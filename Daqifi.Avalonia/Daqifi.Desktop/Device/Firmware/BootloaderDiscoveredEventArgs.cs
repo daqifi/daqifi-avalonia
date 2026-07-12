@@ -14,17 +14,17 @@ public sealed class BootloaderDiscoveredEventArgs : EventArgs
     /// <summary>Creates the event args.</summary>
     public BootloaderDiscoveredEventArgs(string devicePath, string? deviceName)
     {
-        // @port: Daqifi.Desktop.Device.Firmware.BootloaderDiscoveredEventArgs.DevicePath
         DevicePath = string.IsNullOrWhiteSpace(devicePath)
             ? throw new ArgumentException("Device path cannot be empty.", nameof(devicePath))
             : devicePath;
-        // @port: Daqifi.Desktop.Device.Firmware.BootloaderDiscoveredEventArgs.DeviceName
         DeviceName = deviceName;
     }
 
     /// <summary>OS HID device path of the discovered bootloader.</summary>
+    // @port: Daqifi.Desktop.Device.Firmware.BootloaderDiscoveredEventArgs.DevicePath
     public string DevicePath { get; }
 
     /// <summary>Friendly device name, when discovery could read it; otherwise null.</summary>
+    // @port: Daqifi.Desktop.Device.Firmware.BootloaderDiscoveredEventArgs.DeviceName
     public string? DeviceName { get; }
 }

@@ -20,11 +20,11 @@ public partial class App : Application
     {
         if (ApplicationLifetime is IClassicDesktopStyleApplicationLifetime desktop)
         {
-            // @port: replace with the ported MainWindow once its step closes.
-            desktop.MainWindow = new global::Avalonia.Controls.Window
-            {
-                Title = "DAQiFi (Avalonia port scaffold)",
-            };
+            // Absorption seam: the ported Daqifi.Desktop.App startup host owns DI, database
+            // migration, exception hooks, and MainWindow creation (upstream WPF OnStartup);
+            // this bootstrap only hands it the desktop lifetime.
+            Daqifi.Desktop.App.Initialize(desktop);
+            desktop.Exit += (_, _) => Daqifi.Desktop.App.OnExit();
         }
 
         base.OnFrameworkInitializationCompleted();

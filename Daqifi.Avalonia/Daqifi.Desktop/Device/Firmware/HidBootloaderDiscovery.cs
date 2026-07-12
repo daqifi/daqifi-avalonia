@@ -72,9 +72,9 @@ public sealed class HidBootloaderDiscovery : IBootloaderDiscovery, IDisposable
             if (_finder != null)
             {
                 _finder.DeviceDiscovered -= OnDeviceDiscovered;
-                // @port: Daqifi.Desktop.Device.Firmware.HidBootloaderDiscovery.Dispose
                 _finder.Dispose();
             }
+            // @port: Daqifi.Desktop.Device.Firmware.HidBootloaderDiscovery.Dispose
             _cts?.Dispose();
 
             _finder = _finderFactory();

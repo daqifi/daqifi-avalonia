@@ -24,10 +24,10 @@ public sealed class BootloaderSessionStreamingDeviceAdapter : CoreStreamingDevic
 
     public BootloaderSessionStreamingDeviceAdapter(string name)
     {
-        // @port: Daqifi.Desktop.Device.Firmware.BootloaderSessionStreamingDeviceAdapter.Name
         Name = string.IsNullOrWhiteSpace(name) ? "DAQiFi Bootloader" : name;
     }
 
+    // @port: Daqifi.Desktop.Device.Firmware.BootloaderSessionStreamingDeviceAdapter.Name
     public string Name { get; }
     // @port: Daqifi.Desktop.Device.Firmware.BootloaderSessionStreamingDeviceAdapter.IpAddress
     public IPAddress? IpAddress => null;

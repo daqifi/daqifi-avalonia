@@ -19,19 +19,19 @@ public sealed class HeldBootloader
     /// <param name="displayName">Friendly name shown in the UI.</param>
     public HeldBootloader(string devicePath, string displayName)
     {
-        // @port: Daqifi.Desktop.Device.Firmware.HeldBootloader.DevicePath
         DevicePath = string.IsNullOrWhiteSpace(devicePath)
             ? throw new ArgumentException("Device path cannot be empty.", nameof(devicePath))
             : devicePath;
-        // @port: Daqifi.Desktop.Device.Firmware.HeldBootloader.DisplayName
         DisplayName = string.IsNullOrWhiteSpace(displayName)
             ? throw new ArgumentException("Display name cannot be empty.", nameof(displayName))
             : displayName;
     }
 
     /// <summary>OS HID device path; the stable identity passed to the path-targeted flash.</summary>
+    // @port: Daqifi.Desktop.Device.Firmware.HeldBootloader.DevicePath
     public string DevicePath { get; }
 
     /// <summary>Friendly name shown in the connection dialog's firmware list.</summary>
+    // @port: Daqifi.Desktop.Device.Firmware.HeldBootloader.DisplayName
     public string DisplayName { get; }
 }

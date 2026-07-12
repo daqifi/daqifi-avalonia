@@ -1,0 +1,88 @@
+schema_version: 1
+plan_id: 20260712T220407-stub-bodies-loggers-converters
+slug: stub-bodies-loggers-converters
+kind: apply
+created_at: '2026-07-12T22:04:07Z'
+upstream_sha: null
+summary: "Stub-body ports wave 2 \u2014 loggers/data cluster (DatabaseLogger, PlotLogger,\
+  \ PlotModelFactory, SdCardSessionImporter, LoggedSeriesLegendItem), converters round\
+  \ 2, and MinimapInteractionController."
+steps:
+- id: s1
+  summary: 'Loggers/data: DispatcherTimer/Invoke -> Avalonia.Threading; ownerless
+    Win32 SaveFileDialog -> StorageProvider picker owned by the app main window (file_pickers
+    hal, matching the AvaloniaMessageBoxService ownerless-dialog dialect); OxyPlot.Wpf.PngExporter
+    -> OxyPlot.Avalonia.PngExporter (aliased); WPF CompositionTarget.Rendering ->
+    render-priority DispatcherTimer @16ms.'
+  kind: patch
+  upstream_ref: Daqifi.Desktop/Loggers
+  downstream_target: Daqifi.Avalonia/Daqifi.Desktop/Loggers
+  assigned_to: patch-author
+  status: done
+  classification: null
+  shard: domain
+  commit_sha: 3c7cec6
+  file: null
+  target_symbol: DatabaseLogger
+  parent_audit_row: null
+  expected_resolution: null
+  notes:
+  - 'Alias `using PngExporter = OxyPlot.Avalonia.PngExporter` (a plain using would
+    ambiguate OxyPlot.Series.LineSeries). SD-card channel colors use the recorded
+    ISolidColorBrush Color.ToString() #AARRGGBB dialect shared with DataSample.'
+  - loggers/data dialect in 3c7cec6
+  divergences: []
+  started_at: null
+  finished_at: '2026-07-12T22:06:56.436802Z'
+  failure_class: null
+  ticket_url: null
+  ticket_number: null
+- id: s2
+  summary: Converters round 2 (9 files, Avalonia.Data.Converters idiom, Visibility
+    -> bool) + MinimapInteractionController full port (OxyPlot model-level mouse handlers
+    are platform-neutral; WPF Cursors.* singletons -> cached StandardCursorType cursors
+    preserving the reference-equality skip; FrameworkElement -> InputElement).
+  kind: patch
+  upstream_ref: Daqifi.Desktop/Converters
+  downstream_target: Daqifi.Avalonia/Daqifi.Desktop/Converters
+  assigned_to: patch-author
+  status: done
+  classification: null
+  shard: UI
+  commit_sha: 3c7cec6
+  file: null
+  target_symbol: MinimapInteractionController
+  parent_audit_row: null
+  expected_resolution: null
+  notes:
+  - ConvertBack keeps the upstream NotImplementedException bodies (faithful).
+  - converters + minimap controller in 3c7cec6
+  divergences: []
+  started_at: null
+  finished_at: '2026-07-12T22:06:58.191578Z'
+  failure_class: null
+  ticket_url: null
+  ticket_number: null
+- id: s3
+  summary: 'Build gate: dotnet build 0 errors, warnings 517 -> 438.'
+  kind: verify
+  upstream_ref: null
+  downstream_target: Daqifi.Avalonia
+  assigned_to: verifier
+  status: done
+  classification: null
+  shard: domain
+  commit_sha: 3c7cec6
+  file: null
+  target_symbol: null
+  parent_audit_row: null
+  expected_resolution: null
+  notes:
+  - 'adapter build --kind dotnet: success true, 0 errors, 438 warnings (build14.json).'
+  - 'gate: build14.json success, 0 errors, 438 warnings'
+  divergences: []
+  started_at: null
+  finished_at: '2026-07-12T22:07:02.714321Z'
+  failure_class: null
+  ticket_url: null
+  ticket_number: null

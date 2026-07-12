@@ -1,5 +1,41 @@
 <Window xmlns="https://github.com/avaloniaui"
         xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml"
-        x:Class="Daqifi.Desktop.View.DuplicateDeviceDialog">
-  <!-- Scaffolded by portomatic from upstream Daqifi.Desktop.View.DuplicateDeviceDialog. Fill in the view; the code-behind ctor calls InitializeComponent(). -->
+        xmlns:i="https://github.com/projektanker/icons.avalonia"
+        x:Class="Daqifi.Desktop.View.DuplicateDeviceDialog"
+        Title="Device Already Connected" CanResize="False"
+        SizeToContent="WidthAndHeight"
+        MinWidth="480" MinHeight="280" MaxWidth="620" MaxHeight="520"
+        Background="{StaticResource Surface}">
+
+    <!-- Ported from the MahApps MetroWindow original: GlowBrush/ResizeMode/DarkDialog styles
+         have no direct analog; DesignTokens brushes replace the DarkDialog dictionary.
+         Autosizes to content within bounds (DAQiFi#576); MinWidth/MinHeight hold the prior
+         480x280 footprint for the common case. -->
+    <Grid Margin="20" Background="{StaticResource Surface}" RowDefinitions="Auto,Auto,*,Auto" ColumnDefinitions="Auto,*">
+
+        <!-- Icon -->
+        <i:Icon Grid.Row="0" Grid.Column="0" Margin="5,5,10,0" Value="mdi-alert-circle-outline"
+                HorizontalAlignment="Center" VerticalAlignment="Top"
+                FontSize="40" Foreground="{StaticResource StatusAmber}"/>
+
+        <!-- Message -->
+        <TextBlock Grid.Row="0" Grid.Column="1" Text="{Binding Message}"
+                   VerticalAlignment="Top" Margin="10,5,0,10" MaxWidth="385"
+                   TextWrapping="Wrap" FontSize="14" Foreground="{StaticResource TextPrimary}"/>
+
+        <!-- Options (sit directly under the prompt, aligned with the message) -->
+        <StackPanel Grid.Row="1" Grid.Column="1" Margin="10,14,0,0">
+            <RadioButton x:Name="KeepExistingRadio" Content="{Binding KeepExistingText}"
+                         IsChecked="True" Margin="0,6" FontSize="13" Foreground="{StaticResource TextPrimary}"/>
+            <RadioButton x:Name="SwitchToNewRadio" Content="{Binding SwitchToNewText}"
+                         Margin="0,6" FontSize="13" Foreground="{StaticResource TextPrimary}"/>
+        </StackPanel>
+
+        <!-- Buttons -->
+        <StackPanel Grid.Row="3" Grid.Column="0" Grid.ColumnSpan="2"
+                    Orientation="Horizontal" HorizontalAlignment="Right" Margin="0,10,0,0">
+            <Button Content="OK" Click="BtnOk_Click" Width="80" Height="30" Margin="0,0,10,0"/>
+            <Button Content="Cancel" Click="BtnCancel_Click" Width="80" Height="30"/>
+        </StackPanel>
+    </Grid>
 </Window>

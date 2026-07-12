@@ -1,0 +1,91 @@
+schema_version: 1
+plan_id: 20260712T220405-stub-bodies-verbatim-device
+slug: stub-bodies-verbatim-device
+kind: apply
+created_at: '2026-07-12T22:04:05Z'
+upstream_sha: null
+summary: "Stub-body ports wave 1 \u2014 verbatim sweep of the 57 platform-neutral\
+  \ stubs (device plumbing, firmware coordinator/hold/discovery, DiskSpace, models,\
+  \ logger leaf types, exporters, helpers, dialog VMs, AbstractStreamingDevice, Serial/WiFi\
+  \ devices) plus the device-cluster dialect files and cross-file coupling blockers."
+steps:
+- id: s1
+  summary: 'Verbatim sweep: script-copy upstream twins over 57 stubs with full //
+    @port: marker re-insertion; markers for [ObservableProperty]/[RelayCommand]-synthesized
+    members drop per the MVVM source-gen convention.'
+  kind: patch
+  upstream_ref: Daqifi.Desktop
+  downstream_target: Daqifi.Avalonia/Daqifi.Desktop
+  assigned_to: patch-author
+  status: done
+  classification: null
+  shard: domain
+  commit_sha: c939fb8
+  file: null
+  target_symbol: AbstractStreamingDevice
+  parent_audit_row: null
+  expected_resolution: null
+  notes:
+  - '57 files: interface-member markers needed a return-type-first matcher pass (recovered
+    99 + 3 generic-method markers by diffing against HEAD stubs); LiveGraphPane/DeviceLogsView
+    needed ": UserControl" restored (WPF puts the base in x:Class XAML, Avalonia needs
+    it in code-behind).'
+  - verbatim sweep landed in c939fb8; build gate 0 errors
+  divergences: []
+  started_at: null
+  finished_at: '2026-07-12T22:06:47.382141Z'
+  failure_class: null
+  ticket_url: null
+  ticket_number: null
+- id: s2
+  summary: 'Device cluster dialect: BootloaderWatcher (BeginInvoke -> Dispatcher.UIThread.Post,
+    lock-inversion note preserved), ConnectionManager (Dispatcher.UIThread.Invoke;
+    System.Management hotplug stays per DIV-UI-003), coupling blockers LoggingManager
+    + DebugDataModel + ConfirmOverlayViewModel.'
+  kind: patch
+  upstream_ref: Daqifi.Desktop/Device
+  downstream_target: Daqifi.Avalonia/Daqifi.Desktop/Device
+  assigned_to: patch-author
+  status: done
+  classification: null
+  shard: domain
+  commit_sha: c939fb8
+  file: null
+  target_symbol: BootloaderWatcher
+  parent_audit_row: null
+  expected_resolution: null
+  notes:
+  - 'ConfirmOverlayViewModel was verbatim (MahApps reference was comment-only). Headless-host
+    semantics: Dispatcher.UIThread.CheckAccess() true on test thread stands in for
+    WPF Application.Current == null inline path.'
+  - device dialect + coupling blockers in c939fb8
+  divergences: []
+  started_at: null
+  finished_at: '2026-07-12T22:06:49.412047Z'
+  failure_class: null
+  ticket_url: null
+  ticket_number: null
+- id: s3
+  summary: 'Build gate: dotnet build 0 errors, warnings 798 -> 517 (stub CS0169/CS8618
+    noise shrinking as bodies land).'
+  kind: verify
+  upstream_ref: null
+  downstream_target: Daqifi.Avalonia
+  assigned_to: verifier
+  status: done
+  classification: null
+  shard: domain
+  commit_sha: c939fb8
+  file: null
+  target_symbol: null
+  parent_audit_row: null
+  expected_resolution: null
+  notes:
+  - 'adapter build --kind dotnet: success true, 0 errors, 517 warnings (build12.json).'
+  - 'gate: build12.json success, 0 errors, 517 warnings'
+  divergences: []
+  started_at: null
+  finished_at: '2026-07-12T22:06:54.688997Z'
+  failure_class: null
+  ticket_url: null
+  ticket_number: null

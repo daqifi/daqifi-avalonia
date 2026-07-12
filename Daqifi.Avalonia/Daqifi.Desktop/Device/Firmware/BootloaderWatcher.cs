@@ -56,7 +56,6 @@ public sealed class BootloaderWatcher : IBootloaderWatcher, IDisposable
         _discovery = discovery ?? throw new ArgumentNullException(nameof(discovery));
         _holdFactory = holdFactory ?? throw new ArgumentNullException(nameof(holdFactory));
         _logger = logger ?? throw new ArgumentNullException(nameof(logger));
-        // @port: Daqifi.Desktop.Device.Firmware.BootloaderWatcher.Bootloaders
         Bootloaders = new ReadOnlyObservableCollection<HeldBootloader>(_bootloaders);
     }
     #endregion
@@ -67,6 +66,7 @@ public sealed class BootloaderWatcher : IBootloaderWatcher, IDisposable
     private readonly ObservableCollection<HeldBootloader> _bootloaders = [];
 
     /// <inheritdoc />
+    // @port: Daqifi.Desktop.Device.Firmware.BootloaderWatcher.Bootloaders
     public ReadOnlyObservableCollection<HeldBootloader> Bootloaders { get; }
 
     /// <inheritdoc />
@@ -227,7 +227,6 @@ public sealed class BootloaderWatcher : IBootloaderWatcher, IDisposable
             {
                 // Could not open it (already gone, or transitioned to application mode). Don't list it.
                 created.HoldDropped -= OnHoldDropped;
-                // @port: Daqifi.Desktop.Device.Firmware.BootloaderWatcher.Dispose
                 created.Dispose();
                 created = null;
                 return;
@@ -364,6 +363,7 @@ public sealed class BootloaderWatcher : IBootloaderWatcher, IDisposable
 
     #region IDisposable
     /// <summary>Stops discovery and releases every held bootloader.</summary>
+    // @port: Daqifi.Desktop.Device.Firmware.BootloaderWatcher.Dispose
     public void Dispose()
     {
         if (_disposed)

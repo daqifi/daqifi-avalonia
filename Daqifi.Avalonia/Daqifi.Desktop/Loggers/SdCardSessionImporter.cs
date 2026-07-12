@@ -333,9 +333,7 @@ public class SdCardSessionImporter
 
         return new SdCardImportResult
         {
-            // @port: Daqifi.Desktop.Loggers.SdCardImportResult.Session
             Session = session,
-            // @port: Daqifi.Desktop.Loggers.SdCardImportResult.TimestampQuality
             TimestampQuality = timestampQuality
         };
     }
@@ -467,11 +465,13 @@ public sealed class SdCardImportResult
     /// <summary>
     /// The logging session the import created.
     /// </summary>
+    // @port: Daqifi.Desktop.Loggers.SdCardImportResult.Session
     public required LoggingSession Session { get; init; }
 
     /// <summary>
     /// Timestamp statistics observed across the imported entries.
     /// </summary>
+    // @port: Daqifi.Desktop.Loggers.SdCardImportResult.TimestampQuality
     public required ImportTimestampQuality TimestampQuality { get; init; }
 }
 

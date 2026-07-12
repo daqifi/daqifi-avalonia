@@ -43,7 +43,10 @@ public partial class ConnectionManager : ObservableObject
     /// Should return the user's choice on how to handle the duplicate.
     /// </summary>
     // @port: Daqifi.Desktop.ConnectionManager.DuplicateDeviceHandler
-    public Func<DuplicateDeviceCheckResult, DuplicateDeviceAction> DuplicateDeviceHandler { get; set; }
+    // Dialect divergence: Avalonia dialogs are async-only (no WPF ShowDialog nested message
+    // pump), so the handler is Task-returning and Connect awaits it — same async-dialogs
+    // dialect as IMessageBoxService.ShowAsync.
+    public Func<DuplicateDeviceCheckResult, Task<DuplicateDeviceAction>> DuplicateDeviceHandler { get; set; }
 
     /// <summary>
     /// Tracks the device currently undergoing firmware update to suppress disconnect notifications.
@@ -101,7 +104,7 @@ public partial class ConnectionManager : ObservableObject
             {
                 if (DuplicateDeviceHandler != null)
                 {
-                    var action = DuplicateDeviceHandler(duplicateResult);
+                    var action = await DuplicateDeviceHandler(duplicateResult);
                     switch (action)
                     {
                         case DuplicateDeviceAction.KeepExisting:
@@ -136,7 +139,6 @@ public partial class ConnectionManager : ObservableObject
             if (postConnectDuplicateResult.IsDuplicate)
             {
                 // Disconnect the device we just connected since it's a duplicate
-                // @port: Daqifi.Desktop.ConnectionManager.Disconnect
                 device.Disconnect();
                 ConnectionStatus = postConnectDuplicateResult.ExistingDevice != null ? DAQiFiConnectionStatus.AlreadyConnected : DAQiFiConnectionStatus.Error;
                 return;
@@ -163,6 +165,7 @@ public partial class ConnectionManager : ObservableObject
         }
     }
 
+    // @port: Daqifi.Desktop.ConnectionManager.Disconnect
     public void Disconnect(IStreamingDevice device)
     {
         var connectionType = device.ConnectionType == ConnectionType.Usb ? "usb" : "wifi";
@@ -307,15 +310,10 @@ public partial class ConnectionManager : ObservableObject
             
             return new DuplicateDeviceCheckResult 
             { 
-                // @port: Daqifi.Desktop.DuplicateDeviceCheckResult.IsDuplicate
                 IsDuplicate = true, 
-                // @port: Daqifi.Desktop.DuplicateDeviceCheckResult.ExistingDevice
                 ExistingDevice = existingDevice,
-                // @port: Daqifi.Desktop.DuplicateDeviceCheckResult.NewDevice
                 NewDevice = newDevice,
-                // @port: Daqifi.Desktop.DuplicateDeviceCheckResult.NewDeviceInterface
                 NewDeviceInterface = newDeviceInterface,
-                // @port: Daqifi.Desktop.DuplicateDeviceCheckResult.ExistingDeviceInterface
                 ExistingDeviceInterface = existingDeviceInterface
             };
         }
@@ -330,10 +328,15 @@ public partial class ConnectionManager : ObservableObject
 // @port: Daqifi.Desktop.DuplicateDeviceCheckResult
 public class DuplicateDeviceCheckResult
 {
+    // @port: Daqifi.Desktop.DuplicateDeviceCheckResult.IsDuplicate
     public bool IsDuplicate { get; set; }
+    // @port: Daqifi.Desktop.DuplicateDeviceCheckResult.ExistingDevice
     public IStreamingDevice ExistingDevice { get; set; }
+    // @port: Daqifi.Desktop.DuplicateDeviceCheckResult.NewDevice
     public IStreamingDevice NewDevice { get; set; }
+    // @port: Daqifi.Desktop.DuplicateDeviceCheckResult.NewDeviceInterface
     public string NewDeviceInterface { get; set; }
+    // @port: Daqifi.Desktop.DuplicateDeviceCheckResult.ExistingDeviceInterface
     public string ExistingDeviceInterface { get; set; }
 }
 

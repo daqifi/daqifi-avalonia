@@ -241,6 +241,7 @@ public partial class DatabaseLogger : ObservableObject, ILogger, IDisposable
             _lastViewportMin = double.NaN;
             _lastViewportMax = double.NaN;
             _fetchCts?.Cancel();
+            // @port: Daqifi.Desktop.Logger.DatabaseLogger.Dispose
             _fetchCts?.Dispose();
             _fetchCts = null;
             IsRefiningData = false;
@@ -713,7 +714,6 @@ public partial class DatabaseLogger : ObservableObject, ILogger, IDisposable
         if (_fetchCts != null)
         {
             _fetchCts.Cancel();
-            // @port: Daqifi.Desktop.Logger.DatabaseLogger.Dispose
             _fetchCts.Dispose();
             _fetchCts = null;
             IsRefiningData = false;

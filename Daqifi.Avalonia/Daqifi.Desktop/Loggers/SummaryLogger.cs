@@ -166,9 +166,7 @@ public partial class SummaryLogger : ObservableObject, ILogger
     {
         public SummaryBuffer()
         {
-            // @port: Daqifi.Desktop.Logger.SummaryLogger.Channels
             Channels = new Dictionary<string, ChannelBuffer>(64);
-            // @port: Daqifi.Desktop.Logger.SummaryLogger.StatusList
             StatusList = new HashSet<int>();
         }
 
@@ -220,6 +218,7 @@ public partial class SummaryLogger : ObservableObject, ILogger
         /// <summary>
         /// The statuses seen
         /// </summary>
+        // @port: Daqifi.Desktop.Logger.SummaryLogger.StatusList
         public HashSet<int> StatusList { get; set; }
 
         /// <summary>
@@ -230,6 +229,7 @@ public partial class SummaryLogger : ObservableObject, ILogger
         /// <summary>
         /// The channels seen
         /// </summary>
+        // @port: Daqifi.Desktop.Logger.SummaryLogger.Channels
         public Dictionary<string, ChannelBuffer> Channels { get; set; }
 
         public void Reset()

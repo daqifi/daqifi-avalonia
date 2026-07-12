@@ -117,7 +117,6 @@ public class DiskSpaceMonitor : IDiskSpaceMonitor
                 return;
             }
 
-            // @port: Daqifi.Desktop.DiskSpace.DiskSpaceMonitor.Dispose
             _timer.Dispose();
             _timer = null;
             _warningRaised = false;
@@ -126,6 +125,7 @@ public class DiskSpaceMonitor : IDiskSpaceMonitor
     }
 
     /// <inheritdoc />
+    // @port: Daqifi.Desktop.DiskSpace.DiskSpaceMonitor.Dispose
     public void Dispose()
     {
         if (_disposed)
