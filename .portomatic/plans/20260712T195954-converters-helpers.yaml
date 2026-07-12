@@ -1,0 +1,63 @@
+schema_version: 1
+plan_id: 20260712T195954-converters-helpers
+slug: converters-helpers
+kind: apply
+created_at: '2026-07-12T19:59:54Z'
+upstream_sha: null
+summary: "Port all value/multi-value converters (Converters/ + Helpers/) to Avalonia.Data.Converters\
+  \ \u2014 Visibility -> bool, Brush -> Avalonia.Media, IMultiValueConverter IList\
+  \ signature."
+steps:
+- id: s1
+  summary: 'Port 16 converter classes: Converters/*.cs + Helpers/{BooleanConverter,
+    BooleanToInverseBoolConverter, BooleanToVisibilityConverter, MyMultiValueConverter,
+    EnumDescriptionConverter}.cs. Dialect: System.Windows.Data.IValueConverter ->
+    Avalonia.Data.Converters; Visibility.Visible/Collapsed -> bool; WPF IMultiValueConverter
+    (object[], ConvertBack) -> Avalonia (IList<object?>, no ConvertBack member).'
+  kind: patch
+  upstream_ref: Daqifi.Desktop/Converters
+  downstream_target: Daqifi.Avalonia/Daqifi.Desktop/Converters
+  assigned_to: patch-author
+  status: done
+  classification: null
+  shard: UI
+  commit_sha: null
+  file: null
+  target_symbol: IValueConverter
+  parent_audit_row: null
+  expected_resolution: null
+  notes:
+  - '16 converters ported: System.Windows.Data -> Avalonia.Data.Converters; Visibility->bool
+    (BoolAnd/Inverted/NotNull/BooleanToVisibility now boolean); IMultiValueConverter
+    -> IList<object?> signature, ConvertBack dropped (not in Avalonia interface);
+    BrushColorMatch compares ISolidColorBrush so immutable brushes match; OxyColorToBrush
+    -> Avalonia SolidColorBrush/Brushes.Transparent.'
+  divergences: []
+  started_at: null
+  finished_at: '2026-07-12T20:13:16.162719Z'
+  failure_class: null
+  ticket_url: null
+  ticket_number: null
+- id: s2
+  summary: 'Build gate: portomatic adapter build --kind dotnet'
+  kind: verify
+  upstream_ref: null
+  downstream_target: null
+  assigned_to: null
+  status: done
+  classification: null
+  shard: UI
+  commit_sha: null
+  file: null
+  target_symbol: null
+  parent_audit_row: null
+  expected_resolution: null
+  notes:
+  - 'Build gate: FULL BUILD GREEN (0 errors incl. XamlIl); 0 diagnostics in Converters/
+    + Helpers/.'
+  divergences: []
+  started_at: null
+  finished_at: '2026-07-12T20:13:17.431182Z'
+  failure_class: null
+  ticket_url: null
+  ticket_number: null

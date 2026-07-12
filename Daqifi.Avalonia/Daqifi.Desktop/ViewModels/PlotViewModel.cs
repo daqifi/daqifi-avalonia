@@ -9,6 +9,11 @@
 using System;
 using System.Collections.Generic;
 using System.Threading.Tasks;
+using Daqifi.Desktop.Channel;
+using OxyPlot;
+using OxyPlot.Series;
+using System.IO;
+using System.Linq;
 
 namespace Daqifi.Desktop.ViewModels;
 

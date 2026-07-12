@@ -6,10 +6,15 @@
 // DO NOT manually delete the `// @port:` markers — they link symbols back to
 // the correspondence map.
 
+using Cursor = Avalonia.Input.Cursor;
 using System;
 using Avalonia.Threading;
 using System.Collections.Generic;
 using System.Threading.Tasks;
+using Daqifi.Desktop.Logger;
+using OxyPlot;
+using OxyPlot.Annotations;
+using OxyPlot.Axes;
 
 namespace Daqifi.Desktop.View;
 
@@ -86,4 +91,8 @@ public class MinimapInteractionController : IDisposable
 
     // @port: Daqifi.Desktop.View.MinimapInteractionController.Dispose
     public void Dispose() => throw new NotImplementedException();
+
+    // scaffold-repair: nested enum the scaffold dropped (upstream verbatim).
+    // @port: Daqifi.Desktop.View.MinimapInteractionController.DragMode
+    private enum DragMode { None, Pan, ResizeLeft, ResizeRight }
 }

@@ -11,6 +11,9 @@ using CommunityToolkit.Mvvm.Input;
 using System;
 using System.Collections.Generic;
 using System.Threading.Tasks;
+using Daqifi.Desktop.Channel;
+using Daqifi.Desktop.Device;
+using System.Text;
 
 namespace Daqifi.Desktop.Logger;
 
@@ -128,4 +131,22 @@ public partial class SummaryLogger : ObservableObject, ILogger
 
     // @port: Daqifi.Desktop.Logger.SummaryLogger.Reset
     private void Reset() => throw new NotImplementedException();
+
+    // scaffold-repair: nested types the scaffold dropped — skeletons only; the full
+    // buffers/summaries port lands with this class's apply step.
+
+    // @port: Daqifi.Desktop.Logger.SummaryLogger.ChannelSummary
+    public class ChannelSummary
+    {
+        public string Name => throw new NotImplementedException();
+        public int SampleCount => throw new NotImplementedException();
+        public DateTime LastUpdate => throw new NotImplementedException();
+        public double SampleRate => throw new NotImplementedException();
+        public double MaxDelta => throw new NotImplementedException();
+    }
+
+    // @port: Daqifi.Desktop.Logger.SummaryLogger.SummaryBuffer
+    private class SummaryBuffer
+    {
+    }
 }

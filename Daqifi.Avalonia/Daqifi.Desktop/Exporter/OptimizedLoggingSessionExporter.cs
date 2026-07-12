@@ -10,6 +10,14 @@ using System;
 using System.Collections.Generic;
 using System.Threading;
 using System.Threading.Tasks;
+using System.IO;
+using System.Text;
+using Daqifi.Core.Logging.Export;
+using Daqifi.Desktop.Common.Loggers;
+using Daqifi.Desktop.Logger;
+using Daqifi.Desktop.Models;
+using Microsoft.EntityFrameworkCore;
+using Microsoft.Extensions.DependencyInjection;
 
 namespace Daqifi.Desktop.Exporter;
 

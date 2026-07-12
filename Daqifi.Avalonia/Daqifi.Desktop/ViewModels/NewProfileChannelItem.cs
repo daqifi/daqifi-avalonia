@@ -10,6 +10,7 @@ using CommunityToolkit.Mvvm.ComponentModel;
 using System;
 using System.Collections.Generic;
 using System.Threading.Tasks;
+using Daqifi.Desktop.Channel;
 
 namespace Daqifi.Desktop.ViewModels;
 

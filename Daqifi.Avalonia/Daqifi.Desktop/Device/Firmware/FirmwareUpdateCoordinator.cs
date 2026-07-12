@@ -10,6 +10,13 @@ using System;
 using System.Collections.Generic;
 using System.Threading;
 using System.Threading.Tasks;
+using System.IO;
+using System.IO.Ports;
+using Daqifi.Core.Firmware;
+using Daqifi.Desktop.Common.Loggers;
+using Daqifi.Desktop.Device.SerialDevice;
+using Daqifi.Desktop.Models;
+using Microsoft.Extensions.Logging;
 
 namespace Daqifi.Desktop.Device.Firmware;
 

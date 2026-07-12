@@ -1,0 +1,57 @@
+schema_version: 1
+plan_id: 20260712T193737-profile-models
+slug: profile-models
+kind: apply
+created_at: '2026-07-12T19:37:37Z'
+upstream_sha: null
+summary: "Port Models/AddProfileModel.cs \u2014 Profile, ProfileDevice, ProfileChannel,\
+  \ AddProfileModel (CommunityToolkit ObservableObject, platform-neutral, verbatim)."
+steps:
+- id: s1
+  summary: "Port Models/AddProfileModel.cs: AddProfileModel, Profile, ProfileDevice,\
+    \ ProfileChannel \u2014 verbatim (no WPF surface)."
+  kind: patch
+  upstream_ref: Daqifi.Desktop/Models/AddProfileModel.cs
+  downstream_target: Daqifi.Avalonia/Daqifi.Desktop/Models/AddProfileModel.cs
+  assigned_to: patch-author
+  status: done
+  classification: null
+  shard: UI
+  commit_sha: null
+  file: null
+  target_symbol: Profile
+  parent_audit_row: null
+  expected_resolution: null
+  notes:
+  - "AddProfileModel/Profile/ProfileDevice/ProfileChannel filled verbatim (CommunityToolkit\
+    \ ObservableObject, no WPF surface); scaffold had dropped the [ObservableProperty]\
+    \ attributes \u2014 restored."
+  divergences: []
+  started_at: null
+  finished_at: '2026-07-12T19:54:57.304080Z'
+  failure_class: null
+  ticket_url: null
+  ticket_number: null
+- id: s2
+  summary: 'Build gate: portomatic adapter build --kind dotnet'
+  kind: verify
+  upstream_ref: null
+  downstream_target: null
+  assigned_to: null
+  status: done
+  classification: null
+  shard: UI
+  commit_sha: null
+  file: null
+  target_symbol: null
+  parent_audit_row: null
+  expected_resolution: null
+  notes:
+  - 'Build gate (shared run with logging-session/logging-data-layer): restore green;
+    wall 576->545; 0 diagnostics in Models/AddProfileModel.cs.'
+  divergences: []
+  started_at: null
+  finished_at: '2026-07-12T19:54:58.657123Z'
+  failure_class: null
+  ticket_url: null
+  ticket_number: null

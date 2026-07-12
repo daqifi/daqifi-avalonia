@@ -11,6 +11,7 @@ using System;
 using System.Collections.Generic;
 using System.Collections.ObjectModel;
 using System.Threading.Tasks;
+using Daqifi.Desktop.Device;
 
 namespace Daqifi.Desktop.ViewModels;
 

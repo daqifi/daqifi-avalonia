@@ -6,6 +6,7 @@
 // DO NOT manually delete the `// @port:` markers — they link symbols back to
 // the correspondence map.
 
+using Avalonia.Interactivity;
 using Avalonia.Controls;
 using System;
 using System.Collections.Generic;
@@ -19,6 +20,14 @@ namespace Daqifi.Desktop.View;
 // @port: Daqifi.Desktop.View.DuplicateDeviceDialog
 public partial class DuplicateDeviceDialog : Window
 {
+    // @port: Daqifi.Desktop.View.DuplicateDeviceDialog.DuplicateDeviceDialogResult
+    public enum DuplicateDeviceDialogResult
+    {
+        KeepExisting,
+        SwitchToNew,
+        Cancel
+    }
+
     public DuplicateDeviceDialog()
     {
         InitializeComponent();

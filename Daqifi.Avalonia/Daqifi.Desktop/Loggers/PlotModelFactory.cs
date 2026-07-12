@@ -9,6 +9,14 @@
 using System;
 using System.Collections.Generic;
 using System.Threading.Tasks;
+using Daqifi.Desktop.Helpers;
+using OxyPlot;
+using OxyPlot.Annotations;
+using OxyPlot.Axes;
+using OxyPlot.Series;
+using ChannelType = Daqifi.Core.Channel.ChannelType;
+using FontWeights = OxyPlot.FontWeights;
+using TickStyle = OxyPlot.Axes.TickStyle;
 
 namespace Daqifi.Desktop.Logger;
 

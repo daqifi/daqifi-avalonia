@@ -10,6 +10,10 @@ using CommunityToolkit.Mvvm.ComponentModel;
 using System;
 using System.Collections.Generic;
 using System.Threading.Tasks;
+using Daqifi.Desktop.Common.Loggers;
+using Newtonsoft.Json.Linq;
+using System.Net.Http;
+using System.Reflection;
 
 namespace Daqifi.Desktop.UpdateVersion;
 

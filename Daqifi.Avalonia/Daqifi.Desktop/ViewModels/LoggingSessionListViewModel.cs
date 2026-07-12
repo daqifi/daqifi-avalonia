@@ -10,6 +10,12 @@ using System;
 using System.Collections.Generic;
 using System.Collections.ObjectModel;
 using System.Threading.Tasks;
+using System.Collections.Specialized;
+using System.IO;
+using Daqifi.Desktop.Common.Loggers;
+using Daqifi.Desktop.Logger;
+using Microsoft.Data.Sqlite;
+using Microsoft.EntityFrameworkCore;
 
 namespace Daqifi.Desktop.ViewModels;
 

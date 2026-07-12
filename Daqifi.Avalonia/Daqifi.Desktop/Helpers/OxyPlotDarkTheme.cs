@@ -9,6 +9,8 @@
 using System;
 using System.Collections.Generic;
 using System.Threading.Tasks;
+using OxyPlot;
+using OxyPlot.Axes;
 
 namespace Daqifi.Desktop.Helpers;
 

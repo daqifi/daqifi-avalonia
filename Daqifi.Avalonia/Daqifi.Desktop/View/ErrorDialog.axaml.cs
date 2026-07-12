@@ -6,6 +6,7 @@
 // DO NOT manually delete the `// @port:` markers — they link symbols back to
 // the correspondence map.
 
+using Avalonia.Interactivity;
 using Avalonia.Controls;
 using System;
 using System.Collections.Generic;

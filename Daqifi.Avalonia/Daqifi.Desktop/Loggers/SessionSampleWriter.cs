@@ -10,6 +10,11 @@ using System;
 using System.Collections.Generic;
 using System.Threading;
 using System.Threading.Tasks;
+using Daqifi.Desktop.Channel;
+using Daqifi.Desktop.Common.Loggers;
+using EFCore.BulkExtensions;
+using Microsoft.EntityFrameworkCore;
+using System.Collections.Concurrent;
 
 namespace Daqifi.Desktop.Logger;
 

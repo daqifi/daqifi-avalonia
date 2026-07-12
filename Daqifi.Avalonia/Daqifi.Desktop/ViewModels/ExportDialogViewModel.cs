@@ -13,6 +13,13 @@ using System.Collections.Generic;
 using System.Threading;
 using System.Threading.Tasks;
 using System.Windows.Input;
+using Daqifi.Desktop.Common.Loggers;
+using Daqifi.Desktop.Exporter;
+using Daqifi.Desktop.Logger;
+using Microsoft.EntityFrameworkCore;
+using Microsoft.Extensions.DependencyInjection;
+using System.Diagnostics;
+using System.IO;
 
 namespace Daqifi.Desktop.ViewModels;
 

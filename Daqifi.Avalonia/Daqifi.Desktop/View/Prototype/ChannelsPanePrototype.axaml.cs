@@ -6,6 +6,7 @@
 // DO NOT manually delete the `// @port:` markers — they link symbols back to
 // the correspondence map.
 
+using Avalonia.Interactivity;
 using Avalonia.Controls;
 using System;
 using System.Collections.Generic;
@@ -22,8 +23,8 @@ public partial class ChannelsPanePrototype : UserControl
     }
 
     // @port: Daqifi.Desktop.View.Prototype.ChannelsPanePrototype.OnLoaded
-    private void OnLoaded(object sender, System.Windows.RoutedEventArgs e) => throw new NotImplementedException();
+    private void OnLoaded(object sender, RoutedEventArgs e) => throw new NotImplementedException();
 
     // @port: Daqifi.Desktop.View.Prototype.ChannelsPanePrototype.OnUnloaded
-    private void OnUnloaded(object sender, System.Windows.RoutedEventArgs e) => throw new NotImplementedException();
+    private void OnUnloaded(object sender, RoutedEventArgs e) => throw new NotImplementedException();
 }

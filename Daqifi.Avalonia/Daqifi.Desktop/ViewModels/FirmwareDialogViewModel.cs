@@ -13,6 +13,13 @@ using System.Collections.Generic;
 using System.Collections.ObjectModel;
 using System.Threading;
 using System.Threading.Tasks;
+using Daqifi.Core.Firmware;
+using Daqifi.Desktop.Common.Loggers;
+using Daqifi.Desktop.Device.Firmware;
+using Daqifi.Desktop.Models;
+using Microsoft.Extensions.DependencyInjection;
+using System.IO;
+using File = System.IO.File;
 
 namespace Daqifi.Desktop.ViewModels;
 

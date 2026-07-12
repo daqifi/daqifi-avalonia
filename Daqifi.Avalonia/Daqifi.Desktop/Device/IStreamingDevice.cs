@@ -10,6 +10,11 @@ using System;
 using System.Collections.Generic;
 using System.Threading;
 using System.Threading.Tasks;
+using Daqifi.Desktop.Channel;
+using ChannelDirection = Daqifi.Core.Channel.ChannelDirection;
+using Daqifi.Core.Device.Network;
+using Daqifi.Core.Device.SdCard;
+using Daqifi.Desktop.Models;
 
 namespace Daqifi.Desktop.Device;
 

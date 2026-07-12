@@ -6,6 +6,8 @@
 // DO NOT manually delete the `// @port:` markers — they link symbols back to
 // the correspondence map.
 
+using Avalonia.Controls;
+using Avalonia.Controls.ApplicationLifetimes;
 using System;
 using Avalonia.Threading;
 using System.Collections.Generic;
@@ -17,7 +19,7 @@ namespace Daqifi.Desktop;
 public partial class App
 {
     // @port: Daqifi.Desktop.App.SplashScreen
-    private SplashScreen SplashScreen
+    private Window SplashScreen
     {
         get => throw new NotImplementedException();
         set => throw new NotImplementedException();
@@ -66,7 +68,7 @@ public partial class App
     }
 
     // @port: Daqifi.Desktop.App.OnStartup
-    protected void OnStartup(StartupEventArgs e) => throw new NotImplementedException();
+    protected void OnStartup(ControlledApplicationLifetimeStartupEventArgs e) => throw new NotImplementedException();
 
     // @port: Daqifi.Desktop.App.OnDispatcherUnhandledException
     private static void OnDispatcherUnhandledException(object sender, DispatcherUnhandledExceptionEventArgs e) => throw new NotImplementedException();
@@ -78,7 +80,7 @@ public partial class App
     private static void OnUnobservedTaskException(object sender, UnobservedTaskExceptionEventArgs e) => throw new NotImplementedException();
 
     // @port: Daqifi.Desktop.App.OnExit
-    protected void OnExit(ExitEventArgs e) => throw new NotImplementedException();
+    protected void OnExit(ControlledApplicationLifetimeExitEventArgs e) => throw new NotImplementedException();
 
     // @port: Daqifi.Desktop.App.ShowSplashScreen
     private void ShowSplashScreen() => throw new NotImplementedException();

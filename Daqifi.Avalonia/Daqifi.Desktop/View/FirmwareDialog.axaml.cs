@@ -6,6 +6,7 @@
 // DO NOT manually delete the `// @port:` markers — they link symbols back to
 // the correspondence map.
 
+using Avalonia.Interactivity;
 using Avalonia.Controls;
 using System;
 using System.Collections.Generic;
@@ -25,8 +26,8 @@ public partial class FirmwareDialog : Window
     }
 
     // @port: Daqifi.Desktop.View.FirmwareDialog.btnCancel_Click
-    private void btnCancel_Click(object sender, System.Windows.RoutedEventArgs e) => throw new NotImplementedException();
+    private void btnCancel_Click(object sender, RoutedEventArgs e) => throw new NotImplementedException();
 
     // @port: Daqifi.Desktop.View.FirmwareDialog.btnOk_Click
-    private void btnOk_Click(object sender, System.Windows.RoutedEventArgs e) => throw new NotImplementedException();
+    private void btnOk_Click(object sender, RoutedEventArgs e) => throw new NotImplementedException();
 }

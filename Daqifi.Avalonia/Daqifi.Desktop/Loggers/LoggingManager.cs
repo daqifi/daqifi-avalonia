@@ -11,6 +11,15 @@ using System;
 using System.Collections.Generic;
 using System.Collections.ObjectModel;
 using System.Threading.Tasks;
+using Daqifi.Desktop.Channel;
+using Daqifi.Desktop.Device;
+using Daqifi.Desktop.Models;
+using Daqifi.Desktop.Common.Loggers;
+using System.IO;
+using System.Xml.Linq;
+using Daqifi.Desktop.UpdateVersion;
+using Microsoft.EntityFrameworkCore;
+using Microsoft.Extensions.DependencyInjection;
 
 namespace Daqifi.Desktop.Logger;
 

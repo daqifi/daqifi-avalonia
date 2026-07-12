@@ -12,6 +12,13 @@ using System;
 using System.Collections.Generic;
 using System.Collections.ObjectModel;
 using System.Threading.Tasks;
+using System.ComponentModel;
+using Daqifi.Desktop.Channel;
+using Daqifi.Desktop.Common.Loggers;
+using Daqifi.Desktop.Device;
+using Daqifi.Desktop.Helpers;
+using Daqifi.Desktop.Logger;
+using Daqifi.Desktop.Models;
 
 namespace Daqifi.Desktop.ViewModels;
 

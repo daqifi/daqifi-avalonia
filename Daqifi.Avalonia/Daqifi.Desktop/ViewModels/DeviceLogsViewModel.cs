@@ -6,12 +6,22 @@
 // DO NOT manually delete the `// @port:` markers — they link symbols back to
 // the correspondence map.
 
+using Daqifi.Desktop.Services;
 using CommunityToolkit.Mvvm.ComponentModel;
 using CommunityToolkit.Mvvm.Input;
 using System;
 using System.Collections.Generic;
 using System.Collections.ObjectModel;
 using System.Threading.Tasks;
+using System.Text;
+using Daqifi.Desktop.Common.Loggers;
+using Daqifi.Desktop.Device;
+using Daqifi.Desktop.Logger;
+using Daqifi.Desktop.Loggers;
+using Daqifi.Desktop.Models;
+using Daqifi.Core.Device.SdCard;
+using Microsoft.EntityFrameworkCore;
+using Microsoft.Extensions.DependencyInjection;
 
 namespace Daqifi.Desktop.ViewModels;
 
@@ -129,5 +139,5 @@ public partial class DeviceLogsViewModel : ObservableObject
     private Task ImportAllFiles() => throw new NotImplementedException();
 
     // @port: Daqifi.Desktop.ViewModels.DeviceLogsViewModel.ShowMessage
-    private Task ShowMessage(string title, string message, MessageDialogStyle dialogStyle) => throw new NotImplementedException();
+    private Task ShowMessage(string title, string message, MessageBoxButton dialogStyle) => throw new NotImplementedException();
 }

@@ -9,6 +9,12 @@
 using System;
 using System.Collections.Generic;
 using System.Threading.Tasks;
+using Daqifi.Desktop.Common.Loggers;
+using Daqifi.Desktop.Helpers;
+using Microsoft.EntityFrameworkCore;
+using OxyPlot;
+using System.Diagnostics;
+using ChannelType = Daqifi.Core.Channel.ChannelType;
 
 namespace Daqifi.Desktop.Logger;
 

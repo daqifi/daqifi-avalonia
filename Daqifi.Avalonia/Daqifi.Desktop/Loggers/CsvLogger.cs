@@ -9,6 +9,10 @@
 using System;
 using System.Collections.Generic;
 using System.Threading.Tasks;
+using System.IO;
+using System.Linq;
+using System.Text;
+using Daqifi.Desktop.Channel;
 
 namespace Daqifi.Desktop.Logger;
 

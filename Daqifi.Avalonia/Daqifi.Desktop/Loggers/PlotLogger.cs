@@ -11,6 +11,17 @@ using CommunityToolkit.Mvvm.Input;
 using System;
 using System.Collections.Generic;
 using System.Threading.Tasks;
+using Daqifi.Desktop.Channel;
+using ChannelType = Daqifi.Core.Channel.ChannelType;
+using Daqifi.Desktop.Device;
+using Daqifi.Desktop.Helpers;
+using OxyPlot;
+using OxyPlot.Axes;
+using OxyPlot.Series;
+using System.Diagnostics;
+using System.Globalization;
+using System.IO;
+using TickStyle = OxyPlot.Axes.TickStyle;
 
 namespace Daqifi.Desktop.Logger;
 

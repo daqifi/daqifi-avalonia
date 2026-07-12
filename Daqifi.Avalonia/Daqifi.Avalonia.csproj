@@ -13,6 +13,14 @@
 	</PropertyGroup>
 
 	<ItemGroup>
+		<!-- Mirrors upstream Daqifi.Desktop.csproj's Compile Remove list — legacy files kept in-tree but never compiled -->
+		<Compile Remove="Daqifi.Desktop\Loggers\CsvLogger.cs" />
+		<Compile Remove="Daqifi.Desktop\ViewModels\PlottingViewModel.cs" />
+		<Compile Remove="Daqifi.Desktop\ViewModels\PlotViewModel.cs" />
+		<Compile Remove="Daqifi.Desktop\ViewModels\ViewModelLocator.cs" />
+	</ItemGroup>
+
+	<ItemGroup>
 		<!-- Avalonia stack (replaces WPF + MahApps.Metro per the UI catalog decision log) -->
 		<PackageReference Include="Avalonia" Version="11.3.*" />
 		<PackageReference Include="Avalonia.Desktop" Version="11.3.*" />

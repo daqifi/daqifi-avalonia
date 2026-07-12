@@ -6,6 +6,8 @@
 // DO NOT manually delete the `// @port:` markers — they link symbols back to
 // the correspondence map.
 
+using Avalonia.Controls;
+using Daqifi.Desktop.Services;
 using CommunityToolkit.Mvvm.ComponentModel;
 using CommunityToolkit.Mvvm.Input;
 using System;
@@ -15,6 +17,31 @@ using System.Collections.ObjectModel;
 using System.Threading;
 using System.Threading.Tasks;
 using System.Windows.Input;
+using Daqifi.Desktop.Channel;
+using Daqifi.Desktop.Common.Loggers;
+using Daqifi.Desktop.Configuration;
+using Daqifi.Desktop.Device;
+using Daqifi.Desktop.DialogService;
+using Daqifi.Desktop.DiskSpace;
+using Daqifi.Desktop.Helpers;
+using Daqifi.Desktop.Logger;
+using Daqifi.Desktop.Loggers;
+using Daqifi.Desktop.Models;
+using Daqifi.Desktop.UpdateVersion;
+using Daqifi.Desktop.View;
+using Microsoft.EntityFrameworkCore;
+using Microsoft.Extensions.DependencyInjection;
+using Microsoft.Extensions.Logging;
+using Microsoft.Extensions.Logging.Abstractions;
+using Daqifi.Core.Firmware;
+using Daqifi.Desktop.Device.Firmware;
+using Daqifi.Desktop.Device.SerialDevice;
+using ILanChipInfoProvider = Daqifi.Core.Firmware.ILanChipInfoProvider;
+using LanChipInfo = Daqifi.Core.Firmware.LanChipInfo;
+using System.Collections.Specialized;
+using System.ComponentModel;
+using System.Net.Http;
+using Daqifi.Core.Device.SdCard;
 
 namespace Daqifi.Desktop.ViewModels;
 
@@ -492,7 +519,7 @@ public partial class DaqifiViewModel : ObservableObject, IFirmwareUpdateHost, IL
     public void UpdateUi(object sender, PropertyChangedEventArgs args) => throw new NotImplementedException();
 
     // @port: Daqifi.Desktop.ViewModels.DaqifiViewModel.ShowMessage
-    public Task<MessageDialogResult> ShowMessage(string title, string message, MessageDialogStyle dialogStyle) => throw new NotImplementedException();
+    public Task<MessageBoxResult> ShowMessage(string title, string message, MessageBoxButton dialogStyle) => throw new NotImplementedException();
 
     // @port: Daqifi.Desktop.ViewModels.DaqifiViewModel.ShowConfirm
     private Task<bool> ShowConfirm(string title, string message, string affirmativeLabel, bool isDestructive) => throw new NotImplementedException();
@@ -636,4 +663,92 @@ public partial class DaqifiViewModel : ObservableObject, IFirmwareUpdateHost, IL
 
     // @port: Daqifi.Desktop.ViewModels.DaqifiViewModel.Dispose
     public void Dispose() => throw new NotImplementedException();
+
+    // scaffold-repair: interface members the scaffold's member synthesis missed
+    // (upstream satisfies these via [ObservableProperty] fields); real bodies land
+    // with this class's apply step.
+
+    // @port: Daqifi.Desktop.ViewModels.DaqifiViewModel.SelectedDevice
+    public IStreamingDevice? SelectedDevice
+    {
+        get => throw new NotImplementedException();
+        set => throw new NotImplementedException();
+    }
+
+    // @port: Daqifi.Desktop.ViewModels.DaqifiViewModel.FirmwareFilePath
+    public string FirmwareFilePath
+    {
+        get => throw new NotImplementedException();
+        set => throw new NotImplementedException();
+    }
+
+    // @port: Daqifi.Desktop.ViewModels.DaqifiViewModel.SelectedDeviceSupportsFirmwareUpdate
+    public bool SelectedDeviceSupportsFirmwareUpdate
+    {
+        get => throw new NotImplementedException();
+        set => throw new NotImplementedException();
+    }
+
+    // @port: Daqifi.Desktop.ViewModels.DaqifiViewModel.IsFirmwareUploading
+    public bool IsFirmwareUploading
+    {
+        get => throw new NotImplementedException();
+        set => throw new NotImplementedException();
+    }
+
+    // @port: Daqifi.Desktop.ViewModels.DaqifiViewModel.IsUploadComplete
+    public bool IsUploadComplete
+    {
+        get => throw new NotImplementedException();
+        set => throw new NotImplementedException();
+    }
+
+    // @port: Daqifi.Desktop.ViewModels.DaqifiViewModel.HasErrorOccured
+    public bool HasErrorOccured
+    {
+        get => throw new NotImplementedException();
+        set => throw new NotImplementedException();
+    }
+
+    // @port: Daqifi.Desktop.ViewModels.DaqifiViewModel.UploadFirmwareProgress
+    public int UploadFirmwareProgress
+    {
+        get => throw new NotImplementedException();
+        set => throw new NotImplementedException();
+    }
+
+    // @port: Daqifi.Desktop.ViewModels.DaqifiViewModel.UploadWiFiProgress
+    public int UploadWiFiProgress
+    {
+        get => throw new NotImplementedException();
+        set => throw new NotImplementedException();
+    }
+
+    // @port: Daqifi.Desktop.ViewModels.DaqifiViewModel.FirmwareUpdateStatusText
+    public string FirmwareUpdateStatusText
+    {
+        get => throw new NotImplementedException();
+        set => throw new NotImplementedException();
+    }
+
+    // @port: Daqifi.Desktop.ViewModels.DaqifiViewModel.SelectedLoggingSession
+    public LoggingSession SelectedLoggingSession
+    {
+        get => throw new NotImplementedException();
+        set => throw new NotImplementedException();
+    }
+
+    // @port: Daqifi.Desktop.ViewModels.DaqifiViewModel.IsLoggedDataBusy
+    public bool IsLoggedDataBusy
+    {
+        get => throw new NotImplementedException();
+        set => throw new NotImplementedException();
+    }
+
+    // @port: Daqifi.Desktop.ViewModels.DaqifiViewModel.LoggedDataBusyReason
+    public string LoggedDataBusyReason
+    {
+        get => throw new NotImplementedException();
+        set => throw new NotImplementedException();
+    }
 }

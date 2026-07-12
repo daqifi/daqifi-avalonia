@@ -12,6 +12,11 @@ using Daqifi.Desktop.Services.DeviceWatcher;
 using System;
 using System.Collections.Generic;
 using System.Threading.Tasks;
+using Daqifi.Desktop.Device;
+using Daqifi.Desktop.Device.SerialDevice;
+using Daqifi.Desktop.Logger;
+using System.ComponentModel;
+using System.IO.Ports;
 
 namespace Daqifi.Desktop;
 

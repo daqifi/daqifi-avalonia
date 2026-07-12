@@ -13,6 +13,19 @@ using System.Collections.Generic;
 using System.Collections.ObjectModel;
 using System.Threading;
 using System.Threading.Tasks;
+using Daqifi.Desktop.Device;
+using Daqifi.Desktop.Device.Firmware;
+using Daqifi.Desktop.Device.SerialDevice;
+using Daqifi.Desktop.Device.WiFiDevice;
+using Daqifi.Desktop.DialogService;
+using Daqifi.Desktop.View;
+using System.Collections;
+using System.IO.Ports;
+using System.Net;
+using System.Net.Sockets;
+using Microsoft.Extensions.DependencyInjection;
+using Daqifi.Core.Device.Discovery;
+using CoreDeviceInfo = Daqifi.Core.Device.Discovery.IDeviceInfo;
 
 namespace Daqifi.Desktop.ViewModels;
 

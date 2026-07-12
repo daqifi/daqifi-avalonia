@@ -10,6 +10,10 @@ using System;
 using System.Collections.Generic;
 using System.Threading.Tasks;
 using System.Windows.Input;
+using Daqifi.Desktop;
+using OxyPlot;
+using OxyPlot.Axes;
+using System.IO;
 
 namespace Daqifi.Desktop.ViewModels;
 

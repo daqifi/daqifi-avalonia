@@ -6,6 +6,11 @@
 // DO NOT manually delete the `// @port:` markers — they link symbols back to
 // the correspondence map.
 
+using Avalonia;
+using Avalonia.Controls;
+using Daqifi.Desktop.Common.Loggers;
+using Daqifi.Desktop.Logger;
+using Microsoft.EntityFrameworkCore;
 using Avalonia.Controls;
 using System;
 using System.Collections.Generic;
@@ -32,8 +37,8 @@ public partial class LoggedDataPanePrototype : UserControl
     private CancellationTokenSource? _renameSessionCts;
 
     // @port: Daqifi.Desktop.View.Prototype.LoggedDataPanePrototype.OnConfirmOverlayIsVisibleChanged
-    private void OnConfirmOverlayIsVisibleChanged(object sender, System.Windows.DependencyPropertyChangedEventArgs e) => throw new NotImplementedException();
+    private void OnConfirmOverlayIsVisibleChanged(object sender, AvaloniaPropertyChangedEventArgs e) => throw new NotImplementedException();
 
     // @port: Daqifi.Desktop.View.Prototype.LoggedDataPanePrototype.OnSessionNameChanged
-    private void OnSessionNameChanged(object sender, System.Windows.Controls.TextChangedEventArgs e) => throw new NotImplementedException();
+    private void OnSessionNameChanged(object sender, TextChangedEventArgs e) => throw new NotImplementedException();
 }

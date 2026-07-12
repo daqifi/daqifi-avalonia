@@ -6,12 +6,28 @@
 // DO NOT manually delete the `// @port:` markers — they link symbols back to
 // the correspondence map.
 
+using Daqifi.Core.Device;
+using Daqifi.Core.Device.Protocol;
+using Daqifi.Core.Communication.Messages;
 using CommunityToolkit.Mvvm.ComponentModel;
 using Daqifi.Desktop.Services.KeepAwake;
 using System;
 using System.Collections.Generic;
 using System.Threading;
 using System.Threading.Tasks;
+using Daqifi.Desktop.Channel;
+using Daqifi.Desktop.Common.Loggers;
+using Daqifi.Core.Communication;
+using Daqifi.Core.Device.Network;
+using ChannelDirection = Daqifi.Core.Channel.ChannelDirection;
+using ChannelType = Daqifi.Core.Channel.ChannelType;
+using Daqifi.Desktop.Models;
+using System.Globalization;
+using System.IO;
+using ScpiMessageProducer = Daqifi.Core.Communication.Producers.ScpiMessageProducer;
+using CoreStreamingDevice = Daqifi.Core.Device.DaqifiStreamingDevice;
+using Daqifi.Core.Device.SdCard;
+using CoreSdCardFileInfo = Daqifi.Core.Device.SdCard.SdCardFileInfo;
 
 namespace Daqifi.Desktop.Device;
 
@@ -449,4 +465,35 @@ public partial class AbstractStreamingDevice : ObservableObject, IStreamingDevic
 
     // @port: Daqifi.Desktop.Device.AbstractStreamingDevice.SendDebugData
     private void SendDebugData(DaqifiOutMessage message, List<AnalogChannel> activeChannels, DateTime timestamp) => throw new NotImplementedException();
+
+    // scaffold-repair: interface members the scaffold dropped; real bodies land
+    // with this class's apply step.
+
+    // @port: Daqifi.Desktop.Device.AbstractStreamingDevice.Name
+    public string Name
+    {
+        get => throw new NotImplementedException();
+        set => throw new NotImplementedException();
+    }
+
+    // @port: Daqifi.Desktop.Device.AbstractStreamingDevice.IsWifiFirmwareOutdated
+    public bool IsWifiFirmwareOutdated
+    {
+        get => throw new NotImplementedException();
+        set => throw new NotImplementedException();
+    }
+
+    // @port: Daqifi.Desktop.Device.AbstractStreamingDevice.WifiFirmwareVersion
+    public string WifiFirmwareVersion
+    {
+        get => throw new NotImplementedException();
+        set => throw new NotImplementedException();
+    }
+
+    // @port: Daqifi.Desktop.Device.AbstractStreamingDevice.StreamingFrequency
+    public int StreamingFrequency
+    {
+        get => throw new NotImplementedException();
+        set => throw new NotImplementedException();
+    }
 }

@@ -10,6 +10,9 @@ using System;
 using System.Collections.Generic;
 using System.Threading;
 using System.Threading.Tasks;
+using Daqifi.Core.Communication.Transport;
+using Daqifi.Core.Device.Discovery;
+using Daqifi.Desktop.Common.Loggers;
 
 namespace Daqifi.Desktop.Device.Firmware;
 

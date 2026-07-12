@@ -6,11 +6,15 @@
 // DO NOT manually delete the `// @port:` markers — they link symbols back to
 // the correspondence map.
 
+using Avalonia.Media;
+using Brush = Avalonia.Media.IBrush;
 using CommunityToolkit.Mvvm.ComponentModel;
 using System;
 using System.Collections.Generic;
 using System.ComponentModel;
 using System.Threading.Tasks;
+using Daqifi.Desktop.Channel;
+using ChannelDirection = Daqifi.Core.Channel.ChannelDirection;
 
 namespace Daqifi.Desktop.ViewModels;
 

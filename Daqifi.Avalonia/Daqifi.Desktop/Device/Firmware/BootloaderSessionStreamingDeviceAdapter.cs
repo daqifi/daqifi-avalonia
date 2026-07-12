@@ -9,6 +9,13 @@
 using System;
 using System.Collections.Generic;
 using System.Threading.Tasks;
+using System.Net;
+using Daqifi.Core.Channel;
+using Daqifi.Core.Communication.Messages;
+using CoreConnectionStatus = Daqifi.Core.Device.ConnectionStatus;
+using CoreDeviceStatusEventArgs = Daqifi.Core.Device.DeviceStatusEventArgs;
+using CoreMessageReceivedEventArgs = Daqifi.Core.Device.MessageReceivedEventArgs;
+using CoreStreamingDevice = Daqifi.Core.Device.IStreamingDevice;
 
 namespace Daqifi.Desktop.Device.Firmware;
 
@@ -117,4 +124,11 @@ public class BootloaderSessionStreamingDeviceAdapter : CoreStreamingDevice
 
     // @port: Daqifi.Desktop.Device.Firmware.BootloaderSessionStreamingDeviceAdapter.Reboot
     public void Reboot() => throw new NotImplementedException();
+
+    // scaffold-repair: Core IStreamingDevice events the scaffold dropped.
+    // @port: Daqifi.Desktop.Device.Firmware.BootloaderSessionStreamingDeviceAdapter.StatusChanged
+    public event EventHandler<CoreDeviceStatusEventArgs>? StatusChanged;
+
+    // @port: Daqifi.Desktop.Device.Firmware.BootloaderSessionStreamingDeviceAdapter.MessageReceived
+    public event EventHandler<CoreMessageReceivedEventArgs>? MessageReceived;
 }

@@ -14,6 +14,18 @@ using System.Collections.Generic;
 using System.Collections.ObjectModel;
 using System.Threading;
 using System.Threading.Tasks;
+using Daqifi.Desktop.Channel;
+using Daqifi.Desktop.Common.Loggers;
+using Daqifi.Desktop.Device;
+using Daqifi.Desktop.Helpers;
+using Daqifi.Desktop.View;
+using OxyPlot;
+using OxyPlot.Annotations;
+using OxyPlot.Axes;
+using OxyPlot.Series;
+using Exception = System.Exception;
+using Microsoft.EntityFrameworkCore;
+using EFCore.BulkExtensions;
 
 namespace Daqifi.Desktop.Logger;
 

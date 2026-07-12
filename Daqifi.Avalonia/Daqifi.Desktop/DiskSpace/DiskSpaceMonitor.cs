@@ -9,6 +9,8 @@
 using System;
 using System.Collections.Generic;
 using System.Threading.Tasks;
+using Daqifi.Desktop.Common.Loggers;
+using System.IO;
 
 namespace Daqifi.Desktop.DiskSpace;
 

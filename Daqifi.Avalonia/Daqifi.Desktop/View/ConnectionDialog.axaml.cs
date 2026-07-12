@@ -6,6 +6,8 @@
 // DO NOT manually delete the `// @port:` markers — they link symbols back to
 // the correspondence map.
 
+using Avalonia;
+using Daqifi.Desktop.ViewModels;
 using Avalonia.Controls;
 using System;
 using System.Collections.Generic;
@@ -27,7 +29,7 @@ public partial class ConnectionDialog : Window
     private ConnectionDialogViewModel? _subscribedViewModel;
 
     // @port: Daqifi.Desktop.View.ConnectionDialog.OnDataContextChanged
-    private void OnDataContextChanged(object sender, DependencyPropertyChangedEventArgs e) => throw new NotImplementedException();
+    private void OnDataContextChanged(object sender, AvaloniaPropertyChangedEventArgs e) => throw new NotImplementedException();
 
     // @port: Daqifi.Desktop.View.ConnectionDialog.OnCloseRequested
     private void OnCloseRequested(object? sender, System.EventArgs e) => throw new NotImplementedException();

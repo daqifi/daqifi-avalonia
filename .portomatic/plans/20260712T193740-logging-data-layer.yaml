@@ -1,0 +1,82 @@
+schema_version: 1
+plan_id: 20260712T193740-logging-data-layer
+slug: logging-data-layer
+kind: apply
+created_at: '2026-07-12T19:37:40Z'
+upstream_sha: null
+summary: "Port the EF data layer \u2014 LoggingContext, LoggingContextDesignTimeFactory,\
+  \ DatabaseMigrator, and all Migrations/ (EF-generated, verbatim)."
+steps:
+- id: s1
+  summary: "Port Loggers/LoggingContext.cs + LoggingContextDesignTimeFactory.cs +\
+    \ DatabaseMigrator.cs \u2014 DbContext with DbSet<LoggingSession>/DbSet<DataSample>."
+  kind: patch
+  upstream_ref: Daqifi.Desktop/Loggers/LoggingContext.cs
+  downstream_target: Daqifi.Avalonia/Daqifi.Desktop/Loggers/LoggingContext.cs
+  assigned_to: patch-author
+  status: done
+  classification: null
+  shard: UI
+  commit_sha: null
+  file: null
+  target_symbol: LoggingContext
+  parent_audit_row: null
+  expected_resolution: null
+  notes:
+  - 'cluster files: LoggingContext.cs, LoggingContextDesignTimeFactory.cs, DatabaseMigrator.cs'
+  - "LoggingContext + LoggingContextDesignTimeFactory + DatabaseMigrator filled verbatim\
+    \ \u2014 EF Core/Microsoft.Data.Sqlite are platform-neutral; model config (Sessions/Samples/SessionDeviceMetadata/Channel\
+    \ tables, cascade deletes, IX_Samples_SessionTime) identical; entity.Ignore(ChannelColorBrush)\
+    \ now ignores the IBrush property."
+  divergences: []
+  started_at: null
+  finished_at: '2026-07-12T19:55:03.621583Z'
+  failure_class: null
+  ticket_url: null
+  ticket_number: null
+- id: s2
+  summary: "Port Migrations/ (9 files) \u2014 EF-generated migration + designer +\
+    \ snapshot code, verbatim."
+  kind: patch
+  upstream_ref: Daqifi.Desktop/Migrations/LoggingContextModelSnapshot.cs
+  downstream_target: Daqifi.Avalonia/Daqifi.Desktop/Migrations/LoggingContextModelSnapshot.cs
+  assigned_to: patch-author
+  status: done
+  classification: null
+  shard: UI
+  commit_sha: null
+  file: null
+  target_symbol: LoggingContextModelSnapshot
+  parent_audit_row: null
+  expected_resolution: null
+  notes:
+  - All 9 Migrations/ files copied verbatim from upstream EF-generated code (4 migrations
+    + 4 designers + snapshot), class/Up/Down/BuildTargetModel/BuildModel markers preserved.
+  divergences: []
+  started_at: null
+  finished_at: '2026-07-12T19:55:05.315173Z'
+  failure_class: null
+  ticket_url: null
+  ticket_number: null
+- id: s3
+  summary: 'Build gate: portomatic adapter build --kind dotnet'
+  kind: verify
+  upstream_ref: null
+  downstream_target: null
+  assigned_to: null
+  status: done
+  classification: null
+  shard: UI
+  commit_sha: null
+  file: null
+  target_symbol: null
+  parent_audit_row: null
+  expected_resolution: null
+  notes:
+  - 'Build gate: restore green; wall 576->545; 0 diagnostics across LoggingContext/DesignTimeFactory/DatabaseMigrator/Migrations.'
+  divergences: []
+  started_at: null
+  finished_at: '2026-07-12T19:55:06.824150Z'
+  failure_class: null
+  ticket_url: null
+  ticket_number: null

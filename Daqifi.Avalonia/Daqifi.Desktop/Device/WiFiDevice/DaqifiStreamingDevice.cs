@@ -9,6 +9,13 @@
 using System;
 using System.Collections.Generic;
 using System.Threading.Tasks;
+using System.Net;
+using System.Net.Sockets;
+using Daqifi.Core.Communication.Messages;
+using Daqifi.Core.Communication.Transport;
+using Daqifi.Core.Device;
+using CoreDeviceInfo = Daqifi.Core.Device.Discovery.IDeviceInfo;
+using CoreStreamingDevice = Daqifi.Core.Device.DaqifiStreamingDevice;
 
 namespace Daqifi.Desktop.Device.WiFiDevice;
 
