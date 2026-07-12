@@ -1,0 +1,36 @@
+<Window x:Class="Daqifi.Desktop.View.Dialogs.MessageDialog"
+        xmlns="https://github.com/avaloniaui"
+        xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml"
+        xmlns:i="https://github.com/projektanker/icons.avalonia"
+        Width="420"
+        SizeToContent="Height"
+        CanResize="False"
+        WindowStartupLocation="CenterOwner"
+        Background="{DynamicResource SurfaceRaised}">
+
+    <!--
+        WPF MessageBox → owned dialog window routed through DialogService
+        (hal: message_box; dialog_service mechanism — never instantiated per
+        call site). Caption/text/buttons are configured by the code-behind ctor.
+    -->
+
+    <StackPanel Margin="24,20,24,16" Spacing="16">
+        <StackPanel Orientation="Horizontal" Spacing="12">
+            <i:Icon Name="IconGlyph" Value="mdi-information-outline" FontSize="28"
+                    VerticalAlignment="Top"
+                    Foreground="{DynamicResource Accent}"/>
+            <TextBlock Name="MessageText"
+                       TextWrapping="Wrap"
+                       MaxWidth="330"
+                       VerticalAlignment="Center"
+                       Foreground="{DynamicResource TextPrimary}"/>
+        </StackPanel>
+
+        <StackPanel Orientation="Horizontal" HorizontalAlignment="Right" Spacing="8">
+            <Button Name="YesButton" Content="Yes" MinWidth="72" IsDefault="True" Click="OnYes"/>
+            <Button Name="NoButton" Content="No" MinWidth="72" Click="OnNo"/>
+            <Button Name="OkButton" Content="OK" MinWidth="72" IsDefault="True" Click="OnOk"/>
+            <Button Name="CancelButton" Content="Cancel" MinWidth="72" IsCancel="True" Click="OnCancel"/>
+        </StackPanel>
+    </StackPanel>
+</Window>

@@ -1,5 +1,485 @@
-<Window xmlns="https://github.com/avaloniaui"
+<Window x:Class="Daqifi.Desktop.MainWindow"
+        xmlns="https://github.com/avaloniaui"
         xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml"
-        x:Class="Daqifi.Desktop.MainWindow">
-  <!-- Scaffolded by portomatic from upstream Daqifi.Desktop.MainWindow. Fill in the view; the code-behind ctor calls InitializeComponent(). -->
+        xmlns:i="https://github.com/projektanker/icons.avalonia"
+        xmlns:flyouts="using:Daqifi.Desktop.View.Flyouts"
+        xmlns:local="using:Daqifi.Desktop.View"
+        xmlns:prototype="using:Daqifi.Desktop.View.Prototype"
+        xmlns:converters="using:Daqifi.Desktop.Converters"
+        xmlns:service="using:Daqifi.Desktop.DialogService"
+        service:DialogService.IsRegisteredView="True"
+        Height="{Binding Height, Mode=TwoWay}"
+        Width="{Binding Width, Mode=TwoWay}"
+        WindowState="{Binding ViewWindowState, Mode=OneWayToSource}"
+        Background="{DynamicResource Surface}">
+
+    <!--
+        MetroWindow → Window (hal: main_window_chrome): FluentTheme covers
+        chrome + theming; GlowBrush/WindowTitleBrush have no counterpart.
+        RightWindowCommands move to the client-area toolbar row below.
+        The three MahApps flyouts are pane content of the ONE SplitView
+        host (hal: flyout_host mechanism) — not independent slide-outs.
+    -->
+
+    <Window.Resources>
+
+        <converters:BoolOrConverter x:Key="BoolOr"/>
+
+        <!--
+            Navigation rail — uses canonical design tokens from
+            /Daqifi.Desktop/Resources/DesignTokens.axaml. See docs/design-philosophy.md.
+            WPF ControlTemplate+Triggers → ControlTheme + pseudo-class selectors;
+            the accent-stripe Storyboard becomes an opacity Transition.
+            (NavTabItemFocusVisual dropped — Avalonia draws its own focus adorner.)
+        -->
+
+        <ControlTheme x:Key="NavTabItem" TargetType="TabItem">
+            <Setter Property="Background" Value="Transparent"/>
+            <Setter Property="Foreground" Value="{DynamicResource TextSecondary}"/>
+            <Setter Property="Padding" Value="0"/>
+            <Setter Property="Margin" Value="0"/>
+            <Setter Property="Template">
+                <ControlTemplate>
+                    <Grid Background="{TemplateBinding Background}" ColumnDefinitions="3,*">
+                        <Rectangle x:Name="AccentStripe"
+                                   Grid.Column="0"
+                                   Fill="{DynamicResource Accent}"
+                                   Opacity="0">
+                            <Rectangle.Transitions>
+                                <Transitions>
+                                    <DoubleTransition Property="Opacity" Duration="0:0:0.12"/>
+                                </Transitions>
+                            </Rectangle.Transitions>
+                        </Rectangle>
+                        <ContentPresenter Grid.Column="1"
+                                          VerticalAlignment="Center"
+                                          HorizontalAlignment="Center"
+                                          Content="{TemplateBinding Header}"
+                                          ContentTemplate="{TemplateBinding HeaderTemplate}"/>
+                    </Grid>
+                </ControlTemplate>
+            </Setter>
+            <Style Selector="^:selected">
+                <Setter Property="Background" Value="{DynamicResource SurfaceRaised}"/>
+                <Setter Property="Foreground" Value="{DynamicResource TextPrimary}"/>
+            </Style>
+            <Style Selector="^:selected /template/ Rectangle#AccentStripe">
+                <Setter Property="Opacity" Value="1"/>
+            </Style>
+            <Style Selector="^:pointerover:not(:selected)">
+                <Setter Property="Background" Value="{DynamicResource SurfaceHover}"/>
+                <Setter Property="Foreground" Value="{DynamicResource TextPrimary}"/>
+                <Setter Property="Cursor" Value="Hand"/>
+            </Style>
+        </ControlTheme>
+
+        <ControlTheme x:Key="NavTabControl" TargetType="TabControl">
+            <Setter Property="Background" Value="Transparent"/>
+            <Setter Property="Padding" Value="0"/>
+            <!-- WPF TabStripPlacement="Left" stacked vertically; Avalonia's
+                 default ItemsPanel is a WrapPanel, so pin a vertical stack. -->
+            <Setter Property="ItemsPanel">
+                <ItemsPanelTemplate>
+                    <StackPanel/>
+                </ItemsPanelTemplate>
+            </Setter>
+            <Setter Property="Template">
+                <ControlTemplate>
+                    <Grid ColumnDefinitions="Auto,*">
+                        <Border Grid.Column="0"
+                                Background="{DynamicResource Surface}"
+                                BorderBrush="{DynamicResource BorderDim}"
+                                BorderThickness="0,0,1,0">
+                            <ItemsPresenter x:Name="PART_ItemsPresenter"
+                                            ItemsPanel="{TemplateBinding ItemsPanel}"/>
+                        </Border>
+                        <ContentPresenter x:Name="PART_SelectedContentHost"
+                                          Grid.Column="1"
+                                          Content="{TemplateBinding SelectedContent}"
+                                          ContentTemplate="{TemplateBinding SelectedContentTemplate}"/>
+                    </Grid>
+                </ControlTemplate>
+            </Setter>
+        </ControlTheme>
+
+        <ControlTheme x:Key="TransparentButtonStyle" TargetType="Button">
+            <Setter Property="Background" Value="Transparent"/>
+            <Setter Property="BorderThickness" Value="0"/>
+            <Setter Property="HorizontalContentAlignment" Value="Stretch"/>
+            <Setter Property="VerticalContentAlignment" Value="Stretch"/>
+            <Setter Property="Padding" Value="0"/>
+            <Setter Property="Template">
+                <ControlTemplate>
+                    <ContentPresenter Content="{TemplateBinding Content}"/>
+                </ControlTemplate>
+            </Setter>
+        </ControlTheme>
+
+        <!-- Round hover-highlight close button (upstream inline Button template) -->
+        <ControlTheme x:Key="RoundCloseButton" TargetType="Button">
+            <Setter Property="Background" Value="Transparent"/>
+            <Setter Property="BorderThickness" Value="0"/>
+            <Setter Property="Template">
+                <ControlTemplate>
+                    <Border x:Name="Bg" Background="Transparent" CornerRadius="14">
+                        <ContentPresenter HorizontalAlignment="Center" VerticalAlignment="Center"
+                                          Content="{TemplateBinding Content}"/>
+                    </Border>
+                </ControlTemplate>
+            </Setter>
+            <Style Selector="^:pointerover /template/ Border#Bg">
+                <Setter Property="Background" Value="#1FFFFFFF"/>
+            </Style>
+        </ControlTheme>
+
+        <!-- Segmented toggle (upstream AppSettings.SegmentedToggle RadioButton template) -->
+        <ControlTheme x:Key="SegmentedToggle" TargetType="RadioButton">
+            <Setter Property="Foreground" Value="{DynamicResource TextSecondary}"/>
+            <Setter Property="FontSize" Value="10"/>
+            <Setter Property="FontWeight" Value="SemiBold"/>
+            <Setter Property="Cursor" Value="Hand"/>
+            <Setter Property="Template">
+                <ControlTemplate>
+                    <Border x:Name="Bg"
+                            Background="Transparent"
+                            CornerRadius="2"
+                            Padding="12,7">
+                        <ContentPresenter HorizontalAlignment="Center" VerticalAlignment="Center"
+                                          Content="{TemplateBinding Content}"/>
+                    </Border>
+                </ControlTemplate>
+            </Setter>
+            <Style Selector="^:checked /template/ Border#Bg">
+                <Setter Property="Background" Value="{DynamicResource SurfaceActive}"/>
+            </Style>
+            <Style Selector="^:checked">
+                <Setter Property="Foreground" Value="{DynamicResource TextPrimary}"/>
+            </Style>
+            <Style Selector="^:pointerover">
+                <Setter Property="Foreground" Value="{DynamicResource TextPrimary}"/>
+            </Style>
+        </ControlTheme>
+
+    </Window.Resources>
+
+    <Window.Styles>
+        <Style Selector="TextBlock.navTabHeaderLabel">
+            <Setter Property="TextAlignment" Value="Center"/>
+            <Setter Property="FontSize" Value="11"/>
+            <Setter Property="Margin" Value="0,6,0,0"/>
+        </Style>
+
+        <!-- MahApps WindowCommands buttons → flat toolbar buttons -->
+        <Style Selector="Button.windowCommand, ToggleButton.windowCommand">
+            <Setter Property="Background" Value="Transparent"/>
+            <Setter Property="BorderThickness" Value="0"/>
+            <Setter Property="Foreground" Value="{DynamicResource TextSecondary}"/>
+            <Setter Property="Padding" Value="10,6"/>
+        </Style>
+        <Style Selector="Button.windowCommand:pointerover, ToggleButton.windowCommand:pointerover">
+            <Setter Property="Foreground" Value="{DynamicResource TextPrimary}"/>
+        </Style>
+
+        <Style Selector="TextBlock.appSettingsSectionLabel">
+            <Setter Property="FontSize" Value="11"/>
+            <Setter Property="FontWeight" Value="SemiBold"/>
+            <Setter Property="Foreground" Value="{DynamicResource TextSecondary}"/>
+            <Setter Property="VerticalAlignment" Value="Center"/>
+        </Style>
+        <Style Selector="TextBlock.appSettingsRowLabel">
+            <Setter Property="FontSize" Value="11"/>
+            <Setter Property="FontWeight" Value="SemiBold"/>
+            <Setter Property="Foreground" Value="{DynamicResource TextSecondary}"/>
+        </Style>
+        <Style Selector="TextBlock.appSettingsHelpText">
+            <Setter Property="FontSize" Value="11"/>
+            <Setter Property="Foreground" Value="{DynamicResource TextTertiary}"/>
+            <Setter Property="TextWrapping" Value="Wrap"/>
+            <Setter Property="Margin" Value="0,4,0,0"/>
+        </Style>
+    </Window.Styles>
+
+    <Grid RowDefinitions="Auto,*">
+
+        <!-- MetroWindow.RightWindowCommands → client-area toolbar row -->
+        <Border Grid.Row="0"
+                Background="{DynamicResource Surface}"
+                BorderBrush="{DynamicResource BorderDim}"
+                BorderThickness="0,0,0,1">
+            <StackPanel Orientation="Horizontal" HorizontalAlignment="Right">
+                <ToggleButton Classes="windowCommand"
+                              IsChecked="{Binding IsAppSettingsOpen}"
+                              ToolTip.Tip="Settings">
+                    <StackPanel Orientation="Horizontal">
+                        <i:Icon Value="mdi-cog" FontSize="20" VerticalAlignment="Center" HorizontalAlignment="Center"/>
+                        <TextBlock Margin="4 0 0 0" VerticalAlignment="Center" Text="settings"/>
+                    </StackPanel>
+                </ToggleButton>
+                <ToggleButton Classes="windowCommand"
+                              IsChecked="{Binding IsDebugModeEnabled}"
+                              ToolTip.Tip="Toggle Debug Mode">
+                    <StackPanel Orientation="Horizontal">
+                        <i:Icon Value="mdi-bug" FontSize="20" VerticalAlignment="Center" HorizontalAlignment="Center"/>
+                        <TextBlock Margin="4 0 0 0" VerticalAlignment="Center" Text="debug"/>
+                    </StackPanel>
+                </ToggleButton>
+                <Button Classes="windowCommand"
+                        Command="{Binding OpenDebugWindowCommand}"
+                        ToolTip.Tip="Open Debug Console"
+                        IsVisible="{Binding IsDebugModeEnabled}">
+                    <StackPanel Orientation="Horizontal">
+                        <i:Icon Value="mdi-console" FontSize="20" VerticalAlignment="Center" HorizontalAlignment="Center"/>
+                        <TextBlock Margin="4 0 0 0" VerticalAlignment="Center" Text="console"/>
+                    </StackPanel>
+                </Button>
+                <Button Classes="windowCommand" Command="{Binding OpenHelpCommand}">
+                    <StackPanel Orientation="Horizontal">
+                        <i:Icon Value="mdi-help-circle-outline" FontSize="20" HorizontalAlignment="Center"/>
+                        <TextBlock Margin="4 0 0 0" VerticalAlignment="Center" Text="help"/>
+                    </StackPanel>
+                </Button>
+                <Button Classes="windowCommand" Command="{Binding OpenNotificationsCommand}">
+                    <Grid>
+                        <i:Icon Value="mdi-bell-outline" FontSize="20" VerticalAlignment="Center" HorizontalAlignment="Center"/>
+                        <Border Background="{DynamicResource StatusRed}"
+                                HorizontalAlignment="Right"
+                                VerticalAlignment="Top"
+                                Width="10"
+                                Height="10"
+                                CornerRadius="7.5"
+                                Margin="5 0 0 0"
+                                IsVisible="{Binding NotificationCount, Converter={StaticResource IntToVisibility}}">
+                            <TextBlock Text="{Binding NotificationCount}"
+                                       VerticalAlignment="Center"
+                                       HorizontalAlignment="Center"
+                                       FontSize="8"
+                                       FontWeight="Bold"
+                                       Foreground="White"/>
+                        </Border>
+                    </Grid>
+                </Button>
+            </StackPanel>
+        </Border>
+
+        <!-- ONE SplitView flyout host (hal: flyout_host) — pane hosts all three
+             former MahApps flyouts; VM booleans stay the source of truth. -->
+        <SplitView Grid.Row="1"
+                   PanePlacement="Right"
+                   DisplayMode="Overlay"
+                   OpenPaneLength="{Binding FlyoutWidth}"
+                   PaneBackground="{DynamicResource SurfaceRaised}">
+            <SplitView.IsPaneOpen>
+                <MultiBinding Converter="{StaticResource BoolOr}" Mode="OneWay">
+                    <Binding Path="IsNotificationsOpen"/>
+                    <Binding Path="IsLiveGraphSettingsOpen"/>
+                    <Binding Path="IsLogSummaryOpen"/>
+                </MultiBinding>
+            </SplitView.IsPaneOpen>
+
+            <SplitView.Pane>
+                <Panel>
+                    <!--NotificationsFlyout-->
+                    <flyouts:NotificationsFlyout IsVisible="{Binding IsNotificationsOpen}"/>
+
+                    <!-- Live Graph Flyout -->
+                    <flyouts:LiveGraphFlyout IsVisible="{Binding IsLiveGraphSettingsOpen}"/>
+
+                    <!-- Summary Logger Flyout-->
+                    <flyouts:SummaryFlyout IsVisible="{Binding IsLogSummaryOpen}"/>
+                </Panel>
+            </SplitView.Pane>
+
+            <Grid>
+                <TabControl Theme="{StaticResource NavTabControl}"
+                            ItemContainerTheme="{StaticResource NavTabItem}"
+                            SelectedIndex="{Binding SelectedIndex}">
+
+                    <!-- Live Graph -->
+                    <TabItem>
+                        <TabItem.Header>
+                            <StackPanel Width="76" Margin="0,14,0,14">
+                                <i:Icon Value="mdi-chart-timeline-variant" FontSize="24" HorizontalAlignment="Center"/>
+                                <TextBlock Text="Live Graph" Classes="navTabHeaderLabel"/>
+                            </StackPanel>
+                        </TabItem.Header>
+                        <ContentControl Content="{Binding}">
+                            <ContentControl.ContentTemplate>
+                                <DataTemplate>
+                                    <prototype:LiveGraphPane/>
+                                </DataTemplate>
+                            </ContentControl.ContentTemplate>
+                        </ContentControl>
+                    </TabItem>
+
+                    <!-- Logged Data -->
+                    <TabItem>
+                        <TabItem.Header>
+                            <StackPanel Width="76" Margin="0,14,0,14">
+                                <i:Icon Value="mdi-database-outline" FontSize="24" HorizontalAlignment="Center"/>
+                                <TextBlock Text="Logged Data" Classes="navTabHeaderLabel"/>
+                            </StackPanel>
+                        </TabItem.Header>
+                        <ContentControl Content="{Binding}">
+                            <ContentControl.ContentTemplate>
+                                <DataTemplate>
+                                    <prototype:LoggedDataPanePrototype/>
+                                </DataTemplate>
+                            </ContentControl.ContentTemplate>
+                        </ContentControl>
+                    </TabItem>
+
+                    <!-- Channels -->
+                    <TabItem>
+                        <TabItem.Header>
+                            <StackPanel Width="76" Margin="0,14,0,14">
+                                <i:Icon Value="mdi-hub-outline" FontSize="24" HorizontalAlignment="Center"/>
+                                <TextBlock Text="Channels" Classes="navTabHeaderLabel"/>
+                            </StackPanel>
+                        </TabItem.Header>
+                        <ContentControl Content="{Binding}">
+                            <ContentControl.ContentTemplate>
+                                <DataTemplate>
+                                    <prototype:ChannelsPanePrototype/>
+                                </DataTemplate>
+                            </ContentControl.ContentTemplate>
+                        </ContentControl>
+                    </TabItem>
+
+                    <!-- Devices -->
+                    <TabItem>
+                        <TabItem.Header>
+                            <StackPanel Width="76" Margin="0,14,0,14">
+                                <i:Icon Value="mdi-chip" FontSize="24" HorizontalAlignment="Center"/>
+                                <TextBlock Text="Devices" Classes="navTabHeaderLabel"/>
+                            </StackPanel>
+                        </TabItem.Header>
+                        <ContentControl Content="{Binding}">
+                            <ContentControl.ContentTemplate>
+                                <DataTemplate>
+                                    <prototype:DevicesPanePrototype/>
+                                </DataTemplate>
+                            </ContentControl.ContentTemplate>
+                        </ContentControl>
+                    </TabItem>
+
+                    <!--profile-->
+                    <TabItem>
+                        <TabItem.Header>
+                            <StackPanel Width="76" Margin="0,14,0,14">
+                                <i:Icon Value="mdi-tune-variant" FontSize="24" HorizontalAlignment="Center"/>
+                                <TextBlock Text="Profiles" Classes="navTabHeaderLabel"/>
+                            </StackPanel>
+                        </TabItem.Header>
+                        <ContentControl Content="{Binding}">
+                            <ContentControl.ContentTemplate>
+                                <DataTemplate>
+                                    <local:ProfilesPane/>
+                                </DataTemplate>
+                            </ContentControl.ContentTemplate>
+                        </ContentControl>
+                    </TabItem>
+
+                </TabControl>
+
+                <!-- Busy overlay (MahApps ProgressRing → indeterminate ProgressBar) -->
+                <Grid Background="Black" Opacity="0.5" IsVisible="{Binding IsBusy, FallbackValue=False}">
+                    <ProgressBar IsIndeterminate="{Binding IsBusy, Mode=OneWay}"
+                                 Width="200" VerticalAlignment="Center" HorizontalAlignment="Center"/>
+                </Grid>
+
+                <!-- ========== APP SETTINGS DRAWER ========== -->
+                <Grid IsVisible="{Binding IsAppSettingsOpen}"
+                      ZIndex="20"
+                      ColumnDefinitions="*,380">
+                    <!-- Brushes (Surface, SurfaceRaised, …) come from /Daqifi.Desktop/Resources/DesignTokens.axaml. -->
+
+                    <!-- Scrim (WPF MouseBinding → transparent command Button) -->
+                    <Button Grid.Column="0"
+                            Theme="{StaticResource TransparentButtonStyle}"
+                            Command="{Binding CloseAppSettingsCommand}">
+                        <Rectangle Fill="#A0000000"/>
+                    </Button>
+
+                    <!-- Drawer -->
+                    <Border Grid.Column="1"
+                            Background="{DynamicResource SurfaceRaised}"
+                            BorderBrush="{DynamicResource BorderDim}"
+                            BorderThickness="1,0,0,0">
+                        <Grid RowDefinitions="Auto,*">
+
+                            <!-- Header -->
+                            <Grid Grid.Row="0" Margin="24,22,16,18" ColumnDefinitions="*,Auto">
+                                <StackPanel Grid.Column="0">
+                                    <TextBlock Text="PREFERENCES"
+                                               FontSize="9"
+                                               FontWeight="Bold"
+                                               Foreground="{DynamicResource TextTertiary}"/>
+                                    <TextBlock Text="Settings"
+                                               FontSize="22"
+                                               FontWeight="Light"
+                                               Foreground="{DynamicResource TextPrimary}"
+                                               Margin="0,2,0,0"/>
+                                </StackPanel>
+                                <Button Grid.Column="1"
+                                        Width="28" Height="28"
+                                        Theme="{StaticResource RoundCloseButton}"
+                                        Foreground="{DynamicResource TextSecondary}"
+                                        FontSize="16"
+                                        Cursor="Hand"
+                                        Content="&#xD7;"
+                                        Command="{Binding CloseAppSettingsCommand}"/>
+                            </Grid>
+
+                            <!-- Body -->
+                            <ScrollViewer Grid.Row="1"
+                                          VerticalScrollBarVisibility="Auto"
+                                          HorizontalScrollBarVisibility="Disabled"
+                                          Padding="24,0,24,24">
+                                <StackPanel>
+
+                                    <!-- EXPORT section -->
+                                    <TextBlock Text="EXPORT"
+                                               Classes="appSettingsSectionLabel"
+                                               Margin="0,4,0,10"/>
+                                    <Rectangle Height="1"
+                                               Fill="{DynamicResource BorderDim}"
+                                               Margin="0,0,0,18"/>
+
+                                    <StackPanel Margin="0,0,0,12">
+                                        <TextBlock Text="CSV DELIMITER"
+                                                   Classes="appSettingsRowLabel"/>
+                                        <TextBlock Text="Separates columns when exporting logged sessions to CSV."
+                                                   Classes="appSettingsHelpText"/>
+                                        <Border Background="{DynamicResource Surface}"
+                                                BorderBrush="{DynamicResource BorderDim}"
+                                                BorderThickness="1"
+                                                CornerRadius="3"
+                                                Padding="3"
+                                                HorizontalAlignment="Left"
+                                                Margin="0,10,0,0">
+                                            <Grid ColumnDefinitions="Auto,Auto">
+                                                <RadioButton Grid.Column="0"
+                                                             GroupName="CsvDelimiter"
+                                                             Content="COMMA  ,"
+                                                             IsChecked="{Binding AppSettings.IsCommaDelimiter, Mode=TwoWay}"
+                                                             Theme="{StaticResource SegmentedToggle}"
+                                                             ToolTip.Tip="Standard CSV — compatible with most spreadsheets."/>
+                                                <RadioButton Grid.Column="1"
+                                                             GroupName="CsvDelimiter"
+                                                             Content="SEMICOLON  ;"
+                                                             IsChecked="{Binding AppSettings.IsSemicolonDelimiter, Mode=TwoWay}"
+                                                             Theme="{StaticResource SegmentedToggle}"
+                                                             ToolTip.Tip="Use when locale treats comma as decimal separator."/>
+                                            </Grid>
+                                        </Border>
+                                    </StackPanel>
+
+                                </StackPanel>
+                            </ScrollViewer>
+                        </Grid>
+                    </Border>
+                </Grid>
+            </Grid>
+        </SplitView>
+    </Grid>
 </Window>

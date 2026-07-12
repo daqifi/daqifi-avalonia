@@ -7,6 +7,7 @@
 // the correspondence map.
 
 using CommunityToolkit.Mvvm.ComponentModel;
+using Daqifi.Desktop.Services.KeepAwake;
 using System;
 using System.Collections.Generic;
 using System.Threading;
@@ -14,20 +15,17 @@ using System.Threading.Tasks;
 
 namespace Daqifi.Desktop.Device;
 
-// @port: Daqifi.Desktop.Device.NativeMethods
-partial class NativeMethods
-{
-    public uint EsSystemRequired;
-
-    public uint EsContinuous;
-
-    // @port: Daqifi.Desktop.Device.NativeMethods.SetThreadExecutionState
-    public static uint SetThreadExecutionState(uint esFlags) => throw new NotImplementedException();
-}
+// Upstream NativeMethods (SetThreadExecutionState P/Invoke) is absorbed by
+// the keep_awake mechanism — see Services/KeepAwake (hal: keep_awake).
+// Divergence recorded on the concept's plan close.
 
 // @port: Daqifi.Desktop.Device.AbstractStreamingDevice
 public partial class AbstractStreamingDevice : ObservableObject, IStreamingDevice
 {
+    // hal: keep_awake — InitializeStreaming/StopStreaming call
+    // PreventSleep()/AllowSleep() here instead of SetThreadExecutionState.
+    private static readonly IKeepAwakeService KeepAwakeService = KeepAwakeServiceFactory.Create();
+
     // @port: Daqifi.Desktop.Device.AbstractStreamingDevice.ConnectionType
     public ConnectionType ConnectionType
     {

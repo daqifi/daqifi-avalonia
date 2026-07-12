@@ -1,0 +1,112 @@
+<UserControl x:Class="Daqifi.Desktop.View.Flyouts.LiveGraphFlyout"
+             xmlns="https://github.com/avaloniaui"
+             xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml"
+             xmlns:i="https://github.com/projektanker/icons.avalonia"
+             Background="{DynamicResource SurfaceRaised}"
+             Foreground="{DynamicResource TextPrimary}">
+
+    <!--
+        Pane content for the single SplitView flyout host in MainWindow
+        (hal: flyout_host). MahApps Flyout chrome lives on the host.
+        Brushes come from /Daqifi.Desktop/Resources/DesignTokens.axaml via App.axaml.
+    -->
+
+    <UserControl.Styles>
+        <Style Selector="TextBlock.drawerSectionLabel">
+            <Setter Property="FontSize" Value="10"/>
+            <Setter Property="FontWeight" Value="SemiBold"/>
+            <Setter Property="Foreground" Value="{DynamicResource TextTertiary}"/>
+            <Setter Property="Margin" Value="0,0,0,10"/>
+        </Style>
+        <Style Selector="TextBlock.drawerRowLabel">
+            <Setter Property="FontSize" Value="11"/>
+            <Setter Property="Foreground" Value="{DynamicResource TextSecondary}"/>
+            <Setter Property="VerticalAlignment" Value="Center"/>
+        </Style>
+        <!-- MahApps ToggleSwitch → Avalonia ToggleSwitch (IsOn → IsChecked) -->
+        <Style Selector="ToggleSwitch.flyoutToggle">
+            <Setter Property="Foreground" Value="{DynamicResource TextPrimary}"/>
+            <Setter Property="OffContent" Value="Off"/>
+            <Setter Property="OnContent" Value="On"/>
+        </Style>
+    </UserControl.Styles>
+
+    <Grid RowDefinitions="Auto,Auto,Auto,Auto" Margin="0,8,0,0">
+
+        <!-- Header (MahApps Flyout rendered Header + close chrome) -->
+        <Grid Grid.Row="0" ColumnDefinitions="*,Auto" Margin="20,4,12,8">
+            <TextBlock Grid.Column="0" Text="Plot Settings"
+                       FontSize="18" FontWeight="Light"
+                       Foreground="{DynamicResource TextPrimary}"
+                       VerticalAlignment="Center"/>
+            <ToggleButton Grid.Column="1"
+                          i:Attached.Icon="mdi-close"
+                          Background="Transparent" BorderThickness="0"
+                          Foreground="{DynamicResource TextSecondary}"
+                          Cursor="Hand"
+                          ToolTip.Tip="Close"
+                          IsChecked="{Binding IsLiveGraphSettingsOpen, Mode=TwoWay}"/>
+        </Grid>
+
+        <!-- ── Grid visibility ── -->
+        <Border Grid.Row="1"
+                BorderBrush="{DynamicResource BorderDim}"
+                BorderThickness="0,0,0,1"
+                Padding="20,16,20,16">
+            <StackPanel>
+                <TextBlock Text="GRID LINES" Classes="drawerSectionLabel"/>
+
+                <Grid ColumnDefinitions="*,Auto" Margin="0,0,0,10">
+                    <TextBlock Grid.Column="0" Text="Major X-Axis" Classes="drawerRowLabel"/>
+                    <ToggleSwitch Grid.Column="1" Classes="flyoutToggle"
+                                  IsChecked="{Binding Plotter.ShowingMajorXAxisGrid, Mode=TwoWay}"/>
+                </Grid>
+
+                <Grid ColumnDefinitions="*,Auto" Margin="0,0,0,10">
+                    <TextBlock Grid.Column="0" Text="Minor X-Axis" Classes="drawerRowLabel"/>
+                    <ToggleSwitch Grid.Column="1" Classes="flyoutToggle"
+                                  IsChecked="{Binding Plotter.ShowingMinorXAxisGrid, Mode=TwoWay}"/>
+                </Grid>
+
+                <Grid ColumnDefinitions="*,Auto" Margin="0,0,0,10">
+                    <TextBlock Grid.Column="0" Text="Major Y-Axis" Classes="drawerRowLabel"/>
+                    <ToggleSwitch Grid.Column="1" Classes="flyoutToggle"
+                                  IsChecked="{Binding Plotter.ShowingMajorYAxisGrid, Mode=TwoWay}"/>
+                </Grid>
+
+                <Grid ColumnDefinitions="*,Auto">
+                    <TextBlock Grid.Column="0" Text="Minor Y-Axis" Classes="drawerRowLabel"/>
+                    <ToggleSwitch Grid.Column="1" Classes="flyoutToggle"
+                                  IsChecked="{Binding Plotter.ShowingMinorYAxisGrid, Mode=TwoWay}"/>
+                </Grid>
+            </StackPanel>
+        </Border>
+
+        <!-- ── Graph precision ── -->
+        <Border Grid.Row="2"
+                Padding="20,16,20,16">
+            <StackPanel>
+                <TextBlock Text="PRECISION" Classes="drawerSectionLabel"/>
+
+                <Grid ColumnDefinitions="*,Auto">
+                    <Slider Grid.Column="0"
+                            VerticalAlignment="Center"
+                            Minimum="0" Maximum="10"
+                            TickFrequency="1"
+                            IsSnapToTickEnabled="True"
+                            Value="{Binding Plotter.Precision}"
+                            Margin="0,0,12,0"/>
+                    <TextBlock Grid.Column="1"
+                               Text="{Binding Plotter.Precision}"
+                               FontFamily="Consolas"
+                               FontSize="16"
+                               Foreground="{DynamicResource TextPrimary}"
+                               VerticalAlignment="Center"
+                               MinWidth="20"
+                               TextAlignment="Center"/>
+                </Grid>
+            </StackPanel>
+        </Border>
+
+    </Grid>
+</UserControl>

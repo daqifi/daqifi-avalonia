@@ -12,7 +12,7 @@ steps:
   upstream_ref: null
   downstream_target: Services/FilePickerService.cs
   assigned_to: patch-author
-  status: pending
+  status: done
   classification: null
   shard: UI
   commit_sha: null
@@ -26,9 +26,13 @@ steps:
   - "on completion: run `portomatic firmware close-hal --shard UI --concept file_pickers\
     \ --relation <relation> --symbol <sym> --file <path>` \u2014 it flips the `UI`\
     \ hal_pairs entry to ported and refuses while verify gates are pending"
+  - "All three upstream picker shapes (Win32 Save/Open + WinForms FolderBrowser) collapse\
+    \ into IFilePickerService on TopLevel.StorageProvider; owner windows resolve via\
+    \ IDialogService.FindOwnerWindow (promoted to the interface \u2014 dialog_service\
+    \ mechanism keeps the ONE registry). Async by dialect, as message_box."
   divergences: []
   started_at: null
-  finished_at: null
+  finished_at: '2026-07-12T18:43:59.278455Z'
   failure_class: null
   ticket_url: null
   ticket_number: null
@@ -38,7 +42,7 @@ steps:
   upstream_ref: null
   downstream_target: null
   assigned_to: null
-  status: pending
+  status: done
   classification: null
   shard: UI
   commit_sha: null
@@ -48,9 +52,15 @@ steps:
   expected_resolution: null
   notes:
   - hal-concept:file_pickers
+  - "Build gate (concept-scoped): dotnet restore green; adapter build shows 0 diagnostics\
+    \ referencing this concept's upstream vendor surface. Full build remains red on\
+    \ out-of-scope not-yet-ported domain types (612 errors). Avalonia XamlIl compiles\
+    \ post-CSC, so markup is XML-well-formedness-validated until the domain port lands.\
+    \ Vendor surface checked: SaveFileDialog/OpenFileDialog/FolderBrowserDialog \u2014\
+    \ 0 references remain."
   divergences: []
   started_at: null
-  finished_at: null
+  finished_at: '2026-07-12T18:43:57.680498Z'
   failure_class: null
   ticket_url: null
   ticket_number: null

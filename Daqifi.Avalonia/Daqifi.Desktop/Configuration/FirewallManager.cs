@@ -6,6 +6,7 @@
 // DO NOT manually delete the `// @port:` markers — they link symbols back to
 // the correspondence map.
 
+using Daqifi.Desktop.Services;
 using System;
 using System.Collections.Generic;
 using System.Threading.Tasks;

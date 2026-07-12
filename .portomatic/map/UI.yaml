@@ -713,19 +713,19 @@ files:
   rationale: null
   last_synced_sha: null
 - upstream: Daqifi.Desktop/View/Flyouts/LiveGraphFlyout.xaml.cs
-  downstream: Daqifi.Avalonia/Daqifi.Desktop/View/Flyouts/LiveGraphFlyout.cs
+  downstream: Daqifi.Avalonia/Daqifi.Desktop/View/Flyouts/LiveGraphFlyout.axaml.cs
   relation: subset
   notes: ' (scaffolded)'
   rationale: null
   last_synced_sha: null
 - upstream: Daqifi.Desktop/View/Flyouts/NotificationsFlyout.xaml.cs
-  downstream: Daqifi.Avalonia/Daqifi.Desktop/View/Flyouts/NotificationsFlyout.cs
+  downstream: Daqifi.Avalonia/Daqifi.Desktop/View/Flyouts/NotificationsFlyout.axaml.cs
   relation: subset
   notes: ' (scaffolded)'
   rationale: null
   last_synced_sha: null
 - upstream: Daqifi.Desktop/View/Flyouts/SummaryFlyout.xaml.cs
-  downstream: Daqifi.Avalonia/Daqifi.Desktop/View/Flyouts/SummaryFlyout.cs
+  downstream: Daqifi.Avalonia/Daqifi.Desktop/View/Flyouts/SummaryFlyout.axaml.cs
   relation: subset
   notes: ' (scaffolded)'
   rationale: null
@@ -994,7 +994,7 @@ hal_pairs:
   downstream:
     vendor: avalonia
     symbol: Window
-    file: Views/MainWindow.axaml
+    file: Daqifi.Avalonia/Daqifi.Desktop/MainWindow.axaml
   relation: equivalent
   notes: 'FluentTheme covers chrome + theming (decision log). WindowCommands content
     moves to the client-area title bar or a toolbar row.
@@ -1008,7 +1008,7 @@ hal_pairs:
   downstream:
     vendor: avalonia
     symbol: SplitView
-    file: Views/MainWindow.axaml
+    file: Daqifi.Avalonia/Daqifi.Desktop/MainWindow.axaml
   relation: equivalent
   notes: "Three upstream flyouts (LiveGraph, Notifications, Summary) become pane content\
     \ of ONE SplitView-based host \u2014 see the flyout_host mechanism; do not build\
@@ -1020,8 +1020,8 @@ hal_pairs:
     file: MainWindow.xaml
   downstream:
     vendor: projektanker-icons
-    symbol: Attached.Icon
-    file: Views/MainWindow.axaml
+    symbol: i:Icon
+    file: Daqifi.Avalonia/Daqifi.Desktop/MainWindow.axaml
   relation: equivalent
   notes: null
 - concept: xaml_behaviors
@@ -1032,7 +1032,7 @@ hal_pairs:
   downstream:
     vendor: avalonia
     symbol: Interaction.Behaviors
-    file: Views/LoggingPane.axaml
+    file: Daqifi.Avalonia/Daqifi.Desktop/View/Prototype/DevicesPanePrototype.axaml
   relation: equivalent
   notes: "Avalonia.Xaml.Behaviors \u2014 mechanical xmlns swap."
 - concept: chart_plot_host
@@ -1043,7 +1043,7 @@ hal_pairs:
   downstream:
     vendor: oxyplot
     symbol: PlotView
-    file: Views/LiveGraphPane.axaml
+    file: Daqifi.Avalonia/Daqifi.Desktop/View/Prototype/LiveGraphPane.axaml
   relation: equivalent
   notes: 'OxyPlot.Avalonia (decision log). PlotModel/axis/series code ports verbatim;
     only the view host + tracker templates change dialect.
@@ -1081,7 +1081,7 @@ hal_pairs:
   downstream:
     vendor: avalonia
     symbol: DialogService
-    file: Services/DialogService.cs
+    file: Daqifi.Avalonia/Daqifi.Desktop/DialogService/DialogService.cs
   relation: equivalent
   notes: "Retype the VM-type\u2192Window-type map to Avalonia Window; ShowDialog becomes\
     \ async ShowDialog<T>(owner). See dialog_service mechanism.\n"
@@ -1092,8 +1092,8 @@ hal_pairs:
     file: Loggers/SummaryLogger.cs
   downstream:
     vendor: avalonia
-    symbol: StorageProvider
-    file: Services/FilePickerService.cs
+    symbol: FilePickerService
+    file: Daqifi.Avalonia/Daqifi.Desktop/Services/FilePickerService.cs
   relation: equivalent
   notes: "Also covers OpenFileDialog and the WinForms FolderBrowserDialog \u2014 all\
     \ three collapse into TopLevel.StorageProvider async pickers.\n"
@@ -1105,7 +1105,7 @@ hal_pairs:
   downstream:
     vendor: avalonia
     symbol: MessageDialog
-    file: Views/Dialogs/MessageDialog.axaml
+    file: Daqifi.Avalonia/Daqifi.Desktop/View/Dialogs/MessageDialog.axaml
   relation: equivalent
   notes: Owned dialog window routed through DialogService (decision log).
 - concept: ui_thread_dispatch
@@ -1116,7 +1116,7 @@ hal_pairs:
   downstream:
     vendor: avalonia
     symbol: Dispatcher.UIThread
-    file: ViewModels/DaqifiViewModel.cs
+    file: Daqifi.Avalonia/Daqifi.Desktop/ViewModels/DaqifiViewModel.cs
   relation: equivalent
   notes: null
 - concept: theming_tokens
@@ -1127,7 +1127,7 @@ hal_pairs:
   downstream:
     vendor: avalonia
     symbol: ThemeDictionaries
-    file: Resources/DesignTokens.axaml
+    file: Daqifi.Avalonia/Daqifi.Desktop/Resources/DesignTokens.axaml
   relation: equivalent
   notes: ThemeVariant Dark/Light replaces MahApps theme dictionaries.
 - concept: usb_hotplug_watch
@@ -1138,7 +1138,7 @@ hal_pairs:
   downstream:
     vendor: avalonia
     symbol: IDeviceWatcher
-    file: Services/DeviceWatcher/IDeviceWatcher.cs
+    file: Daqifi.Avalonia/Daqifi.Desktop/Services/DeviceWatcher/IDeviceWatcher.cs
   relation: equivalent
   notes: 'Per-platform backends behind one interface (WMI / udev netlink / IOKit);
     mobile has no serial so its backend is a no-op. See the device_watcher mechanism.
@@ -1152,7 +1152,7 @@ hal_pairs:
   downstream:
     vendor: avalonia
     symbol: IKeepAwakeService
-    file: Services/KeepAwake/IKeepAwakeService.cs
+    file: Daqifi.Avalonia/Daqifi.Desktop/Services/KeepAwake/IKeepAwakeService.cs
   relation: equivalent
   notes: 'Per-platform backends: SetThreadExecutionState / IOPMAssertion / D-Bus inhibit
     / WakeLock / IdleTimerDisabled.
@@ -1180,8 +1180,8 @@ hal_pairs:
   downstream:
     vendor: shared
     symbol: SQLitePCLRaw.bundle_e_sqlite3
-    file: Daqifi.Avalonia.csproj
-  relation: equivalent
+    file: Daqifi.Avalonia/Daqifi.Avalonia.csproj
+  relation: shared_library
   notes: All-platform native bundle replaces the committed win-x64 dll.
 mechanisms:
 - name: dialog_service
@@ -1239,6 +1239,138 @@ downstream_only:
   notes: null
   members: []
   added_at: null
+- downstream:
+    kind: class
+    qualified: Daqifi.Desktop.Converters.BoolOrConverter
+    file: Daqifi.Avalonia/Daqifi.Desktop/Converters/BoolOrConverter.cs
+  rationale: 'flyout_host mechanism helper: ORs the three per-flyout open flags into
+    the single SplitView host IsPaneOpen (MahApps gave each Flyout its own IsOpen;
+    one-host invariant needs the disjunction).'
+  notes: null
+  members: []
+  added_at: '2026-07-12'
+- downstream:
+    kind: enum
+    qualified: Daqifi.Desktop.Services.MessageBoxButton
+    file: Daqifi.Avalonia/Daqifi.Desktop/Services/MessageBoxTypes.cs
+  rationale: 'message_box concept: System.Windows.MessageBoxButton has no Avalonia
+    counterpart; WPF-compatible member names keep ported call sites source-compatible.'
+  notes: null
+  members: []
+  added_at: '2026-07-12'
+- downstream:
+    kind: enum
+    qualified: Daqifi.Desktop.Services.MessageBoxImage
+    file: Daqifi.Avalonia/Daqifi.Desktop/Services/MessageBoxTypes.cs
+  rationale: 'message_box concept: System.Windows.MessageBoxImage replacement.'
+  notes: null
+  members: []
+  added_at: '2026-07-12'
+- downstream:
+    kind: enum
+    qualified: Daqifi.Desktop.Services.MessageBoxResult
+    file: Daqifi.Avalonia/Daqifi.Desktop/Services/MessageBoxTypes.cs
+  rationale: 'message_box concept: System.Windows.MessageBoxResult replacement.'
+  notes: null
+  members: []
+  added_at: '2026-07-12'
+- downstream:
+    kind: class
+    qualified: Daqifi.Desktop.View.Dialogs.MessageDialog
+    file: Daqifi.Avalonia/Daqifi.Desktop/View/Dialogs/MessageDialog.axaml.cs
+  rationale: 'message_box concept: owned dialog window replacing WPF MessageBox, constructed
+    only by DialogService/IMessageBoxService (dialog_service mechanism).'
+  notes: null
+  members: []
+  added_at: '2026-07-12'
+- downstream:
+    kind: interface
+    qualified: Daqifi.Desktop.Services.IFilePickerService
+    file: Daqifi.Avalonia/Daqifi.Desktop/Services/FilePickerService.cs
+  rationale: 'file_pickers concept: Save/Open/FolderBrowser dialogs collapse into
+    TopLevel.StorageProvider async pickers behind one service (dialog_service mechanism).'
+  notes: null
+  members: []
+  added_at: '2026-07-12'
+- downstream:
+    kind: class
+    qualified: Daqifi.Desktop.Services.FilePickerService
+    file: Daqifi.Avalonia/Daqifi.Desktop/Services/FilePickerService.cs
+  rationale: file_pickers concept implementation; owner windows resolve through the
+    ONE DialogService registry.
+  notes: null
+  members: []
+  added_at: '2026-07-12'
+- downstream:
+    kind: interface
+    qualified: Daqifi.Desktop.Services.DeviceWatcher.IDeviceWatcher
+    file: Daqifi.Avalonia/Daqifi.Desktop/Services/DeviceWatcher/IDeviceWatcher.cs
+  rationale: 'usb_hotplug_watch concept: the ONE hotplug watcher interface (device_watcher
+    mechanism); upstream wired WMI inline in ConnectionManager.'
+  notes: null
+  members: []
+  added_at: '2026-07-12'
+- downstream:
+    kind: class
+    qualified: Daqifi.Desktop.Services.DeviceWatcher.WmiDeviceWatcher
+    file: Daqifi.Avalonia/Daqifi.Desktop/Services/DeviceWatcher/WmiDeviceWatcher.cs
+  rationale: 'device_watcher Windows backend: Win32_DeviceChangeEvent WMI subscription
+    extracted from upstream ConnectionManager ctor.'
+  notes: null
+  members: []
+  added_at: '2026-07-12'
+- downstream:
+    kind: class
+    qualified: Daqifi.Desktop.Services.DeviceWatcher.NoOpDeviceWatcher
+    file: Daqifi.Avalonia/Daqifi.Desktop/Services/DeviceWatcher/NoOpDeviceWatcher.cs
+  rationale: device_watcher silent fallback backend (mobile has no serial; udev/IOKit
+    heads slot in later).
+  notes: null
+  members: []
+  added_at: '2026-07-12'
+- downstream:
+    kind: class
+    qualified: Daqifi.Desktop.Services.DeviceWatcher.DeviceWatcherFactory
+    file: Daqifi.Avalonia/Daqifi.Desktop/Services/DeviceWatcher/DeviceWatcherFactory.cs
+  rationale: device_watcher backend selection.
+  notes: null
+  members: []
+  added_at: '2026-07-12'
+- downstream:
+    kind: interface
+    qualified: Daqifi.Desktop.Services.KeepAwake.IKeepAwakeService
+    file: Daqifi.Avalonia/Daqifi.Desktop/Services/KeepAwake/IKeepAwakeService.cs
+  rationale: 'keep_awake concept: per-platform sleep-prevention interface replacing
+    the upstream SetThreadExecutionState NativeMethods shim.'
+  notes: null
+  members: []
+  added_at: '2026-07-12'
+- downstream:
+    kind: class
+    qualified: Daqifi.Desktop.Services.KeepAwake.WindowsKeepAwakeService
+    file: Daqifi.Avalonia/Daqifi.Desktop/Services/KeepAwake/WindowsKeepAwakeService.cs
+  rationale: 'keep_awake Windows backend: SetThreadExecutionState P/Invoke moved from
+    upstream Device/AbstractStreamingDevice NativeMethods.'
+  notes: null
+  members: []
+  added_at: '2026-07-12'
+- downstream:
+    kind: class
+    qualified: Daqifi.Desktop.Services.KeepAwake.NoOpKeepAwakeService
+    file: Daqifi.Avalonia/Daqifi.Desktop/Services/KeepAwake/NoOpKeepAwakeService.cs
+  rationale: keep_awake fallback backend until IOPMAssertion/D-Bus/WakeLock heads
+    land; success-reporting matches upstream warn-only failure handling.
+  notes: null
+  members: []
+  added_at: '2026-07-12'
+- downstream:
+    kind: class
+    qualified: Daqifi.Desktop.Services.KeepAwake.KeepAwakeServiceFactory
+    file: Daqifi.Avalonia/Daqifi.Desktop/Services/KeepAwake/KeepAwakeServiceFactory.cs
+  rationale: keep_awake backend selection.
+  notes: null
+  members: []
+  added_at: '2026-07-12'
 downstream_only_files:
 - downstream: Daqifi.Avalonia/Program.cs
   rationale: Avalonia entry point; no upstream counterpart (WPF uses generated Main).
@@ -1260,4 +1392,59 @@ downstream_only_files:
   rationale: Avalonia project file (package swaps per the UI catalog decision log).
   notes: null
   added_at: null
+- downstream: Daqifi.Avalonia/Daqifi.Desktop/Converters/BoolOrConverter.cs
+  rationale: flyout_host mechanism helper converter; no upstream counterpart.
+  notes: null
+  added_at: '2026-07-12'
+- downstream: Daqifi.Avalonia/Daqifi.Desktop/Services/MessageBoxTypes.cs
+  rationale: 'message_box concept: WPF MessageBox enum replacements; no upstream counterpart
+    file.'
+  notes: null
+  added_at: '2026-07-12'
+- downstream: Daqifi.Avalonia/Daqifi.Desktop/View/Dialogs/MessageDialog.axaml
+  rationale: 'message_box concept: owned MessageDialog markup; no upstream counterpart.'
+  notes: null
+  added_at: '2026-07-12'
+- downstream: Daqifi.Avalonia/Daqifi.Desktop/View/Dialogs/MessageDialog.axaml.cs
+  rationale: 'message_box concept: MessageDialog code-behind; no upstream counterpart.'
+  notes: null
+  added_at: '2026-07-12'
+- downstream: Daqifi.Avalonia/Daqifi.Desktop/Services/FilePickerService.cs
+  rationale: 'file_pickers concept: StorageProvider picker service; upstream used
+    inline Win32/WinForms dialogs.'
+  notes: null
+  added_at: '2026-07-12'
+- downstream: Daqifi.Avalonia/Daqifi.Desktop/Services/DeviceWatcher/IDeviceWatcher.cs
+  rationale: usb_hotplug_watch mechanism interface; no upstream counterpart file.
+  notes: null
+  added_at: '2026-07-12'
+- downstream: Daqifi.Avalonia/Daqifi.Desktop/Services/DeviceWatcher/WmiDeviceWatcher.cs
+  rationale: usb_hotplug_watch Windows backend; extracted from upstream ConnectionManager.
+  notes: null
+  added_at: '2026-07-12'
+- downstream: Daqifi.Avalonia/Daqifi.Desktop/Services/DeviceWatcher/NoOpDeviceWatcher.cs
+  rationale: usb_hotplug_watch silent fallback backend.
+  notes: null
+  added_at: '2026-07-12'
+- downstream: Daqifi.Avalonia/Daqifi.Desktop/Services/DeviceWatcher/DeviceWatcherFactory.cs
+  rationale: usb_hotplug_watch backend factory.
+  notes: null
+  added_at: '2026-07-12'
+- downstream: Daqifi.Avalonia/Daqifi.Desktop/Services/KeepAwake/IKeepAwakeService.cs
+  rationale: keep_awake mechanism interface; no upstream counterpart file.
+  notes: null
+  added_at: '2026-07-12'
+- downstream: Daqifi.Avalonia/Daqifi.Desktop/Services/KeepAwake/WindowsKeepAwakeService.cs
+  rationale: keep_awake Windows backend; extracted from upstream AbstractStreamingDevice
+    NativeMethods.
+  notes: null
+  added_at: '2026-07-12'
+- downstream: Daqifi.Avalonia/Daqifi.Desktop/Services/KeepAwake/NoOpKeepAwakeService.cs
+  rationale: keep_awake fallback backend.
+  notes: null
+  added_at: '2026-07-12'
+- downstream: Daqifi.Avalonia/Daqifi.Desktop/Services/KeepAwake/KeepAwakeServiceFactory.cs
+  rationale: keep_awake backend factory.
+  notes: null
+  added_at: '2026-07-12'
 updated_at: '2026-07-12T00:28:22.501677Z'

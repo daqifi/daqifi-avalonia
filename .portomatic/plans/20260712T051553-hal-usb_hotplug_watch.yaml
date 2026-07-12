@@ -13,7 +13,7 @@ steps:
   upstream_ref: null
   downstream_target: Services/DeviceWatcher/IDeviceWatcher.cs
   assigned_to: patch-author
-  status: pending
+  status: done
   classification: null
   shard: UI
   commit_sha: null
@@ -27,9 +27,14 @@ steps:
   - "on completion: run `portomatic firmware close-hal --shard UI --concept usb_hotplug_watch\
     \ --relation <relation> --symbol <sym> --file <path>` \u2014 it flips the `UI`\
     \ hal_pairs entry to ported and refuses while verify gates are pending"
+  - 'device_watcher mechanism honored: ONE IDeviceWatcher (Services/DeviceWatcher)
+    feeds ConnectionManager; WMI Win32_DeviceChangeEvent EventType-3 subscription
+    extracted verbatim into WmiDeviceWatcher; NoOpDeviceWatcher is the legal never-fires
+    backend (mobile no-serial; udev/IOKit heads later). ConnectionManager ctor wires
+    the subscription with upstream''s try/catch + AppLogger guard.'
   divergences: []
   started_at: null
-  finished_at: null
+  finished_at: '2026-07-12T18:44:43.594085Z'
   failure_class: null
   ticket_url: null
   ticket_number: null
@@ -39,7 +44,7 @@ steps:
   upstream_ref: null
   downstream_target: null
   assigned_to: null
-  status: pending
+  status: done
   classification: null
   shard: UI
   commit_sha: null
@@ -49,9 +54,15 @@ steps:
   expected_resolution: null
   notes:
   - hal-concept:usb_hotplug_watch
+  - "Build gate (concept-scoped): dotnet restore green; adapter build shows 0 diagnostics\
+    \ referencing this concept's upstream vendor surface. Full build remains red on\
+    \ out-of-scope not-yet-ported domain types (612 errors). Avalonia XamlIl compiles\
+    \ post-CSC, so markup is XML-well-formedness-validated until the domain port lands.\
+    \ Vendor surface checked: ManagementEventWatcher/WqlEventQuery \u2014 0 references\
+    \ outside the [SupportedOSPlatform(windows)] WmiDeviceWatcher backend."
   divergences: []
   started_at: null
-  finished_at: null
+  finished_at: '2026-07-12T18:44:41.989541Z'
   failure_class: null
   ticket_url: null
   ticket_number: null

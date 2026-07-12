@@ -6,6 +6,8 @@
 		<ImplicitUsings>enable</ImplicitUsings>
 		<Version>3.3.0</Version>
 		<BuiltInComInteropSupport>true</BuiltInComInteropSupport>
+		<!-- LibraryImport (keep_awake Windows backend) generates unsafe marshalling stubs -->
+		<AllowUnsafeBlocks>true</AllowUnsafeBlocks>
 		<ApplicationManifest>app.manifest</ApplicationManifest>
 		<AvaloniaUseCompiledBindingsByDefault>false</AvaloniaUseCompiledBindingsByDefault>
 	</PropertyGroup>

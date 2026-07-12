@@ -1,8 +1,23 @@
 <Application xmlns="https://github.com/avaloniaui"
              xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml"
+             xmlns:helpers="using:Daqifi.Desktop.Helpers"
              x:Class="Daqifi.Avalonia.App"
              RequestedThemeVariant="Dark">
     <Application.Styles>
         <FluentTheme />
     </Application.Styles>
+    <Application.Resources>
+        <ResourceDictionary>
+            <ResourceDictionary.MergedDictionaries>
+                <!-- Canonical design tokens (hal: theming_tokens) — MahApps theme
+                     dictionaries are replaced by FluentTheme + ThemeVariant. -->
+                <ResourceInclude Source="avares://Daqifi.Avalonia/Daqifi.Desktop/Resources/DesignTokens.axaml"/>
+            </ResourceDictionary.MergedDictionaries>
+
+            <!-- Upstream App.xaml converter registrations migrate here as their
+                 classes port; WPF BoolToVis has no Avalonia counterpart — bind
+                 IsVisible directly instead. -->
+            <helpers:IntToVisibilityConverter x:Key="IntToVisibility"/>
+        </ResourceDictionary>
+    </Application.Resources>
 </Application>

@@ -7,6 +7,8 @@
 // the correspondence map.
 
 using CommunityToolkit.Mvvm.ComponentModel;
+using Daqifi.Desktop.Common.Loggers;
+using Daqifi.Desktop.Services.DeviceWatcher;
 using System;
 using System.Collections.Generic;
 using System.Threading.Tasks;
@@ -16,7 +18,9 @@ namespace Daqifi.Desktop;
 // @port: Daqifi.Desktop.ConnectionManager
 public partial class ConnectionManager : ObservableObject
 {
-    private ManagementEventWatcher _deviceRemovedWatcher;
+    // hal: usb_hotplug_watch — the WMI ManagementEventWatcher moves behind the
+    // ONE IDeviceWatcher instance (device_watcher mechanism, per-OS backends).
+    private readonly IDeviceWatcher _deviceRemovedWatcher;
 
     private DAQiFiConnectionStatus _connectionStatus;
 
@@ -51,6 +55,25 @@ public partial class ConnectionManager : ObservableObject
     private void OnConnectionStatusChanged(DAQiFiConnectionStatus value) => throw new NotImplementedException();
 
     private static ConnectionManager instance;
+
+    private ConnectionManager()
+    {
+        // hal: usb_hotplug_watch — subscribe the removal signal through the
+        // mechanism backend (upstream wired WqlEventQuery EventType 3 inline).
+        // The rest of the upstream ctor body lands with this class's own
+        // apply step.
+        _deviceRemovedWatcher = DeviceWatcherFactory.Create();
+
+        try
+        {
+            _deviceRemovedWatcher.DeviceRemoved += (sender, eventArgs) => CheckIfSerialDeviceWasRemoved();
+            _deviceRemovedWatcher.Start();
+        }
+        catch (Exception ex)
+        {
+            AppLogger.Instance.Error(ex, "Failed to initialize device watcher: " + ex.Message);
+        }
+    }
 
     // @port: Daqifi.Desktop.ConnectionManager.Instance
     public static ConnectionManager Instance

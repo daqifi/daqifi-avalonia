@@ -13,7 +13,7 @@ steps:
   upstream_ref: null
   downstream_target: ViewModels/DaqifiViewModel.cs
   assigned_to: patch-author
-  status: pending
+  status: done
   classification: null
   shard: UI
   commit_sha: null
@@ -27,9 +27,14 @@ steps:
   - "on completion: run `portomatic firmware close-hal --shard UI --concept ui_thread_dispatch\
     \ --relation <relation> --symbol <sym> --file <path>` \u2014 it flips the `UI`\
     \ hal_pairs entry to ported and refuses while verify gates are pending"
+  - "Avalonia.Threading mirrors the WPF dispatcher surface: DispatcherTimer, Dispatcher,\
+    \ DispatcherUnhandledExceptionEventArgs map 1:1 \u2014 landed as using swaps in\
+    \ the six files whose stub surfaces reference them (App, DatabaseLogger, ChannelsPane/DevicesPane/Daqifi\
+    \ VMs, MinimapInteractionController). Body-level Dispatcher.Invoke \u2192 Dispatcher.UIThread.Post/InvokeAsync\
+    \ applies as each class ports (recorded in port_conventions)."
   divergences: []
   started_at: null
-  finished_at: null
+  finished_at: '2026-07-12T18:44:03.780338Z'
   failure_class: null
   ticket_url: null
   ticket_number: null
@@ -39,7 +44,7 @@ steps:
   upstream_ref: null
   downstream_target: null
   assigned_to: null
-  status: pending
+  status: done
   classification: null
   shard: UI
   commit_sha: null
@@ -49,9 +54,15 @@ steps:
   expected_resolution: null
   notes:
   - hal-concept:ui_thread_dispatch
+  - "Build gate (concept-scoped): dotnet restore green; adapter build shows 0 diagnostics\
+    \ referencing this concept's upstream vendor surface. Full build remains red on\
+    \ out-of-scope not-yet-ported domain types (612 errors). Avalonia XamlIl compiles\
+    \ post-CSC, so markup is XML-well-formedness-validated until the domain port lands.\
+    \ Vendor surface checked: Dispatcher/DispatcherTimer/DispatcherUnhandledException\
+    \ \u2014 0 references remain."
   divergences: []
   started_at: null
-  finished_at: null
+  finished_at: '2026-07-12T18:44:02.265659Z'
   failure_class: null
   ticket_url: null
   ticket_number: null

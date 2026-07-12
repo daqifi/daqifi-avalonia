@@ -1,0 +1,54 @@
+<UserControl x:Class="Daqifi.Desktop.View.Flyouts.NotificationsFlyout"
+             xmlns="https://github.com/avaloniaui"
+             xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml"
+             xmlns:i="https://github.com/projektanker/icons.avalonia"
+             Background="{DynamicResource SurfaceRaised}">
+
+    <!--
+        Pane content for the single SplitView flyout host in MainWindow
+        (hal: flyout_host). The MahApps Flyout chrome (Position, Width/Height,
+        IsOpen) lives on the host; this control keeps only the header + body.
+    -->
+
+    <Grid RowDefinitions="Auto,*">
+
+        <!-- Header (MahApps Flyout rendered Header + close chrome) -->
+        <Grid Grid.Row="0" ColumnDefinitions="*,Auto" Margin="20,12,12,12">
+            <TextBlock Grid.Column="0" Text="Notifications"
+                       FontSize="18" FontWeight="Light"
+                       Foreground="{DynamicResource TextPrimary}"
+                       VerticalAlignment="Center"/>
+            <ToggleButton Grid.Column="1"
+                          i:Attached.Icon="mdi-close"
+                          Background="Transparent" BorderThickness="0"
+                          Foreground="{DynamicResource TextSecondary}"
+                          Cursor="Hand"
+                          ToolTip.Tip="Close"
+                          IsChecked="{Binding IsNotificationsOpen, Mode=TwoWay}"/>
+        </Grid>
+
+        <ScrollViewer Grid.Row="1">
+            <ItemsControl ItemsSource="{Binding NotificationList}">
+                <ItemsControl.ItemTemplate>
+                    <DataTemplate>
+                        <StackPanel Margin="10" Orientation="Vertical">
+                            <TextBlock Text="{Binding Message}" FontWeight="Medium" FontSize="18" TextWrapping="Wrap"/>
+                            <Button Content="Click here"
+                                    IsVisible="{Binding Link, Converter={x:Static ObjectConverters.IsNotNull}}"
+                                    Tag="{Binding Link}"
+                                    Click="Hyperlink_RequestNavigate"
+                                    Background="Transparent" BorderThickness="0" Padding="0"
+                                    Foreground="{DynamicResource Accent}"
+                                    Cursor="Hand"/>
+                        </StackPanel>
+                    </DataTemplate>
+                </ItemsControl.ItemTemplate>
+                <ItemsControl.ItemsPanel>
+                    <ItemsPanelTemplate>
+                        <VirtualizingStackPanel/>
+                    </ItemsPanelTemplate>
+                </ItemsControl.ItemsPanel>
+            </ItemsControl>
+        </ScrollViewer>
+    </Grid>
+</UserControl>

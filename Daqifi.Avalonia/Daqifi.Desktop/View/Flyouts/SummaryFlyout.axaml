@@ -1,0 +1,171 @@
+<UserControl x:Class="Daqifi.Desktop.View.Flyouts.SummaryFlyout"
+             xmlns="https://github.com/avaloniaui"
+             xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml"
+             xmlns:i="https://github.com/projektanker/icons.avalonia"
+             Background="{DynamicResource SurfaceRaised}">
+
+    <!--
+        Pane content for the single SplitView flyout host in MainWindow
+        (hal: flyout_host). MahApps Flyout chrome lives on the host.
+        WPF GroupBox has no Avalonia counterpart — HeaderedContentControl
+        with the groupBox theme below reproduces it.
+    -->
+
+    <UserControl.Resources>
+        <ControlTheme x:Key="GroupBoxTheme" TargetType="HeaderedContentControl">
+            <Setter Property="Template">
+                <ControlTemplate>
+                    <Border BorderBrush="{DynamicResource BorderDim}"
+                            BorderThickness="1"
+                            CornerRadius="3"
+                            Margin="8">
+                        <Grid RowDefinitions="Auto,*">
+                            <ContentPresenter Grid.Row="0"
+                                              Content="{TemplateBinding Header}"
+                                              TextElement.FontWeight="Bold"
+                                              Margin="10,6,10,0"/>
+                            <ContentPresenter Grid.Row="1"
+                                              Content="{TemplateBinding Content}"/>
+                        </Grid>
+                    </Border>
+                </ControlTemplate>
+            </Setter>
+        </ControlTheme>
+    </UserControl.Resources>
+
+    <UserControl.Styles>
+        <Style Selector="TextBlock.cell">
+            <Setter Property="FontSize" Value="16"/>
+            <Setter Property="VerticalAlignment" Value="Center"/>
+        </Style>
+        <Style Selector="TextBlock.cellHeader">
+            <Setter Property="FontSize" Value="16"/>
+            <Setter Property="FontWeight" Value="Bold"/>
+            <Setter Property="VerticalAlignment" Value="Center"/>
+        </Style>
+    </UserControl.Styles>
+
+    <Grid RowDefinitions="Auto,Auto,*">
+
+        <!-- Header (MahApps Flyout rendered Header + close chrome) -->
+        <Grid Grid.Row="0" ColumnDefinitions="*,Auto" Margin="20,12,12,4">
+            <TextBlock Grid.Column="0" Text="Log Summary"
+                       FontSize="18" FontWeight="Light"
+                       Foreground="{DynamicResource TextPrimary}"
+                       VerticalAlignment="Center"/>
+            <ToggleButton Grid.Column="1"
+                          i:Attached.Icon="mdi-close"
+                          Background="Transparent" BorderThickness="0"
+                          Foreground="{DynamicResource TextSecondary}"
+                          Cursor="Hand"
+                          ToolTip.Tip="Close"
+                          IsChecked="{Binding IsLogSummaryOpen, Mode=TwoWay}"/>
+        </Grid>
+
+        <HeaderedContentControl Grid.Row="1" Header="Settings" Theme="{StaticResource GroupBoxTheme}">
+            <Grid Margin="15" ColumnDefinitions="150,*,75" RowDefinitions="Auto,Auto,Auto">
+                <TextBlock Grid.Row="0" Grid.Column="0" Classes="cellHeader" Text="Log Session"/>
+                <TextBlock Grid.Row="0" Grid.Column="1" Classes="cell"
+                           Text="{Binding SelectedLoggingSession.Name}" TextAlignment="Center"/>
+
+                <TextBlock Grid.Row="1" Grid.Column="0" Classes="cellHeader" Text="Sample Size" Margin="5"/>
+                <NumericUpDown Grid.Row="1" Grid.Column="1"
+                               Value="{Binding SummaryLogger.SampleSize}"
+                               Minimum="1" Increment="1" Width="150" HorizontalAlignment="Left"/>
+
+                <TextBlock Grid.Row="2" Grid.Column="0" Classes="cellHeader" Text="Status" Margin="5"/>
+                <ToggleSwitch Grid.Row="2" Grid.Column="1"
+                              Command="{Binding SummaryLogger.ToggleEnabledCommand}"
+                              IsChecked="{Binding SummaryLogger.Enabled, Mode=OneWay}"
+                              OffContent="Stopped" OnContent="Running" HorizontalAlignment="Left"/>
+                <Button Grid.Row="2" Grid.Column="2" Content="Reset" Command="{Binding SummaryLogger.ResetCommand}"/>
+            </Grid>
+        </HeaderedContentControl>
+
+        <ScrollViewer Grid.Row="2" HorizontalAlignment="Stretch" VerticalAlignment="Stretch">
+            <Grid RowDefinitions="Auto,*">
+
+                <HeaderedContentControl Grid.Row="0" Header="Device" Theme="{StaticResource GroupBoxTheme}">
+                    <Grid Margin="5" ColumnDefinitions="150,*,*,*"
+                          RowDefinitions="Auto,Auto,Auto,Auto,Auto,Auto,Auto">
+                        <TextBlock Grid.Row="0" Grid.Column="0" Classes="cellHeader" Text="Updated"/>
+                        <TextBlock Grid.Row="0" Grid.Column="1" Grid.ColumnSpan="3" Classes="cell"
+                                   Text="{Binding SummaryLogger.LastUpdate, StringFormat=HH:mm:ss.fffffff}"/>
+
+                        <TextBlock Grid.Row="1" Grid.Column="0" Classes="cellHeader" Text="Elapsed Time (ms)"/>
+                        <TextBlock Grid.Row="1" Grid.Column="1" Grid.ColumnSpan="3" Classes="cell"
+                                   Text="{Binding SummaryLogger.ElapsedTime}"/>
+
+                        <TextBlock Grid.Row="2" Grid.Column="0" Classes="cellHeader" Text="Sample Rate (hz)"/>
+                        <TextBlock Grid.Row="2" Grid.Column="1" Grid.ColumnSpan="3" Classes="cell"
+                                   Text="{Binding SummaryLogger.SampleRate}" TextAlignment="Center"/>
+
+                        <TextBlock Grid.Row="3" Grid.Column="0" Classes="cellHeader" Text="Statuses"/>
+                        <TextBlock Grid.Row="3" Grid.Column="1" Classes="cell"
+                                   Text="{Binding SummaryLogger.StatusList}" TextAlignment="Right"/>
+
+                        <TextBlock Grid.Row="4" Grid.Column="1" Classes="cellHeader" Text="Min"/>
+                        <TextBlock Grid.Row="4" Grid.Column="2" Classes="cellHeader" Text="Avg"/>
+                        <TextBlock Grid.Row="4" Grid.Column="3" Classes="cellHeader" Text="Max"/>
+
+                        <TextBlock Grid.Row="5" Grid.Column="0" Classes="cellHeader" Text="Delta (ticks)"/>
+                        <TextBlock Grid.Row="5" Grid.Column="1" Classes="cell"
+                                   Text="{Binding SummaryLogger.MinDelta}" TextAlignment="Right"/>
+                        <TextBlock Grid.Row="5" Grid.Column="2" Classes="cell"
+                                   Text="{Binding SummaryLogger.AverageDelta}" TextAlignment="Right"/>
+                        <TextBlock Grid.Row="5" Grid.Column="3" Classes="cell"
+                                   Text="{Binding SummaryLogger.MaxDelta}" TextAlignment="Right"/>
+
+                        <TextBlock Grid.Row="6" Grid.Column="0" Classes="cellHeader" Text="Latency (ticks)"/>
+                        <TextBlock Grid.Row="6" Grid.Column="1" Classes="cell"
+                                   Text="{Binding SummaryLogger.MinLatency}" TextAlignment="Right"/>
+                        <TextBlock Grid.Row="6" Grid.Column="2" Classes="cell"
+                                   Text="{Binding SummaryLogger.AverageLatency}" TextAlignment="Right"/>
+                        <TextBlock Grid.Row="6" Grid.Column="3" Classes="cell"
+                                   Text="{Binding SummaryLogger.MaxLatency}" TextAlignment="Right"/>
+                    </Grid>
+                </HeaderedContentControl>
+
+                <HeaderedContentControl Grid.Row="1" Header="Channels" Theme="{StaticResource GroupBoxTheme}">
+                    <ListBox ItemsSource="{Binding SummaryLogger.Channels}">
+                        <ListBox.ItemTemplate>
+                            <DataTemplate>
+                                <Grid Margin="5" ColumnDefinitions="150,*,*,*"
+                                      RowDefinitions="Auto,Auto,Auto,Auto">
+                                    <TextBlock Grid.Row="0" Grid.Column="0" Classes="cell"
+                                               Text="{Binding Name}"/>
+                                    <TextBlock Grid.Row="0" Grid.Column="1" Classes="cell"
+                                               Text="{Binding LastUpdate, StringFormat=HH:mm:ss.fffffff}"/>
+                                    <TextBlock Grid.Row="0" Grid.Column="2" Classes="cell"
+                                               Text="Count" TextAlignment="Right"/>
+                                    <TextBlock Grid.Row="0" Grid.Column="3" Classes="cell"
+                                               Text="{Binding SampleCount}" TextAlignment="Right"/>
+
+                                    <TextBlock Grid.Row="1" Grid.Column="0" Classes="cellHeader" Text="Sample Rate (hz)"/>
+                                    <TextBlock Grid.Row="1" Grid.Column="2" Classes="cell"
+                                               Text="{Binding SampleRate}" TextAlignment="Right"/>
+
+                                    <TextBlock Grid.Row="2" Grid.Column="0" Classes="cellHeader" Text="Delta"/>
+                                    <TextBlock Grid.Row="2" Grid.Column="1" Classes="cell"
+                                               Text="{Binding MinDelta}" TextAlignment="Right"/>
+                                    <TextBlock Grid.Row="2" Grid.Column="2" Classes="cell"
+                                               Text="{Binding AverageDelta}" TextAlignment="Right"/>
+                                    <TextBlock Grid.Row="2" Grid.Column="3" Classes="cell"
+                                               Text="{Binding MaxDelta}" TextAlignment="Right"/>
+
+                                    <TextBlock Grid.Row="3" Grid.Column="0" Classes="cellHeader" Text="Value"/>
+                                    <TextBlock Grid.Row="3" Grid.Column="1" Classes="cell"
+                                               Text="{Binding MinValue}" TextAlignment="Right"/>
+                                    <TextBlock Grid.Row="3" Grid.Column="2" Classes="cell"
+                                               Text="{Binding AverageValue}" TextAlignment="Right"/>
+                                    <TextBlock Grid.Row="3" Grid.Column="3" Classes="cell"
+                                               Text="{Binding MaxValue}" TextAlignment="Right"/>
+                                </Grid>
+                            </DataTemplate>
+                        </ListBox.ItemTemplate>
+                    </ListBox>
+                </HeaderedContentControl>
+            </Grid>
+        </ScrollViewer>
+    </Grid>
+</UserControl>

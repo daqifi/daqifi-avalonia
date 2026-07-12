@@ -12,7 +12,7 @@ steps:
   upstream_ref: null
   downstream_target: Views/MainWindow.axaml
   assigned_to: patch-author
-  status: pending
+  status: done
   classification: null
   shard: UI
   commit_sha: null
@@ -26,9 +26,13 @@ steps:
   - "on completion: run `portomatic firmware close-hal --shard UI --concept flyout_host\
     \ --relation <relation> --symbol <sym> --file <path>` \u2014 it flips the `UI`\
     \ hal_pairs entry to ported and refuses while verify gates are pending"
+  - 'Mechanism honored: ONE SplitView host in MainWindow owns pane geometry/IsPaneOpen;
+    the three flyouts ported as content-only UserControls (View/Flyouts/*.axaml).
+    IsPaneOpen = BoolOrConverter over the three VM open flags (converter registered
+    downstream-only); per-flyout close is a TwoWay ToggleButton on the same flags.'
   divergences: []
   started_at: null
-  finished_at: null
+  finished_at: '2026-07-12T18:43:24.549924Z'
   failure_class: null
   ticket_url: null
   ticket_number: null
@@ -38,7 +42,7 @@ steps:
   upstream_ref: null
   downstream_target: null
   assigned_to: null
-  status: pending
+  status: done
   classification: null
   shard: UI
   commit_sha: null
@@ -48,9 +52,14 @@ steps:
   expected_resolution: null
   notes:
   - hal-concept:flyout_host
+  - "Build gate (concept-scoped): dotnet restore green; adapter build shows 0 diagnostics\
+    \ referencing this concept's upstream vendor surface. Full build remains red on\
+    \ out-of-scope not-yet-ported domain types (612 errors). Avalonia XamlIl compiles\
+    \ post-CSC, so markup is XML-well-formedness-validated until the domain port lands.\
+    \ Vendor surface checked: FlyoutsControl/Flyout \u2014 0 references remain."
   divergences: []
   started_at: null
-  finished_at: null
+  finished_at: '2026-07-12T18:43:22.983576Z'
   failure_class: null
   ticket_url: null
   ticket_number: null

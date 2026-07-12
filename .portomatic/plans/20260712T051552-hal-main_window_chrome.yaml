@@ -13,7 +13,7 @@ steps:
   upstream_ref: null
   downstream_target: Views/MainWindow.axaml
   assigned_to: patch-author
-  status: pending
+  status: done
   classification: null
   shard: UI
   commit_sha: null
@@ -27,9 +27,14 @@ steps:
   - "on completion: run `portomatic firmware close-hal --shard UI --concept main_window_chrome\
     \ --relation <relation> --symbol <sym> --file <path>` \u2014 it flips the `UI`\
     \ hal_pairs entry to ported and refuses while verify gates are pending"
+  - 'Dialect notes: GlowBrush/WindowTitleBrush/NonActiveWindowTitleBrush/TitleForeground
+    have no Avalonia counterpart (FluentTheme owns chrome); NavTabItemFocusVisual
+    dropped (Avalonia draws its own focus adorner); MahApps ProgressRing rendered
+    as indeterminate ProgressBar; RightWindowCommands moved to a client-area toolbar
+    row per catalog decision.'
   divergences: []
   started_at: null
-  finished_at: null
+  finished_at: '2026-07-12T18:43:20.018842Z'
   failure_class: null
   ticket_url: null
   ticket_number: null
@@ -39,7 +44,7 @@ steps:
   upstream_ref: null
   downstream_target: null
   assigned_to: null
-  status: pending
+  status: done
   classification: null
   shard: UI
   commit_sha: null
@@ -49,9 +54,15 @@ steps:
   expected_resolution: null
   notes:
   - hal-concept:main_window_chrome
+  - "Build gate (concept-scoped): dotnet restore green; adapter build shows 0 diagnostics\
+    \ referencing this concept's upstream vendor surface. Full build remains red on\
+    \ out-of-scope not-yet-ported domain types (612 errors). Avalonia XamlIl compiles\
+    \ post-CSC, so markup is XML-well-formedness-validated until the domain port lands.\
+    \ Vendor surface checked: MetroWindow/WindowCommands/ProgressRing/GlowBrush \u2014\
+    \ 0 references remain."
   divergences: []
   started_at: null
-  finished_at: null
+  finished_at: '2026-07-12T18:43:18.483881Z'
   failure_class: null
   ticket_url: null
   ticket_number: null

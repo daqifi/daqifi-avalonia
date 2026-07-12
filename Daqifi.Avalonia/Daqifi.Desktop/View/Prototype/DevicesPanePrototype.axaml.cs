@@ -7,6 +7,7 @@
 // the correspondence map.
 
 using Avalonia.Controls;
+using Avalonia.Interactivity;
 using System;
 using System.Collections.Generic;
 using System.Threading.Tasks;

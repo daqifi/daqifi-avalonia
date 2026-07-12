@@ -1,5 +1,44 @@
 <UserControl xmlns="https://github.com/avaloniaui"
              xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml"
+             xmlns:oxy="http://oxyplot.org/avalonia"
              x:Class="Daqifi.Desktop.View.Prototype.LiveGraphPane">
-  <!-- Scaffolded by portomatic from upstream Daqifi.Desktop.View.Prototype.LiveGraphPane. Fill in the view; the code-behind ctor calls InitializeComponent(). -->
+
+    <!--
+        Chart host (hal: chart_plot_host): oxy:PlotView from OxyPlot.Avalonia
+        replaces OxyPlot.Wpf — the PlotModel/axis/series layer ports verbatim
+        (charting_stack invariant: ONE model layer feeds live graph,
+        logged-data pane, and minimap; only the view host + tracker templates
+        change dialect). WPF InvertedBoolToVis → Avalonia `!` binding negation.
+
+        The rest of the upstream pane (toolbar, channel legend, empty-state
+        overlay, SD-card panel) lands with this view's own apply step.
+    -->
+
+    <Grid>
+        <!-- Plot area -->
+        <oxy:PlotView x:Name="DataLog"
+                      Model="{Binding Plotter.PlotModel}"
+                      Background="{DynamicResource Surface}"
+                      TabIndex="0"
+                      IsVisible="{Binding !IsSdCardLoggingActive}">
+            <oxy:PlotView.DefaultTrackerTemplate>
+                <ControlTemplate>
+                    <oxy:TrackerControl Position="{Binding Position}"
+                                        LineExtents="{Binding PlotModel.PlotArea}"
+                                        Background="{DynamicResource SurfaceActive}"
+                                        BorderBrush="{DynamicResource BorderBright}"
+                                        BorderThickness="1"
+                                        LineStroke="{DynamicResource BorderBright}"
+                                        CornerRadius="4">
+                        <TextBlock Text="{Binding Text}"
+                                   Foreground="{DynamicResource TextPrimary}"
+                                   FontFamily="Consolas"
+                                   FontSize="11"
+                                   LineHeight="18"
+                                   Margin="10,7"/>
+                    </oxy:TrackerControl>
+                </ControlTemplate>
+            </oxy:PlotView.DefaultTrackerTemplate>
+        </oxy:PlotView>
+    </Grid>
 </UserControl>

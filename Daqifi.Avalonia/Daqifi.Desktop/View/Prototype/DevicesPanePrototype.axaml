@@ -1,5 +1,99 @@
 <UserControl xmlns="https://github.com/avaloniaui"
              xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml"
+             xmlns:ia="using:Avalonia.Xaml.Interactivity"
+             xmlns:iac="using:Avalonia.Xaml.Interactions.Core"
              x:Class="Daqifi.Desktop.View.Prototype.DevicesPanePrototype">
-  <!-- Scaffolded by portomatic from upstream Daqifi.Desktop.View.Prototype.DevicesPanePrototype. Fill in the view; the code-behind ctor calls InitializeComponent(). -->
+
+    <!--
+        hal: xaml_behaviors — Microsoft.Xaml.Behaviors.Wpf → Avalonia.Xaml.Behaviors:
+        i:Interaction.Triggers/EventTrigger/InvokeCommandAction become
+        ia:Interaction.Behaviors + iac:EventTriggerBehavior/InvokeCommandAction.
+        WPF BooleanToInverse converter → Avalonia `!` binding negation.
+
+        The logging-mode switch below is the upstream behaviors usage site;
+        the rest of the pane (device tiles, info drawer, firmware panel)
+        lands with this view's own apply step.
+    -->
+
+    <UserControl.Resources>
+        <!-- Segmented toggle (shared shape with MainWindow's AppSettings.SegmentedToggle) -->
+        <ControlTheme x:Key="SegmentedToggle" TargetType="RadioButton">
+            <Setter Property="Foreground" Value="{DynamicResource TextSecondary}"/>
+            <Setter Property="FontSize" Value="10"/>
+            <Setter Property="FontWeight" Value="SemiBold"/>
+            <Setter Property="Cursor" Value="Hand"/>
+            <Setter Property="Template">
+                <ControlTemplate>
+                    <Border x:Name="Bg"
+                            Background="Transparent"
+                            CornerRadius="2"
+                            Padding="12,7">
+                        <ContentPresenter HorizontalAlignment="Center" VerticalAlignment="Center"
+                                          Content="{TemplateBinding Content}"/>
+                    </Border>
+                </ControlTemplate>
+            </Setter>
+            <Style Selector="^:checked /template/ Border#Bg">
+                <Setter Property="Background" Value="{DynamicResource SurfaceActive}"/>
+            </Style>
+            <Style Selector="^:checked">
+                <Setter Property="Foreground" Value="{DynamicResource TextPrimary}"/>
+            </Style>
+            <Style Selector="^:pointerover">
+                <Setter Property="Foreground" Value="{DynamicResource TextPrimary}"/>
+            </Style>
+        </ControlTheme>
+    </UserControl.Resources>
+
+    <StackPanel Margin="16">
+
+        <TextBlock Text="LOGGING MODE" FontSize="11" FontWeight="SemiBold"
+                   Foreground="{DynamicResource TextSecondary}" Margin="0,0,0,6"/>
+        <Border Background="{DynamicResource Surface}"
+                BorderBrush="{DynamicResource BorderDim}"
+                BorderThickness="1"
+                CornerRadius="3"
+                Padding="3"
+                HorizontalAlignment="Left">
+            <Grid ColumnDefinitions="*,*">
+                <!-- Drive the mode switch off Checked rather than Command: a RadioButton's
+                     bound Command fires only on a real Click, which a background UI-automation
+                     host cannot raise. Checking the button through the automation Toggle
+                     pattern raises Checked (not Click), so an EventTriggerBehavior on Checked
+                     keeps the control drivable both interactively and from the automation
+                     harness. The SelectedLoggingMode setter is idempotent, so the extra
+                     Checked that fires when the OneWay binding refreshes after a switch is a
+                     harmless no-op. -->
+                <RadioButton Grid.Column="0"
+                             Content="STREAM TO APP"
+                             AutomationProperties.AutomationId="LoggingModeStreamToApp"
+                             GroupName="LoggingMode"
+                             IsChecked="{Binding !Shell.IsLogToDeviceMode, Mode=OneWay}"
+                             Theme="{StaticResource SegmentedToggle}">
+                    <ia:Interaction.Behaviors>
+                        <iac:EventTriggerBehavior EventName="Checked">
+                            <iac:InvokeCommandAction Command="{Binding SetLoggingModeCommand}"
+                                                     CommandParameter="Stream to App"/>
+                        </iac:EventTriggerBehavior>
+                    </ia:Interaction.Behaviors>
+                </RadioButton>
+                <RadioButton Grid.Column="1"
+                             Content="LOG TO DEVICE"
+                             AutomationProperties.AutomationId="LoggingModeLogToDevice"
+                             GroupName="LoggingMode"
+                             IsEnabled="{Binding SelectedTile.IsUsb}"
+                             IsChecked="{Binding Shell.IsLogToDeviceMode, Mode=OneWay}"
+                             Theme="{StaticResource SegmentedToggle}"
+                             ToolTip.Tip="SD card logging requires USB. WiFi devices do not support SD card logging.">
+                    <ia:Interaction.Behaviors>
+                        <iac:EventTriggerBehavior EventName="Checked">
+                            <iac:InvokeCommandAction Command="{Binding SetLoggingModeCommand}"
+                                                     CommandParameter="Log to Device"/>
+                        </iac:EventTriggerBehavior>
+                    </ia:Interaction.Behaviors>
+                </RadioButton>
+            </Grid>
+        </Border>
+
+    </StackPanel>
 </UserControl>
