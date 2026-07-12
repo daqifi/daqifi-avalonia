@@ -1,29 +1,30 @@
 schema_version: 1
-plan_id: 20260712T013408-hal-flyout_host
-slug: hal-flyout_host
+plan_id: 20260712T051553-hal-keep_awake
+slug: hal-keep_awake
 kind: apply
-created_at: '2026-07-12T01:34:08.191477Z'
+created_at: '2026-07-12T05:15:53.619315Z'
 upstream_sha: null
-summary: "Port HAL concept `flyout_host` (mahapps \u2192 avalonia)"
+summary: "Port HAL concept `keep_awake` (win32 \u2192 avalonia)"
 steps:
 - id: s1
-  summary: "Translate HAL concept `flyout_host`: mahapps:FlyoutsControl \u2192 avalonia:SplitView"
+  summary: "Translate HAL concept `keep_awake`: win32:SetThreadExecutionState \u2192\
+    \ avalonia:IKeepAwakeService"
   kind: patch
   upstream_ref: null
-  downstream_target: Views/MainWindow.axaml
+  downstream_target: Services/KeepAwake/IKeepAwakeService.cs
   assigned_to: patch-author
   status: pending
   classification: null
   shard: UI
   commit_sha: null
   file: null
-  target_symbol: SplitView
+  target_symbol: IKeepAwakeService
   parent_audit_row: null
   expected_resolution: null
   notes:
-  - hal-concept:flyout_host
-  - 'prompt: .portomatic/cache/prompts/translate-hal-flyout_host.md'
-  - "on completion: run `portomatic firmware close-hal --shard UI --concept flyout_host\
+  - hal-concept:keep_awake
+  - 'prompt: .portomatic/cache/prompts/translate-hal-keep_awake.md'
+  - "on completion: run `portomatic firmware close-hal --shard UI --concept keep_awake\
     \ --relation <relation> --symbol <sym> --file <path>` \u2014 it flips the `UI`\
     \ hal_pairs entry to ported and refuses while verify gates are pending"
   divergences: []
@@ -47,7 +48,7 @@ steps:
   parent_audit_row: null
   expected_resolution: null
   notes:
-  - hal-concept:flyout_host
+  - hal-concept:keep_awake
   divergences: []
   started_at: null
   finished_at: null

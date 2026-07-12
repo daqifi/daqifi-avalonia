@@ -13,7 +13,7 @@ using System.Threading.Tasks;
 namespace Daqifi.Desktop.Migrations;
 
 // @port: Daqifi.Desktop.Migrations.AddSessionDeviceMetadata
-internal partial class AddSessionDeviceMetadata
+partial class AddSessionDeviceMetadata
 {
     // @port: Daqifi.Desktop.Migrations.AddSessionDeviceMetadata.BuildTargetModel
     protected void BuildTargetModel(ModelBuilder modelBuilder) => throw new NotImplementedException();

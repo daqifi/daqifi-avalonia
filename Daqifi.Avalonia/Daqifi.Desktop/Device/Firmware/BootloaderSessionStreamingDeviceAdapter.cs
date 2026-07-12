@@ -75,8 +75,8 @@ public class BootloaderSessionStreamingDeviceAdapter : CoreStreamingDevice
     // @port: Daqifi.Desktop.Device.Firmware.BootloaderSessionStreamingDeviceAdapter.Disconnect
     public void Disconnect() => throw new NotImplementedException();
 
-    // @port: Daqifi.Desktop.Device.Firmware.BootloaderSessionStreamingDeviceAdapter.Send
-    public void Send(IOutboundMessage<T> message) => throw new NotImplementedException();
+    // @port: Daqifi.Desktop.Device.Firmware.BootloaderSessionStreamingDeviceAdapter.Send<T>
+    public void Send<T>(IOutboundMessage<T> message) => throw new NotImplementedException();
 
     // @port: Daqifi.Desktop.Device.Firmware.BootloaderSessionStreamingDeviceAdapter.EnableChannel
     public void EnableChannel(IChannel channel) => throw new NotImplementedException();

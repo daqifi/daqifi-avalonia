@@ -13,7 +13,7 @@ using System.Threading.Tasks;
 namespace Daqifi.Desktop.Migrations;
 
 // @port: Daqifi.Desktop.Migrations.AddSamplesSessionTimeIndex
-internal partial class AddSamplesSessionTimeIndex
+partial class AddSamplesSessionTimeIndex
 {
     // @port: Daqifi.Desktop.Migrations.AddSamplesSessionTimeIndex.BuildTargetModel
     protected void BuildTargetModel(ModelBuilder modelBuilder) => throw new NotImplementedException();

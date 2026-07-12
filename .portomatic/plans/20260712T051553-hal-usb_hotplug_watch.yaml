@@ -1,30 +1,30 @@
 schema_version: 1
-plan_id: 20260712T013408-hal-main_window_chrome
-slug: hal-main_window_chrome
+plan_id: 20260712T051553-hal-usb_hotplug_watch
+slug: hal-usb_hotplug_watch
 kind: apply
-created_at: '2026-07-12T01:34:08.111703Z'
+created_at: '2026-07-12T05:15:53.552489Z'
 upstream_sha: null
-summary: "Port HAL concept `main_window_chrome` (mahapps \u2192 avalonia)"
+summary: "Port HAL concept `usb_hotplug_watch` (win32 \u2192 avalonia)"
 steps:
 - id: s1
-  summary: "Translate HAL concept `main_window_chrome`: mahapps:MetroWindow \u2192\
-    \ avalonia:Window"
+  summary: "Translate HAL concept `usb_hotplug_watch`: win32:ManagementEventWatcher\
+    \ \u2192 avalonia:IDeviceWatcher"
   kind: patch
   upstream_ref: null
-  downstream_target: Views/MainWindow.axaml
+  downstream_target: Services/DeviceWatcher/IDeviceWatcher.cs
   assigned_to: patch-author
   status: pending
   classification: null
   shard: UI
   commit_sha: null
   file: null
-  target_symbol: Window
+  target_symbol: IDeviceWatcher
   parent_audit_row: null
   expected_resolution: null
   notes:
-  - hal-concept:main_window_chrome
-  - 'prompt: .portomatic/cache/prompts/translate-hal-main_window_chrome.md'
-  - "on completion: run `portomatic firmware close-hal --shard UI --concept main_window_chrome\
+  - hal-concept:usb_hotplug_watch
+  - 'prompt: .portomatic/cache/prompts/translate-hal-usb_hotplug_watch.md'
+  - "on completion: run `portomatic firmware close-hal --shard UI --concept usb_hotplug_watch\
     \ --relation <relation> --symbol <sym> --file <path>` \u2014 it flips the `UI`\
     \ hal_pairs entry to ported and refuses while verify gates are pending"
   divergences: []
@@ -48,7 +48,7 @@ steps:
   parent_audit_row: null
   expected_resolution: null
   notes:
-  - hal-concept:main_window_chrome
+  - hal-concept:usb_hotplug_watch
   divergences: []
   started_at: null
   finished_at: null

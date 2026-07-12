@@ -29,40 +29,40 @@ namespace Daqifi.Desktop.Device.Firmware;
 public interface IFirmwareUpdateHost
 {
     // @port: Daqifi.Desktop.Device.Firmware.IFirmwareUpdateHost.SelectedDevice
-    IStreamingDevice? SelectedDevice { get; set; }
+    IStreamingDevice? SelectedDevice { get; }
 
     // @port: Daqifi.Desktop.Device.Firmware.IFirmwareUpdateHost.ConnectedDevices
-    IReadOnlyList<IStreamingDevice> ConnectedDevices { get; set; }
+    IReadOnlyList<IStreamingDevice> ConnectedDevices { get; }
 
     // @port: Daqifi.Desktop.Device.Firmware.IFirmwareUpdateHost.FirmwareFilePath
     string FirmwareFilePath { get; set; }
 
     // @port: Daqifi.Desktop.Device.Firmware.IFirmwareUpdateHost.SelectedDeviceSupportsFirmwareUpdate
-    bool SelectedDeviceSupportsFirmwareUpdate { get; set; }
+    bool SelectedDeviceSupportsFirmwareUpdate { set; }
 
     // @port: Daqifi.Desktop.Device.Firmware.IFirmwareUpdateHost.IsFirmwareUploading
     bool IsFirmwareUploading { get; set; }
 
     // @port: Daqifi.Desktop.Device.Firmware.IFirmwareUpdateHost.IsUploadComplete
-    bool IsUploadComplete { get; set; }
+    bool IsUploadComplete { set; }
 
     // @port: Daqifi.Desktop.Device.Firmware.IFirmwareUpdateHost.HasErrorOccured
-    bool HasErrorOccured { get; set; }
+    bool HasErrorOccured { set; }
 
     // @port: Daqifi.Desktop.Device.Firmware.IFirmwareUpdateHost.UploadFirmwareProgress
-    int UploadFirmwareProgress { get; set; }
+    int UploadFirmwareProgress { set; }
 
     // @port: Daqifi.Desktop.Device.Firmware.IFirmwareUpdateHost.UploadWiFiProgress
-    int UploadWiFiProgress { get; set; }
+    int UploadWiFiProgress { set; }
 
     // @port: Daqifi.Desktop.Device.Firmware.IFirmwareUpdateHost.FirmwareUpdateStatusText
-    string FirmwareUpdateStatusText { get; set; }
+    string FirmwareUpdateStatusText { set; }
 
     // @port: Daqifi.Desktop.Device.Firmware.IFirmwareUpdateHost.Notifications
-    ObservableCollection<Notifications> Notifications { get; set; }
+    ObservableCollection<Notifications> Notifications { get; }
 
     // @port: Daqifi.Desktop.Device.Firmware.IFirmwareUpdateHost.DeviceBeingUpdated
-    IStreamingDevice? DeviceBeingUpdated { get; set; }
+    IStreamingDevice? DeviceBeingUpdated { set; }
 
     // @port: Daqifi.Desktop.Device.Firmware.IFirmwareUpdateHost.RefreshNotificationCount
     void RefreshNotificationCount();

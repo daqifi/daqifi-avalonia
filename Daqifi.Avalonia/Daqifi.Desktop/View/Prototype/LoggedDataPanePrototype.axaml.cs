@@ -6,6 +6,7 @@
 // DO NOT manually delete the `// @port:` markers — they link symbols back to
 // the correspondence map.
 
+using Avalonia.Controls;
 using System;
 using System.Collections.Generic;
 using System.Threading;
@@ -17,8 +18,13 @@ namespace Daqifi.Desktop.View.Prototype;
 /// Interaction logic for LoggedDataPanePrototype.xaml
 /// </summary>
 // @port: Daqifi.Desktop.View.Prototype.LoggedDataPanePrototype
-public partial class LoggedDataPanePrototype
+public partial class LoggedDataPanePrototype : UserControl
 {
+    public LoggedDataPanePrototype()
+    {
+        InitializeComponent();
+    }
+
     private AppLogger _logger;
 
     private IDbContextFactory<LoggingContext> _loggingContext;

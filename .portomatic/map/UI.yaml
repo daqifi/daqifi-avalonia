@@ -7,925 +7,925 @@ files:
 - upstream: Daqifi.Desktop/App.xaml.cs
   downstream: Daqifi.Avalonia/Daqifi.Desktop/App.cs
   relation: subset
-  notes: auto-mapped by portomatic scaffold
+  notes: ' (scaffolded)'
   rationale: null
   last_synced_sha: null
 - upstream: Daqifi.Desktop/Channel/AbstractChannel.cs
   downstream: Daqifi.Avalonia/Daqifi.Desktop/Channel/AbstractChannel.cs
   relation: subset
-  notes: auto-mapped by portomatic scaffold
+  notes: ' (scaffolded)'
   rationale: null
   last_synced_sha: null
 - upstream: Daqifi.Desktop/Channel/AnalogChannel.cs
   downstream: Daqifi.Avalonia/Daqifi.Desktop/Channel/AnalogChannel.cs
   relation: subset
-  notes: auto-mapped by portomatic scaffold
+  notes: ' (scaffolded)'
   rationale: null
   last_synced_sha: null
 - upstream: Daqifi.Desktop/Channel/Channel.cs
   downstream: Daqifi.Avalonia/Daqifi.Desktop/Channel/Channel.cs
   relation: subset
-  notes: auto-mapped by portomatic scaffold
+  notes: ' (scaffolded)'
   rationale: null
   last_synced_sha: null
 - upstream: Daqifi.Desktop/Channel/ChannelColorManager.cs
   downstream: Daqifi.Avalonia/Daqifi.Desktop/Channel/ChannelColorManager.cs
   relation: subset
-  notes: auto-mapped by portomatic scaffold
+  notes: ' (scaffolded)'
   rationale: null
   last_synced_sha: null
 - upstream: Daqifi.Desktop/Channel/DataSample.cs
   downstream: Daqifi.Avalonia/Daqifi.Desktop/Channel/DataSample.cs
   relation: subset
-  notes: auto-mapped by portomatic scaffold
+  notes: ' (scaffolded)'
   rationale: null
   last_synced_sha: null
 - upstream: Daqifi.Desktop/Channel/DigitalChannel.cs
   downstream: Daqifi.Avalonia/Daqifi.Desktop/Channel/DigitalChannel.cs
   relation: subset
-  notes: auto-mapped by portomatic scaffold
+  notes: ' (scaffolded)'
   rationale: null
   last_synced_sha: null
 - upstream: Daqifi.Desktop/Channel/IChannel.cs
   downstream: Daqifi.Avalonia/Daqifi.Desktop/Channel/IChannel.cs
   relation: subset
-  notes: auto-mapped by portomatic scaffold
+  notes: ' (scaffolded)'
   rationale: null
   last_synced_sha: null
 - upstream: Daqifi.Desktop/Channel/MaterialColors.cs
   downstream: Daqifi.Avalonia/Daqifi.Desktop/Channel/MaterialColors.cs
   relation: subset
-  notes: auto-mapped by portomatic scaffold
+  notes: ' (scaffolded)'
   rationale: null
   last_synced_sha: null
 - upstream: Daqifi.Desktop/Commands/CompositeCommand.cs
   downstream: Daqifi.Avalonia/Daqifi.Desktop/Commands/CompositeCommand.cs
   relation: subset
-  notes: auto-mapped by portomatic scaffold
+  notes: ' (scaffolded)'
   rationale: null
   last_synced_sha: null
 - upstream: Daqifi.Desktop/Commands/HostCommands.cs
   downstream: Daqifi.Avalonia/Daqifi.Desktop/Commands/HostCommands.cs
   relation: subset
-  notes: auto-mapped by portomatic scaffold
+  notes: ' (scaffolded)'
   rationale: null
   last_synced_sha: null
 - upstream: Daqifi.Desktop/Commands/IActiveAware.cs
   downstream: Daqifi.Avalonia/Daqifi.Desktop/Commands/IActiveAware.cs
   relation: subset
-  notes: auto-mapped by portomatic scaffold
+  notes: ' (scaffolded)'
   rationale: null
   last_synced_sha: null
 - upstream: Daqifi.Desktop/Commands/WeakEventHandler.cs
   downstream: Daqifi.Avalonia/Daqifi.Desktop/Commands/WeakEventHandler.cs
   relation: subset
-  notes: auto-mapped by portomatic scaffold
+  notes: ' (scaffolded)'
   rationale: null
   last_synced_sha: null
 - upstream: Daqifi.Desktop/Configuration/FirewallManager.cs
   downstream: Daqifi.Avalonia/Daqifi.Desktop/Configuration/FirewallManager.cs
   relation: subset
-  notes: auto-mapped by portomatic scaffold
+  notes: ' (scaffolded)'
   rationale: null
   last_synced_sha: null
 - upstream: Daqifi.Desktop/Configuration/IColorable.cs
   downstream: Daqifi.Avalonia/Daqifi.Desktop/Configuration/IColorable.cs
   relation: subset
-  notes: auto-mapped by portomatic scaffold
+  notes: ' (scaffolded)'
   rationale: null
   last_synced_sha: null
 - upstream: Daqifi.Desktop/ConnectionManager.cs
   downstream: Daqifi.Avalonia/Daqifi.Desktop/ConnectionManager.cs
   relation: subset
-  notes: auto-mapped by portomatic scaffold
+  notes: ' (scaffolded)'
   rationale: null
   last_synced_sha: null
 - upstream: Daqifi.Desktop/Converters/BoolAndToVisibilityConverter.cs
   downstream: Daqifi.Avalonia/Daqifi.Desktop/Converters/BoolAndToVisibilityConverter.cs
   relation: subset
-  notes: auto-mapped by portomatic scaffold
+  notes: ' (scaffolded)'
   rationale: null
   last_synced_sha: null
 - upstream: Daqifi.Desktop/Converters/BoolToActiveStatusConverter.cs
   downstream: Daqifi.Avalonia/Daqifi.Desktop/Converters/BoolToActiveStatusConverter.cs
   relation: subset
-  notes: auto-mapped by portomatic scaffold
+  notes: ' (scaffolded)'
   rationale: null
   last_synced_sha: null
 - upstream: Daqifi.Desktop/Converters/BoolToConnectionStatusConverter.cs
   downstream: Daqifi.Avalonia/Daqifi.Desktop/Converters/BoolToConnectionStatusConverter.cs
   relation: subset
-  notes: auto-mapped by portomatic scaffold
+  notes: ' (scaffolded)'
   rationale: null
   last_synced_sha: null
 - upstream: Daqifi.Desktop/Converters/BoolToStatusColorConverter.cs
   downstream: Daqifi.Avalonia/Daqifi.Desktop/Converters/BoolToStatusColorConverter.cs
   relation: subset
-  notes: auto-mapped by portomatic scaffold
+  notes: ' (scaffolded)'
   rationale: null
   last_synced_sha: null
 - upstream: Daqifi.Desktop/Converters/BrushColorMatchConverter.cs
   downstream: Daqifi.Avalonia/Daqifi.Desktop/Converters/BrushColorMatchConverter.cs
   relation: subset
-  notes: auto-mapped by portomatic scaffold
+  notes: ' (scaffolded)'
   rationale: null
   last_synced_sha: null
 - upstream: Daqifi.Desktop/Converters/ConnectionTypeToColorConverter.cs
   downstream: Daqifi.Avalonia/Daqifi.Desktop/Converters/ConnectionTypeToColorConverter.cs
   relation: subset
-  notes: auto-mapped by portomatic scaffold
+  notes: ' (scaffolded)'
   rationale: null
   last_synced_sha: null
 - upstream: Daqifi.Desktop/Converters/ConnectionTypeToUsbConverter.cs
   downstream: Daqifi.Avalonia/Daqifi.Desktop/Converters/ConnectionTypeToUsbConverter.cs
   relation: subset
-  notes: auto-mapped by portomatic scaffold
+  notes: ' (scaffolded)'
   rationale: null
   last_synced_sha: null
 - upstream: Daqifi.Desktop/Converters/InvertedBoolToVisibilityConverter.cs
   downstream: Daqifi.Avalonia/Daqifi.Desktop/Converters/InvertedBoolToVisibilityConverter.cs
   relation: subset
-  notes: auto-mapped by portomatic scaffold
+  notes: ' (scaffolded)'
   rationale: null
   last_synced_sha: null
 - upstream: Daqifi.Desktop/Converters/ListToStringConverter.cs
   downstream: Daqifi.Avalonia/Daqifi.Desktop/Converters/ListToStringConverter.cs
   relation: subset
-  notes: auto-mapped by portomatic scaffold
+  notes: ' (scaffolded)'
   rationale: null
   last_synced_sha: null
 - upstream: Daqifi.Desktop/Converters/NotNullToVisibilityConverter.cs
   downstream: Daqifi.Avalonia/Daqifi.Desktop/Converters/NotNullToVisibilityConverter.cs
   relation: subset
-  notes: auto-mapped by portomatic scaffold
+  notes: ' (scaffolded)'
   rationale: null
   last_synced_sha: null
 - upstream: Daqifi.Desktop/Converters/OxyColorToBrushConverter.cs
   downstream: Daqifi.Avalonia/Daqifi.Desktop/Converters/OxyColorToBrushConverter.cs
   relation: subset
-  notes: auto-mapped by portomatic scaffold
+  notes: ' (scaffolded)'
   rationale: null
   last_synced_sha: null
 - upstream: Daqifi.Desktop/Device/AbstractStreamingDevice.cs
   downstream: Daqifi.Avalonia/Daqifi.Desktop/Device/AbstractStreamingDevice.cs
   relation: subset
-  notes: auto-mapped by portomatic scaffold
+  notes: ' (scaffolded)'
   rationale: null
   last_synced_sha: null
 - upstream: Daqifi.Desktop/Device/DeviceMessage.cs
   downstream: Daqifi.Avalonia/Daqifi.Desktop/Device/DeviceMessage.cs
   relation: subset
-  notes: auto-mapped by portomatic scaffold
+  notes: ' (scaffolded)'
   rationale: null
   last_synced_sha: null
 - upstream: Daqifi.Desktop/Device/Firmware/BootloaderDiscoveredEventArgs.cs
   downstream: Daqifi.Avalonia/Daqifi.Desktop/Device/Firmware/BootloaderDiscoveredEventArgs.cs
   relation: subset
-  notes: auto-mapped by portomatic scaffold
+  notes: ' (scaffolded)'
   rationale: null
   last_synced_sha: null
 - upstream: Daqifi.Desktop/Device/Firmware/BootloaderHoldDroppedEventArgs.cs
   downstream: Daqifi.Avalonia/Daqifi.Desktop/Device/Firmware/BootloaderHoldDroppedEventArgs.cs
   relation: subset
-  notes: auto-mapped by portomatic scaffold
+  notes: ' (scaffolded)'
   rationale: null
   last_synced_sha: null
 - upstream: Daqifi.Desktop/Device/Firmware/BootloaderHoldService.cs
   downstream: Daqifi.Avalonia/Daqifi.Desktop/Device/Firmware/BootloaderHoldService.cs
   relation: subset
-  notes: auto-mapped by portomatic scaffold
+  notes: ' (scaffolded)'
   rationale: null
   last_synced_sha: null
 - upstream: Daqifi.Desktop/Device/Firmware/BootloaderSessionStreamingDeviceAdapter.cs
   downstream: Daqifi.Avalonia/Daqifi.Desktop/Device/Firmware/BootloaderSessionStreamingDeviceAdapter.cs
   relation: subset
-  notes: auto-mapped by portomatic scaffold
+  notes: ' (scaffolded)'
   rationale: null
   last_synced_sha: null
 - upstream: Daqifi.Desktop/Device/Firmware/BootloaderWatcher.cs
   downstream: Daqifi.Avalonia/Daqifi.Desktop/Device/Firmware/BootloaderWatcher.cs
   relation: subset
-  notes: auto-mapped by portomatic scaffold
+  notes: ' (scaffolded)'
   rationale: null
   last_synced_sha: null
 - upstream: Daqifi.Desktop/Device/Firmware/FirmwareUpdateCoordinator.cs
   downstream: Daqifi.Avalonia/Daqifi.Desktop/Device/Firmware/FirmwareUpdateCoordinator.cs
   relation: subset
-  notes: auto-mapped by portomatic scaffold
+  notes: ' (scaffolded)'
   rationale: null
   last_synced_sha: null
 - upstream: Daqifi.Desktop/Device/Firmware/FirmwareUpdateServiceConfig.cs
   downstream: Daqifi.Avalonia/Daqifi.Desktop/Device/Firmware/FirmwareUpdateServiceConfig.cs
   relation: subset
-  notes: auto-mapped by portomatic scaffold
+  notes: ' (scaffolded)'
   rationale: null
   last_synced_sha: null
 - upstream: Daqifi.Desktop/Device/Firmware/HeldBootloader.cs
   downstream: Daqifi.Avalonia/Daqifi.Desktop/Device/Firmware/HeldBootloader.cs
   relation: subset
-  notes: auto-mapped by portomatic scaffold
+  notes: ' (scaffolded)'
   rationale: null
   last_synced_sha: null
 - upstream: Daqifi.Desktop/Device/Firmware/HidBootloaderDiscovery.cs
   downstream: Daqifi.Avalonia/Daqifi.Desktop/Device/Firmware/HidBootloaderDiscovery.cs
   relation: subset
-  notes: auto-mapped by portomatic scaffold
+  notes: ' (scaffolded)'
   rationale: null
   last_synced_sha: null
 - upstream: Daqifi.Desktop/Device/Firmware/IBootloaderDiscovery.cs
   downstream: Daqifi.Avalonia/Daqifi.Desktop/Device/Firmware/IBootloaderDiscovery.cs
   relation: subset
-  notes: auto-mapped by portomatic scaffold
+  notes: ' (scaffolded)'
   rationale: null
   last_synced_sha: null
 - upstream: Daqifi.Desktop/Device/Firmware/IBootloaderHoldService.cs
   downstream: Daqifi.Avalonia/Daqifi.Desktop/Device/Firmware/IBootloaderHoldService.cs
   relation: subset
-  notes: auto-mapped by portomatic scaffold
+  notes: ' (scaffolded)'
   rationale: null
   last_synced_sha: null
 - upstream: Daqifi.Desktop/Device/Firmware/IBootloaderWatcher.cs
   downstream: Daqifi.Avalonia/Daqifi.Desktop/Device/Firmware/IBootloaderWatcher.cs
   relation: subset
-  notes: auto-mapped by portomatic scaffold
+  notes: ' (scaffolded)'
   rationale: null
   last_synced_sha: null
 - upstream: Daqifi.Desktop/Device/Firmware/IFirmwareUpdateHost.cs
   downstream: Daqifi.Avalonia/Daqifi.Desktop/Device/Firmware/IFirmwareUpdateHost.cs
   relation: subset
-  notes: auto-mapped by portomatic scaffold
+  notes: ' (scaffolded)'
   rationale: null
   last_synced_sha: null
 - upstream: Daqifi.Desktop/Device/IDevice.cs
   downstream: Daqifi.Avalonia/Daqifi.Desktop/Device/IDevice.cs
   relation: subset
-  notes: auto-mapped by portomatic scaffold
+  notes: ' (scaffolded)'
   rationale: null
   last_synced_sha: null
 - upstream: Daqifi.Desktop/Device/IStreamingDevice.cs
   downstream: Daqifi.Avalonia/Daqifi.Desktop/Device/IStreamingDevice.cs
   relation: subset
-  notes: auto-mapped by portomatic scaffold
+  notes: ' (scaffolded)'
   rationale: null
   last_synced_sha: null
 - upstream: Daqifi.Desktop/Device/SerialDevice/SerialStreamingDevice.cs
   downstream: Daqifi.Avalonia/Daqifi.Desktop/Device/SerialDevice/SerialStreamingDevice.cs
   relation: subset
-  notes: auto-mapped by portomatic scaffold
+  notes: ' (scaffolded)'
   rationale: null
   last_synced_sha: null
 - upstream: Daqifi.Desktop/Device/WiFiDevice/DaqifiStreamingDevice.cs
   downstream: Daqifi.Avalonia/Daqifi.Desktop/Device/WiFiDevice/DaqifiStreamingDevice.cs
   relation: subset
-  notes: auto-mapped by portomatic scaffold
+  notes: ' (scaffolded)'
   rationale: null
   last_synced_sha: null
 - upstream: Daqifi.Desktop/DialogService/DialogService.cs
   downstream: Daqifi.Avalonia/Daqifi.Desktop/DialogService/DialogService.cs
   relation: subset
-  notes: auto-mapped by portomatic scaffold
+  notes: ' (scaffolded)'
   rationale: null
   last_synced_sha: null
 - upstream: Daqifi.Desktop/DialogService/IDialogService.cs
   downstream: Daqifi.Avalonia/Daqifi.Desktop/DialogService/IDialogService.cs
   relation: subset
-  notes: auto-mapped by portomatic scaffold
+  notes: ' (scaffolded)'
   rationale: null
   last_synced_sha: null
 - upstream: Daqifi.Desktop/DialogService/ServiceLocator.cs
   downstream: Daqifi.Avalonia/Daqifi.Desktop/DialogService/ServiceLocator.cs
   relation: subset
-  notes: auto-mapped by portomatic scaffold
+  notes: ' (scaffolded)'
   rationale: null
   last_synced_sha: null
 - upstream: Daqifi.Desktop/DiskSpace/DiskSpaceCheckResult.cs
   downstream: Daqifi.Avalonia/Daqifi.Desktop/DiskSpace/DiskSpaceCheckResult.cs
   relation: subset
-  notes: auto-mapped by portomatic scaffold
+  notes: ' (scaffolded)'
   rationale: null
   last_synced_sha: null
 - upstream: Daqifi.Desktop/DiskSpace/DiskSpaceEventArgs.cs
   downstream: Daqifi.Avalonia/Daqifi.Desktop/DiskSpace/DiskSpaceEventArgs.cs
   relation: subset
-  notes: auto-mapped by portomatic scaffold
+  notes: ' (scaffolded)'
   rationale: null
   last_synced_sha: null
 - upstream: Daqifi.Desktop/DiskSpace/DiskSpaceLevel.cs
   downstream: Daqifi.Avalonia/Daqifi.Desktop/DiskSpace/DiskSpaceLevel.cs
   relation: subset
-  notes: auto-mapped by portomatic scaffold
+  notes: ' (scaffolded)'
   rationale: null
   last_synced_sha: null
 - upstream: Daqifi.Desktop/DiskSpace/DiskSpaceMonitor.cs
   downstream: Daqifi.Avalonia/Daqifi.Desktop/DiskSpace/DiskSpaceMonitor.cs
   relation: subset
-  notes: auto-mapped by portomatic scaffold
+  notes: ' (scaffolded)'
   rationale: null
   last_synced_sha: null
 - upstream: Daqifi.Desktop/DiskSpace/DiskSpaceMonitorCoordinator.cs
   downstream: Daqifi.Avalonia/Daqifi.Desktop/DiskSpace/DiskSpaceMonitorCoordinator.cs
   relation: subset
-  notes: auto-mapped by portomatic scaffold
+  notes: ' (scaffolded)'
   rationale: null
   last_synced_sha: null
 - upstream: Daqifi.Desktop/DiskSpace/DiskSpaceStartDecision.cs
   downstream: Daqifi.Avalonia/Daqifi.Desktop/DiskSpace/DiskSpaceStartDecision.cs
   relation: subset
-  notes: auto-mapped by portomatic scaffold
+  notes: ' (scaffolded)'
   rationale: null
   last_synced_sha: null
 - upstream: Daqifi.Desktop/DiskSpace/IDiskSpaceMonitor.cs
   downstream: Daqifi.Avalonia/Daqifi.Desktop/DiskSpace/IDiskSpaceMonitor.cs
   relation: subset
-  notes: auto-mapped by portomatic scaffold
+  notes: ' (scaffolded)'
   rationale: null
   last_synced_sha: null
 - upstream: Daqifi.Desktop/DiskSpace/IDiskSpaceMonitorHost.cs
   downstream: Daqifi.Avalonia/Daqifi.Desktop/DiskSpace/IDiskSpaceMonitorHost.cs
   relation: subset
-  notes: auto-mapped by portomatic scaffold
+  notes: ' (scaffolded)'
   rationale: null
   last_synced_sha: null
 - upstream: Daqifi.Desktop/Exporter/LoggingSessionSampleSource.cs
   downstream: Daqifi.Avalonia/Daqifi.Desktop/Exporter/LoggingSessionSampleSource.cs
   relation: subset
-  notes: auto-mapped by portomatic scaffold
+  notes: ' (scaffolded)'
   rationale: null
   last_synced_sha: null
 - upstream: Daqifi.Desktop/Exporter/OptimizedLoggingSessionExporter.cs
   downstream: Daqifi.Avalonia/Daqifi.Desktop/Exporter/OptimizedLoggingSessionExporter.cs
   relation: subset
-  notes: auto-mapped by portomatic scaffold
+  notes: ' (scaffolded)'
   rationale: null
   last_synced_sha: null
 - upstream: Daqifi.Desktop/Helpers/BooleanConverter.cs
   downstream: Daqifi.Avalonia/Daqifi.Desktop/Helpers/BooleanConverter.cs
   relation: subset
-  notes: auto-mapped by portomatic scaffold
+  notes: ' (scaffolded)'
   rationale: null
   last_synced_sha: null
 - upstream: Daqifi.Desktop/Helpers/BooleanToInverseBoolConverter.cs
   downstream: Daqifi.Avalonia/Daqifi.Desktop/Helpers/BooleanToInverseBoolConverter.cs
   relation: subset
-  notes: auto-mapped by portomatic scaffold
+  notes: ' (scaffolded)'
   rationale: null
   last_synced_sha: null
 - upstream: Daqifi.Desktop/Helpers/BooleanToVisibilityConverter.cs
   downstream: Daqifi.Avalonia/Daqifi.Desktop/Helpers/BooleanToVisibilityConverter.cs
   relation: subset
-  notes: auto-mapped by portomatic scaffold
+  notes: ' (scaffolded)'
   rationale: null
   last_synced_sha: null
 - upstream: Daqifi.Desktop/Helpers/EnumDescriptionConverter.cs
   downstream: Daqifi.Avalonia/Daqifi.Desktop/Helpers/EnumDescriptionConverter.cs
   relation: subset
-  notes: auto-mapped by portomatic scaffold
+  notes: ' (scaffolded)'
   rationale: null
   last_synced_sha: null
 - upstream: Daqifi.Desktop/Helpers/IntToVisibilityConverter.cs
   downstream: Daqifi.Avalonia/Daqifi.Desktop/Helpers/IntToVisibilityConverter.cs
   relation: subset
-  notes: auto-mapped by portomatic scaffold
+  notes: ' (scaffolded)'
   rationale: null
   last_synced_sha: null
 - upstream: Daqifi.Desktop/Helpers/MinMaxDownsampler.cs
   downstream: Daqifi.Avalonia/Daqifi.Desktop/Helpers/MinMaxDownsampler.cs
   relation: subset
-  notes: auto-mapped by portomatic scaffold
+  notes: ' (scaffolded)'
   rationale: null
   last_synced_sha: null
 - upstream: Daqifi.Desktop/Helpers/MyMultiValueConverter.cs
   downstream: Daqifi.Avalonia/Daqifi.Desktop/Helpers/MyMultiValueConverter.cs
   relation: subset
-  notes: auto-mapped by portomatic scaffold
+  notes: ' (scaffolded)'
   rationale: null
   last_synced_sha: null
 - upstream: Daqifi.Desktop/Helpers/NaturalSortHelper.cs
   downstream: Daqifi.Avalonia/Daqifi.Desktop/Helpers/NaturalSortHelper.cs
   relation: subset
-  notes: auto-mapped by portomatic scaffold
+  notes: ' (scaffolded)'
   rationale: null
   last_synced_sha: null
 - upstream: Daqifi.Desktop/Helpers/OxyPlotDarkTheme.cs
   downstream: Daqifi.Avalonia/Daqifi.Desktop/Helpers/OxyPlotDarkTheme.cs
   relation: subset
-  notes: auto-mapped by portomatic scaffold
+  notes: ' (scaffolded)'
   rationale: null
   last_synced_sha: null
 - upstream: Daqifi.Desktop/Helpers/VersionHelper.cs
   downstream: Daqifi.Avalonia/Daqifi.Desktop/Helpers/VersionHelper.cs
   relation: subset
-  notes: auto-mapped by portomatic scaffold
+  notes: ' (scaffolded)'
   rationale: null
   last_synced_sha: null
 - upstream: Daqifi.Desktop/Loggers/AppLoggerLoggerProvider.cs
   downstream: Daqifi.Avalonia/Daqifi.Desktop/Loggers/AppLoggerLoggerProvider.cs
   relation: subset
-  notes: auto-mapped by portomatic scaffold
+  notes: ' (scaffolded)'
   rationale: null
   last_synced_sha: null
 - upstream: Daqifi.Desktop/Loggers/CsvLogger.cs
   downstream: Daqifi.Avalonia/Daqifi.Desktop/Loggers/CsvLogger.cs
   relation: subset
-  notes: auto-mapped by portomatic scaffold
+  notes: ' (scaffolded)'
   rationale: null
   last_synced_sha: null
 - upstream: Daqifi.Desktop/Loggers/DatabaseLogger.cs
   downstream: Daqifi.Avalonia/Daqifi.Desktop/Loggers/DatabaseLogger.cs
   relation: subset
-  notes: auto-mapped by portomatic scaffold
+  notes: ' (scaffolded)'
   rationale: null
   last_synced_sha: null
 - upstream: Daqifi.Desktop/Loggers/DatabaseMigrator.cs
   downstream: Daqifi.Avalonia/Daqifi.Desktop/Loggers/DatabaseMigrator.cs
   relation: subset
-  notes: auto-mapped by portomatic scaffold
+  notes: ' (scaffolded)'
   rationale: null
   last_synced_sha: null
 - upstream: Daqifi.Desktop/Loggers/DeviceLegendGroup.cs
   downstream: Daqifi.Avalonia/Daqifi.Desktop/Loggers/DeviceLegendGroup.cs
   relation: subset
-  notes: auto-mapped by portomatic scaffold
+  notes: ' (scaffolded)'
   rationale: null
   last_synced_sha: null
 - upstream: Daqifi.Desktop/Loggers/ILogger.cs
   downstream: Daqifi.Avalonia/Daqifi.Desktop/Loggers/ILogger.cs
   relation: subset
-  notes: auto-mapped by portomatic scaffold
+  notes: ' (scaffolded)'
   rationale: null
   last_synced_sha: null
 - upstream: Daqifi.Desktop/Loggers/ImportTimestampQuality.cs
   downstream: Daqifi.Avalonia/Daqifi.Desktop/Loggers/ImportTimestampQuality.cs
   relation: subset
-  notes: auto-mapped by portomatic scaffold
+  notes: ' (scaffolded)'
   rationale: null
   last_synced_sha: null
 - upstream: Daqifi.Desktop/Loggers/LoggedSeriesLegendItem.cs
   downstream: Daqifi.Avalonia/Daqifi.Desktop/Loggers/LoggedSeriesLegendItem.cs
   relation: subset
-  notes: auto-mapped by portomatic scaffold
+  notes: ' (scaffolded)'
   rationale: null
   last_synced_sha: null
 - upstream: Daqifi.Desktop/Loggers/LoggingContext.cs
   downstream: Daqifi.Avalonia/Daqifi.Desktop/Loggers/LoggingContext.cs
   relation: subset
-  notes: auto-mapped by portomatic scaffold
+  notes: ' (scaffolded)'
   rationale: null
   last_synced_sha: null
 - upstream: Daqifi.Desktop/Loggers/LoggingContextDesignTimeFactory.cs
   downstream: Daqifi.Avalonia/Daqifi.Desktop/Loggers/LoggingContextDesignTimeFactory.cs
   relation: subset
-  notes: auto-mapped by portomatic scaffold
+  notes: ' (scaffolded)'
   rationale: null
   last_synced_sha: null
 - upstream: Daqifi.Desktop/Loggers/LoggingManager.cs
   downstream: Daqifi.Avalonia/Daqifi.Desktop/Loggers/LoggingManager.cs
   relation: subset
-  notes: auto-mapped by portomatic scaffold
+  notes: ' (scaffolded)'
   rationale: null
   last_synced_sha: null
 - upstream: Daqifi.Desktop/Loggers/LoggingSession.cs
   downstream: Daqifi.Avalonia/Daqifi.Desktop/Loggers/LoggingSession.cs
   relation: subset
-  notes: auto-mapped by portomatic scaffold
+  notes: ' (scaffolded)'
   rationale: null
   last_synced_sha: null
 - upstream: Daqifi.Desktop/Loggers/MinimapPlotComponents.cs
   downstream: Daqifi.Avalonia/Daqifi.Desktop/Loggers/MinimapPlotComponents.cs
   relation: subset
-  notes: auto-mapped by portomatic scaffold
+  notes: ' (scaffolded)'
   rationale: null
   last_synced_sha: null
 - upstream: Daqifi.Desktop/Loggers/PlotLogger.cs
   downstream: Daqifi.Avalonia/Daqifi.Desktop/Loggers/PlotLogger.cs
   relation: subset
-  notes: auto-mapped by portomatic scaffold
+  notes: ' (scaffolded)'
   rationale: null
   last_synced_sha: null
 - upstream: Daqifi.Desktop/Loggers/PlotModelFactory.cs
   downstream: Daqifi.Avalonia/Daqifi.Desktop/Loggers/PlotModelFactory.cs
   relation: subset
-  notes: auto-mapped by portomatic scaffold
+  notes: ' (scaffolded)'
   rationale: null
   last_synced_sha: null
 - upstream: Daqifi.Desktop/Loggers/SdCardSessionImporter.cs
   downstream: Daqifi.Avalonia/Daqifi.Desktop/Loggers/SdCardSessionImporter.cs
   relation: subset
-  notes: auto-mapped by portomatic scaffold
+  notes: ' (scaffolded)'
   rationale: null
   last_synced_sha: null
 - upstream: Daqifi.Desktop/Loggers/SessionDataRepository.cs
   downstream: Daqifi.Avalonia/Daqifi.Desktop/Loggers/SessionDataRepository.cs
   relation: subset
-  notes: auto-mapped by portomatic scaffold
+  notes: ' (scaffolded)'
   rationale: null
   last_synced_sha: null
 - upstream: Daqifi.Desktop/Loggers/SessionDeviceMetadata.cs
   downstream: Daqifi.Avalonia/Daqifi.Desktop/Loggers/SessionDeviceMetadata.cs
   relation: subset
-  notes: auto-mapped by portomatic scaffold
+  notes: ' (scaffolded)'
   rationale: null
   last_synced_sha: null
 - upstream: Daqifi.Desktop/Loggers/SessionSampleWriter.cs
   downstream: Daqifi.Avalonia/Daqifi.Desktop/Loggers/SessionSampleWriter.cs
   relation: subset
-  notes: auto-mapped by portomatic scaffold
+  notes: ' (scaffolded)'
   rationale: null
   last_synced_sha: null
 - upstream: Daqifi.Desktop/Loggers/SummaryLogger.cs
   downstream: Daqifi.Avalonia/Daqifi.Desktop/Loggers/SummaryLogger.cs
   relation: subset
-  notes: auto-mapped by portomatic scaffold
+  notes: ' (scaffolded)'
   rationale: null
   last_synced_sha: null
 - upstream: Daqifi.Desktop/Loggers/TimestampGapDetector.cs
   downstream: Daqifi.Avalonia/Daqifi.Desktop/Loggers/TimestampGapDetector.cs
   relation: subset
-  notes: auto-mapped by portomatic scaffold
+  notes: ' (scaffolded)'
   rationale: null
   last_synced_sha: null
 - upstream: Daqifi.Desktop/MainWindow.xaml.cs
-  downstream: Daqifi.Avalonia/Daqifi.Desktop/MainWindow.cs
+  downstream: Daqifi.Avalonia/Daqifi.Desktop/MainWindow.axaml.cs
   relation: subset
-  notes: auto-mapped by portomatic scaffold
+  notes: ' (scaffolded)'
   rationale: null
   last_synced_sha: null
 - upstream: Daqifi.Desktop/Migrations/20250812090000_InitialSQLiteMigration.Designer.cs
   downstream: Daqifi.Avalonia/Daqifi.Desktop/Migrations/20250812090000_InitialSQLiteMigration.Designer.cs
   relation: subset
-  notes: auto-mapped by portomatic scaffold
+  notes: ' (scaffolded)'
   rationale: null
   last_synced_sha: null
 - upstream: Daqifi.Desktop/Migrations/20250812090000_InitialSQLiteMigration.cs
   downstream: Daqifi.Avalonia/Daqifi.Desktop/Migrations/20250812090000_InitialSQLiteMigration.cs
   relation: subset
-  notes: auto-mapped by portomatic scaffold
+  notes: ' (scaffolded)'
   rationale: null
   last_synced_sha: null
 - upstream: Daqifi.Desktop/Migrations/20250812100000_AddSamplesSessionTimeIndex.Designer.cs
   downstream: Daqifi.Avalonia/Daqifi.Desktop/Migrations/20250812100000_AddSamplesSessionTimeIndex.Designer.cs
   relation: subset
-  notes: auto-mapped by portomatic scaffold
+  notes: ' (scaffolded)'
   rationale: null
   last_synced_sha: null
 - upstream: Daqifi.Desktop/Migrations/20250812100000_AddSamplesSessionTimeIndex.cs
   downstream: Daqifi.Avalonia/Daqifi.Desktop/Migrations/20250812100000_AddSamplesSessionTimeIndex.cs
   relation: subset
-  notes: auto-mapped by portomatic scaffold
+  notes: ' (scaffolded)'
   rationale: null
   last_synced_sha: null
 - upstream: Daqifi.Desktop/Migrations/20260414120000_AddSessionDeviceMetadata.Designer.cs
   downstream: Daqifi.Avalonia/Daqifi.Desktop/Migrations/20260414120000_AddSessionDeviceMetadata.Designer.cs
   relation: subset
-  notes: auto-mapped by portomatic scaffold
+  notes: ' (scaffolded)'
   rationale: null
   last_synced_sha: null
 - upstream: Daqifi.Desktop/Migrations/20260414120000_AddSessionDeviceMetadata.cs
   downstream: Daqifi.Avalonia/Daqifi.Desktop/Migrations/20260414120000_AddSessionDeviceMetadata.cs
   relation: subset
-  notes: auto-mapped by portomatic scaffold
+  notes: ' (scaffolded)'
   rationale: null
   last_synced_sha: null
 - upstream: Daqifi.Desktop/Migrations/20260415000000_AddSessionSampleCount.Designer.cs
   downstream: Daqifi.Avalonia/Daqifi.Desktop/Migrations/20260415000000_AddSessionSampleCount.Designer.cs
   relation: subset
-  notes: auto-mapped by portomatic scaffold
+  notes: ' (scaffolded)'
   rationale: null
   last_synced_sha: null
 - upstream: Daqifi.Desktop/Migrations/20260415000000_AddSessionSampleCount.cs
   downstream: Daqifi.Avalonia/Daqifi.Desktop/Migrations/20260415000000_AddSessionSampleCount.cs
   relation: subset
-  notes: auto-mapped by portomatic scaffold
+  notes: ' (scaffolded)'
   rationale: null
   last_synced_sha: null
 - upstream: Daqifi.Desktop/Migrations/LoggingContextModelSnapshot.cs
   downstream: Daqifi.Avalonia/Daqifi.Desktop/Migrations/LoggingContextModelSnapshot.cs
   relation: subset
-  notes: auto-mapped by portomatic scaffold
+  notes: ' (scaffolded)'
   rationale: null
   last_synced_sha: null
 - upstream: Daqifi.Desktop/Models/AddProfileModel.cs
   downstream: Daqifi.Avalonia/Daqifi.Desktop/Models/AddProfileModel.cs
   relation: subset
-  notes: auto-mapped by portomatic scaffold
+  notes: ' (scaffolded)'
   rationale: null
   last_synced_sha: null
 - upstream: Daqifi.Desktop/Models/DaqifiSettings.cs
   downstream: Daqifi.Avalonia/Daqifi.Desktop/Models/DaqifiSettings.cs
   relation: subset
-  notes: auto-mapped by portomatic scaffold
+  notes: ' (scaffolded)'
   rationale: null
   last_synced_sha: null
 - upstream: Daqifi.Desktop/Models/DebugDataModel.cs
   downstream: Daqifi.Avalonia/Daqifi.Desktop/Models/DebugDataModel.cs
   relation: subset
-  notes: auto-mapped by portomatic scaffold
+  notes: ' (scaffolded)'
   rationale: null
   last_synced_sha: null
 - upstream: Daqifi.Desktop/Models/FirmwareOption.cs
   downstream: Daqifi.Avalonia/Daqifi.Desktop/Models/FirmwareOption.cs
   relation: subset
-  notes: auto-mapped by portomatic scaffold
+  notes: ' (scaffolded)'
   rationale: null
   last_synced_sha: null
 - upstream: Daqifi.Desktop/Models/LoggingMode.cs
   downstream: Daqifi.Avalonia/Daqifi.Desktop/Models/LoggingMode.cs
   relation: subset
-  notes: auto-mapped by portomatic scaffold
+  notes: ' (scaffolded)'
   rationale: null
   last_synced_sha: null
 - upstream: Daqifi.Desktop/Models/Notifications.cs
   downstream: Daqifi.Avalonia/Daqifi.Desktop/Models/Notifications.cs
   relation: subset
-  notes: auto-mapped by portomatic scaffold
+  notes: ' (scaffolded)'
   rationale: null
   last_synced_sha: null
 - upstream: Daqifi.Desktop/Models/SdCardFile.cs
   downstream: Daqifi.Avalonia/Daqifi.Desktop/Models/SdCardFile.cs
   relation: subset
-  notes: auto-mapped by portomatic scaffold
+  notes: ' (scaffolded)'
   rationale: null
   last_synced_sha: null
 - upstream: Daqifi.Desktop/Services/AdminChecker.cs
   downstream: Daqifi.Avalonia/Daqifi.Desktop/Services/AdminChecker.cs
   relation: subset
-  notes: auto-mapped by portomatic scaffold
+  notes: ' (scaffolded)'
   rationale: null
   last_synced_sha: null
 - upstream: Daqifi.Desktop/Services/MessageBoxService.cs
   downstream: Daqifi.Avalonia/Daqifi.Desktop/Services/MessageBoxService.cs
   relation: subset
-  notes: auto-mapped by portomatic scaffold
+  notes: ' (scaffolded)'
   rationale: null
   last_synced_sha: null
 - upstream: Daqifi.Desktop/Services/NoOpMessageBoxService.cs
   downstream: Daqifi.Avalonia/Daqifi.Desktop/Services/NoOpMessageBoxService.cs
   relation: subset
-  notes: auto-mapped by portomatic scaffold
+  notes: ' (scaffolded)'
   rationale: null
   last_synced_sha: null
 - upstream: Daqifi.Desktop/UpdateVersion/VersionNotification.cs
   downstream: Daqifi.Avalonia/Daqifi.Desktop/UpdateVersion/VersionNotification.cs
   relation: subset
-  notes: auto-mapped by portomatic scaffold
+  notes: ' (scaffolded)'
   rationale: null
   last_synced_sha: null
 - upstream: Daqifi.Desktop/View/ConnectionDialog.xaml.cs
-  downstream: Daqifi.Avalonia/Daqifi.Desktop/View/ConnectionDialog.cs
+  downstream: Daqifi.Avalonia/Daqifi.Desktop/View/ConnectionDialog.axaml.cs
   relation: subset
-  notes: auto-mapped by portomatic scaffold
+  notes: ' (scaffolded)'
   rationale: null
   last_synced_sha: null
 - upstream: Daqifi.Desktop/View/DebugWindow.xaml.cs
   downstream: Daqifi.Avalonia/Daqifi.Desktop/View/DebugWindow.axaml.cs
   relation: subset
-  notes: auto-mapped by portomatic scaffold
+  notes: ' (scaffolded)'
   rationale: null
   last_synced_sha: null
 - upstream: Daqifi.Desktop/View/DeviceLogsView.xaml.cs
-  downstream: Daqifi.Avalonia/Daqifi.Desktop/View/DeviceLogsView.cs
+  downstream: Daqifi.Avalonia/Daqifi.Desktop/View/DeviceLogsView.axaml.cs
   relation: subset
-  notes: auto-mapped by portomatic scaffold
+  notes: ' (scaffolded)'
   rationale: null
   last_synced_sha: null
 - upstream: Daqifi.Desktop/View/DuplicateDeviceDialog.xaml.cs
-  downstream: Daqifi.Avalonia/Daqifi.Desktop/View/DuplicateDeviceDialog.cs
+  downstream: Daqifi.Avalonia/Daqifi.Desktop/View/DuplicateDeviceDialog.axaml.cs
   relation: subset
-  notes: auto-mapped by portomatic scaffold
+  notes: ' (scaffolded)'
   rationale: null
   last_synced_sha: null
 - upstream: Daqifi.Desktop/View/ErrorDialog.xaml.cs
-  downstream: Daqifi.Avalonia/Daqifi.Desktop/View/ErrorDialog.cs
+  downstream: Daqifi.Avalonia/Daqifi.Desktop/View/ErrorDialog.axaml.cs
   relation: subset
-  notes: auto-mapped by portomatic scaffold
+  notes: ' (scaffolded)'
   rationale: null
   last_synced_sha: null
 - upstream: Daqifi.Desktop/View/ExportDialog.xaml.cs
-  downstream: Daqifi.Avalonia/Daqifi.Desktop/View/ExportDialog.cs
+  downstream: Daqifi.Avalonia/Daqifi.Desktop/View/ExportDialog.axaml.cs
   relation: subset
-  notes: auto-mapped by portomatic scaffold
+  notes: ' (scaffolded)'
   rationale: null
   last_synced_sha: null
 - upstream: Daqifi.Desktop/View/FirmwareDialog.xaml.cs
   downstream: Daqifi.Avalonia/Daqifi.Desktop/View/FirmwareDialog.axaml.cs
   relation: subset
-  notes: auto-mapped by portomatic scaffold
+  notes: ' (scaffolded)'
   rationale: null
   last_synced_sha: null
 - upstream: Daqifi.Desktop/View/Flyouts/LiveGraphFlyout.xaml.cs
   downstream: Daqifi.Avalonia/Daqifi.Desktop/View/Flyouts/LiveGraphFlyout.cs
   relation: subset
-  notes: auto-mapped by portomatic scaffold
+  notes: ' (scaffolded)'
   rationale: null
   last_synced_sha: null
 - upstream: Daqifi.Desktop/View/Flyouts/NotificationsFlyout.xaml.cs
   downstream: Daqifi.Avalonia/Daqifi.Desktop/View/Flyouts/NotificationsFlyout.cs
   relation: subset
-  notes: auto-mapped by portomatic scaffold
+  notes: ' (scaffolded)'
   rationale: null
   last_synced_sha: null
 - upstream: Daqifi.Desktop/View/Flyouts/SummaryFlyout.xaml.cs
   downstream: Daqifi.Avalonia/Daqifi.Desktop/View/Flyouts/SummaryFlyout.cs
   relation: subset
-  notes: auto-mapped by portomatic scaffold
+  notes: ' (scaffolded)'
   rationale: null
   last_synced_sha: null
 - upstream: Daqifi.Desktop/View/MigrationStatusWindow.xaml.cs
   downstream: Daqifi.Avalonia/Daqifi.Desktop/View/MigrationStatusWindow.axaml.cs
   relation: subset
-  notes: auto-mapped by portomatic scaffold
+  notes: ' (scaffolded)'
   rationale: null
   last_synced_sha: null
 - upstream: Daqifi.Desktop/View/MinimapInteractionController.cs
   downstream: Daqifi.Avalonia/Daqifi.Desktop/View/MinimapInteractionController.cs
   relation: subset
-  notes: auto-mapped by portomatic scaffold
+  notes: ' (scaffolded)'
   rationale: null
   last_synced_sha: null
 - upstream: Daqifi.Desktop/View/ProfilesPane.xaml.cs
   downstream: Daqifi.Avalonia/Daqifi.Desktop/View/ProfilesPane.axaml.cs
   relation: subset
-  notes: auto-mapped by portomatic scaffold
+  notes: ' (scaffolded)'
   rationale: null
   last_synced_sha: null
 - upstream: Daqifi.Desktop/View/Prototype/ChannelsPanePrototype.xaml.cs
   downstream: Daqifi.Avalonia/Daqifi.Desktop/View/Prototype/ChannelsPanePrototype.axaml.cs
   relation: subset
-  notes: auto-mapped by portomatic scaffold
+  notes: ' (scaffolded)'
   rationale: null
   last_synced_sha: null
 - upstream: Daqifi.Desktop/View/Prototype/DevicesPanePrototype.xaml.cs
   downstream: Daqifi.Avalonia/Daqifi.Desktop/View/Prototype/DevicesPanePrototype.axaml.cs
   relation: subset
-  notes: auto-mapped by portomatic scaffold
+  notes: ' (scaffolded)'
   rationale: null
   last_synced_sha: null
 - upstream: Daqifi.Desktop/View/Prototype/LiveGraphPane.xaml.cs
-  downstream: Daqifi.Avalonia/Daqifi.Desktop/View/Prototype/LiveGraphPane.cs
+  downstream: Daqifi.Avalonia/Daqifi.Desktop/View/Prototype/LiveGraphPane.axaml.cs
   relation: subset
-  notes: auto-mapped by portomatic scaffold
+  notes: ' (scaffolded)'
   rationale: null
   last_synced_sha: null
 - upstream: Daqifi.Desktop/View/Prototype/LoggedDataPanePrototype.xaml.cs
-  downstream: Daqifi.Avalonia/Daqifi.Desktop/View/Prototype/LoggedDataPanePrototype.cs
+  downstream: Daqifi.Avalonia/Daqifi.Desktop/View/Prototype/LoggedDataPanePrototype.axaml.cs
   relation: subset
-  notes: auto-mapped by portomatic scaffold
+  notes: ' (scaffolded)'
   rationale: null
   last_synced_sha: null
 - upstream: Daqifi.Desktop/View/SuccessDialog.xaml.cs
-  downstream: Daqifi.Avalonia/Daqifi.Desktop/View/SuccessDialog.cs
+  downstream: Daqifi.Avalonia/Daqifi.Desktop/View/SuccessDialog.axaml.cs
   relation: subset
-  notes: auto-mapped by portomatic scaffold
+  notes: ' (scaffolded)'
   rationale: null
   last_synced_sha: null
 - upstream: Daqifi.Desktop/ViewModels/ChannelTileViewModel.cs
   downstream: Daqifi.Avalonia/Daqifi.Desktop/ViewModels/ChannelTileViewModel.cs
   relation: subset
-  notes: auto-mapped by portomatic scaffold
+  notes: ' (scaffolded)'
   rationale: null
   last_synced_sha: null
 - upstream: Daqifi.Desktop/ViewModels/ChannelsPaneViewModel.cs
   downstream: Daqifi.Avalonia/Daqifi.Desktop/ViewModels/ChannelsPaneViewModel.cs
   relation: subset
-  notes: auto-mapped by portomatic scaffold
+  notes: ' (scaffolded)'
   rationale: null
   last_synced_sha: null
 - upstream: Daqifi.Desktop/ViewModels/ConfirmOverlayViewModel.cs
   downstream: Daqifi.Avalonia/Daqifi.Desktop/ViewModels/ConfirmOverlayViewModel.cs
   relation: subset
-  notes: auto-mapped by portomatic scaffold
+  notes: ' (scaffolded)'
   rationale: null
   last_synced_sha: null
 - upstream: Daqifi.Desktop/ViewModels/ConnectionDialogViewModel.cs
   downstream: Daqifi.Avalonia/Daqifi.Desktop/ViewModels/ConnectionDialogViewModel.cs
   relation: subset
-  notes: auto-mapped by portomatic scaffold
+  notes: ' (scaffolded)'
   rationale: null
   last_synced_sha: null
 - upstream: Daqifi.Desktop/ViewModels/DaqifiViewModel.cs
   downstream: Daqifi.Avalonia/Daqifi.Desktop/ViewModels/DaqifiViewModel.cs
   relation: subset
-  notes: auto-mapped by portomatic scaffold
+  notes: ' (scaffolded)'
   rationale: null
   last_synced_sha: null
 - upstream: Daqifi.Desktop/ViewModels/DeviceLogsViewModel.cs
   downstream: Daqifi.Avalonia/Daqifi.Desktop/ViewModels/DeviceLogsViewModel.cs
   relation: subset
-  notes: auto-mapped by portomatic scaffold
+  notes: ' (scaffolded)'
   rationale: null
   last_synced_sha: null
 - upstream: Daqifi.Desktop/ViewModels/DeviceTileViewModel.cs
   downstream: Daqifi.Avalonia/Daqifi.Desktop/ViewModels/DeviceTileViewModel.cs
   relation: subset
-  notes: auto-mapped by portomatic scaffold
+  notes: ' (scaffolded)'
   rationale: null
   last_synced_sha: null
 - upstream: Daqifi.Desktop/ViewModels/DevicesPaneViewModel.cs
   downstream: Daqifi.Avalonia/Daqifi.Desktop/ViewModels/DevicesPaneViewModel.cs
   relation: subset
-  notes: auto-mapped by portomatic scaffold
+  notes: ' (scaffolded)'
   rationale: null
   last_synced_sha: null
 - upstream: Daqifi.Desktop/ViewModels/DuplicateDeviceDialogViewModel.cs
   downstream: Daqifi.Avalonia/Daqifi.Desktop/ViewModels/DuplicateDeviceDialogViewModel.cs
   relation: subset
-  notes: auto-mapped by portomatic scaffold
+  notes: ' (scaffolded)'
   rationale: null
   last_synced_sha: null
 - upstream: Daqifi.Desktop/ViewModels/ErrorDialogViewModel.cs
   downstream: Daqifi.Avalonia/Daqifi.Desktop/ViewModels/ErrorDialogViewModel.cs
   relation: subset
-  notes: auto-mapped by portomatic scaffold
+  notes: ' (scaffolded)'
   rationale: null
   last_synced_sha: null
 - upstream: Daqifi.Desktop/ViewModels/ExportDialogViewModel.cs
   downstream: Daqifi.Avalonia/Daqifi.Desktop/ViewModels/ExportDialogViewModel.cs
   relation: subset
-  notes: auto-mapped by portomatic scaffold
+  notes: ' (scaffolded)'
   rationale: null
   last_synced_sha: null
 - upstream: Daqifi.Desktop/ViewModels/FirmwareDialogViewModel.cs
   downstream: Daqifi.Avalonia/Daqifi.Desktop/ViewModels/FirmwareDialogViewModel.cs
   relation: subset
-  notes: auto-mapped by portomatic scaffold
+  notes: ' (scaffolded)'
   rationale: null
   last_synced_sha: null
 - upstream: Daqifi.Desktop/ViewModels/ILoggingSessionListHost.cs
   downstream: Daqifi.Avalonia/Daqifi.Desktop/ViewModels/ILoggingSessionListHost.cs
   relation: subset
-  notes: auto-mapped by portomatic scaffold
+  notes: ' (scaffolded)'
   rationale: null
   last_synced_sha: null
 - upstream: Daqifi.Desktop/ViewModels/LoggingSessionListViewModel.cs
   downstream: Daqifi.Avalonia/Daqifi.Desktop/ViewModels/LoggingSessionListViewModel.cs
   relation: subset
-  notes: auto-mapped by portomatic scaffold
+  notes: ' (scaffolded)'
   rationale: null
   last_synced_sha: null
 - upstream: Daqifi.Desktop/ViewModels/NewProfileChannelItem.cs
   downstream: Daqifi.Avalonia/Daqifi.Desktop/ViewModels/NewProfileChannelItem.cs
   relation: subset
-  notes: auto-mapped by portomatic scaffold
+  notes: ' (scaffolded)'
   rationale: null
   last_synced_sha: null
 - upstream: Daqifi.Desktop/ViewModels/NewProfileDeviceItem.cs
   downstream: Daqifi.Avalonia/Daqifi.Desktop/ViewModels/NewProfileDeviceItem.cs
   relation: subset
-  notes: auto-mapped by portomatic scaffold
+  notes: ' (scaffolded)'
   rationale: null
   last_synced_sha: null
 - upstream: Daqifi.Desktop/ViewModels/PlotViewModel.cs
   downstream: Daqifi.Avalonia/Daqifi.Desktop/ViewModels/PlotViewModel.cs
   relation: subset
-  notes: auto-mapped by portomatic scaffold
+  notes: ' (scaffolded)'
   rationale: null
   last_synced_sha: null
 - upstream: Daqifi.Desktop/ViewModels/PlottingViewModel.cs
   downstream: Daqifi.Avalonia/Daqifi.Desktop/ViewModels/PlottingViewModel.cs
   relation: subset
-  notes: auto-mapped by portomatic scaffold
+  notes: ' (scaffolded)'
   rationale: null
   last_synced_sha: null
 - upstream: Daqifi.Desktop/ViewModels/ProfilesPaneViewModel.cs
   downstream: Daqifi.Avalonia/Daqifi.Desktop/ViewModels/ProfilesPaneViewModel.cs
   relation: subset
-  notes: auto-mapped by portomatic scaffold
+  notes: ' (scaffolded)'
   rationale: null
   last_synced_sha: null
 - upstream: Daqifi.Desktop/ViewModels/SettingsViewModel.cs
   downstream: Daqifi.Avalonia/Daqifi.Desktop/ViewModels/SettingsViewModel.cs
   relation: subset
-  notes: auto-mapped by portomatic scaffold
+  notes: ' (scaffolded)'
   rationale: null
   last_synced_sha: null
 - upstream: Daqifi.Desktop/ViewModels/SuccessDialogViewModel.cs
   downstream: Daqifi.Avalonia/Daqifi.Desktop/ViewModels/SuccessDialogViewModel.cs
   relation: subset
-  notes: auto-mapped by portomatic scaffold
+  notes: ' (scaffolded)'
   rationale: null
   last_synced_sha: null
 - upstream: Daqifi.Desktop/ViewModels/ViewModelLocator.cs
   downstream: Daqifi.Avalonia/Daqifi.Desktop/ViewModels/ViewModelLocator.cs
   relation: subset
-  notes: auto-mapped by portomatic scaffold
+  notes: ' (scaffolded)'
   rationale: null
   last_synced_sha: null
 - upstream: Daqifi.Desktop/WindowViewModelMapping/IWindowViewModelMappings.cs
   downstream: Daqifi.Avalonia/Daqifi.Desktop/WindowViewModelMapping/IWindowViewModelMappings.cs
   relation: subset
-  notes: auto-mapped by portomatic scaffold
+  notes: ' (scaffolded)'
   rationale: null
   last_synced_sha: null
 - upstream: Daqifi.Desktop/WindowViewModelMapping/IWindowViewModelMappingsContract.cs
   downstream: Daqifi.Avalonia/Daqifi.Desktop/WindowViewModelMapping/IWindowViewModelMappingsContract.cs
   relation: subset
-  notes: auto-mapped by portomatic scaffold
+  notes: ' (scaffolded)'
   rationale: null
   last_synced_sha: null
 - upstream: Daqifi.Desktop/WindowViewModelMapping/WindowViewModelMappings.cs
   downstream: Daqifi.Avalonia/Daqifi.Desktop/WindowViewModelMapping/WindowViewModelMappings.cs
   relation: subset
-  notes: auto-mapped by portomatic scaffold
+  notes: ' (scaffolded)'
   rationale: null
   last_synced_sha: null
 symbols: []
@@ -1222,21 +1222,42 @@ mechanisms:
   resource: one hotplug watcher interface with per-OS backends
   notes: null
 downstream_only:
-- downstream: { kind: class, qualified: Daqifi.Avalonia.Program }
+- downstream:
+    kind: class
+    qualified: Daqifi.Avalonia.Program
+    file: null
   rationale: Avalonia AppBuilder entry point; WPF upstream boots via App.xaml StartupUri.
-- downstream: { kind: class, qualified: Daqifi.Avalonia.App }
-  rationale: >
-    Avalonia Application bootstrap (Initialize/OnFrameworkInitializationCompleted);
+  notes: null
+  members: []
+  added_at: null
+- downstream:
+    kind: class
+    qualified: Daqifi.Avalonia.App
+    file: null
+  rationale: Avalonia Application bootstrap (Initialize/OnFrameworkInitializationCompleted);
     ported upstream Daqifi.Desktop.App logic lands inside it as its steps close.
+  notes: null
+  members: []
+  added_at: null
 downstream_only_files:
 - downstream: Daqifi.Avalonia/Program.cs
   rationale: Avalonia entry point; no upstream counterpart (WPF uses generated Main).
+  notes: null
+  added_at: null
 - downstream: Daqifi.Avalonia/App.axaml
   rationale: Avalonia application markup (FluentTheme); upstream App.xaml is WPF-specific.
+  notes: null
+  added_at: null
 - downstream: Daqifi.Avalonia/App.axaml.cs
   rationale: Avalonia application code-behind; pairs with App.axaml.
+  notes: null
+  added_at: null
 - downstream: Daqifi.Avalonia/app.manifest
   rationale: Windows-head manifest for the Avalonia template; ignored elsewhere.
+  notes: null
+  added_at: null
 - downstream: Daqifi.Avalonia/Daqifi.Avalonia.csproj
   rationale: Avalonia project file (package swaps per the UI catalog decision log).
+  notes: null
+  added_at: null
 updated_at: '2026-07-12T00:28:22.501677Z'

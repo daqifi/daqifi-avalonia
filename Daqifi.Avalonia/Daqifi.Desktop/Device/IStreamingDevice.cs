@@ -34,19 +34,19 @@ public enum ConnectionType
 public interface IStreamingDevice : IDevice
 {
     // @port: Daqifi.Desktop.Device.IStreamingDevice.Mode
-    DeviceMode Mode { get; set; }
+    DeviceMode Mode { get; }
 
     // @port: Daqifi.Desktop.Device.IStreamingDevice.ConnectionType
-    ConnectionType ConnectionType { get; set; }
+    ConnectionType ConnectionType { get; }
 
     // @port: Daqifi.Desktop.Device.IStreamingDevice.IsConnected
-    bool IsConnected { get; set; }
+    bool IsConnected { get; }
 
     // @port: Daqifi.Desktop.Device.IStreamingDevice.IsLoggingToSdCard
-    bool IsLoggingToSdCard { get; set; }
+    bool IsLoggingToSdCard { get; }
 
     // @port: Daqifi.Desktop.Device.IStreamingDevice.SdCardFiles
-    IReadOnlyList<SdCardFile> SdCardFiles { get; set; }
+    IReadOnlyList<SdCardFile> SdCardFiles { get; }
 
     // @port: Daqifi.Desktop.Device.IStreamingDevice.SdCardLogFormat
     SdCardLogFormat SdCardLogFormat { get; set; }
@@ -67,13 +67,13 @@ public interface IStreamingDevice : IDevice
     void UpdateSdCardFiles(List<SdCardFile> files);
 
     // @port: Daqifi.Desktop.Device.IStreamingDevice.DevicePartNumber
-    string DevicePartNumber { get; set; }
+    string DevicePartNumber { get; }
 
     // @port: Daqifi.Desktop.Device.IStreamingDevice.TimestampFrequency
-    uint TimestampFrequency { get; set; }
+    uint TimestampFrequency { get; }
 
     // @port: Daqifi.Desktop.Device.IStreamingDevice.NetworkConfiguration
-    NetworkConfiguration NetworkConfiguration { get; set; }
+    NetworkConfiguration NetworkConfiguration { get; }
 
     // @port: Daqifi.Desktop.Device.IStreamingDevice.MacAddress
     string MacAddress { get; set; }
@@ -88,7 +88,7 @@ public interface IStreamingDevice : IDevice
     bool IsFirmwareOutdated { get; set; }
 
     // @port: Daqifi.Desktop.Device.IStreamingDevice.HasWincWifiModule
-    bool HasWincWifiModule { get; set; }
+    bool HasWincWifiModule { get; }
 
     // @port: Daqifi.Desktop.Device.IStreamingDevice.IsWifiFirmwareOutdated
     bool IsWifiFirmwareOutdated { get; set; }
@@ -103,10 +103,10 @@ public interface IStreamingDevice : IDevice
     int StreamingFrequency { get; set; }
 
     // @port: Daqifi.Desktop.Device.IStreamingDevice.DisplayIdentifier
-    string DisplayIdentifier { get; set; }
+    string DisplayIdentifier { get; }
 
     // @port: Daqifi.Desktop.Device.IStreamingDevice.DeviceDisplayName
-    string DeviceDisplayName { get; set; }
+    string DeviceDisplayName { get; }
 
     // @port: Daqifi.Desktop.Device.IStreamingDevice.DataChannels
     List<IChannel> DataChannels { get; set; }

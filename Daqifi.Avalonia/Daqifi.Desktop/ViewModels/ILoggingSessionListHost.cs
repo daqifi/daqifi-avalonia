@@ -31,19 +31,19 @@ namespace Daqifi.Desktop.ViewModels;
 public interface ILoggingSessionListHost
 {
     // @port: Daqifi.Desktop.ViewModels.ILoggingSessionListHost.SelectedLoggingSession
-    LoggingSession SelectedLoggingSession { get; set; }
+    LoggingSession SelectedLoggingSession { set; }
 
     // @port: Daqifi.Desktop.ViewModels.ILoggingSessionListHost.IsLoggedDataBusy
-    bool IsLoggedDataBusy { get; set; }
+    bool IsLoggedDataBusy { set; }
 
     // @port: Daqifi.Desktop.ViewModels.ILoggingSessionListHost.LoggedDataBusyReason
-    string LoggedDataBusyReason { get; set; }
+    string LoggedDataBusyReason { set; }
 
     // @port: Daqifi.Desktop.ViewModels.ILoggingSessionListHost.LoggingSessions
-    ObservableCollection<LoggingSession> LoggingSessions { get; set; }
+    ObservableCollection<LoggingSession> LoggingSessions { get; }
 
     // @port: Daqifi.Desktop.ViewModels.ILoggingSessionListHost.IsLoggingActive
-    bool IsLoggingActive { get; set; }
+    bool IsLoggingActive { get; }
 
     // @port: Daqifi.Desktop.ViewModels.ILoggingSessionListHost.NotifyLoggingSessionsChanged
     void NotifyLoggingSessionsChanged();

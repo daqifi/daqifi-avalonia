@@ -28,19 +28,19 @@ public interface IChannel : IColorable
     string DeviceSerialNo { get; set; }
 
     // @port: Daqifi.Desktop.Channel.IChannel.Index
-    int Index { get; set; }
+    int Index { get; }
 
     // @port: Daqifi.Desktop.Channel.IChannel.OutputValue
     double OutputValue { get; set; }
 
     // @port: Daqifi.Desktop.Channel.IChannel.Type
-    ChannelType Type { get; set; }
+    ChannelType Type { get; }
 
     // @port: Daqifi.Desktop.Channel.IChannel.Direction
     ChannelDirection Direction { get; set; }
 
     // @port: Daqifi.Desktop.Channel.IChannel.TypeString
-    string TypeString { get; set; }
+    string TypeString { get; }
 
     // @port: Daqifi.Desktop.Channel.IChannel.ScaleExpression
     string ScaleExpression { get; set; }
@@ -61,16 +61,16 @@ public interface IChannel : IColorable
     bool IsActive { get; set; }
 
     // @port: Daqifi.Desktop.Channel.IChannel.IsDigital
-    bool IsDigital { get; set; }
+    bool IsDigital { get; }
 
     // @port: Daqifi.Desktop.Channel.IChannel.IsAnalog
-    bool IsAnalog { get; set; }
+    bool IsAnalog { get; }
 
     // @port: Daqifi.Desktop.Channel.IChannel.IsDigitalOn
     bool IsDigitalOn { get; set; }
 
     // @port: Daqifi.Desktop.Channel.IChannel.IsPwmCapable
-    bool IsPwmCapable { get; set; }
+    bool IsPwmCapable { get; }
 
     // @port: Daqifi.Desktop.Channel.IChannel.IsPwmEnabled
     bool IsPwmEnabled { get; set; }

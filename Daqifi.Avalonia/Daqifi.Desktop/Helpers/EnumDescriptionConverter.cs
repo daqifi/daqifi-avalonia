@@ -18,9 +18,9 @@ public class EnumDescriptionConverter : IValueConverter
     // @port: Daqifi.Desktop.Helpers.EnumDescriptionConverter.GetEnumDescription
     private string GetEnumDescription(Enum enumObj) => throw new NotImplementedException();
 
-    // @port: Daqifi.Desktop.Helpers.EnumDescriptionConverter.Convert
-    private object Convert(object value, Type targetType, object parameter, CultureInfo culture) => throw new NotImplementedException();
+    // @port: Daqifi.Desktop.Helpers.EnumDescriptionConverter.IValueConverter.Convert
+    object IValueConverter.Convert(object value, Type targetType, object parameter, CultureInfo culture) => throw new NotImplementedException();
 
-    // @port: Daqifi.Desktop.Helpers.EnumDescriptionConverter.ConvertBack
-    private object ConvertBack(object value, Type targetType, object parameter, CultureInfo culture) => throw new NotImplementedException();
+    // @port: Daqifi.Desktop.Helpers.EnumDescriptionConverter.IValueConverter.ConvertBack
+    object IValueConverter.ConvertBack(object value, Type targetType, object parameter, CultureInfo culture) => throw new NotImplementedException();
 }

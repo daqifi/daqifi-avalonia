@@ -35,8 +35,8 @@ public class DialogService : IDialogService
     // @port: Daqifi.Desktop.DialogService.DialogService.ShowDialog
     public bool? ShowDialog(object ownerViewModel, object viewModel) => throw new NotImplementedException();
 
-    // @port: Daqifi.Desktop.DialogService.DialogService.ShowDialog
-    public bool? ShowDialog(object ownerViewModel, object viewModel) => throw new NotImplementedException();
+    // @port: Daqifi.Desktop.DialogService.DialogService.ShowDialog<T>
+    public bool? ShowDialog<T>(object ownerViewModel, object viewModel) => throw new NotImplementedException();
 
     // @port: Daqifi.Desktop.DialogService.DialogService.ShowMessageBox
     public MessageBoxResult ShowMessageBox(object ownerViewModel, string messageBoxText, string caption, MessageBoxButton button, MessageBoxImage icon) => throw new NotImplementedException();

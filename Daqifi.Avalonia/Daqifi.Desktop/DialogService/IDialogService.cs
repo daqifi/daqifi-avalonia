@@ -19,7 +19,7 @@ namespace Daqifi.Desktop.DialogService;
 public interface IDialogService
 {
     // @port: Daqifi.Desktop.DialogService.IDialogService.Views
-    ReadOnlyCollection<FrameworkElement> Views { get; set; }
+    ReadOnlyCollection<FrameworkElement> Views { get; }
 
     // @port: Daqifi.Desktop.DialogService.IDialogService.Register
     void Register(FrameworkElement view);
@@ -30,8 +30,8 @@ public interface IDialogService
     // @port: Daqifi.Desktop.DialogService.IDialogService.ShowDialog
     bool? ShowDialog(object ownerViewModel, object viewModel);
 
-    // @port: Daqifi.Desktop.DialogService.IDialogService.ShowDialog
-    bool? ShowDialog(object ownerViewModel, object viewModel);
+    // @port: Daqifi.Desktop.DialogService.IDialogService.ShowDialog<T>
+    bool? ShowDialog<T>(object ownerViewModel, object viewModel);
 
     // @port: Daqifi.Desktop.DialogService.IDialogService.ShowMessageBox
     MessageBoxResult ShowMessageBox(object ownerViewModel, string messageBoxText, string caption, MessageBoxButton button, MessageBoxImage icon);

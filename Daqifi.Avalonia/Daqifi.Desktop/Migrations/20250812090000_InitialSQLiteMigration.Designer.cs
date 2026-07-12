@@ -13,7 +13,7 @@ using System.Threading.Tasks;
 namespace Daqifi.Desktop.Migrations;
 
 // @port: Daqifi.Desktop.Migrations.InitialSQLiteMigration
-internal partial class InitialSQLiteMigration
+partial class InitialSQLiteMigration
 {
     // @port: Daqifi.Desktop.Migrations.InitialSQLiteMigration.BuildTargetModel
     protected void BuildTargetModel(ModelBuilder modelBuilder) => throw new NotImplementedException();

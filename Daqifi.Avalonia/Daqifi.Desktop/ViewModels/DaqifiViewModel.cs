@@ -499,35 +499,32 @@ public partial class DaqifiViewModel : ObservableObject, IFirmwareUpdateHost, IL
     // @port: Daqifi.Desktop.ViewModels.DaqifiViewModel.CloseFlyouts
     public void CloseFlyouts() => throw new NotImplementedException();
 
-    // @port: Daqifi.Desktop.ViewModels.DaqifiViewModel.ConnectedDevices
-    private IReadOnlyList<IStreamingDevice> ConnectedDevices
+    // @port: Daqifi.Desktop.ViewModels.DaqifiViewModel.IFirmwareUpdateHost.ConnectedDevices
+    IReadOnlyList<IStreamingDevice> IFirmwareUpdateHost.ConnectedDevices
     {
         get => throw new NotImplementedException();
+    }
+
+    // @port: Daqifi.Desktop.ViewModels.DaqifiViewModel.IFirmwareUpdateHost.Notifications
+    ObservableCollection<Notifications> IFirmwareUpdateHost.Notifications
+    {
+        get => throw new NotImplementedException();
+    }
+
+    // @port: Daqifi.Desktop.ViewModels.DaqifiViewModel.IFirmwareUpdateHost.DeviceBeingUpdated
+    IStreamingDevice? IFirmwareUpdateHost.DeviceBeingUpdated
+    {
         set => throw new NotImplementedException();
     }
 
-    // @port: Daqifi.Desktop.ViewModels.DaqifiViewModel.Notifications
-    private ObservableCollection<Notifications> Notifications
-    {
-        get => throw new NotImplementedException();
-        set => throw new NotImplementedException();
-    }
+    // @port: Daqifi.Desktop.ViewModels.DaqifiViewModel.IFirmwareUpdateHost.RefreshNotificationCount
+    void IFirmwareUpdateHost.RefreshNotificationCount() => throw new NotImplementedException();
 
-    // @port: Daqifi.Desktop.ViewModels.DaqifiViewModel.DeviceBeingUpdated
-    private IStreamingDevice? DeviceBeingUpdated
-    {
-        get => throw new NotImplementedException();
-        set => throw new NotImplementedException();
-    }
+    // @port: Daqifi.Desktop.ViewModels.DaqifiViewModel.IFirmwareUpdateHost.ShowFirmwareError
+    void IFirmwareUpdateHost.ShowFirmwareError(string message) => throw new NotImplementedException();
 
-    // @port: Daqifi.Desktop.ViewModels.DaqifiViewModel.RefreshNotificationCount
-    private void RefreshNotificationCount() => throw new NotImplementedException();
-
-    // @port: Daqifi.Desktop.ViewModels.DaqifiViewModel.ShowFirmwareError
-    private void ShowFirmwareError(string message) => throw new NotImplementedException();
-
-    // @port: Daqifi.Desktop.ViewModels.DaqifiViewModel.ShowFirmwareUpdateSucceeded
-    private void ShowFirmwareUpdateSucceeded() => throw new NotImplementedException();
+    // @port: Daqifi.Desktop.ViewModels.DaqifiViewModel.IFirmwareUpdateHost.ShowFirmwareUpdateSucceeded
+    void IFirmwareUpdateHost.ShowFirmwareUpdateSucceeded() => throw new NotImplementedException();
 
     // @port: Daqifi.Desktop.ViewModels.DaqifiViewModel.QuiesceWifiFirmwareProbeAsync
     public Task QuiesceWifiFirmwareProbeAsync(CancellationToken cancellationToken) => throw new NotImplementedException();
@@ -565,48 +562,47 @@ public partial class DaqifiViewModel : ObservableObject, IFirmwareUpdateHost, IL
     // @port: Daqifi.Desktop.ViewModels.DaqifiViewModel.ShowWifiFlashFailedDialog
     private void ShowWifiFlashFailedDialog() => throw new NotImplementedException();
 
-    // @port: Daqifi.Desktop.ViewModels.DaqifiViewModel.IsLoggingActive
-    private bool IsLoggingActive
+    // @port: Daqifi.Desktop.ViewModels.DaqifiViewModel.ILoggingSessionListHost.IsLoggingActive
+    bool ILoggingSessionListHost.IsLoggingActive
     {
         get => throw new NotImplementedException();
-        set => throw new NotImplementedException();
     }
 
-    // @port: Daqifi.Desktop.ViewModels.DaqifiViewModel.NotifyLoggingSessionsChanged
-    private void NotifyLoggingSessionsChanged() => throw new NotImplementedException();
+    // @port: Daqifi.Desktop.ViewModels.DaqifiViewModel.ILoggingSessionListHost.NotifyLoggingSessionsChanged
+    void ILoggingSessionListHost.NotifyLoggingSessionsChanged() => throw new NotImplementedException();
 
-    // @port: Daqifi.Desktop.ViewModels.DaqifiViewModel.DisplaySessionOnPlot
-    private void DisplaySessionOnPlot(LoggingSession session) => throw new NotImplementedException();
+    // @port: Daqifi.Desktop.ViewModels.DaqifiViewModel.ILoggingSessionListHost.DisplaySessionOnPlot
+    void ILoggingSessionListHost.DisplaySessionOnPlot(LoggingSession session) => throw new NotImplementedException();
 
-    // @port: Daqifi.Desktop.ViewModels.DaqifiViewModel.DeleteSessionFromDatabase
-    private void DeleteSessionFromDatabase(LoggingSession session) => throw new NotImplementedException();
+    // @port: Daqifi.Desktop.ViewModels.DaqifiViewModel.ILoggingSessionListHost.DeleteSessionFromDatabase
+    void ILoggingSessionListHost.DeleteSessionFromDatabase(LoggingSession session) => throw new NotImplementedException();
 
-    // @port: Daqifi.Desktop.ViewModels.DaqifiViewModel.ClearPlot
-    private void ClearPlot() => throw new NotImplementedException();
+    // @port: Daqifi.Desktop.ViewModels.DaqifiViewModel.ILoggingSessionListHost.ClearPlot
+    void ILoggingSessionListHost.ClearPlot() => throw new NotImplementedException();
 
-    // @port: Daqifi.Desktop.ViewModels.DaqifiViewModel.SuspendConsumer
-    private void SuspendConsumer() => throw new NotImplementedException();
+    // @port: Daqifi.Desktop.ViewModels.DaqifiViewModel.ILoggingSessionListHost.SuspendConsumer
+    void ILoggingSessionListHost.SuspendConsumer() => throw new NotImplementedException();
 
-    // @port: Daqifi.Desktop.ViewModels.DaqifiViewModel.ResumeConsumer
-    private void ResumeConsumer() => throw new NotImplementedException();
+    // @port: Daqifi.Desktop.ViewModels.DaqifiViewModel.ILoggingSessionListHost.ResumeConsumer
+    void ILoggingSessionListHost.ResumeConsumer() => throw new NotImplementedException();
 
-    // @port: Daqifi.Desktop.ViewModels.DaqifiViewModel.ClearBuffer
-    private void ClearBuffer() => throw new NotImplementedException();
+    // @port: Daqifi.Desktop.ViewModels.DaqifiViewModel.ILoggingSessionListHost.ClearBuffer
+    void ILoggingSessionListHost.ClearBuffer() => throw new NotImplementedException();
 
-    // @port: Daqifi.Desktop.ViewModels.DaqifiViewModel.DiscardPendingBatch
-    private void DiscardPendingBatch() => throw new NotImplementedException();
+    // @port: Daqifi.Desktop.ViewModels.DaqifiViewModel.ILoggingSessionListHost.DiscardPendingBatch
+    void ILoggingSessionListHost.DiscardPendingBatch() => throw new NotImplementedException();
 
-    // @port: Daqifi.Desktop.ViewModels.DaqifiViewModel.ShowExportDialogForSessionAsync
-    private Task ShowExportDialogForSessionAsync(int sessionId) => throw new NotImplementedException();
+    // @port: Daqifi.Desktop.ViewModels.DaqifiViewModel.ILoggingSessionListHost.ShowExportDialogForSessionAsync
+    Task ILoggingSessionListHost.ShowExportDialogForSessionAsync(int sessionId) => throw new NotImplementedException();
 
-    // @port: Daqifi.Desktop.ViewModels.DaqifiViewModel.ShowExportDialogForSessionsAsync
-    private Task ShowExportDialogForSessionsAsync(IReadOnlyList<LoggingSession> sessions) => throw new NotImplementedException();
+    // @port: Daqifi.Desktop.ViewModels.DaqifiViewModel.ILoggingSessionListHost.ShowExportDialogForSessionsAsync
+    Task ILoggingSessionListHost.ShowExportDialogForSessionsAsync(IReadOnlyList<LoggingSession> sessions) => throw new NotImplementedException();
 
-    // @port: Daqifi.Desktop.ViewModels.DaqifiViewModel.ShowConfirmAsync
-    private Task<bool> ShowConfirmAsync(string title, string message, string affirmativeLabel, bool isDestructive) => throw new NotImplementedException();
+    // @port: Daqifi.Desktop.ViewModels.DaqifiViewModel.ILoggingSessionListHost.ShowConfirmAsync
+    Task<bool> ILoggingSessionListHost.ShowConfirmAsync(string title, string message, string affirmativeLabel, bool isDestructive) => throw new NotImplementedException();
 
-    // @port: Daqifi.Desktop.ViewModels.DaqifiViewModel.ShowMessageAsync
-    private Task ShowMessageAsync(string title, string message) => throw new NotImplementedException();
+    // @port: Daqifi.Desktop.ViewModels.DaqifiViewModel.ILoggingSessionListHost.ShowMessageAsync
+    Task ILoggingSessionListHost.ShowMessageAsync(string title, string message) => throw new NotImplementedException();
 
     // @port: Daqifi.Desktop.ViewModels.DaqifiViewModel.CanExportAllLoggingSession
     private bool CanExportAllLoggingSession() => throw new NotImplementedException();
@@ -626,11 +622,11 @@ public partial class DaqifiViewModel : ObservableObject, IFirmwareUpdateHost, IL
     // @port: Daqifi.Desktop.ViewModels.DaqifiViewModel.OnDebugDataReceived
     private void OnDebugDataReceived(DebugDataModel debugData) => throw new NotImplementedException();
 
-    // @port: Daqifi.Desktop.ViewModels.DaqifiViewModel.StopLogging
-    private void StopLogging() => throw new NotImplementedException();
+    // @port: Daqifi.Desktop.ViewModels.DaqifiViewModel.IDiskSpaceMonitorHost.StopLogging
+    void IDiskSpaceMonitorHost.StopLogging() => throw new NotImplementedException();
 
-    // @port: Daqifi.Desktop.ViewModels.DaqifiViewModel.ShowDiskSpaceMessageAsync
-    private Task ShowDiskSpaceMessageAsync(string title, string message) => throw new NotImplementedException();
+    // @port: Daqifi.Desktop.ViewModels.DaqifiViewModel.IDiskSpaceMonitorHost.ShowDiskSpaceMessageAsync
+    Task IDiskSpaceMonitorHost.ShowDiskSpaceMessageAsync(string title, string message) => throw new NotImplementedException();
 
     // @port: Daqifi.Desktop.ViewModels.DaqifiViewModel.ShowDiskSpaceMessage
     private Task ShowDiskSpaceMessage(string title, string message) => throw new NotImplementedException();

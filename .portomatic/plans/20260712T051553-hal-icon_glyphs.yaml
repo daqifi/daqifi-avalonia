@@ -1,29 +1,30 @@
 schema_version: 1
-plan_id: 20260712T013408-hal-chart_plot_host
-slug: hal-chart_plot_host
+plan_id: 20260712T051553-hal-icon_glyphs
+slug: hal-icon_glyphs
 kind: apply
-created_at: '2026-07-12T01:34:08.418209Z'
+created_at: '2026-07-12T05:15:53.028126Z'
 upstream_sha: null
-summary: "Port HAL concept `chart_plot_host` (oxyplot \u2192 oxyplot)"
+summary: "Port HAL concept `icon_glyphs` (iconpacks \u2192 projektanker-icons)"
 steps:
 - id: s1
-  summary: "Translate HAL concept `chart_plot_host`: oxyplot:PlotView \u2192 oxyplot:PlotView"
+  summary: "Translate HAL concept `icon_glyphs`: iconpacks:PackIconMaterial \u2192\
+    \ projektanker-icons:Attached.Icon"
   kind: patch
   upstream_ref: null
-  downstream_target: Views/LiveGraphPane.axaml
+  downstream_target: Views/MainWindow.axaml
   assigned_to: patch-author
   status: pending
   classification: null
   shard: UI
   commit_sha: null
   file: null
-  target_symbol: PlotView
+  target_symbol: Attached.Icon
   parent_audit_row: null
   expected_resolution: null
   notes:
-  - hal-concept:chart_plot_host
-  - 'prompt: .portomatic/cache/prompts/translate-hal-chart_plot_host.md'
-  - "on completion: run `portomatic firmware close-hal --shard UI --concept chart_plot_host\
+  - hal-concept:icon_glyphs
+  - 'prompt: .portomatic/cache/prompts/translate-hal-icon_glyphs.md'
+  - "on completion: run `portomatic firmware close-hal --shard UI --concept icon_glyphs\
     \ --relation <relation> --symbol <sym> --file <path>` \u2014 it flips the `UI`\
     \ hal_pairs entry to ported and refuses while verify gates are pending"
   divergences: []
@@ -47,7 +48,7 @@ steps:
   parent_audit_row: null
   expected_resolution: null
   notes:
-  - hal-concept:chart_plot_host
+  - hal-concept:icon_glyphs
   divergences: []
   started_at: null
   finished_at: null

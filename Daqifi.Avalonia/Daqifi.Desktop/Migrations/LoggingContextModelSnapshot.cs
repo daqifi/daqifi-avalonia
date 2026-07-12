@@ -13,7 +13,7 @@ using System.Threading.Tasks;
 namespace Daqifi.Desktop.Migrations;
 
 // @port: Daqifi.Desktop.Migrations.LoggingContextModelSnapshot
-internal partial class LoggingContextModelSnapshot : ModelSnapshot
+partial class LoggingContextModelSnapshot : ModelSnapshot
 {
     // @port: Daqifi.Desktop.Migrations.LoggingContextModelSnapshot.BuildModel
     protected void BuildModel(ModelBuilder modelBuilder) => throw new NotImplementedException();

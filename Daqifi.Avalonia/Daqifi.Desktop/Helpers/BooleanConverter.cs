@@ -12,26 +12,26 @@ using System.Threading.Tasks;
 
 namespace Daqifi.Desktop.Helpers;
 
-// @port: Daqifi.Desktop.Helpers.BooleanConverter
-public class BooleanConverter : IValueConverter
+// @port: Daqifi.Desktop.Helpers.BooleanConverter<T>
+public class BooleanConverter<T> : IValueConverter
 {
-    // @port: Daqifi.Desktop.Helpers.BooleanConverter.True
+    // @port: Daqifi.Desktop.Helpers.BooleanConverter<T>.True
     public T True
     {
         get => throw new NotImplementedException();
         set => throw new NotImplementedException();
     }
 
-    // @port: Daqifi.Desktop.Helpers.BooleanConverter.False
+    // @port: Daqifi.Desktop.Helpers.BooleanConverter<T>.False
     public T False
     {
         get => throw new NotImplementedException();
         set => throw new NotImplementedException();
     }
 
-    // @port: Daqifi.Desktop.Helpers.BooleanConverter.Convert
+    // @port: Daqifi.Desktop.Helpers.BooleanConverter<T>.Convert
     public object Convert(object value, Type targetType, object parameter, CultureInfo culture) => throw new NotImplementedException();
 
-    // @port: Daqifi.Desktop.Helpers.BooleanConverter.ConvertBack
+    // @port: Daqifi.Desktop.Helpers.BooleanConverter<T>.ConvertBack
     public object ConvertBack(object value, Type targetType, object parameter, CultureInfo culture) => throw new NotImplementedException();
 }

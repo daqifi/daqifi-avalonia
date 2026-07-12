@@ -1,14 +1,13 @@
 schema_version: 1
-plan_id: 20260712T013408-hal-icon_glyphs
-slug: hal-icon_glyphs
+plan_id: 20260712T051552-hal-flyout_host
+slug: hal-flyout_host
 kind: apply
-created_at: '2026-07-12T01:34:08.264865Z'
+created_at: '2026-07-12T05:15:52.937679Z'
 upstream_sha: null
-summary: "Port HAL concept `icon_glyphs` (iconpacks \u2192 projektanker-icons)"
+summary: "Port HAL concept `flyout_host` (mahapps \u2192 avalonia)"
 steps:
 - id: s1
-  summary: "Translate HAL concept `icon_glyphs`: iconpacks:PackIconMaterial \u2192\
-    \ projektanker-icons:Attached.Icon"
+  summary: "Translate HAL concept `flyout_host`: mahapps:FlyoutsControl \u2192 avalonia:SplitView"
   kind: patch
   upstream_ref: null
   downstream_target: Views/MainWindow.axaml
@@ -18,13 +17,13 @@ steps:
   shard: UI
   commit_sha: null
   file: null
-  target_symbol: Attached.Icon
+  target_symbol: SplitView
   parent_audit_row: null
   expected_resolution: null
   notes:
-  - hal-concept:icon_glyphs
-  - 'prompt: .portomatic/cache/prompts/translate-hal-icon_glyphs.md'
-  - "on completion: run `portomatic firmware close-hal --shard UI --concept icon_glyphs\
+  - hal-concept:flyout_host
+  - 'prompt: .portomatic/cache/prompts/translate-hal-flyout_host.md'
+  - "on completion: run `portomatic firmware close-hal --shard UI --concept flyout_host\
     \ --relation <relation> --symbol <sym> --file <path>` \u2014 it flips the `UI`\
     \ hal_pairs entry to ported and refuses while verify gates are pending"
   divergences: []
@@ -48,7 +47,7 @@ steps:
   parent_audit_row: null
   expected_resolution: null
   notes:
-  - hal-concept:icon_glyphs
+  - hal-concept:flyout_host
   divergences: []
   started_at: null
   finished_at: null

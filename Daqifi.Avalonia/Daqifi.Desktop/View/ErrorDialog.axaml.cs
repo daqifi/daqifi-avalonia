@@ -6,6 +6,7 @@
 // DO NOT manually delete the `// @port:` markers — they link symbols back to
 // the correspondence map.
 
+using Avalonia.Controls;
 using System;
 using System.Collections.Generic;
 using System.Threading.Tasks;
@@ -16,8 +17,13 @@ namespace Daqifi.Desktop.View;
 /// Interaction logic for ErrorDialog.xaml
 /// </summary>
 // @port: Daqifi.Desktop.View.ErrorDialog
-public partial class ErrorDialog
+public partial class ErrorDialog : Window
 {
+    public ErrorDialog()
+    {
+        InitializeComponent();
+    }
+
     // @port: Daqifi.Desktop.View.ErrorDialog.btnOk_Click
     private void btnOk_Click(object sender, RoutedEventArgs e) => throw new NotImplementedException();
 }

@@ -24,9 +24,9 @@ public class NaturalSortHelper
     // @port: Daqifi.Desktop.Helpers.NaturalSortHelper.NaturalCompare
     public static int NaturalCompare(string x, string y) => throw new NotImplementedException();
 
-    // @port: Daqifi.Desktop.Helpers.NaturalSortHelper.CreateNaturalComparer
-    public static Comparison<T> CreateNaturalComparer(Func<T, string> keySelector) => throw new NotImplementedException();
+    // @port: Daqifi.Desktop.Helpers.NaturalSortHelper.CreateNaturalComparer<T>
+    public static Comparison<T> CreateNaturalComparer<T>(Func<T, string> keySelector) => throw new NotImplementedException();
 
-    // @port: Daqifi.Desktop.Helpers.NaturalSortHelper.NaturalOrderBy
-    public static IEnumerable<T> NaturalOrderBy(IEnumerable<T> source, Func<T, string> keySelector) => throw new NotImplementedException();
+    // @port: Daqifi.Desktop.Helpers.NaturalSortHelper.NaturalOrderBy<T>
+    public static IEnumerable<T> NaturalOrderBy<T>(IEnumerable<T> source, Func<T, string> keySelector) => throw new NotImplementedException();
 }

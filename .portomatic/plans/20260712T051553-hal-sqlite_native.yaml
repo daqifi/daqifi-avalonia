@@ -1,29 +1,29 @@
 schema_version: 1
-plan_id: 20260712T013408-hal-file_pickers
-slug: hal-file_pickers
+plan_id: 20260712T051553-hal-sqlite_native
+slug: hal-sqlite_native
 kind: apply
-created_at: '2026-07-12T01:34:08.483039Z'
+created_at: '2026-07-12T05:15:53.678551Z'
 upstream_sha: null
-summary: "Port HAL concept `file_pickers` (win32 \u2192 avalonia)"
+summary: "Port HAL concept `sqlite_native` (win32 \u2192 shared)"
 steps:
 - id: s1
-  summary: "Translate HAL concept `file_pickers`: win32:SaveFileDialog \u2192 avalonia:StorageProvider"
+  summary: "Translate HAL concept `sqlite_native`: win32:e_sqlite3.dll \u2192 shared:SQLitePCLRaw.bundle_e_sqlite3"
   kind: patch
   upstream_ref: null
-  downstream_target: Services/FilePickerService.cs
+  downstream_target: Daqifi.Avalonia.csproj
   assigned_to: patch-author
   status: pending
   classification: null
   shard: UI
   commit_sha: null
   file: null
-  target_symbol: StorageProvider
+  target_symbol: SQLitePCLRaw.bundle_e_sqlite3
   parent_audit_row: null
   expected_resolution: null
   notes:
-  - hal-concept:file_pickers
-  - 'prompt: .portomatic/cache/prompts/translate-hal-file_pickers.md'
-  - "on completion: run `portomatic firmware close-hal --shard UI --concept file_pickers\
+  - hal-concept:sqlite_native
+  - 'prompt: .portomatic/cache/prompts/translate-hal-sqlite_native.md'
+  - "on completion: run `portomatic firmware close-hal --shard UI --concept sqlite_native\
     \ --relation <relation> --symbol <sym> --file <path>` \u2014 it flips the `UI`\
     \ hal_pairs entry to ported and refuses while verify gates are pending"
   divergences: []
@@ -47,7 +47,7 @@ steps:
   parent_audit_row: null
   expected_resolution: null
   notes:
-  - hal-concept:file_pickers
+  - hal-concept:sqlite_native
   divergences: []
   started_at: null
   finished_at: null

@@ -29,7 +29,7 @@ namespace Daqifi.Desktop.Device.Firmware;
 public interface IBootloaderWatcher
 {
     // @port: Daqifi.Desktop.Device.Firmware.IBootloaderWatcher.Bootloaders
-    ReadOnlyObservableCollection<HeldBootloader> Bootloaders { get; set; }
+    ReadOnlyObservableCollection<HeldBootloader> Bootloaders { get; }
 
     // @port: Daqifi.Desktop.Device.Firmware.IBootloaderWatcher.Start
     void Start();

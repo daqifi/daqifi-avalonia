@@ -1,29 +1,29 @@
 schema_version: 1
-plan_id: 20260712T013408-hal-message_box
-slug: hal-message_box
+plan_id: 20260712T051553-hal-chart_plot_host
+slug: hal-chart_plot_host
 kind: apply
-created_at: '2026-07-12T01:34:08.552223Z'
+created_at: '2026-07-12T05:15:53.202976Z'
 upstream_sha: null
-summary: "Port HAL concept `message_box` (wpf \u2192 avalonia)"
+summary: "Port HAL concept `chart_plot_host` (oxyplot \u2192 oxyplot)"
 steps:
 - id: s1
-  summary: "Translate HAL concept `message_box`: wpf:MessageBox \u2192 avalonia:MessageDialog"
+  summary: "Translate HAL concept `chart_plot_host`: oxyplot:PlotView \u2192 oxyplot:PlotView"
   kind: patch
   upstream_ref: null
-  downstream_target: Views/Dialogs/MessageDialog.axaml
+  downstream_target: Views/LiveGraphPane.axaml
   assigned_to: patch-author
   status: pending
   classification: null
   shard: UI
   commit_sha: null
   file: null
-  target_symbol: MessageDialog
+  target_symbol: PlotView
   parent_audit_row: null
   expected_resolution: null
   notes:
-  - hal-concept:message_box
-  - 'prompt: .portomatic/cache/prompts/translate-hal-message_box.md'
-  - "on completion: run `portomatic firmware close-hal --shard UI --concept message_box\
+  - hal-concept:chart_plot_host
+  - 'prompt: .portomatic/cache/prompts/translate-hal-chart_plot_host.md'
+  - "on completion: run `portomatic firmware close-hal --shard UI --concept chart_plot_host\
     \ --relation <relation> --symbol <sym> --file <path>` \u2014 it flips the `UI`\
     \ hal_pairs entry to ported and refuses while verify gates are pending"
   divergences: []
@@ -47,7 +47,7 @@ steps:
   parent_audit_row: null
   expected_resolution: null
   notes:
-  - hal-concept:message_box
+  - hal-concept:chart_plot_host
   divergences: []
   started_at: null
   finished_at: null

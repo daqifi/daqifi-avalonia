@@ -28,5 +28,5 @@ public interface IDiskSpaceMonitor : IDisposable
     void StopMonitoring();
 
     // @port: Daqifi.Desktop.DiskSpace.IDiskSpaceMonitor.IsMonitoring
-    bool IsMonitoring { get; set; }
+    bool IsMonitoring { get; }
 }

@@ -6,6 +6,7 @@
 // DO NOT manually delete the `// @port:` markers — they link symbols back to
 // the correspondence map.
 
+using Avalonia.Controls;
 using System;
 using System.Collections.Generic;
 using System.Threading.Tasks;
@@ -16,8 +17,13 @@ namespace Daqifi.Desktop.View;
 /// Interaction logic for DuplicateDeviceDialog.xaml
 /// </summary>
 // @port: Daqifi.Desktop.View.DuplicateDeviceDialog
-public partial class DuplicateDeviceDialog
+public partial class DuplicateDeviceDialog : Window
 {
+    public DuplicateDeviceDialog()
+    {
+        InitializeComponent();
+    }
+
     // @port: Daqifi.Desktop.View.DuplicateDeviceDialog.Result
     public DuplicateDeviceDialogResult Result
     {

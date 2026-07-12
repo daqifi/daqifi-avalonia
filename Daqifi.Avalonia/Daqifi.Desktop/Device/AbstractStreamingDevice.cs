@@ -15,7 +15,7 @@ using System.Threading.Tasks;
 namespace Daqifi.Desktop.Device;
 
 // @port: Daqifi.Desktop.Device.NativeMethods
-internal partial class NativeMethods
+partial class NativeMethods
 {
     public uint EsSystemRequired;
 

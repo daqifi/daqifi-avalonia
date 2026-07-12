@@ -34,13 +34,13 @@ namespace Daqifi.Desktop.Device.Firmware;
 public interface IBootloaderHoldService : IDisposable
 {
     // @port: Daqifi.Desktop.Device.Firmware.IBootloaderHoldService.IsHolding
-    bool IsHolding { get; set; }
+    bool IsHolding { get; }
 
     // @port: Daqifi.Desktop.Device.Firmware.IBootloaderHoldService.DevicePath
-    string? DevicePath { get; set; }
+    string? DevicePath { get; }
 
     // @port: Daqifi.Desktop.Device.Firmware.IBootloaderHoldService.DeviceName
-    string? DeviceName { get; set; }
+    string? DeviceName { get; }
 
     // @port: Daqifi.Desktop.Device.Firmware.IBootloaderHoldService.BeginHoldAsync
     Task BeginHoldAsync(CancellationToken cancellationToken);

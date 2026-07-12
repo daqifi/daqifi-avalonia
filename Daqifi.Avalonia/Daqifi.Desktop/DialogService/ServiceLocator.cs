@@ -20,15 +20,15 @@ internal class ServiceLocator
 {
     private static Dictionary<Type, ServiceInfo> services;
 
-    // @port: Daqifi.Desktop.DialogService.ServiceLocator.Register
-    public static void Register() => throw new NotImplementedException();
+    // @port: Daqifi.Desktop.DialogService.ServiceLocator.Register<TInterface, TImplemention>
+    public static void Register<TInterface, TImplemention>() => throw new NotImplementedException();
 
-    // @port: Daqifi.Desktop.DialogService.ServiceLocator.RegisterSingleton
-    public static void RegisterSingleton() => throw new NotImplementedException();
+    // @port: Daqifi.Desktop.DialogService.ServiceLocator.RegisterSingleton<TInterface, TImplemention>
+    public static void RegisterSingleton<TInterface, TImplemention>() => throw new NotImplementedException();
 
-    // @port: Daqifi.Desktop.DialogService.ServiceLocator.Resolve
-    public static TInterface Resolve() => throw new NotImplementedException();
+    // @port: Daqifi.Desktop.DialogService.ServiceLocator.Resolve<TInterface>
+    public static TInterface Resolve<TInterface>() => throw new NotImplementedException();
 
-    // @port: Daqifi.Desktop.DialogService.ServiceLocator.Register
-    private static void Register(bool isSingleton) => throw new NotImplementedException();
+    // @port: Daqifi.Desktop.DialogService.ServiceLocator.Register<TInterface, TImplemention>
+    private static void Register<TInterface, TImplemention>(bool isSingleton) => throw new NotImplementedException();
 }

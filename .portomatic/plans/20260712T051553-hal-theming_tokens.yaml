@@ -1,29 +1,30 @@
 schema_version: 1
-plan_id: 20260712T013408-hal-sqlite_native
-slug: hal-sqlite_native
+plan_id: 20260712T051553-hal-theming_tokens
+slug: hal-theming_tokens
 kind: apply
-created_at: '2026-07-12T01:34:08.879205Z'
+created_at: '2026-07-12T05:15:53.474628Z'
 upstream_sha: null
-summary: "Port HAL concept `sqlite_native` (win32 \u2192 shared)"
+summary: "Port HAL concept `theming_tokens` (wpf \u2192 avalonia)"
 steps:
 - id: s1
-  summary: "Translate HAL concept `sqlite_native`: win32:e_sqlite3.dll \u2192 shared:SQLitePCLRaw.bundle_e_sqlite3"
+  summary: "Translate HAL concept `theming_tokens`: wpf:ResourceDictionary \u2192\
+    \ avalonia:ThemeDictionaries"
   kind: patch
   upstream_ref: null
-  downstream_target: Daqifi.Avalonia.csproj
+  downstream_target: Resources/DesignTokens.axaml
   assigned_to: patch-author
   status: pending
   classification: null
   shard: UI
   commit_sha: null
   file: null
-  target_symbol: SQLitePCLRaw.bundle_e_sqlite3
+  target_symbol: ThemeDictionaries
   parent_audit_row: null
   expected_resolution: null
   notes:
-  - hal-concept:sqlite_native
-  - 'prompt: .portomatic/cache/prompts/translate-hal-sqlite_native.md'
-  - "on completion: run `portomatic firmware close-hal --shard UI --concept sqlite_native\
+  - hal-concept:theming_tokens
+  - 'prompt: .portomatic/cache/prompts/translate-hal-theming_tokens.md'
+  - "on completion: run `portomatic firmware close-hal --shard UI --concept theming_tokens\
     \ --relation <relation> --symbol <sym> --file <path>` \u2014 it flips the `UI`\
     \ hal_pairs entry to ported and refuses while verify gates are pending"
   divergences: []
@@ -47,7 +48,7 @@ steps:
   parent_audit_row: null
   expected_resolution: null
   notes:
-  - hal-concept:sqlite_native
+  - hal-concept:theming_tokens
   divergences: []
   started_at: null
   finished_at: null

@@ -6,6 +6,7 @@
 // DO NOT manually delete the `// @port:` markers — they link symbols back to
 // the correspondence map.
 
+using Avalonia.Controls;
 using System;
 using System.Collections.Generic;
 using System.Threading.Tasks;
@@ -16,8 +17,13 @@ namespace Daqifi.Desktop.View;
 /// Interaction logic for SuccessDialog.xaml
 /// </summary>
 // @port: Daqifi.Desktop.View.SuccessDialog
-public partial class SuccessDialog
+public partial class SuccessDialog : Window
 {
+    public SuccessDialog()
+    {
+        InitializeComponent();
+    }
+
     // @port: Daqifi.Desktop.View.SuccessDialog.btnOk_Click
     private void btnOk_Click(object sender, System.Windows.RoutedEventArgs e) => throw new NotImplementedException();
 }
