@@ -1,0 +1,57 @@
+schema_version: 1
+plan_id: 20260712T013408-hal-main_window_chrome
+slug: hal-main_window_chrome
+kind: apply
+created_at: '2026-07-12T01:34:08.111703Z'
+upstream_sha: null
+summary: "Port HAL concept `main_window_chrome` (mahapps \u2192 avalonia)"
+steps:
+- id: s1
+  summary: "Translate HAL concept `main_window_chrome`: mahapps:MetroWindow \u2192\
+    \ avalonia:Window"
+  kind: patch
+  upstream_ref: null
+  downstream_target: Views/MainWindow.axaml
+  assigned_to: patch-author
+  status: pending
+  classification: null
+  shard: UI
+  commit_sha: null
+  file: null
+  target_symbol: Window
+  parent_audit_row: null
+  expected_resolution: null
+  notes:
+  - hal-concept:main_window_chrome
+  - 'prompt: .portomatic/cache/prompts/translate-hal-main_window_chrome.md'
+  - "on completion: run `portomatic firmware close-hal --shard UI --concept main_window_chrome\
+    \ --relation <relation> --symbol <sym> --file <path>` \u2014 it flips the `UI`\
+    \ hal_pairs entry to ported and refuses while verify gates are pending"
+  divergences: []
+  started_at: null
+  finished_at: null
+  failure_class: null
+  ticket_url: null
+  ticket_number: null
+- id: s2
+  summary: 'Build gate: portomatic adapter build --kind dotnet'
+  kind: verify
+  upstream_ref: null
+  downstream_target: null
+  assigned_to: null
+  status: pending
+  classification: null
+  shard: UI
+  commit_sha: null
+  file: null
+  target_symbol: null
+  parent_audit_row: null
+  expected_resolution: null
+  notes:
+  - hal-concept:main_window_chrome
+  divergences: []
+  started_at: null
+  finished_at: null
+  failure_class: null
+  ticket_url: null
+  ticket_number: null

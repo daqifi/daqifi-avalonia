@@ -1,0 +1,57 @@
+schema_version: 1
+plan_id: 20260712T013408-hal-ui_thread_dispatch
+slug: hal-ui_thread_dispatch
+kind: apply
+created_at: '2026-07-12T01:34:08.616647Z'
+upstream_sha: null
+summary: "Port HAL concept `ui_thread_dispatch` (wpf \u2192 avalonia)"
+steps:
+- id: s1
+  summary: "Translate HAL concept `ui_thread_dispatch`: wpf:Dispatcher.Invoke \u2192\
+    \ avalonia:Dispatcher.UIThread"
+  kind: patch
+  upstream_ref: null
+  downstream_target: ViewModels/DaqifiViewModel.cs
+  assigned_to: patch-author
+  status: pending
+  classification: null
+  shard: UI
+  commit_sha: null
+  file: null
+  target_symbol: Dispatcher.UIThread
+  parent_audit_row: null
+  expected_resolution: null
+  notes:
+  - hal-concept:ui_thread_dispatch
+  - 'prompt: .portomatic/cache/prompts/translate-hal-ui_thread_dispatch.md'
+  - "on completion: run `portomatic firmware close-hal --shard UI --concept ui_thread_dispatch\
+    \ --relation <relation> --symbol <sym> --file <path>` \u2014 it flips the `UI`\
+    \ hal_pairs entry to ported and refuses while verify gates are pending"
+  divergences: []
+  started_at: null
+  finished_at: null
+  failure_class: null
+  ticket_url: null
+  ticket_number: null
+- id: s2
+  summary: 'Build gate: portomatic adapter build --kind dotnet'
+  kind: verify
+  upstream_ref: null
+  downstream_target: null
+  assigned_to: null
+  status: pending
+  classification: null
+  shard: UI
+  commit_sha: null
+  file: null
+  target_symbol: null
+  parent_audit_row: null
+  expected_resolution: null
+  notes:
+  - hal-concept:ui_thread_dispatch
+  divergences: []
+  started_at: null
+  finished_at: null
+  failure_class: null
+  ticket_url: null
+  ticket_number: null
