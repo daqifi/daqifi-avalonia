@@ -1,0 +1,5 @@
+<UserControl xmlns="https://github.com/avaloniaui"
+             xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml"
+             x:Class="Daqifi.Desktop.View.ProfilesPane">
+  <!-- Scaffolded by portomatic from upstream Daqifi.Desktop.View.ProfilesPane. Fill in the view; the code-behind ctor calls InitializeComponent(). -->
+</UserControl>

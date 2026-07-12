@@ -1,0 +1,51 @@
+<Project Sdk="Microsoft.NET.Sdk">
+	<PropertyGroup>
+		<OutputType>WinExe</OutputType>
+		<TargetFramework>net10.0</TargetFramework>
+		<Nullable>enable</Nullable>
+		<ImplicitUsings>enable</ImplicitUsings>
+		<Version>3.3.0</Version>
+		<BuiltInComInteropSupport>true</BuiltInComInteropSupport>
+		<ApplicationManifest>app.manifest</ApplicationManifest>
+		<AvaloniaUseCompiledBindingsByDefault>false</AvaloniaUseCompiledBindingsByDefault>
+	</PropertyGroup>
+
+	<ItemGroup>
+		<!-- Avalonia stack (replaces WPF + MahApps.Metro per the UI catalog decision log) -->
+		<PackageReference Include="Avalonia" Version="11.3.*" />
+		<PackageReference Include="Avalonia.Desktop" Version="11.3.*" />
+		<PackageReference Include="Avalonia.Themes.Fluent" Version="11.3.*" />
+		<PackageReference Include="Avalonia.Fonts.Inter" Version="11.3.*" />
+		<PackageReference Include="Avalonia.Diagnostics" Version="11.3.*" Condition="'$(Configuration)' == 'Debug'" />
+		<!-- OxyPlot.Avalonia replaces OxyPlot.Wpf; the PlotModel layer (OxyPlot.Core) ports verbatim -->
+		<PackageReference Include="OxyPlot.Core" Version="2.2.0" />
+		<PackageReference Include="OxyPlot.Avalonia" Version="2.*" />
+		<!-- Same Material glyph set as MahApps.Metro.IconPacks.Material -->
+		<PackageReference Include="Projektanker.Icons.Avalonia.MaterialDesign" Version="9.*" />
+		<!-- Direct port of Microsoft.Xaml.Behaviors.Wpf -->
+		<PackageReference Include="Avalonia.Xaml.Behaviors" Version="11.3.*" />
+
+		<!-- Platform-neutral stack carried over from upstream Daqifi.Desktop + Daqifi.Desktop.Common -->
+		<PackageReference Include="CommunityToolkit.Mvvm" Version="8.4.2" />
+		<PackageReference Include="Daqifi.Core" Version="1.0.0" />
+		<PackageReference Include="EFCore.BulkExtensions.Sqlite" Version="10.0.1" />
+		<PackageReference Include="Microsoft.Data.Sqlite" Version="10.0.9" />
+		<PackageReference Include="Microsoft.EntityFrameworkCore" Version="10.0.9" />
+		<PackageReference Include="Microsoft.EntityFrameworkCore.Sqlite" Version="10.0.9" />
+		<PackageReference Include="Microsoft.EntityFrameworkCore.Tools" Version="10.0.9">
+			<PrivateAssets>all</PrivateAssets>
+			<IncludeAssets>runtime; build; native; contentfiles; analyzers; buildtransitive</IncludeAssets>
+		</PackageReference>
+		<PackageReference Include="Microsoft.Extensions.Http" Version="10.0.9" />
+		<PackageReference Include="NCalcSync" Version="6.4.0" />
+		<PackageReference Include="Newtonsoft.Json" Version="13.0.4" />
+		<PackageReference Include="NLog" Version="6.1.4" />
+		<PackageReference Include="Sentry" Version="6.6.0" />
+		<!-- All-platform native SQLite bundle (upstream committed a win-x64 e_sqlite3.dll) -->
+		<PackageReference Include="SQLitePCLRaw.bundle_e_sqlite3" Version="3.0.3" />
+		<PackageReference Include="System.Configuration.ConfigurationManager" Version="10.0.9" />
+		<!-- Desktop-only transports: serial + WMI hotplug (mobile is WiFi/TCP only, DIV-UI-003) -->
+		<PackageReference Include="System.IO.Ports" Version="10.0.9" />
+		<PackageReference Include="System.Management" Version="10.0.9" />
+	</ItemGroup>
+</Project>

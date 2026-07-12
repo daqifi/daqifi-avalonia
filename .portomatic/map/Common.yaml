@@ -1,0 +1,38 @@
+schema_version: 1
+shard: Common
+upstream_root: Daqifi.Desktop.Common
+downstream_root: Daqifi.Avalonia/Daqifi.Desktop.Common
+last_synced_upstream_sha: null
+files:
+- upstream: Daqifi.Desktop.Common/AppDataPaths.cs
+  downstream: Daqifi.Avalonia/Daqifi.Desktop.Common/AppDataPaths.cs
+  relation: subset
+  notes: auto-mapped by portomatic scaffold
+  rationale: null
+  last_synced_sha: null
+- upstream: Daqifi.Desktop.Common/Loggers/AppLogger.cs
+  downstream: Daqifi.Avalonia/Daqifi.Desktop.Common/Loggers/AppLogger.cs
+  relation: subset
+  notes: auto-mapped by portomatic scaffold
+  rationale: null
+  last_synced_sha: null
+- upstream: Daqifi.Desktop.Common/Loggers/IAppLogger.cs
+  downstream: Daqifi.Avalonia/Daqifi.Desktop.Common/Loggers/IAppLogger.cs
+  relation: subset
+  notes: auto-mapped by portomatic scaffold
+  rationale: null
+  last_synced_sha: null
+- upstream: Daqifi.Desktop.Common/Loggers/NoOpLogger.cs
+  downstream: Daqifi.Avalonia/Daqifi.Desktop.Common/Loggers/NoOpLogger.cs
+  relation: subset
+  notes: auto-mapped by portomatic scaffold
+  rationale: null
+  last_synced_sha: null
+symbols: []
+divergences: []
+backlog: []
+hal_pairs: []
+mechanisms: []
+downstream_only: []
+downstream_only_files: []
+updated_at: '2026-07-12T01:26:57.122507Z'

@@ -1,0 +1,16 @@
+# dotnet
+bin/
+obj/
+*.user
+*.suo
+.vs/
+artifacts/
+
+# portomatic local state (map/ and plans/ ARE committed)
+.portomatic/project.yaml
+.portomatic/reports/
+.portomatic/research/
+.portomatic/cache/
+
+# agent tooling (regenerate via portomatic's install-skill-pack.sh)
+.claude/

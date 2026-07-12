@@ -1,0 +1,5 @@
+<Window xmlns="https://github.com/avaloniaui"
+        xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml"
+        x:Class="Daqifi.Desktop.View.FirmwareDialog">
+  <!-- Scaffolded by portomatic from upstream Daqifi.Desktop.View.FirmwareDialog. Fill in the view; the code-behind ctor calls InitializeComponent(). -->
+</Window>
