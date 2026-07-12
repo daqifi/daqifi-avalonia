@@ -8,7 +8,8 @@ using Avalonia.Data.Converters;
 
 namespace Daqifi.Desktop.Converters;
 
-// WPF returned Visibility; Avalonia visibility is a bool (IsVisible).
+// WPF returned Visibility; Avalonia visibility is a bool (IsVisible), so this is
+// not-null -> bool in the Avalonia dialect.
 // @port: Daqifi.Desktop.Converters.NotNullToVisibilityConverter
 public class NotNullToVisibilityConverter : IValueConverter
 {

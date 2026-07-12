@@ -7,8 +7,6 @@ using System.Globalization;
 using Avalonia.Data.Converters;
 using Avalonia.Media;
 using OxyPlot;
-using Brushes = Avalonia.Media.Brushes;
-using Color = Avalonia.Media.Color;
 
 namespace Daqifi.Desktop.Converters;
 

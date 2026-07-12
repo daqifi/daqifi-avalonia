@@ -3,21 +3,29 @@
 // DO NOT manually delete the `// @port:` markers — they link symbols back to
 // the correspondence map.
 
-using System;
 using System.Globalization;
 using Avalonia.Data.Converters;
 
 namespace Daqifi.Desktop.Helpers;
 
+// WPF returned Visibility; Avalonia visibility is a bool (IsVisible), so this is
+// count > 0 -> bool in the Avalonia dialect.
 // @port: Daqifi.Desktop.Helpers.IntToVisibilityConverter
 public class IntToVisibilityConverter : IValueConverter
 {
-    // WPF Visibility.Visible/Collapsed → Avalonia IsVisible (bool).
     // @port: Daqifi.Desktop.Helpers.IntToVisibilityConverter.Convert
-    public object Convert(object? value, Type targetType, object? parameter, CultureInfo culture)
-        => value is int count && count > 0;
+    public object Convert(object value, Type targetType, object parameter, CultureInfo culture)
+    {
+        if (value is int count)
+        {
+            return count > 0;
+        }
+        return false;
+    }
 
     // @port: Daqifi.Desktop.Helpers.IntToVisibilityConverter.ConvertBack
-    public object ConvertBack(object? value, Type targetType, object? parameter, CultureInfo culture)
-        => throw new NotImplementedException();
+    public object ConvertBack(object value, Type targetType, object parameter, CultureInfo culture)
+    {
+        throw new NotImplementedException();
+    }
 }
