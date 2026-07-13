@@ -1,5 +1,82 @@
 <Window xmlns="https://github.com/avaloniaui"
         xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml"
-        x:Class="Daqifi.Desktop.View.ExportDialog">
-  <!-- Scaffolded by portomatic from upstream Daqifi.Desktop.View.ExportDialog. Fill in the view; the code-behind ctor calls InitializeComponent(). -->
+        xmlns:i="https://github.com/projektanker/icons.avalonia"
+        x:Class="Daqifi.Desktop.View.ExportDialog"
+        Title="Export Logging Session" CanResize="False" Height="390" Width="560"
+        Background="{StaticResource Surface}">
+    <!--
+        Ported from the MahApps MetroWindow original: GlowBrush dropped;
+        DarkDialog styles come from the app-merged DarkDialog.axaml
+        (GroupBox → HeaderedContentControl + DarkGroupBox theme);
+        Visibility+BoolToVis → IsVisible; MetroProgressBar → ProgressBar;
+        PackIconMaterial → projektanker i:Icon; Square.Accent → Classes="accent".
+    -->
+    <Grid Margin="16" Background="{StaticResource Surface}">
+
+        <!-- ══════════════════════════════ Configure ══════════════════════════════ -->
+        <Grid IsVisible="{Binding IsConfiguring}" RowDefinitions="Auto,Auto,Auto,*,Auto">
+
+            <!-- Export Location -->
+            <HeaderedContentControl Grid.Row="0" Header="Export Location" Theme="{StaticResource DarkGroupBox}">
+                <Grid ColumnDefinitions="*,Auto">
+                    <TextBox Grid.Column="0" HorizontalAlignment="Stretch" Text="{Binding ExportFilePath, Mode=OneWay}" IsEnabled="False"/>
+                    <Button Grid.Column="1" Content="Browse" Command="{Binding BrowseCommand}" Margin="8,0,0,0" Theme="{StaticResource DarkSecondaryButton}"/>
+                </Grid>
+            </HeaderedContentControl>
+
+            <!-- Export Type -->
+            <HeaderedContentControl Grid.Row="1" Header="Export Type" Theme="{StaticResource DarkGroupBox}">
+                <Grid ColumnDefinitions="Auto,Auto" RowDefinitions="Auto,Auto">
+                    <RadioButton Grid.Column="0" Grid.Row="0" Content="All Samples" IsChecked="{Binding ExportAllSelected}" Margin="0,0,0,8"/>
+                    <RadioButton Grid.Column="0" Grid.Row="1" Content="Average Every &quot;N&quot; Samples" IsChecked="{Binding ExportAverageSelected}" VerticalAlignment="Center"/>
+                    <TextBox Grid.Column="1" Grid.Row="1" Width="60" Margin="12,0,0,0" Text="{Binding AverageQuantity, Mode=TwoWay}"/>
+                </Grid>
+            </HeaderedContentControl>
+
+            <!-- Timestamp Format -->
+            <HeaderedContentControl Grid.Row="2" Header="Timestamp Format" Theme="{StaticResource DarkGroupBox}">
+                <StackPanel Orientation="Horizontal">
+                    <RadioButton Content="Absolute Time" IsChecked="True"/>
+                    <RadioButton Content="Relative Time" IsChecked="{Binding ExportRelativeTime}" Margin="24,0,0,0"/>
+                </StackPanel>
+            </HeaderedContentControl>
+
+            <!-- Actions -->
+            <DockPanel Grid.Row="4" HorizontalAlignment="Right" Margin="0,8,0,0">
+                <Button Click="btnCancel_Click" Content="Cancel" Width="100" Height="32" Margin="0,0,10,0" Theme="{StaticResource DarkSecondaryButton}"/>
+                <Button Content="Export" Command="{Binding ExportLoggingSessionsCommand}" Width="100" Height="32" Classes="accent"/>
+            </DockPanel>
+        </Grid>
+
+        <!-- ══════════════════════════════ Exporting ══════════════════════════════ -->
+        <StackPanel IsVisible="{Binding IsExporting}"
+                    VerticalAlignment="Center" HorizontalAlignment="Center" Width="400">
+            <TextBlock Text="Exporting…" FontSize="16" HorizontalAlignment="Center" Foreground="{StaticResource TextPrimary}"/>
+            <ProgressBar Minimum="0" Maximum="100" Value="{Binding ExportProgress}" Height="6" Margin="0,18,0,0"/>
+            <TextBlock Text="{Binding ExportProgress, StringFormat={}{0}%}" HorizontalAlignment="Center" Foreground="{StaticResource TextSecondary}" Margin="0,12,0,22"/>
+            <Button Content="Cancel" Command="{Binding CancelExportCommand}" Width="120" Height="32" HorizontalAlignment="Center" Theme="{StaticResource DarkSecondaryButton}"/>
+        </StackPanel>
+
+        <!-- ════════════════════════════════ Result ═══════════════════════════════ -->
+        <StackPanel IsVisible="{Binding IsExportComplete}"
+                    VerticalAlignment="Center" HorizontalAlignment="Center" Width="440">
+            <i:Icon Value="mdi-check-circle-outline" FontSize="46" HorizontalAlignment="Center"
+                    Foreground="{StaticResource StatusGreen}"
+                    IsVisible="{Binding ExportSucceeded}"/>
+            <i:Icon Value="mdi-alert-circle-outline" FontSize="46" HorizontalAlignment="Center"
+                    Foreground="{StaticResource StatusRed}"
+                    IsVisible="{Binding !ExportSucceeded}"/>
+            <TextBlock Text="{Binding ExportResultMessage}" FontSize="16" HorizontalAlignment="Center" Margin="0,14,0,4" Foreground="{StaticResource TextPrimary}"/>
+            <TextBlock Text="{Binding ExportFilePath}" FontSize="11" HorizontalAlignment="Center" TextAlignment="Center" TextWrapping="Wrap"
+                       Foreground="{StaticResource TextSecondary}" Margin="0,0,0,22"
+                       IsVisible="{Binding ExportSucceeded}"/>
+            <StackPanel Orientation="Horizontal" HorizontalAlignment="Center">
+                <Button Content="Open Folder" Command="{Binding OpenExportLocationCommand}" Width="120" Height="32" Margin="0,0,10,0"
+                        Theme="{StaticResource DarkSecondaryButton}"
+                        IsVisible="{Binding ExportSucceeded}"/>
+                <Button Content="Done" Click="btnDone_Click" Width="120" Height="32" Classes="accent"/>
+            </StackPanel>
+        </StackPanel>
+
+    </Grid>
 </Window>

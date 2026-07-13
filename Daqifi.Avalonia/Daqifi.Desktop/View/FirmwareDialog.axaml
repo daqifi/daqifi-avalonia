@@ -1,5 +1,73 @@
 <Window xmlns="https://github.com/avaloniaui"
         xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml"
-        x:Class="Daqifi.Desktop.View.FirmwareDialog">
-  <!-- Scaffolded by portomatic from upstream Daqifi.Desktop.View.FirmwareDialog. Fill in the view; the code-behind ctor calls InitializeComponent(). -->
+        xmlns:dialogService="using:Daqifi.Desktop.DialogService"
+        x:Class="Daqifi.Desktop.View.FirmwareDialog"
+        dialogService:DialogService.IsRegisteredView="True"
+        Title="Firmware Settings" Height="380" Width="500"
+        Background="{StaticResource Surface}">
+    <!--
+        Ported from the MahApps MetroWindow original: GlowBrush dropped;
+        DarkDialog styles come from the app-merged DarkDialog.axaml
+        (GroupBox → HeaderedContentControl + DarkGroupBox theme);
+        Visibility+BoolToVis → IsVisible (with ! for the inverted case);
+        MetroProgressBar → ProgressBar; Square.Accent → Classes="accent";
+        ComboBox DisplayMemberPath → DisplayMemberBinding.
+    -->
+    <Grid Background="{StaticResource Surface}">
+
+        <!-- Before Upload -->
+        <Grid IsVisible="{Binding !IsUploadComplete}" RowDefinitions="Auto,Auto,Auto,*">
+
+            <HeaderedContentControl Grid.Row="0" Header="Bootloader Version" Theme="{StaticResource DarkGroupBox}" Margin="10,10,10,12">
+                <TextBlock Text="{Binding Version}" Foreground="{StaticResource TextPrimary}"/>
+            </HeaderedContentControl>
+
+            <HeaderedContentControl Grid.Row="1" Header="Update Firmware" Theme="{StaticResource DarkGroupBox}" Margin="10,0,10,12">
+                <StackPanel>
+                    <!-- Latest DAQiFi firmware (default path): no need to locate a .hex file. -->
+                    <TextBlock Text="DAQiFi Firmware" Foreground="{StaticResource TextSecondary}" FontSize="11" Margin="2,0,2,4"/>
+                    <ComboBox Theme="{StaticResource DarkComboBox}"
+                              AutomationProperties.AutomationId="BootloaderFirmwareSelector"
+                              HorizontalAlignment="Stretch"
+                              ItemsSource="{Binding AvailableFirmwares}"
+                              DisplayMemberBinding="{Binding Display}"
+                              SelectedItem="{Binding SelectedFirmware, Mode=TwoWay}"/>
+
+                    <!-- Or browse for a specific .hex file -->
+                    <TextBlock Text="Or browse for a firmware file" Foreground="{StaticResource TextTertiary}" FontSize="11" Margin="2,12,2,4"/>
+                    <Grid ColumnDefinitions="*,85">
+                        <TextBox Grid.Column="0" Height="34" VerticalAlignment="Top" Margin="0,0,5,0" Text="{Binding FirmwareFilePath, Mode=OneWay}"/>
+                        <Button Grid.Column="1" Content="Browse" Width="75" Height="34" VerticalAlignment="Top" Theme="{StaticResource DarkSecondaryButton}" Command="{Binding BrowseFirmwarePathCommand}"/>
+                    </Grid>
+                </StackPanel>
+            </HeaderedContentControl>
+
+            <TextBlock IsVisible="{Binding HasErrorOccured}" Grid.Row="2" Text="Sorry, something went wrong uploading the firmware.  :(" HorizontalAlignment="Center" Foreground="{StaticResource StatusRed}"/>
+
+            <DockPanel Grid.Row="3" HorizontalAlignment="Right" VerticalAlignment="Bottom" LastChildFill="True" Margin="5">
+                <Button Click="btnCancel_Click" Content="Cancel" Width="100" Height="30" Margin="0,0,10,0" Theme="{StaticResource DarkSecondaryButton}"/>
+                <Button DockPanel.Dock="Bottom" Content="Upload" Width="100" Height="30" HorizontalAlignment="Right" Classes="accent" Command="{Binding UploadFirmwareCommand}"/>
+            </DockPanel>
+
+            <Grid Grid.Row="0" Grid.RowSpan="4" Background="{StaticResource Scrim}" IsVisible="{Binding IsFirmwareUploading}" RowDefinitions="*,Auto,Auto,*">
+                <ProgressBar Grid.Row="1" Height="25" Minimum="0" Maximum="100" Value="{Binding UploadFirmwareProgress}" Margin="20,0"/>
+                <TextBlock Grid.Row="2"
+                           Text="Loading Firmware... (this may take several minutes)."
+                           HorizontalAlignment="Center" Margin="0,8,0,0"
+                           Foreground="{StaticResource TextPrimary}"/>
+                <TextBlock Grid.Row="3"
+                           Text="{Binding UploadFirmwareProgressText}"
+                           HorizontalAlignment="Center" VerticalAlignment="Top" Margin="0,4,0,0"
+                           Foreground="{StaticResource TextPrimary}"/>
+            </Grid>
+        </Grid>
+
+        <!-- After Upload -->
+        <Grid IsVisible="{Binding IsUploadComplete}" RowDefinitions="*,Auto,Auto,*">
+            <TextBlock Grid.Row="2" Text="Upload Complete" HorizontalAlignment="Center" Foreground="{StaticResource TextPrimary}"/>
+            <DockPanel Grid.Row="3" HorizontalAlignment="Right" VerticalAlignment="Bottom" LastChildFill="True" Margin="5">
+                <Button Click="btnOk_Click" Content="OK" DockPanel.Dock="Bottom" Width="100" Height="30" HorizontalAlignment="Right" Classes="accent"/>
+            </DockPanel>
+        </Grid>
+    </Grid>
 </Window>

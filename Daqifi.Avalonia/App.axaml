@@ -1,10 +1,13 @@
 <Application xmlns="https://github.com/avaloniaui"
              xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml"
              xmlns:helpers="using:Daqifi.Desktop.Helpers"
+             xmlns:converters="using:Daqifi.Desktop.Converters"
              x:Class="Daqifi.Avalonia.App"
              RequestedThemeVariant="Dark">
     <Application.Styles>
         <FluentTheme />
+        <!-- Avalonia's DataGrid ships its theme in its own package (DebugWindow) -->
+        <StyleInclude Source="avares://Avalonia.Controls.DataGrid/Themes/Fluent.xaml"/>
     </Application.Styles>
     <Application.Resources>
         <ResourceDictionary>
@@ -12,12 +15,26 @@
                 <!-- Canonical design tokens (hal: theming_tokens) — MahApps theme
                      dictionaries are replaced by FluentTheme + ThemeVariant. -->
                 <ResourceInclude Source="avares://Daqifi.Avalonia/Daqifi.Desktop/Resources/DesignTokens.axaml"/>
+                <!-- Dark dialog control themes (upstream merges DarkDialog.xaml per-window;
+                     everything here is keyed/opt-in, so an app-level merge is safe and
+                     avoids repeating the include in every dialog). -->
+                <ResourceInclude Source="avares://Daqifi.Avalonia/Daqifi.Desktop/Resources/DarkDialog.axaml"/>
             </ResourceDictionary.MergedDictionaries>
 
-            <!-- Upstream App.xaml converter registrations migrate here as their
-                 classes port; WPF BoolToVis has no Avalonia counterpart — bind
-                 IsVisible directly instead. -->
+            <!-- Upstream App.xaml converter registrations, same keys. The WPF-framework
+                 BoolToVis / InvertedBoolToVis registrations are dropped — Avalonia binds
+                 IsVisible directly (with ! for negation). The ported Converters return
+                 bool for the visibility-flavored keys, so they too target IsVisible. -->
             <helpers:IntToVisibilityConverter x:Key="IntToVisibility"/>
+            <converters:BoolAndToVisibilityConverter x:Key="BoolAndToVis"/>
+            <helpers:EnumDescriptionConverter x:Key="EnumDescription"/>
+            <helpers:BooleanToInverseBoolConverter x:Key="BooleanToInverse"/>
+            <converters:BoolToActiveStatusConverter x:Key="BoolToActiveStatus"/>
+            <converters:BoolToStatusColorConverter x:Key="BoolToStatusColor"/>
+            <converters:ListToStringConverter x:Key="ListToStringConverter"/>
+            <converters:BrushColorMatchConverter x:Key="BrushColorMatch"/>
+            <converters:OxyColorToBrushConverter x:Key="OxyColorToBrushConverter"/>
+            <converters:NotNullToVisibilityConverter x:Key="NotNullToVis"/>
         </ResourceDictionary>
     </Application.Resources>
 </Application>

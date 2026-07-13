@@ -1,5 +1,174 @@
 <Window xmlns="https://github.com/avaloniaui"
         xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml"
-        x:Class="Daqifi.Desktop.View.DebugWindow">
-  <!-- Scaffolded by portomatic from upstream Daqifi.Desktop.View.DebugWindow. Fill in the view; the code-behind ctor calls InitializeComponent(). -->
+        xmlns:i="https://github.com/projektanker/icons.avalonia"
+        x:Class="Daqifi.Desktop.View.DebugWindow"
+        Title="DAQiFi Debug Console"
+        Height="600"
+        Width="1000"
+        WindowStartupLocation="CenterOwner"
+        ShowInTaskbar="False"
+        Background="{StaticResource Surface}">
+    <!--
+        Ported from the MahApps MetroWindow original. MahApps theme brushes map to
+        DesignTokens: Brushes.Accent → Accent, Gray10 (panel header) → SurfaceRaised,
+        Gray9 (value chips) → SurfaceActive, Gray7 (splitter) → BorderDim.
+        Dialogs.Accent buttons → Classes="accent"; PackIconMaterial → i:Icon;
+        WPF DataGrid → Avalonia.Controls.DataGrid (theme included from App.axaml).
+    -->
+    <Grid RowDefinitions="Auto,*,Auto">
+
+        <!-- Header -->
+        <Border Grid.Row="0" Background="{StaticResource Accent}" Padding="10">
+            <Grid ColumnDefinitions="*,Auto,Auto">
+
+                <StackPanel Grid.Column="0" Orientation="Horizontal">
+                    <i:Icon Value="mdi-bug"
+                            Foreground="White"
+                            FontSize="24"
+                            VerticalAlignment="Center"/>
+                    <TextBlock Text="Real-time Device Data Flow Debug Console"
+                               Foreground="White"
+                               FontSize="16"
+                               FontWeight="Bold"
+                               Margin="10,0,0,0"
+                               VerticalAlignment="Center"/>
+                </StackPanel>
+
+                <Button Grid.Column="1"
+                        Content="Clear"
+                        Command="{Binding ClearDebugDataCommand}"
+                        Classes="accent"
+                        Margin="0,0,10,0"/>
+
+                <Button Grid.Column="2"
+                        Content="Close"
+                        Click="CloseButton_Click"
+                        Classes="accent"/>
+            </Grid>
+        </Border>
+
+        <!-- Main Content -->
+        <Grid Grid.Row="1" Margin="10" ColumnDefinitions="2*,5,3*">
+
+            <!-- Left Panel - Latest Data -->
+            <Border Grid.Column="0" BorderBrush="{StaticResource Accent}" BorderThickness="1">
+                <Grid RowDefinitions="Auto,*">
+
+                    <Border Grid.Row="0" Background="{StaticResource SurfaceRaised}" Padding="10">
+                        <TextBlock Text="Latest Data Packet" FontWeight="Bold" FontSize="14"/>
+                    </Border>
+
+                    <ScrollViewer Grid.Row="1" Padding="10" VerticalScrollBarVisibility="Auto">
+                        <StackPanel DataContext="{Binding DebugData.LatestEntry}">
+                            <TextBlock Text="{Binding Timestamp, StringFormat='Timestamp: {0:HH:mm:ss.fff}'}"
+                                       FontFamily="Consolas" Margin="0,0,0,5"/>
+                            <TextBlock Text="{Binding DeviceId, StringFormat='Device ID: {0}'}"
+                                       FontFamily="Consolas" Margin="0,0,0,5"/>
+                            <TextBlock Text="{Binding AnalogDataCount, StringFormat='Data Count: {0}'}"
+                                       FontFamily="Consolas" Margin="0,0,0,5"/>
+                            <TextBlock Text="{Binding ChannelEnableMask, StringFormat='Enable Mask: {0}'}"
+                                       FontFamily="Consolas" Margin="0,0,0,5"/>
+                            <TextBlock Text="{Binding ChannelEnableBinary, StringFormat='Enable Binary: {0}'}"
+                                       FontFamily="Consolas" Margin="0,0,0,10"/>
+
+                            <TextBlock Text="Active Channels:" FontWeight="Bold" Margin="0,0,0,5"/>
+                            <ItemsControl ItemsSource="{Binding ActiveChannelNames}">
+                                <ItemsControl.ItemTemplate>
+                                    <DataTemplate>
+                                        <TextBlock Text="{Binding}" FontFamily="Consolas" Margin="10,0,0,2"/>
+                                    </DataTemplate>
+                                </ItemsControl.ItemTemplate>
+                            </ItemsControl>
+
+                            <TextBlock Text="Raw Values:" FontWeight="Bold" Margin="0,10,0,5"/>
+                            <ItemsControl ItemsSource="{Binding RawAnalogValues}">
+                                <ItemsControl.ItemsPanel>
+                                    <ItemsPanelTemplate>
+                                        <WrapPanel/>
+                                    </ItemsPanelTemplate>
+                                </ItemsControl.ItemsPanel>
+                                <ItemsControl.ItemTemplate>
+                                    <DataTemplate>
+                                        <Border Background="{StaticResource SurfaceActive}"
+                                                Padding="5" Margin="2">
+                                            <TextBlock Text="{Binding}" FontFamily="Consolas"/>
+                                        </Border>
+                                    </DataTemplate>
+                                </ItemsControl.ItemTemplate>
+                            </ItemsControl>
+
+                            <TextBlock Text="Data Flow Visualization:" FontWeight="Bold" Margin="0,10,0,5"/>
+                            <TextBlock Text="{Binding DataFlowVisualization}"
+                                       FontFamily="Consolas"
+                                       Background="{StaticResource SurfaceActive}"
+                                       Padding="10"
+                                       TextWrapping="Wrap"/>
+                        </StackPanel>
+                    </ScrollViewer>
+                </Grid>
+            </Border>
+
+            <GridSplitter Grid.Column="1"
+                          HorizontalAlignment="Stretch"
+                          Background="{StaticResource BorderDim}"/>
+
+            <!-- Right Panel - History -->
+            <Border Grid.Column="2" BorderBrush="{StaticResource Accent}" BorderThickness="1">
+                <Grid RowDefinitions="Auto,*">
+
+                    <Border Grid.Row="0" Background="{StaticResource SurfaceRaised}" Padding="10">
+                        <TextBlock Text="Debug History (Last 100 packets)" FontWeight="Bold" FontSize="14"/>
+                    </Border>
+
+                    <DataGrid Grid.Row="1"
+                              ItemsSource="{Binding DebugData.Entries}"
+                              AutoGenerateColumns="False"
+                              IsReadOnly="True"
+                              GridLinesVisibility="Horizontal"
+                              HeadersVisibility="Column"
+                              CanUserReorderColumns="False"
+                              CanUserResizeColumns="True"
+                              CanUserSortColumns="True">
+                        <DataGrid.Columns>
+                            <DataGridTextColumn Header="Time"
+                                                Binding="{Binding Timestamp, StringFormat=HH:mm:ss.fff}"
+                                                Width="80"/>
+                            <DataGridTextColumn Header="Device"
+                                                Binding="{Binding DeviceId}"
+                                                Width="60"/>
+                            <DataGridTextColumn Header="Count"
+                                                Binding="{Binding AnalogDataCount}"
+                                                Width="50"/>
+                            <DataGridTextColumn Header="Channels"
+                                                Binding="{Binding ActiveChannelNames, Converter={StaticResource ListToStringConverter}}"
+                                                Width="100"/>
+                            <DataGridTextColumn Header="Raw Data"
+                                                Binding="{Binding RawAnalogValues, Converter={StaticResource ListToStringConverter}}"
+                                                Width="120"/>
+                            <DataGridTextColumn Header="Scaled Data"
+                                                Binding="{Binding ScaledAnalogValues, Converter={StaticResource ListToStringConverter}}"
+                                                Width="120"/>
+                        </DataGrid.Columns>
+                    </DataGrid>
+                </Grid>
+            </Border>
+        </Grid>
+
+        <!-- Status Bar -->
+        <Border Grid.Row="2" Background="{StaticResource SurfaceRaised}" Padding="10">
+            <Grid ColumnDefinitions="*,Auto">
+
+                <TextBlock Grid.Column="0"
+                           Text="Debug mode provides real-time visibility into device data flow for firmware correlation"
+                           VerticalAlignment="Center"/>
+
+                <StackPanel Grid.Column="1" Orientation="Horizontal">
+                    <TextBlock Text="Packets: " VerticalAlignment="Center"/>
+                    <TextBlock Text="{Binding DebugData.Entries.Count}"
+                               FontWeight="Bold"
+                               VerticalAlignment="Center"/>
+                </StackPanel>
+            </Grid>
+        </Border>
+    </Grid>
 </Window>

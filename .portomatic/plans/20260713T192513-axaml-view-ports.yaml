@@ -1,0 +1,133 @@
+schema_version: 1
+plan_id: 20260713T192513-axaml-view-ports
+slug: axaml-view-ports
+kind: apply
+created_at: '2026-07-13T19:25:13.152235Z'
+upstream_sha: null
+summary: "AXAML view ports — replace the 11 scaffold placeholder shells with\
+  \ real ports of the upstream WPF XAML (small dialogs, medium dialogs, ConnectionDialog,\
+  \ 4 big panes) and complete the 2 partial mechanism-ports (DevicesPanePrototype,\
+  \ LiveGraphPane); port shared DarkDialog dictionary + App.xaml converter registrations;\
+  \ wire image assets + Avalonia DataGrid."
+steps:
+- id: s1
+  summary: 'Small + medium dialogs: MigrationStatusWindow, SuccessDialog, ErrorDialog,
+    FirmwareDialog, ExportDialog, DebugWindow. Infrastructure: DAQiFi.png asset +
+    AvaloniaResource include; Avalonia.Controls.DataGrid package + Fluent theme;
+    App.axaml converter registrations (upstream App.xaml parity); DarkDialog.xaml
+    -> DarkDialog.axaml (DarkGroupBox HeaderedContentControl / DarkSecondaryButton
+    / DarkComboBox ControlThemes, app-merged).'
+  kind: patch
+  upstream_ref: Daqifi.Desktop/View
+  downstream_target: Daqifi.Avalonia/Daqifi.Desktop/View
+  assigned_to: patch-author
+  status: pending
+  classification: null
+  shard: domain
+  commit_sha: null
+  file: null
+  target_symbol: null
+  parent_audit_row: null
+  expected_resolution: null
+  notes: []
+  divergences: []
+  started_at: null
+  finished_at: null
+  failure_class: null
+  ticket_url: null
+  ticket_number: null
+- id: s2
+  summary: 'ConnectionDialog full port: 5-tab segmented TabControl (SegmentTab/DarkTabControl/TileListBoxItem/AccentPillButton
+    ControlThemes with pseudo-class selectors), device tile DataTemplates, scanning
+    overlays, manual WiFi/USB fields; SelectionMode Extended -> Multiple; ProgressRing
+    -> indeterminate ProgressBar.'
+  kind: patch
+  upstream_ref: Daqifi.Desktop/View/ConnectionDialog.xaml
+  downstream_target: Daqifi.Avalonia/Daqifi.Desktop/View/ConnectionDialog.axaml
+  assigned_to: patch-author
+  status: pending
+  classification: null
+  shard: domain
+  commit_sha: null
+  file: null
+  target_symbol: null
+  parent_audit_row: null
+  expected_resolution: null
+  notes: []
+  divergences: []
+  started_at: null
+  finished_at: null
+  failure_class: null
+  ticket_url: null
+  ticket_number: null
+- id: s3
+  summary: 'Big pane ports: DeviceLogsView (591), ProfilesPane (968), ChannelsPanePrototype
+    (926), LoggedDataPanePrototype (1153) - DataTriggers -> class bindings, local
+    keyed styles -> ControlThemes/class styles, ListView+GridView -> DataGrid dialect,
+    OxyPlot.Avalonia plot hosts.'
+  kind: patch
+  upstream_ref: Daqifi.Desktop/View
+  downstream_target: Daqifi.Avalonia/Daqifi.Desktop/View
+  assigned_to: patch-author
+  status: pending
+  classification: null
+  shard: domain
+  commit_sha: null
+  file: null
+  target_symbol: null
+  parent_audit_row: null
+  expected_resolution: null
+  notes: []
+  divergences: []
+  started_at: null
+  finished_at: null
+  failure_class: null
+  ticket_url: null
+  ticket_number: null
+- id: s4
+  summary: 'Partial mechanism-port completion: DevicesPanePrototype (99 -> full 998-line
+    layout, preserving the logging-mode segmented toggle + UI-automation behaviors
+    block) and LiveGraphPane (44 -> full 655-line layout, preserving the PlotView
+    + DefaultTrackerTemplate).'
+  kind: patch
+  upstream_ref: Daqifi.Desktop/View/Prototype
+  downstream_target: Daqifi.Avalonia/Daqifi.Desktop/View/Prototype
+  assigned_to: patch-author
+  status: pending
+  classification: null
+  shard: domain
+  commit_sha: null
+  file: null
+  target_symbol: null
+  parent_audit_row: null
+  expected_resolution: null
+  notes: []
+  divergences: []
+  started_at: null
+  finished_at: null
+  failure_class: null
+  ticket_url: null
+  ticket_number: null
+- id: s5
+  summary: 'Verify: adapter build 0 errors after every wave; review sweep of agent-ported
+    axaml (binding paths vs upstream, code-behind name alignment, placeholder marker
+    absence); repo-wide zero "Scaffolded by portomatic" occurrences in axaml.'
+  kind: verify
+  upstream_ref: null
+  downstream_target: Daqifi.Avalonia
+  assigned_to: verifier
+  status: pending
+  classification: null
+  shard: domain
+  commit_sha: null
+  file: null
+  target_symbol: null
+  parent_audit_row: null
+  expected_resolution: null
+  notes: []
+  divergences: []
+  started_at: null
+  finished_at: null
+  failure_class: null
+  ticket_url: null
+  ticket_number: null

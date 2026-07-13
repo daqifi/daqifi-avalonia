@@ -1,5 +1,36 @@
 <Window xmlns="https://github.com/avaloniaui"
         xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml"
-        x:Class="Daqifi.Desktop.View.ErrorDialog">
-  <!-- Scaffolded by portomatic from upstream Daqifi.Desktop.View.ErrorDialog. Fill in the view; the code-behind ctor calls InitializeComponent(). -->
+        xmlns:i="https://github.com/projektanker/icons.avalonia"
+        x:Class="Daqifi.Desktop.View.ErrorDialog"
+        Title="Error" CanResize="False"
+        SizeToContent="WidthAndHeight"
+        MinWidth="320" MinHeight="150" MaxWidth="520"
+        Background="{StaticResource Surface}">
+    <!--
+        Ported from the MahApps MetroWindow original: GlowBrush and the Square.Accent
+        button style have no Avalonia analog; PackIconMaterial → projektanker i:Icon.
+
+        Autosizes to the message within bounds (DAQiFi#576): MinWidth/MinHeight keep short
+        messages compact, the read-only TextBox's MaxWidth forces long text to wrap rather
+        than stretch the window wide, and its MaxHeight + Auto vertical scrollbar guarantee an
+        over-long message scrolls instead of clipping off-screen. The message is a read-only
+        (not disabled) TextBox so firmware error + recovery text stays selectable/copyable.
+    -->
+    <Grid Margin="20" Background="{StaticResource Surface}"
+          RowDefinitions="Auto,Auto" ColumnDefinitions="Auto,*">
+
+        <i:Icon Grid.Row="0" Grid.Column="0" Value="mdi-alert-circle-outline"
+                FontSize="40"
+                HorizontalAlignment="Center" VerticalAlignment="Top"
+                Foreground="{StaticResource StatusRed}"/>
+
+        <TextBox Grid.Row="0" Grid.Column="1" Margin="14,0,0,0" Text="{Binding ErrorMessage}"
+                 IsReadOnly="True" TextWrapping="Wrap" MaxWidth="400" MaxHeight="360"
+                 ScrollViewer.VerticalScrollBarVisibility="Auto" BorderThickness="0" Background="Transparent"
+                 FontSize="14" VerticalAlignment="Center" Foreground="{StaticResource TextPrimary}"/>
+
+        <Button Grid.Row="1" Grid.Column="0" Grid.ColumnSpan="2" Content="Ok" Click="btnOk_Click"
+                IsDefault="True" Width="80" Height="30" Margin="0,20,0,0"
+                HorizontalAlignment="Right"/>
+    </Grid>
 </Window>

@@ -1,5 +1,474 @@
 <Window xmlns="https://github.com/avaloniaui"
         xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml"
-        x:Class="Daqifi.Desktop.View.ConnectionDialog">
-  <!-- Scaffolded by portomatic from upstream Daqifi.Desktop.View.ConnectionDialog. Fill in the view; the code-behind ctor calls InitializeComponent(). -->
+        xmlns:dialogService="using:Daqifi.Desktop.DialogService"
+        x:Class="Daqifi.Desktop.View.ConnectionDialog"
+        dialogService:DialogService.IsRegisteredView="True"
+        Title="CONNECT DEVICE" CanResize="False" Height="500" Width="560"
+        Closing="MetroWindow_Closing"
+        Background="{StaticResource Surface}">
+
+    <!--
+        Ported from the MahApps MetroWindow original: GlowBrush dropped;
+        keyed Styles on templated controls → ControlThemes with pseudo-class
+        selectors; keyed TextBlock/Border/TextBox styles → class styles;
+        MahApps ProgressRing → indeterminate ProgressBar;
+        SelectionMode="Extended" → "Multiple"; UpdateSourceTrigger dropped
+        (Avalonia default). BoolToVis/NotNullToVis Visibility bindings →
+        IsVisible (NotNullToVis returns bool downstream).
+    -->
+
+    <Window.Resources>
+
+        <!-- Surface/Border/Text/Accent/Status brushes come from DesignTokens.axaml via App.axaml. -->
+
+        <!-- Connection-type stripe colors (view-specific: type channel per design philosophy §3). -->
+        <SolidColorBrush x:Key="StripeWifi"     Color="#A855F7"/>
+        <SolidColorBrush x:Key="StripeUsb"      Color="#06B6D4"/>
+
+        <!-- ── Segment tab theme ───────────────────────────────────────── -->
+        <ControlTheme x:Key="SegmentTab" TargetType="TabItem">
+            <Setter Property="Foreground"  Value="{StaticResource TextSecondary}"/>
+            <Setter Property="FontSize"    Value="10"/>
+            <Setter Property="FontWeight"  Value="SemiBold"/>
+            <Setter Property="Cursor"      Value="Hand"/>
+            <Setter Property="Padding"     Value="14,8"/>
+            <Setter Property="Template">
+                <ControlTemplate>
+                    <Border x:Name="Bg"
+                            Background="Transparent"
+                            CornerRadius="3"
+                            Padding="{TemplateBinding Padding}"
+                            Margin="2,0">
+                        <ContentPresenter Content="{TemplateBinding Header}"
+                                          ContentTemplate="{TemplateBinding HeaderTemplate}"
+                                          HorizontalAlignment="Center"
+                                          VerticalAlignment="Center"
+                                          TextElement.Foreground="{TemplateBinding Foreground}"/>
+                    </Border>
+                </ControlTemplate>
+            </Setter>
+            <Style Selector="^:selected /template/ Border#Bg">
+                <Setter Property="Background" Value="{StaticResource SurfaceActive}"/>
+            </Style>
+            <Style Selector="^:selected">
+                <Setter Property="Foreground" Value="{StaticResource TextPrimary}"/>
+            </Style>
+            <Style Selector="^:pointerover:not(:selected)">
+                <Setter Property="Foreground" Value="{StaticResource TextPrimary}"/>
+            </Style>
+        </ControlTheme>
+
+        <!-- ── TabControl: dark body + segmented strip ────────────────── -->
+        <ControlTheme x:Key="DarkTabControl" TargetType="TabControl">
+            <Setter Property="Background" Value="{StaticResource Surface}"/>
+            <Setter Property="ItemsPanel">
+                <ItemsPanelTemplate>
+                    <StackPanel Orientation="Horizontal"/>
+                </ItemsPanelTemplate>
+            </Setter>
+            <Setter Property="Template">
+                <ControlTemplate>
+                    <Grid RowDefinitions="Auto,*">
+
+                        <!-- Segment strip -->
+                        <Border Grid.Row="0"
+                                Background="{StaticResource SurfaceRaised}"
+                                BorderBrush="{StaticResource BorderDim}"
+                                BorderThickness="0,0,0,1"
+                                Padding="12,8">
+                            <ItemsPresenter x:Name="PART_ItemsPresenter"
+                                            ItemsPanel="{TemplateBinding ItemsPanel}"
+                                            HorizontalAlignment="Left"/>
+                        </Border>
+
+                        <!-- Selected content -->
+                        <Border Grid.Row="1" Background="{StaticResource Surface}">
+                            <ContentPresenter x:Name="PART_SelectedContentHost"
+                                              Content="{TemplateBinding SelectedContent}"
+                                              ContentTemplate="{TemplateBinding SelectedContentTemplate}"/>
+                        </Border>
+                    </Grid>
+                </ControlTemplate>
+            </Setter>
+        </ControlTheme>
+
+        <!-- ── Device tile list item ──────────────────────────────────── -->
+        <ControlTheme x:Key="TileListBoxItem" TargetType="ListBoxItem">
+            <Setter Property="HorizontalContentAlignment" Value="Stretch"/>
+            <Setter Property="Padding"                    Value="0"/>
+            <Setter Property="Margin"                     Value="0,0,0,8"/>
+            <Setter Property="Cursor"                     Value="Hand"/>
+            <Setter Property="Template">
+                <ControlTemplate>
+                    <Border x:Name="TileBorder"
+                            Background="{StaticResource SurfaceRaised}"
+                            BorderBrush="{StaticResource BorderDim}"
+                            BorderThickness="1"
+                            CornerRadius="4"
+                            ClipToBounds="True">
+                        <ContentPresenter Content="{TemplateBinding Content}"
+                                          ContentTemplate="{TemplateBinding ContentTemplate}"/>
+                    </Border>
+                </ControlTemplate>
+            </Setter>
+            <Style Selector="^:selected /template/ Border#TileBorder">
+                <Setter Property="BorderBrush" Value="{StaticResource Accent}"/>
+                <Setter Property="Background"  Value="{StaticResource SurfaceActive}"/>
+            </Style>
+            <Style Selector="^:pointerover:not(:selected) /template/ Border#TileBorder">
+                <Setter Property="Background" Value="#141821"/>
+            </Style>
+        </ControlTheme>
+
+        <!-- ── Accent pill button ─────────────────────────────────────── -->
+        <ControlTheme x:Key="AccentPillButton" TargetType="Button">
+            <Setter Property="Background"       Value="{StaticResource Accent}"/>
+            <Setter Property="BorderBrush"      Value="{StaticResource Accent}"/>
+            <Setter Property="BorderThickness"  Value="1"/>
+            <Setter Property="Foreground"       Value="White"/>
+            <Setter Property="Padding"          Value="24,8"/>
+            <Setter Property="FontSize"         Value="11"/>
+            <Setter Property="FontWeight"       Value="SemiBold"/>
+            <Setter Property="Cursor"           Value="Hand"/>
+            <Setter Property="Template">
+                <ControlTemplate>
+                    <Border x:Name="Bg"
+                            Background="{TemplateBinding Background}"
+                            BorderBrush="{TemplateBinding BorderBrush}"
+                            BorderThickness="{TemplateBinding BorderThickness}"
+                            CornerRadius="14"
+                            Padding="{TemplateBinding Padding}">
+                        <ContentPresenter Content="{TemplateBinding Content}"
+                                          HorizontalAlignment="Center" VerticalAlignment="Center"/>
+                    </Border>
+                </ControlTemplate>
+            </Setter>
+            <Style Selector="^:pointerover /template/ Border#Bg">
+                <Setter Property="Background"  Value="#1EB3F0"/>
+                <Setter Property="BorderBrush" Value="#1EB3F0"/>
+            </Style>
+            <Style Selector="^:disabled">
+                <Setter Property="Opacity" Value="0.4"/>
+            </Style>
+        </ControlTheme>
+
+    </Window.Resources>
+
+    <Window.Styles>
+        <!-- ── Field label (upstream keyed TextBlock style → class) ───── -->
+        <Style Selector="TextBlock.fieldLabel">
+            <Setter Property="FontSize"   Value="10"/>
+            <Setter Property="FontWeight" Value="SemiBold"/>
+            <Setter Property="Foreground" Value="{StaticResource TextTertiary}"/>
+            <Setter Property="Margin"     Value="0,0,0,6"/>
+        </Style>
+
+        <!-- ── Dark text field (Border chrome + borderless TextBox) ───── -->
+        <Style Selector="Border.darkTextField">
+            <Setter Property="Background"      Value="{StaticResource Surface}"/>
+            <Setter Property="BorderBrush"     Value="{StaticResource BorderDim}"/>
+            <Setter Property="BorderThickness" Value="1"/>
+            <Setter Property="CornerRadius"    Value="3"/>
+            <Setter Property="Padding"         Value="10,0"/>
+        </Style>
+
+        <Style Selector="TextBox.darkTextBox">
+            <Setter Property="Background"               Value="Transparent"/>
+            <Setter Property="BorderThickness"          Value="0"/>
+            <Setter Property="Foreground"               Value="{StaticResource TextPrimary}"/>
+            <Setter Property="FontFamily"               Value="Consolas"/>
+            <Setter Property="FontSize"                 Value="13"/>
+            <Setter Property="Height"                   Value="34"/>
+            <Setter Property="VerticalContentAlignment" Value="Center"/>
+            <Setter Property="CaretBrush"               Value="{StaticResource TextPrimary}"/>
+        </Style>
+
+        <!-- ── Device tile list (upstream keyed ListBox style → class) ── -->
+        <Style Selector="ListBox.tileList">
+            <Setter Property="Background"      Value="Transparent"/>
+            <Setter Property="BorderThickness" Value="0"/>
+            <Setter Property="Padding"         Value="0"/>
+            <Setter Property="ScrollViewer.HorizontalScrollBarVisibility" Value="Disabled"/>
+        </Style>
+    </Window.Styles>
+
+    <Grid Background="{StaticResource Surface}">
+        <TabControl Theme="{StaticResource DarkTabControl}">
+
+            <!-- ──────────────────────────────────────────────────── WiFi -->
+            <TabItem Header="WiFi" Theme="{StaticResource SegmentTab}"
+                     AutomationProperties.AutomationId="ConnTab_Wifi">
+                <Grid Margin="16" RowDefinitions="*,Auto">
+
+                    <!-- Tile list + scanning overlay -->
+                    <Grid Grid.Row="0">
+                        <ListBox x:Name="DeviceList"
+                                 AutomationProperties.AutomationId="DiscoveredDeviceList"
+                                 ItemsSource="{Binding AvailableWiFiDevices}"
+                                 SelectionMode="Multiple"
+                                 Classes="tileList"
+                                 ItemContainerTheme="{StaticResource TileListBoxItem}">
+                            <ListBox.ItemTemplate>
+                                <DataTemplate>
+                                    <Grid Height="74" ColumnDefinitions="3,*"
+                                          AutomationProperties.AutomationId="{Binding Name}">
+                                        <Rectangle Grid.Column="0" Fill="{StaticResource StripeWifi}"/>
+                                        <Grid Grid.Column="1" Margin="14,10,14,10" ColumnDefinitions="*,Auto">
+                                            <StackPanel Grid.Column="0" VerticalAlignment="Center">
+                                                <TextBlock Text="{Binding Name}"
+                                                           FontFamily="Consolas" FontSize="15" FontWeight="Medium"
+                                                           Foreground="{StaticResource TextPrimary}"/>
+                                                <TextBlock Text="{Binding IpAddress}"
+                                                           FontSize="10" Foreground="{StaticResource TextSecondary}"
+                                                           Margin="0,3,0,0"/>
+                                                <TextBlock Text="{Binding DeviceSerialNo}"
+                                                           FontSize="10" Foreground="{StaticResource TextTertiary}"/>
+                                            </StackPanel>
+                                            <StackPanel Grid.Column="1" VerticalAlignment="Center" HorizontalAlignment="Right">
+                                                <Border Background="#141821"
+                                                        BorderBrush="{StaticResource StripeWifi}"
+                                                        BorderThickness="1" CornerRadius="3"
+                                                        Padding="6,2" Margin="0,0,0,4">
+                                                    <TextBlock Text="WIFI" FontSize="9" FontWeight="SemiBold"
+                                                               Foreground="{StaticResource StripeWifi}"/>
+                                                </Border>
+                                                <TextBlock Text="{Binding DeviceVersion}"
+                                                           FontSize="9" Foreground="{StaticResource TextTertiary}"
+                                                           HorizontalAlignment="Right"/>
+                                            </StackPanel>
+                                        </Grid>
+                                    </Grid>
+                                </DataTemplate>
+                            </ListBox.ItemTemplate>
+                        </ListBox>
+
+                        <!-- Scanning overlay (MahApps ProgressRing → indeterminate ProgressBar) -->
+                        <StackPanel VerticalAlignment="Center" HorizontalAlignment="Center"
+                                    IsVisible="{Binding HasNoWiFiDevices}">
+                            <ProgressBar IsIndeterminate="True" Width="120" Height="4"
+                                         Foreground="{StaticResource Accent}"/>
+                            <TextBlock Text="Scanning for WiFi devices…"
+                                       Foreground="{StaticResource TextSecondary}"
+                                       FontSize="11" Margin="0,10,0,0"
+                                       HorizontalAlignment="Center"/>
+                        </StackPanel>
+                    </Grid>
+
+                    <!-- Action bar -->
+                    <Border Grid.Row="1"
+                            BorderBrush="{StaticResource BorderDim}" BorderThickness="0,1,0,0"
+                            Padding="0,12,0,0" Margin="0,12,0,0">
+                        <Button HorizontalAlignment="Right"
+                                AutomationProperties.AutomationId="ConnectButton_Wifi"
+                                Theme="{StaticResource AccentPillButton}"
+                                CommandParameter="{Binding ElementName=DeviceList, Path=SelectedItems}"
+                                Command="{Binding ConnectCommand}"
+                                Content="Connect"/>
+                    </Border>
+                </Grid>
+            </TabItem>
+
+            <!-- ───────────────────────────────────────────── Manual WiFi -->
+            <TabItem Header="Manual WiFi" Theme="{StaticResource SegmentTab}"
+                     AutomationProperties.AutomationId="ConnTab_Manual">
+                <Grid Margin="16" RowDefinitions="*,Auto">
+
+                    <StackPanel Grid.Row="0" VerticalAlignment="Top">
+                        <TextBlock Text="IP ADDRESS" Classes="fieldLabel"/>
+                        <Border Classes="darkTextField">
+                            <TextBox Text="{Binding ManualIpAddress}"
+                                     AutomationProperties.AutomationId="ManualIpInput"
+                                     Classes="darkTextBox"/>
+                        </Border>
+                        <TextBlock Text="Enter the IP address or hostname of the DAQiFi device."
+                                   FontSize="10" Foreground="{StaticResource TextTertiary}"
+                                   Margin="0,6,0,0" TextWrapping="Wrap"/>
+                        <TextBlock Text="{Binding ManualWifiError}"
+                                   AutomationProperties.AutomationId="ManualWifiError"
+                                   FontSize="11" Foreground="{StaticResource StatusRed}"
+                                   Margin="0,8,0,0" TextWrapping="Wrap"
+                                   IsVisible="{Binding ManualWifiError, Converter={StaticResource NotNullToVis}}"/>
+                    </StackPanel>
+
+                    <Border Grid.Row="1"
+                            BorderBrush="{StaticResource BorderDim}" BorderThickness="0,1,0,0"
+                            Padding="0,12,0,0" Margin="0,12,0,0">
+                        <Button HorizontalAlignment="Right"
+                                AutomationProperties.AutomationId="ConnectButton_Manual"
+                                Theme="{StaticResource AccentPillButton}"
+                                Command="{Binding ConnectManualWifiCommand}"
+                                Content="Connect"/>
+                    </Border>
+                </Grid>
+            </TabItem>
+
+            <!-- ──────────────────────────────────────────────────── USB -->
+            <TabItem Header="USB" Theme="{StaticResource SegmentTab}"
+                     AutomationProperties.AutomationId="ConnTab_Serial">
+                <Grid Margin="16" RowDefinitions="*,Auto">
+
+                    <Grid Grid.Row="0">
+                        <ListBox x:Name="SerialList"
+                                 AutomationProperties.AutomationId="SerialPortList"
+                                 ItemsSource="{Binding AvailableSerialDevices}"
+                                 SelectionMode="Multiple"
+                                 Classes="tileList"
+                                 ItemContainerTheme="{StaticResource TileListBoxItem}">
+                            <ListBox.ItemTemplate>
+                                <DataTemplate>
+                                    <Grid Height="74" ColumnDefinitions="3,*"
+                                          AutomationProperties.AutomationId="{Binding Name}">
+                                        <Rectangle Grid.Column="0" Fill="{StaticResource StripeUsb}"/>
+                                        <Grid Grid.Column="1" Margin="14,10,14,10" ColumnDefinitions="*,Auto">
+                                            <StackPanel Grid.Column="0" VerticalAlignment="Center">
+                                                <TextBlock Text="{Binding Name}"
+                                                           FontFamily="Consolas" FontSize="15" FontWeight="Medium"
+                                                           Foreground="{StaticResource TextPrimary}"/>
+                                                <TextBlock Text="{Binding Port.PortName}"
+                                                           FontSize="10" Foreground="{StaticResource TextSecondary}"
+                                                           Margin="0,3,0,0"/>
+                                                <TextBlock Text="{Binding DeviceSerialNo}"
+                                                           FontSize="10" Foreground="{StaticResource TextTertiary}"/>
+                                            </StackPanel>
+                                            <StackPanel Grid.Column="1" VerticalAlignment="Center" HorizontalAlignment="Right">
+                                                <Border Background="#141821"
+                                                        BorderBrush="{StaticResource StripeUsb}"
+                                                        BorderThickness="1" CornerRadius="3"
+                                                        Padding="6,2" Margin="0,0,0,4">
+                                                    <TextBlock Text="USB" FontSize="9" FontWeight="SemiBold"
+                                                               Foreground="{StaticResource StripeUsb}"/>
+                                                </Border>
+                                                <TextBlock Text="{Binding DeviceVersion}"
+                                                           FontSize="9" Foreground="{StaticResource TextTertiary}"
+                                                           HorizontalAlignment="Right"/>
+                                            </StackPanel>
+                                        </Grid>
+                                    </Grid>
+                                </DataTemplate>
+                            </ListBox.ItemTemplate>
+                        </ListBox>
+
+                        <!-- Scanning overlay -->
+                        <StackPanel VerticalAlignment="Center" HorizontalAlignment="Center"
+                                    IsVisible="{Binding HasNoSerialDevices}">
+                            <ProgressBar IsIndeterminate="True" Width="120" Height="4"
+                                         Foreground="{StaticResource Accent}"/>
+                            <TextBlock Text="Scanning for USB devices…"
+                                       Foreground="{StaticResource TextSecondary}"
+                                       FontSize="11" Margin="0,10,0,0"
+                                       HorizontalAlignment="Center"/>
+                        </StackPanel>
+                    </Grid>
+
+                    <Border Grid.Row="1"
+                            BorderBrush="{StaticResource BorderDim}" BorderThickness="0,1,0,0"
+                            Padding="0,12,0,0" Margin="0,12,0,0">
+                        <Button HorizontalAlignment="Right"
+                                AutomationProperties.AutomationId="ConnectButton_Serial"
+                                Theme="{StaticResource AccentPillButton}"
+                                CommandParameter="{Binding ElementName=SerialList, Path=SelectedItems}"
+                                Command="{Binding ConnectSerialCommand}"
+                                Content="Connect"/>
+                    </Border>
+                </Grid>
+            </TabItem>
+
+            <!-- ─────────────────────────────────────────── Manual USB -->
+            <TabItem Header="Manual USB" Theme="{StaticResource SegmentTab}"
+                     AutomationProperties.AutomationId="ConnTab_ManualSerial">
+                <Grid Margin="16" RowDefinitions="*,Auto">
+
+                    <StackPanel Grid.Row="0" VerticalAlignment="Top">
+                        <TextBlock Text="COM PORT" Classes="fieldLabel"/>
+                        <Border Classes="darkTextField">
+                            <TextBox Text="{Binding ManualPortName}"
+                                     AutomationProperties.AutomationId="ManualPortInput"
+                                     Classes="darkTextBox"/>
+                        </Border>
+                        <TextBlock Text="Enter the COM port name of the DAQiFi device (e.g. COM3)."
+                                   FontSize="10" Foreground="{StaticResource TextTertiary}"
+                                   Margin="0,6,0,0" TextWrapping="Wrap"/>
+                        <TextBlock Text="{Binding ManualPortError}"
+                                   AutomationProperties.AutomationId="ManualPortError"
+                                   FontSize="11" Foreground="{StaticResource StatusRed}"
+                                   Margin="0,8,0,0" TextWrapping="Wrap"
+                                   IsVisible="{Binding ManualPortError, Converter={StaticResource NotNullToVis}}"/>
+                    </StackPanel>
+
+                    <Border Grid.Row="1"
+                            BorderBrush="{StaticResource BorderDim}" BorderThickness="0,1,0,0"
+                            Padding="0,12,0,0" Margin="0,12,0,0">
+                        <Button HorizontalAlignment="Right"
+                                AutomationProperties.AutomationId="ConnectButton_ManualSerial"
+                                Theme="{StaticResource AccentPillButton}"
+                                Command="{Binding ConnectManualSerialCommand}"
+                                Content="Connect"/>
+                    </Border>
+                </Grid>
+            </TabItem>
+
+            <!-- ─────────────────────────────────────────── Firmware -->
+            <TabItem Header="Firmware" Theme="{StaticResource SegmentTab}">
+                <Grid Margin="16" RowDefinitions="*,Auto">
+
+                    <Grid Grid.Row="0">
+                        <ListBox x:Name="HidList"
+                                 ItemsSource="{Binding AvailableHidDevices}"
+                                 SelectionMode="Single"
+                                 Classes="tileList"
+                                 ItemContainerTheme="{StaticResource TileListBoxItem}">
+                            <ListBox.ItemTemplate>
+                                <DataTemplate>
+                                    <Grid Height="74" ColumnDefinitions="3,*">
+                                        <Rectangle Grid.Column="0" Fill="{StaticResource StatusAmber}"/>
+                                        <Grid Grid.Column="1" Margin="14,10,14,10" ColumnDefinitions="*,Auto">
+                                            <StackPanel Grid.Column="0" VerticalAlignment="Center">
+                                                <TextBlock Text="{Binding DisplayName}"
+                                                           FontFamily="Consolas" FontSize="15" FontWeight="Medium"
+                                                           Foreground="{StaticResource TextPrimary}"/>
+                                                <TextBlock Text="Firmware mode"
+                                                           FontSize="10" Foreground="{StaticResource TextSecondary}"
+                                                           Margin="0,3,0,0"/>
+                                            </StackPanel>
+                                            <Border Grid.Column="1"
+                                                    Background="#141821"
+                                                    BorderBrush="{StaticResource StatusAmber}"
+                                                    BorderThickness="1" CornerRadius="3"
+                                                    Padding="6,2"
+                                                    VerticalAlignment="Center">
+                                                <TextBlock Text="HID" FontSize="9" FontWeight="SemiBold"
+                                                           Foreground="{StaticResource StatusAmber}"/>
+                                            </Border>
+                                        </Grid>
+                                    </Grid>
+                                </DataTemplate>
+                            </ListBox.ItemTemplate>
+                        </ListBox>
+
+                        <!-- Scanning overlay -->
+                        <StackPanel VerticalAlignment="Center" HorizontalAlignment="Center"
+                                    IsVisible="{Binding HasNoHidDevices}">
+                            <ProgressBar IsIndeterminate="True" Width="120" Height="4"
+                                         Foreground="{StaticResource Accent}"/>
+                            <TextBlock Text="Scanning for devices in firmware mode…"
+                                       Foreground="{StaticResource TextSecondary}"
+                                       FontSize="11" Margin="0,10,0,0"
+                                       HorizontalAlignment="Center"/>
+                        </StackPanel>
+                    </Grid>
+
+                    <Border Grid.Row="1"
+                            BorderBrush="{StaticResource BorderDim}" BorderThickness="0,1,0,0"
+                            Padding="0,12,0,0" Margin="0,12,0,0">
+                        <Button HorizontalAlignment="Right"
+                                Theme="{StaticResource AccentPillButton}"
+                                CommandParameter="{Binding ElementName=HidList, Path=SelectedItems}"
+                                Command="{Binding ConnectHidCommand}"
+                                Content="Open Firmware"/>
+                    </Border>
+                </Grid>
+            </TabItem>
+
+        </TabControl>
+    </Grid>
 </Window>

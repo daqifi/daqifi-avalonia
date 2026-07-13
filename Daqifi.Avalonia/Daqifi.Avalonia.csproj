@@ -13,6 +13,11 @@
 	</PropertyGroup>
 
 	<ItemGroup>
+		<!-- Upstream ships images as WPF Resource; Avalonia loads them via avares:// URIs -->
+		<AvaloniaResource Include="Daqifi.Desktop\Images\**" />
+	</ItemGroup>
+
+	<ItemGroup>
 		<!-- Mirrors upstream Daqifi.Desktop.csproj's Compile Remove list — legacy files kept in-tree but never compiled -->
 		<Compile Remove="Daqifi.Desktop\Loggers\CsvLogger.cs" />
 		<Compile Remove="Daqifi.Desktop\ViewModels\PlottingViewModel.cs" />
@@ -25,6 +30,8 @@
 		<PackageReference Include="Avalonia" Version="11.3.*" />
 		<PackageReference Include="Avalonia.Desktop" Version="11.3.*" />
 		<PackageReference Include="Avalonia.Themes.Fluent" Version="11.3.*" />
+		<!-- WPF DataGrid ships in-box; Avalonia's lives in a separate package (DebugWindow) -->
+		<PackageReference Include="Avalonia.Controls.DataGrid" Version="11.3.*" />
 		<PackageReference Include="Avalonia.Fonts.Inter" Version="11.3.*" />
 		<PackageReference Include="Avalonia.Diagnostics" Version="11.3.*" Condition="'$(Configuration)' == 'Debug'" />
 		<!-- OxyPlot.Avalonia replaces OxyPlot.Wpf; the PlotModel layer (OxyPlot.Core) ports verbatim -->

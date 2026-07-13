@@ -1,0 +1,103 @@
+<ResourceDictionary xmlns="https://github.com/avaloniaui"
+                    xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml">
+
+    <!--
+        Ported from Daqifi.Desktop/Resources/DarkDialog.xaml.
+
+        Upstream exists to re-skin MahApps "Light.Blue" controls dark for the legacy
+        dialogs (Export, Firmware, DuplicateDevice). Downstream runs FluentTheme with
+        RequestedThemeVariant="Dark", so the *implicit* Label/RadioButton/TextBox
+        re-skins are unnecessary — Fluent Dark already renders them dark (recorded
+        divergence on the view-port apply step). Only the load-bearing pieces port:
+
+        - GroupBox (implicit upstream) → keyed DarkGroupBox ControlTheme on
+          HeaderedContentControl (Avalonia has no GroupBox; header-over-raised-panel
+          visual reproduced from the upstream template).
+        - DarkSecondaryButton → ControlTheme with pointerover/disabled pseudo-classes
+          replacing WPF triggers.
+        - DarkComboBox / DarkComboBoxItem → brush-override themes BasedOn the Fluent
+          defaults; the upstream self-contained template existed only to fix the
+          light popup, which Fluent Dark already fixes.
+
+        Merged app-wide from App.axaml (all keys opt-in, zero implicit blast radius).
+        Tokens via DynamicResource so they resolve against DesignTokens at runtime,
+        matching the upstream note.
+    -->
+
+    <!-- ── Grouping container: small header label over a raised panel ──── -->
+    <ControlTheme x:Key="DarkGroupBox" TargetType="HeaderedContentControl">
+        <Setter Property="Margin" Value="0,0,0,12"/>
+        <Setter Property="Template">
+            <ControlTemplate>
+                <Grid RowDefinitions="Auto,*">
+                    <ContentPresenter Grid.Row="0"
+                                      Content="{TemplateBinding Header}"
+                                      TextElement.Foreground="{DynamicResource TextSecondary}"
+                                      TextElement.FontSize="11"
+                                      TextElement.FontWeight="SemiBold"
+                                      Margin="2,0,2,6"/>
+                    <Border Grid.Row="1"
+                            Background="{DynamicResource SurfaceRaised}"
+                            BorderBrush="{DynamicResource BorderDim}"
+                            BorderThickness="1"
+                            CornerRadius="4"
+                            Padding="10">
+                        <ContentPresenter Content="{TemplateBinding Content}"/>
+                    </Border>
+                </Grid>
+            </ControlTemplate>
+        </Setter>
+    </ControlTheme>
+
+    <!-- ── Secondary (non-accent) button ───────────────────────────────────
+         SurfaceActive (the lightest surface token) so the button reads as a control
+         on both the root Surface and the raised SurfaceRaised GroupBox panels. -->
+    <ControlTheme x:Key="DarkSecondaryButton" TargetType="Button">
+        <Setter Property="Background"      Value="{DynamicResource SurfaceActive}"/>
+        <Setter Property="BorderBrush"     Value="{DynamicResource BorderBright}"/>
+        <Setter Property="BorderThickness" Value="1"/>
+        <Setter Property="Foreground"      Value="{DynamicResource TextPrimary}"/>
+        <Setter Property="Padding"         Value="16,6"/>
+        <Setter Property="FontSize"        Value="12"/>
+        <Setter Property="Cursor"          Value="Hand"/>
+        <Setter Property="Template">
+            <ControlTemplate>
+                <Border x:Name="Bg"
+                        Background="{TemplateBinding Background}"
+                        BorderBrush="{TemplateBinding BorderBrush}"
+                        BorderThickness="{TemplateBinding BorderThickness}"
+                        CornerRadius="3">
+                    <ContentPresenter Content="{TemplateBinding Content}"
+                                      HorizontalAlignment="Center" VerticalAlignment="Center"/>
+                </Border>
+            </ControlTemplate>
+        </Setter>
+        <Style Selector="^:pointerover /template/ Border#Bg">
+            <Setter Property="Background"  Value="#283143"/>
+            <Setter Property="BorderBrush" Value="{DynamicResource Accent}"/>
+        </Style>
+        <Style Selector="^:disabled">
+            <Setter Property="Opacity" Value="0.4"/>
+        </Style>
+    </ControlTheme>
+
+    <!-- ── Dark dropdown: token brushes over the Fluent template ───────── -->
+    <ControlTheme x:Key="DarkComboBoxItem" TargetType="ComboBoxItem"
+                  BasedOn="{StaticResource {x:Type ComboBoxItem}}">
+        <Setter Property="Foreground" Value="{DynamicResource TextPrimary}"/>
+        <Setter Property="Padding"    Value="8,5"/>
+    </ControlTheme>
+
+    <ControlTheme x:Key="DarkComboBox" TargetType="ComboBox"
+                  BasedOn="{StaticResource {x:Type ComboBox}}">
+        <Setter Property="Foreground"               Value="{DynamicResource TextPrimary}"/>
+        <Setter Property="Background"               Value="{DynamicResource Surface}"/>
+        <Setter Property="BorderBrush"              Value="{DynamicResource BorderDim}"/>
+        <Setter Property="BorderThickness"          Value="1"/>
+        <Setter Property="Padding"                  Value="8,4"/>
+        <Setter Property="MinHeight"                Value="28"/>
+        <Setter Property="VerticalContentAlignment" Value="Center"/>
+        <Setter Property="ItemContainerTheme"       Value="{StaticResource DarkComboBoxItem}"/>
+    </ControlTheme>
+
+</ResourceDictionary>
