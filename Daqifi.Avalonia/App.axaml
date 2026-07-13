@@ -8,6 +8,11 @@
         <FluentTheme />
         <!-- Avalonia's DataGrid ships its theme in its own package (DebugWindow) -->
         <StyleInclude Source="avares://Avalonia.Controls.DataGrid/Themes/Fluent.xaml"/>
+        <!-- OxyPlot control templates: PlotView renders into its template's PART_Panel,
+             and OnApplyTemplate silently no-ops without one — omitting this include
+             produces a fully blank (not crashed) plot. First streaming QA 2026-07-13:
+             data decoded + persisted + InvalidatePlot ticking, zero pixels drawn. -->
+        <StyleInclude Source="avares://OxyPlot.Avalonia/Themes/Default.axaml"/>
     </Application.Styles>
     <Application.Resources>
         <ResourceDictionary>
