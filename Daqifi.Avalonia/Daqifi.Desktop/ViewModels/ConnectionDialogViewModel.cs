@@ -246,7 +246,7 @@ public partial class ConnectionDialogViewModel : ObservableObject
     // per-port timeout, and DeviceDiscovered gated behind Task.WhenAll, so one zombie port
     // silences every healthy device). Remove once the app consumes a core release with the
     // #294 fix (PR daqifi-core#295).
-    private const int SerialSweepWatchdogMs = 30_000;
+    private const int SerialSweepWatchdogMs = 10_000;
     private const int MaxConsecutiveWatchdogTrips = 3;
 
     // @port: Daqifi.Desktop.ViewModels.ConnectionDialogViewModel.RunContinuousSerialDiscoveryAsync

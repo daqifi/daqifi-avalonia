@@ -231,9 +231,13 @@ public partial class PlotLogger : ObservableObject, ILogger
         // We use our own legend so disable theirs
         PlotModel.IsLegendVisible = false;
 
-        // WPF CompositionTarget.Rendering (per-frame callback) → a render-priority
-        // DispatcherTimer at ~60fps; the handler keeps its own 1 s stopwatch throttle.
-        _renderTimer = new DispatcherTimer(DispatcherPriority.Render)
+        // WPF CompositionTarget.Rendering (per-frame callback) → a DispatcherTimer at
+        // ~60fps; the handler keeps its own 1 s stopwatch throttle. Normal priority,
+        // NOT DispatcherPriority.Render: Avalonia renders on demand, and a
+        // below-Normal-priority timer risks never pumping on an idle (static) UI —
+        // which is exactly the state a stalled plot produces (nothing invalidates,
+        // so nothing renders, so render-priority jobs stay parked).
+        _renderTimer = new DispatcherTimer(DispatcherPriority.Normal)
         {
             Interval = TimeSpan.FromMilliseconds(16)
         };
@@ -350,9 +354,19 @@ public partial class PlotLogger : ObservableObject, ILogger
         OnPropertyChanged(nameof(PlotModel));
     }
 
+    private bool _firstRenderTickLogged;
+
     // @port: Daqifi.Desktop.Logger.PlotLogger.CompositionTargetRendering
     private void CompositionTargetRendering(object sender, EventArgs e)
     {
+        if (!_firstRenderTickLogged)
+        {
+            // QA breadcrumb (2026-07-13 live-graph triage): discriminates "render tick
+            // never fires" from "tick fires but the PlotView doesn't repaint".
+            _firstRenderTickLogged = true;
+            Common.Loggers.AppLogger.Instance.Information("Plot render tick active (first tick fired).");
+        }
+
         if (_stopwatch.ElapsedMilliseconds > _lastUpdateMilliSeconds + 1000) // Or your existing update interval
         {
             lock (PlotModel.SyncRoot)
@@ -374,6 +388,15 @@ public partial class PlotLogger : ObservableObject, ILogger
                 }
                 PlotModel.InvalidatePlot(true); // This will redraw the plot with updated series visibility
                 UpdatePlotStatsSummary();
+                if (_lastUpdateMilliSeconds % 60000 < 1000 && LoggedPoints.Count > 0)
+                {
+                    // QA breadcrumb: once a minute while channels exist, record what the
+                    // plot layer believes it holds — points reaching here but not the
+                    // screen indicts the view/invalidation side.
+                    Common.Loggers.AppLogger.Instance.Information(
+                        $"Plot tick: {PlotModel.Series.Count} series, " +
+                        $"{LoggedPoints.Values.Sum(pl => pl.Count)} buffered points; stats: {PlotStatsSummary}");
+                }
                 _lastUpdateMilliSeconds = _stopwatch.ElapsedMilliseconds;
             }
         }
