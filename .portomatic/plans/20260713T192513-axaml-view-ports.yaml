@@ -4,7 +4,7 @@ slug: axaml-view-ports
 kind: apply
 created_at: '2026-07-13T19:25:13.152235Z'
 upstream_sha: null
-summary: "AXAML view ports — replace the 11 scaffold placeholder shells with\
+summary: "AXAML view ports \u2014 replace the 11 scaffold placeholder shells with\
   \ real ports of the upstream WPF XAML (small dialogs, medium dialogs, ConnectionDialog,\
   \ 4 big panes) and complete the 2 partial mechanism-ports (DevicesPanePrototype,\
   \ LiveGraphPane); port shared DarkDialog dictionary + App.xaml converter registrations;\
@@ -13,15 +13,15 @@ steps:
 - id: s1
   summary: 'Small + medium dialogs: MigrationStatusWindow, SuccessDialog, ErrorDialog,
     FirmwareDialog, ExportDialog, DebugWindow. Infrastructure: DAQiFi.png asset +
-    AvaloniaResource include; Avalonia.Controls.DataGrid package + Fluent theme;
-    App.axaml converter registrations (upstream App.xaml parity); DarkDialog.xaml
-    -> DarkDialog.axaml (DarkGroupBox HeaderedContentControl / DarkSecondaryButton
-    / DarkComboBox ControlThemes, app-merged).'
+    AvaloniaResource include; Avalonia.Controls.DataGrid package + Fluent theme; App.axaml
+    converter registrations (upstream App.xaml parity); DarkDialog.xaml -> DarkDialog.axaml
+    (DarkGroupBox HeaderedContentControl / DarkSecondaryButton / DarkComboBox ControlThemes,
+    app-merged).'
   kind: patch
   upstream_ref: Daqifi.Desktop/View
   downstream_target: Daqifi.Avalonia/Daqifi.Desktop/View
   assigned_to: patch-author
-  status: pending
+  status: done
   classification: null
   shard: domain
   commit_sha: null
@@ -29,10 +29,18 @@ steps:
   target_symbol: null
   parent_audit_row: null
   expected_resolution: null
-  notes: []
-  divergences: []
+  notes:
+  - commit 0dbc96c; build 0 errors / 280 warnings; DAQiFi.png asset + AvaloniaResource;
+    DataGrid pkg + theme; App.axaml converter parity
+  divergences:
+  - symbol: Resources/DarkDialog.xaml implicit Label/RadioButton/TextBox/ComboBox
+      re-skins
+    reason: "upstream re-skins exist only to darken MahApps Light.Blue; FluentTheme\
+      \ Dark already renders these controls dark \u2014 only keyed opt-in themes port"
+    revisit_when: visual QA pass flags dialog contrast drift vs upstream
+    tracked_in: null
   started_at: null
-  finished_at: null
+  finished_at: '2026-07-13T19:28:32.582003Z'
   failure_class: null
   ticket_url: null
   ticket_number: null
@@ -45,7 +53,7 @@ steps:
   upstream_ref: Daqifi.Desktop/View/ConnectionDialog.xaml
   downstream_target: Daqifi.Avalonia/Daqifi.Desktop/View/ConnectionDialog.axaml
   assigned_to: patch-author
-  status: pending
+  status: done
   classification: null
   shard: domain
   commit_sha: null
@@ -53,10 +61,17 @@ steps:
   target_symbol: null
   parent_audit_row: null
   expected_resolution: null
-  notes: []
-  divergences: []
+  notes:
+  - commit 0dbc96c; ConnectionDialog 5-tab port compiles under XamlIl; ElementName
+    SelectedItems CommandParameter kept
+  divergences:
+  - symbol: MahApps ProgressRing scanning spinners
+    reason: no Avalonia ProgressRing; established MainWindow dialect substitutes an
+      indeterminate ProgressBar
+    revisit_when: a ring spinner control is adopted repo-wide
+    tracked_in: null
   started_at: null
-  finished_at: null
+  finished_at: '2026-07-13T19:28:34.251518Z'
   failure_class: null
   ticket_url: null
   ticket_number: null
@@ -69,7 +84,7 @@ steps:
   upstream_ref: Daqifi.Desktop/View
   downstream_target: Daqifi.Avalonia/Daqifi.Desktop/View
   assigned_to: patch-author
-  status: pending
+  status: done
   classification: null
   shard: domain
   commit_sha: null
@@ -77,10 +92,18 @@ steps:
   target_symbol: null
   parent_audit_row: null
   expected_resolution: null
-  notes: []
-  divergences: []
+  notes:
+  - "commit 20dea7f; DeviceLogsView/ProfilesPane/ChannelsPane/LoggedDataPane ported\
+    \ by parallel agents + reviewed; Delay debounces restored in review (agent dropped\
+    \ them on a false 'no Delay in 11.3' claim \u2014 compiler disproved)"
+  divergences:
+  - symbol: WPF ListView+GridView (DeviceLogsView SD file list)
+    reason: Avalonia has no ListView; DataGrid with template columns is the functional
+      analog (header row, resize disabled to match non-interactive upstream headers)
+    revisit_when: runtime smoke flags header/cell misalignment
+    tracked_in: null
   started_at: null
-  finished_at: null
+  finished_at: '2026-07-13T19:43:29.691333Z'
   failure_class: null
   ticket_url: null
   ticket_number: null
@@ -93,7 +116,7 @@ steps:
   upstream_ref: Daqifi.Desktop/View/Prototype
   downstream_target: Daqifi.Avalonia/Daqifi.Desktop/View/Prototype
   assigned_to: patch-author
-  status: pending
+  status: done
   classification: null
   shard: domain
   commit_sha: null
@@ -101,10 +124,18 @@ steps:
   target_symbol: null
   parent_audit_row: null
   expected_resolution: null
-  notes: []
-  divergences: []
+  notes:
+  - commit 20dea7f; DevicesPanePrototype 99->855 and LiveGraphPane 44->608 completed
+    around preserved mechanism blocks (logging-mode behaviors + PlotView tracker verbatim)
+  divergences:
+  - symbol: ObjectDataProvider Enum.GetValues ComboBox sources (DevicesPanePrototype)
+    reason: "no ObjectDataProvider in Avalonia; enum values inlined as literal items\
+      \ (SdCardLogFormat/WifiMode/WifiSecurityType verified against daqifi-core) \u2014\
+      \ drift risk if core enums change"
+    revisit_when: daqifi-core enum additions
+    tracked_in: null
   started_at: null
-  finished_at: null
+  finished_at: '2026-07-13T19:43:31.385581Z'
   failure_class: null
   ticket_url: null
   ticket_number: null
@@ -116,7 +147,7 @@ steps:
   upstream_ref: null
   downstream_target: Daqifi.Avalonia
   assigned_to: verifier
-  status: pending
+  status: done
   classification: null
   shard: domain
   commit_sha: null
@@ -124,10 +155,19 @@ steps:
   target_symbol: null
   parent_audit_row: null
   expected_resolution: null
-  notes: []
-  divergences: []
+  notes:
+  - builds 0dbc96c + 20dea7f both 0 errors / 280 warnings; repo-wide zero 'Scaffolded
+    by portomatic' in axaml; XML-validated all 6 agent files; review restored ChannelsPane
+    Delay=500/300; sentinel PropertyChanged contract verified against OnConfirmOverlayIsVisibleChanged(AvaloniaPropertyChangedEventArgs);
+    ConfirmCancelButton x:Name present
+  divergences:
+  - symbol: WPF IsVisibleChanged (LoggedDataPane confirm overlay focus hook)
+    reason: no IsVisibleChanged event in Avalonia; zero-size non-hit-testable sentinel
+      Control forwards PropertyChanged to the existing handler, filtering to IsVisible=true
+    revisit_when: Avalonia adds a visibility-changed event
+    tracked_in: null
   started_at: null
-  finished_at: null
+  finished_at: '2026-07-13T19:43:35.566415Z'
   failure_class: null
   ticket_url: null
   ticket_number: null
