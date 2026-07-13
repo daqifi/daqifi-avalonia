@@ -1332,6 +1332,19 @@ public partial class DaqifiViewModel : ObservableObject, IFirmwareUpdateHost, IL
             {
                 streamingDevice.SetDebugMode(IsDebugModeEnabled);
             }
+
+            // Seed the Live Graph RATE chip from the device on first connect. Upstream
+            // leaves _selectedStreamingFrequency at its 0 default until the user first
+            // moves the FREQUENCY slider, so the chip claims "RATE 0 Hz" while the
+            // device streams at its real (default 1 Hz) rate — downstream fix, filed
+            // upstream as daqifi-desktop#686. Direct field write: this is a read-back,
+            // so the public setter's logging-lock guard and device write-through are
+            // intentionally bypassed.
+            if (_selectedStreamingFrequency < 1 && connectedDevice.StreamingFrequency > 0)
+            {
+                _selectedStreamingFrequency = connectedDevice.StreamingFrequency;
+                OnPropertyChanged(nameof(SelectedStreamingFrequency));
+            }
         }
 
         return Task.CompletedTask;
