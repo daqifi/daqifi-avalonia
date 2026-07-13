@@ -1,0 +1,9 @@
+<Project>
+    <!-- Upstream reads these from Source/Directory.Build.props (Avalonia 11.0.0 /
+         OxyPlot.Core 2.1.2), which is outside the vendored subtree. Pin to the
+         app's versions instead — see VENDORED.md. -->
+    <PropertyGroup>
+        <AvaloniaVersion>11.3.*</AvaloniaVersion>
+        <OxyPlotCoreVersion>2.2.0</OxyPlotCoreVersion>
+    </PropertyGroup>
+</Project>
