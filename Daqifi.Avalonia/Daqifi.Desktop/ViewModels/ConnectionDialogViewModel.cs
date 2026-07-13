@@ -268,7 +268,28 @@ public partial class ConnectionDialogViewModel : ObservableObject
                 var winner = await Task.WhenAny(sweep, Task.Delay(SerialSweepWatchdogMs, cancellationToken));
                 if (winner != sweep)
                 {
-                    cancellationToken.ThrowIfCancellationRequested();
+                    if (cancellationToken.IsCancellationRequested)
+                    {
+                        // Stop path (step-3.5 port audit): the cancelled Task.Delay wins
+                        // this WhenAny synchronously inside Cancel(), which used to exit
+                        // the loop while the sweep still HELD the COM port (its probe's
+                        // port-closing finally takes up to ~1s) — so StopSerialDiscovery's
+                        // "port fully released" contract broke and Connect raced the
+                        // abandoned probe into a false port-in-use failure. Drain the
+                        // sweep (bounded) before surfacing cancellation; observe its
+                        // outcome either way so an abandoned fault can't go unobserved.
+                        _ = sweep.ContinueWith(
+                            static t => _ = t.Exception,
+                            CancellationToken.None,
+                            TaskContinuationOptions.NotOnRanToCompletion | TaskContinuationOptions.ExecuteSynchronously,
+                            TaskScheduler.Default);
+                        try { await sweep.WaitAsync(TimeSpan.FromSeconds(3), CancellationToken.None); }
+                        catch (TimeoutException) { /* wedged probe — proceed; Connect on OTHER ports is unaffected */ }
+                        catch (OperationCanceledException) { /* sweep observed the same token — drained */ }
+                        catch { /* probe faults are probe-misses, not stop failures */ }
+                        cancellationToken.ThrowIfCancellationRequested();
+                    }
+
                     consecutiveTrips++;
                     Common.Loggers.AppLogger.Instance.Warning(
                         $"Serial discovery sweep exceeded {SerialSweepWatchdogMs / 1000}s " +
