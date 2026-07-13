@@ -1,5 +1,848 @@
-<UserControl xmlns="https://github.com/avaloniaui"
+<UserControl x:Class="Daqifi.Desktop.View.ProfilesPane"
+             x:Name="Root"
+             xmlns="https://github.com/avaloniaui"
              xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml"
-             x:Class="Daqifi.Desktop.View.ProfilesPane">
-  <!-- Scaffolded by portomatic from upstream Daqifi.Desktop.View.ProfilesPane. Fill in the view; the code-behind ctor calls InitializeComponent(). -->
+             xmlns:i="https://github.com/projektanker/icons.avalonia">
+
+    <!--
+        Ported from Daqifi.Desktop/View/ProfilesPane.xaml.
+
+        Dialect decisions applied:
+        - BoolToVis / InvertedBoolToVis converters → IsVisible with `!` negation;
+          BooleanToInverse on IsEnabled → `!` negation (established App.axaml dialect).
+        - Keyed Button/TextBox styles (PillButton family, DrawerTextBox) → keyed ControlThemes;
+          ControlTemplate.Triggers → nested ^:pointerover / ^:disabled / ^:focus styles.
+        - Keyed TextBlock style SectionLabel → class style `sectionLabel`.
+        - DataTriggers on VM state → Classes.<name> bindings + class styles
+          (profileTile / activeStripe / statusDot / drawerStripe).
+        - WPF MouseBinding → transparent command Button (MainWindow scrim dialect);
+          used for both scrims and the profile-tile click target.
+        - {Binding DataContext.X, ElementName=Root} inside item templates →
+          $parent[UserControl].DataContext.X (ElementName does not cross Avalonia
+          DataTemplate name scopes).
+        - iconPacks:PackIconMaterial → projektanker i:Icon (Kind kebab-cased, Width/Height → FontSize).
+        - Panel.ZIndex → ZIndex; ToolTip → ToolTip.Tip; UpdateSourceTrigger dropped
+          (Avalonia default); binding Delay kept (supported since Avalonia 11.1).
+    -->
+
+    <UserControl.Resources>
+
+        <!--
+            Color tokens (Surface, SurfaceRaised, BorderDim, TextPrimary, Accent,
+            StatusGreen, StatusAmber, StatusRed, etc.) are defined in
+            /Resources/DesignTokens.axaml and merged in via App.axaml.
+            See docs/design-philosophy.md.
+        -->
+
+        <ControlTheme x:Key="PillButton" TargetType="Button">
+            <Setter Property="Background"      Value="Transparent"/>
+            <Setter Property="BorderBrush"     Value="{DynamicResource BorderDim}"/>
+            <Setter Property="BorderThickness" Value="1"/>
+            <Setter Property="Foreground"      Value="{DynamicResource TextSecondary}"/>
+            <Setter Property="Padding"         Value="14,5"/>
+            <Setter Property="FontSize"        Value="10"/>
+            <Setter Property="FontWeight"      Value="SemiBold"/>
+            <Setter Property="Cursor"          Value="Hand"/>
+            <Setter Property="Template">
+                <ControlTemplate>
+                    <Border Background="{TemplateBinding Background}"
+                            BorderBrush="{TemplateBinding BorderBrush}"
+                            BorderThickness="{TemplateBinding BorderThickness}"
+                            CornerRadius="14"
+                            Padding="{TemplateBinding Padding}">
+                        <ContentPresenter HorizontalAlignment="Center" VerticalAlignment="Center"
+                                          Content="{TemplateBinding Content}"/>
+                    </Border>
+                </ControlTemplate>
+            </Setter>
+            <Style Selector="^:pointerover">
+                <Setter Property="BorderBrush" Value="{DynamicResource BorderBright}"/>
+                <Setter Property="Background"  Value="#141821"/>
+                <Setter Property="Foreground"  Value="{DynamicResource TextPrimary}"/>
+            </Style>
+            <Style Selector="^:disabled">
+                <Setter Property="Opacity" Value="0.35"/>
+            </Style>
+        </ControlTheme>
+
+        <ControlTheme x:Key="AccentPillButton" TargetType="Button" BasedOn="{StaticResource PillButton}">
+            <Setter Property="Background"  Value="{DynamicResource Accent}"/>
+            <Setter Property="BorderBrush" Value="{DynamicResource Accent}"/>
+            <Setter Property="Foreground"  Value="White"/>
+            <Style Selector="^:pointerover">
+                <Setter Property="Background"  Value="#0D8CC4"/>
+                <Setter Property="BorderBrush" Value="#0D8CC4"/>
+                <Setter Property="Foreground"  Value="White"/>
+            </Style>
+        </ControlTheme>
+
+        <ControlTheme x:Key="DangerPillButton" TargetType="Button" BasedOn="{StaticResource PillButton}">
+            <Setter Property="BorderBrush" Value="{DynamicResource StatusRed}"/>
+            <Setter Property="Foreground"  Value="{DynamicResource StatusRed}"/>
+            <Style Selector="^:pointerover">
+                <Setter Property="Background"  Value="#1A0A0D"/>
+                <Setter Property="BorderBrush" Value="{DynamicResource StatusRed}"/>
+                <Setter Property="Foreground"  Value="{DynamicResource StatusRed}"/>
+            </Style>
+        </ControlTheme>
+
+        <!-- divergence: upstream DrawerTextBox rebuilt the TextBox template to get a flat
+             dark field; Fluent Dark already provides the plumbing, so this derives from the
+             stock theme and recolors the chrome (focus ring → 1px Accent border) instead. -->
+        <ControlTheme x:Key="DrawerTextBox" TargetType="TextBox" BasedOn="{StaticResource {x:Type TextBox}}">
+            <Setter Property="Background"               Value="{DynamicResource Surface}"/>
+            <Setter Property="BorderBrush"              Value="{DynamicResource BorderDim}"/>
+            <Setter Property="BorderThickness"          Value="1"/>
+            <Setter Property="CornerRadius"             Value="3"/>
+            <Setter Property="Foreground"               Value="{DynamicResource TextPrimary}"/>
+            <Setter Property="CaretBrush"               Value="{DynamicResource TextPrimary}"/>
+            <Setter Property="FontFamily"               Value="Consolas"/>
+            <Setter Property="FontSize"                 Value="14"/>
+            <Setter Property="Height"                   Value="34"/>
+            <Setter Property="MinHeight"                Value="34"/>
+            <Setter Property="Padding"                  Value="10,0"/>
+            <Setter Property="VerticalContentAlignment" Value="Center"/>
+            <Style Selector="^:pointerover /template/ Border#PART_BorderElement">
+                <Setter Property="Background"  Value="{DynamicResource Surface}"/>
+                <Setter Property="BorderBrush" Value="{DynamicResource BorderDim}"/>
+            </Style>
+            <Style Selector="^:focus /template/ Border#PART_BorderElement">
+                <Setter Property="Background"      Value="{DynamicResource Surface}"/>
+                <Setter Property="BorderBrush"     Value="{DynamicResource Accent}"/>
+                <Setter Property="BorderThickness" Value="1"/>
+            </Style>
+        </ControlTheme>
+
+        <!-- Round hover-highlight icon button (upstream inline gear/close Button templates;
+             same shape as MainWindow's RoundCloseButton) -->
+        <ControlTheme x:Key="RoundIconButton" TargetType="Button">
+            <Setter Property="Background" Value="Transparent"/>
+            <Setter Property="BorderThickness" Value="0"/>
+            <Setter Property="Template">
+                <ControlTemplate>
+                    <Border x:Name="Bg" Background="Transparent" CornerRadius="14">
+                        <ContentPresenter HorizontalAlignment="Center" VerticalAlignment="Center"
+                                          Content="{TemplateBinding Content}"/>
+                    </Border>
+                </ControlTemplate>
+            </Setter>
+            <Style Selector="^:pointerover /template/ Border#Bg">
+                <Setter Property="Background" Value="#1FFFFFFF"/>
+            </Style>
+        </ControlTheme>
+
+        <!-- WPF MouseBinding → transparent command Button (MainWindow scrim dialect) -->
+        <ControlTheme x:Key="TransparentButtonStyle" TargetType="Button">
+            <Setter Property="Background" Value="Transparent"/>
+            <Setter Property="BorderThickness" Value="0"/>
+            <Setter Property="HorizontalContentAlignment" Value="Stretch"/>
+            <Setter Property="VerticalContentAlignment" Value="Stretch"/>
+            <Setter Property="Padding" Value="0"/>
+            <Setter Property="Template">
+                <ControlTemplate>
+                    <ContentPresenter Content="{TemplateBinding Content}"/>
+                </ControlTemplate>
+            </Setter>
+        </ControlTheme>
+
+    </UserControl.Resources>
+
+    <UserControl.Styles>
+
+        <Style Selector="TextBlock.sectionLabel">
+            <Setter Property="FontSize"          Value="11"/>
+            <Setter Property="FontWeight"        Value="SemiBold"/>
+            <Setter Property="Foreground"        Value="{DynamicResource TextSecondary}"/>
+            <Setter Property="VerticalAlignment" Value="Center"/>
+        </Style>
+
+        <!-- divergence: upstream DarkCheckBox rebuilt the template (14px box, custom check
+             path) purely to darken MahApps-light chrome; Fluent Dark's stock accent
+             checkbox is kept and only type/foreground/compactness are matched. -->
+        <Style Selector="CheckBox.dark">
+            <Setter Property="Foreground"               Value="{DynamicResource TextSecondary}"/>
+            <Setter Property="FontSize"                 Value="11"/>
+            <Setter Property="Cursor"                   Value="Hand"/>
+            <Setter Property="MinHeight"                Value="0"/>
+            <Setter Property="VerticalContentAlignment" Value="Center"/>
+        </Style>
+        <Style Selector="CheckBox.dark:pointerover">
+            <Setter Property="Foreground" Value="{DynamicResource TextPrimary}"/>
+        </Style>
+        <Style Selector="CheckBox.dark:checked">
+            <Setter Property="Foreground" Value="{DynamicResource TextPrimary}"/>
+        </Style>
+
+        <!-- divergence: upstream DarkSlider rebuilt the template (2px track, 12px white
+             thumb) to darken MahApps-light chrome; Fluent Dark's stock slider (accent
+             value track) is used instead, so the row renders slightly taller. -->
+        <Style Selector="Slider.dark">
+            <Setter Property="VerticalAlignment" Value="Center"/>
+        </Style>
+
+        <!-- Profile tile state styles (upstream Border.Style DataTriggers).
+             Declaration order matters: `.locked` is last so it wins over :pointerover,
+             mirroring the upstream trigger-order comment. -->
+        <Style Selector="Border.profileTile">
+            <Setter Property="Background" Value="{DynamicResource SurfaceRaised}"/>
+            <Setter Property="Cursor"     Value="Hand"/>
+            <Setter Property="Opacity"    Value="1"/>
+        </Style>
+        <Style Selector="Border.profileTile.active">
+            <Setter Property="Background" Value="{DynamicResource SurfaceActive}"/>
+        </Style>
+        <Style Selector="Border.profileTile:pointerover">
+            <Setter Property="Opacity" Value="0.9"/>
+        </Style>
+        <!-- Logging-lock style is last so it wins over :pointerover -->
+        <Style Selector="Border.profileTile.locked">
+            <Setter Property="Opacity" Value="0.45"/>
+            <Setter Property="Cursor"  Value="No"/>
+        </Style>
+
+        <Style Selector="Rectangle.activeStripe">
+            <Setter Property="Fill" Value="{DynamicResource TextTertiary}"/>
+        </Style>
+        <Style Selector="Rectangle.activeStripe.active">
+            <Setter Property="Fill" Value="{DynamicResource StatusGreen}"/>
+        </Style>
+
+        <Style Selector="Ellipse.statusDot">
+            <Setter Property="Fill" Value="{DynamicResource TextTertiary}"/>
+        </Style>
+        <Style Selector="Ellipse.statusDot.active">
+            <Setter Property="Fill" Value="{DynamicResource StatusGreen}"/>
+        </Style>
+
+        <Style Selector="Rectangle.drawerStripe">
+            <Setter Property="Fill" Value="{DynamicResource Accent}"/>
+        </Style>
+        <Style Selector="Rectangle.drawerStripe.active">
+            <Setter Property="Fill" Value="{DynamicResource StatusGreen}"/>
+        </Style>
+
+    </UserControl.Styles>
+
+    <Grid Background="{DynamicResource Surface}">
+
+        <!-- ========== HAS PROFILES STATE ========== -->
+        <Grid IsVisible="{Binding HasProfiles}" RowDefinitions="Auto,*,Auto">
+
+            <!-- Header -->
+            <StackPanel Grid.Row="0" Margin="28,22,28,14">
+                <TextBlock Text="PROFILES"
+                           FontSize="10" FontWeight="Bold"
+                           Foreground="{DynamicResource TextTertiary}"
+                           Margin="0,0,0,2"/>
+                <TextBlock FontSize="24" FontWeight="Light"
+                           Foreground="{DynamicResource TextPrimary}">
+                    <Run Text="{Binding Profiles.Count, Mode=OneWay}"/>
+                    <Run Text=" SAVED"/>
+                </TextBlock>
+            </StackPanel>
+
+            <!-- Profile tile list -->
+            <ScrollViewer Grid.Row="1"
+                          VerticalScrollBarVisibility="Auto"
+                          HorizontalScrollBarVisibility="Disabled"
+                          Padding="28,0,28,0">
+                <ItemsControl ItemsSource="{Binding Profiles}"
+                              AutomationProperties.AutomationId="ProfileList">
+                    <ItemsControl.ItemTemplate>
+                        <DataTemplate>
+                            <!-- Upstream MouseBinding on the tile Border → whole tile wrapped
+                                 in a transparent command Button -->
+                            <Button Theme="{StaticResource TransparentButtonStyle}"
+                                    Margin="0,0,0,8"
+                                    Command="{Binding $parent[UserControl].DataContext.ActivateProfileCommand}"
+                                    CommandParameter="{Binding}">
+                                <Border Classes="profileTile"
+                                        Classes.active="{Binding IsProfileActive}"
+                                        Classes.locked="{Binding $parent[UserControl].DataContext.IsLoggingActive}"
+                                        BorderBrush="{DynamicResource BorderDim}"
+                                        BorderThickness="1"
+                                        CornerRadius="4">
+                                    <Grid ColumnDefinitions="3,*">
+
+                                        <!-- Active stripe -->
+                                        <Rectangle Grid.Column="0"
+                                                   Classes="activeStripe"
+                                                   Classes.active="{Binding IsProfileActive}"/>
+
+                                        <!-- Content area -->
+                                        <Grid Grid.Column="1" Margin="16,14,14,14"
+                                              ColumnDefinitions="*,Auto">
+
+                                            <StackPanel Grid.Column="0" VerticalAlignment="Center">
+                                                <!-- Status dot + name -->
+                                                <StackPanel Orientation="Horizontal" Margin="0,0,0,4">
+                                                    <Ellipse Width="6" Height="6"
+                                                             Classes="statusDot"
+                                                             Classes.active="{Binding IsProfileActive}"
+                                                             VerticalAlignment="Center"
+                                                             Margin="0,0,8,0"/>
+                                                    <TextBlock Text="{Binding Name}"
+                                                               Foreground="{DynamicResource TextPrimary}"
+                                                               FontFamily="Consolas"
+                                                               FontSize="16" FontWeight="Medium"
+                                                               VerticalAlignment="Center"/>
+                                                </StackPanel>
+
+                                                <!-- Date -->
+                                                <TextBlock Text="{Binding CreatedOn}"
+                                                           Foreground="{DynamicResource TextSecondary}"
+                                                           FontSize="11"
+                                                           Margin="14,0,0,3"/>
+
+                                                <!-- Device summary -->
+                                                <TextBlock Foreground="{DynamicResource TextTertiary}"
+                                                           FontSize="9" FontWeight="SemiBold"
+                                                           Margin="14,0,0,0">
+                                                    <Run Text="{Binding Devices.Count, Mode=OneWay}"/>
+                                                    <Run Text=" DEVICE(S)"/>
+                                                </TextBlock>
+                                            </StackPanel>
+
+                                            <!-- Gear button (opens drawer in edit mode) -->
+                                            <Button Grid.Column="1"
+                                                    Width="28" Height="28"
+                                                    Theme="{StaticResource RoundIconButton}"
+                                                    Cursor="Hand"
+                                                    ToolTip.Tip="Profile settings"
+                                                    AutomationProperties.AutomationId="ProfileSettingsButton"
+                                                    VerticalAlignment="Center"
+                                                    Command="{Binding $parent[UserControl].DataContext.OpenEditDrawerCommand}"
+                                                    CommandParameter="{Binding}">
+                                                <i:Icon Value="mdi-cog" FontSize="14"
+                                                        Foreground="{DynamicResource TextTertiary}"/>
+                                            </Button>
+                                        </Grid>
+                                    </Grid>
+                                </Border>
+                            </Button>
+                        </DataTemplate>
+                    </ItemsControl.ItemTemplate>
+                </ItemsControl>
+            </ScrollViewer>
+
+            <!-- Status bar -->
+            <Border Grid.Row="2"
+                    Background="#0A0C10"
+                    BorderBrush="{DynamicResource BorderDim}"
+                    BorderThickness="0,1,0,0"
+                    Padding="28,12">
+                <Grid ColumnDefinitions="*,Auto">
+                    <StackPanel Orientation="Horizontal" VerticalAlignment="Center">
+                        <TextBlock FontSize="10" FontWeight="SemiBold"
+                                   Foreground="{DynamicResource TextTertiary}"
+                                   VerticalAlignment="Center">
+                            <Run Text="{Binding Profiles.Count, Mode=OneWay}"/>
+                            <Run Text=" SAVED"/>
+                        </TextBlock>
+                        <!-- Upstream DataTrigger on ActiveProfileName == null → NotNullToVis -->
+                        <TextBlock FontSize="10" FontWeight="SemiBold"
+                                   Foreground="{DynamicResource StatusGreen}"
+                                   VerticalAlignment="Center"
+                                   AutomationProperties.AutomationId="ActiveProfileIndicator"
+                                   IsVisible="{Binding ActiveProfileName, Converter={StaticResource NotNullToVis}}"
+                                   Margin="12,0,0,0">
+                            <Run Text="·  "/>
+                            <Run Text="{Binding ActiveProfileName, Mode=OneWay}"/>
+                            <Run Text=" ACTIVE"/>
+                        </TextBlock>
+                        <Border Margin="12,0,0,0"
+                                Padding="8,3"
+                                CornerRadius="3"
+                                Background="#3D2A0A"
+                                BorderBrush="{DynamicResource StatusAmber}"
+                                BorderThickness="1"
+                                IsVisible="{Binding IsLoggingActive}">
+                            <TextBlock Text="LOGGING · LOCKED"
+                                       FontSize="9" FontWeight="Bold"
+                                       Foreground="{DynamicResource StatusAmber}"/>
+                        </Border>
+                    </StackPanel>
+                    <Button Grid.Column="1"
+                            Theme="{StaticResource PillButton}"
+                            Content="+ ADD PROFILE"
+                            AutomationProperties.AutomationId="AddProfileButton"
+                            IsEnabled="{Binding !IsLoggingActive}"
+                            Command="{Binding OpenNewDrawerCommand}"/>
+                </Grid>
+            </Border>
+        </Grid>
+
+        <!-- ========== EMPTY STATE ========== -->
+        <Grid IsVisible="{Binding !HasProfiles}" RowDefinitions="*,Auto">
+
+            <StackPanel Grid.Row="0"
+                        HorizontalAlignment="Center"
+                        VerticalAlignment="Center"
+                        MaxWidth="420">
+                <Border Width="96" Height="96"
+                        CornerRadius="48"
+                        Background="{DynamicResource SurfaceRaised}"
+                        BorderBrush="{DynamicResource BorderDim}"
+                        BorderThickness="1"
+                        HorizontalAlignment="Center"
+                        Margin="0,0,0,28">
+                    <i:Icon Value="mdi-tune-variant" FontSize="40"
+                            Foreground="{DynamicResource TextTertiary}"
+                            HorizontalAlignment="Center"
+                            VerticalAlignment="Center"/>
+                </Border>
+                <TextBlock Text="NO PROFILES SAVED"
+                           FontSize="11" FontWeight="Bold"
+                           Foreground="{DynamicResource TextTertiary}"
+                           HorizontalAlignment="Center"
+                           Margin="0,0,0,10"/>
+                <TextBlock Text="Profiles capture your device and channel configuration so you can restore it later."
+                           FontSize="15" FontWeight="Light"
+                           Foreground="{DynamicResource TextPrimary}"
+                           TextAlignment="Center"
+                           TextWrapping="Wrap"
+                           HorizontalAlignment="Center"
+                           Margin="0,0,0,28"/>
+                <Button Content="+ ADD PROFILE"
+                        Theme="{StaticResource AccentPillButton}"
+                        HorizontalAlignment="Center"
+                        AutomationProperties.AutomationId="AddProfileButtonEmpty"
+                        IsEnabled="{Binding !IsLoggingActive}"
+                        Command="{Binding OpenNewDrawerCommand}"/>
+            </StackPanel>
+
+            <!-- Status bar (empty) -->
+            <Border Grid.Row="1"
+                    Background="#0A0C10"
+                    BorderBrush="{DynamicResource BorderDim}"
+                    BorderThickness="0,1,0,0"
+                    Padding="28,12">
+                <Grid ColumnDefinitions="*,Auto">
+                    <StackPanel Orientation="Horizontal" VerticalAlignment="Center">
+                        <TextBlock Text="0 PROFILES"
+                                   FontSize="10" FontWeight="SemiBold"
+                                   Foreground="{DynamicResource TextTertiary}"
+                                   VerticalAlignment="Center"/>
+                        <Border Margin="12,0,0,0"
+                                Padding="8,3"
+                                CornerRadius="3"
+                                Background="#3D2A0A"
+                                BorderBrush="{DynamicResource StatusAmber}"
+                                BorderThickness="1"
+                                IsVisible="{Binding IsLoggingActive}">
+                            <TextBlock Text="LOGGING · LOCKED"
+                                       FontSize="9" FontWeight="Bold"
+                                       Foreground="{DynamicResource StatusAmber}"/>
+                        </Border>
+                    </StackPanel>
+                    <Button Grid.Column="1"
+                            Theme="{StaticResource PillButton}"
+                            Content="+ ADD PROFILE"
+                            AutomationProperties.AutomationId="AddProfileButton"
+                            IsEnabled="{Binding !IsLoggingActive}"
+                            Command="{Binding OpenNewDrawerCommand}"/>
+                </Grid>
+            </Border>
+        </Grid>
+
+        <!-- ========== SETTINGS DRAWER (over both states) ========== -->
+        <Grid IsVisible="{Binding IsDrawerOpen, FallbackValue=False}"
+              ZIndex="10"
+              ColumnDefinitions="*,380">
+
+            <!-- Scrim -->
+            <Button Grid.Column="0"
+                    Theme="{StaticResource TransparentButtonStyle}"
+                    Command="{Binding CloseDrawerCommand}">
+                <Rectangle Fill="#A0000000"/>
+            </Button>
+
+            <!-- Drawer panel -->
+            <Border Grid.Column="1"
+                    Background="{DynamicResource SurfaceRaised}"
+                    BorderBrush="{DynamicResource BorderDim}"
+                    BorderThickness="1,0,0,0">
+                <Grid RowDefinitions="Auto,*">
+
+                    <!-- Drawer header -->
+                    <Grid Grid.Row="0" Margin="22,22,16,18" ColumnDefinitions="Auto,*,Auto">
+
+                        <Rectangle Grid.Column="0" Width="3" Height="32" Margin="0,0,12,0"
+                                   Classes="drawerStripe"
+                                   Classes.active="{Binding SelectedProfile.IsProfileActive}"/>
+
+                        <!-- divergence: WPF DataTrigger-swapped Text has no Avalonia analog;
+                             each label is a pair of TextBlocks toggled by IsNewProfile. -->
+                        <StackPanel Grid.Column="1">
+                            <Panel>
+                                <TextBlock Text="PROFILE"
+                                           FontSize="9" FontWeight="Bold"
+                                           Foreground="{DynamicResource TextTertiary}"
+                                           IsVisible="{Binding !IsNewProfile}"/>
+                                <TextBlock Text="NEW PROFILE"
+                                           FontSize="9" FontWeight="Bold"
+                                           Foreground="{DynamicResource TextTertiary}"
+                                           IsVisible="{Binding IsNewProfile}"/>
+                            </Panel>
+                            <Panel>
+                                <TextBlock Text="{Binding SelectedProfile.Name}"
+                                           FontFamily="Consolas"
+                                           FontSize="18" FontWeight="Medium"
+                                           Foreground="{DynamicResource TextPrimary}"
+                                           IsVisible="{Binding !IsNewProfile}"/>
+                                <TextBlock Text="Configure &amp; Save"
+                                           FontFamily="Consolas"
+                                           FontSize="18" FontWeight="Medium"
+                                           Foreground="{DynamicResource TextPrimary}"
+                                           IsVisible="{Binding IsNewProfile}"/>
+                            </Panel>
+                        </StackPanel>
+
+                        <Button Grid.Column="2"
+                                Width="28" Height="28"
+                                Theme="{StaticResource RoundIconButton}"
+                                Foreground="{DynamicResource TextSecondary}"
+                                FontSize="16"
+                                Cursor="Hand"
+                                Content="&#xD7;"
+                                Command="{Binding CloseDrawerCommand}"/>
+                    </Grid>
+
+                    <!-- Drawer body (scrollable) -->
+                    <ScrollViewer Grid.Row="1"
+                                  VerticalScrollBarVisibility="Auto"
+                                  Padding="22,0,22,24">
+                        <StackPanel>
+
+                            <!-- Inline error -->
+                            <Border Background="#1A0A0D"
+                                    BorderBrush="{DynamicResource StatusRed}"
+                                    BorderThickness="1"
+                                    CornerRadius="3"
+                                    Padding="12,8"
+                                    Margin="0,0,0,16"
+                                    IsVisible="{Binding HasDrawerError}">
+                                <TextBlock Text="{Binding DrawerError}"
+                                           Foreground="{DynamicResource StatusRed}"
+                                           FontSize="11"
+                                           TextWrapping="Wrap"/>
+                            </Border>
+
+                            <!-- ═══════════════════════════════════════ -->
+                            <!--  EDIT DRAWER                           -->
+                            <!-- ═══════════════════════════════════════ -->
+                            <StackPanel IsVisible="{Binding !IsNewProfile}">
+
+                                <!-- NAME -->
+                                <TextBlock Text="NAME"
+                                           Classes="sectionLabel"
+                                           Margin="0,8,0,8"/>
+                                <TextBox Theme="{StaticResource DrawerTextBox}"
+                                         Text="{Binding SelectedProfile.Name}"/>
+
+                                <!-- DEVICES -->
+                                <TextBlock Text="DEVICES"
+                                           Classes="sectionLabel"
+                                           Margin="0,22,0,10"/>
+                                <Rectangle Height="1"
+                                           Fill="{DynamicResource BorderDim}"
+                                           Margin="0,0,0,12"/>
+
+                                <ItemsControl ItemsSource="{Binding SelectedProfile.Devices}">
+                                    <ItemsControl.ItemTemplate>
+                                        <DataTemplate>
+                                            <Border Background="{DynamicResource Surface}"
+                                                    BorderBrush="{DynamicResource BorderDim}"
+                                                    BorderThickness="1"
+                                                    CornerRadius="3"
+                                                    Padding="14,12"
+                                                    Margin="0,0,0,10">
+                                                <StackPanel>
+
+                                                    <!-- Device header -->
+                                                    <StackPanel Orientation="Horizontal" Margin="0,0,0,12">
+                                                        <Border Background="{DynamicResource SurfaceActive}"
+                                                                BorderBrush="{DynamicResource BorderBright}"
+                                                                BorderThickness="1"
+                                                                CornerRadius="3"
+                                                                Padding="8,4">
+                                                            <TextBlock Text="{Binding DeviceName}"
+                                                                       Foreground="{DynamicResource TextPrimary}"
+                                                                       FontSize="11" FontWeight="SemiBold"/>
+                                                        </Border>
+                                                        <TextBlock Text="{Binding DeviceSerialNo}"
+                                                                   Foreground="{DynamicResource TextTertiary}"
+                                                                   FontSize="10"
+                                                                   VerticalAlignment="Center"
+                                                                   Margin="10,0,0,0"/>
+                                                    </StackPanel>
+
+                                                    <!-- Frequency -->
+                                                    <Grid Margin="0,0,0,12" ColumnDefinitions="Auto,*,Auto">
+                                                        <TextBlock Grid.Column="0"
+                                                                   Text="FREQ"
+                                                                   Classes="sectionLabel"
+                                                                   FontSize="9"
+                                                                   Margin="0,0,10,0"/>
+                                                        <Slider Grid.Column="1"
+                                                                Classes="dark"
+                                                                Minimum="1" Maximum="1000"
+                                                                IsSnapToTickEnabled="True"
+                                                                TickFrequency="1"
+                                                                Value="{Binding SamplingFrequency, Delay=200}"/>
+                                                        <TextBlock Grid.Column="2"
+                                                                   Foreground="{DynamicResource TextPrimary}"
+                                                                   FontFamily="Consolas"
+                                                                   FontSize="12"
+                                                                   VerticalAlignment="Center"
+                                                                   Margin="10,0,0,0">
+                                                            <Run Text="{Binding SamplingFrequency, Mode=OneWay}"/>
+                                                            <Run Text=" Hz" Foreground="{DynamicResource TextTertiary}"/>
+                                                        </TextBlock>
+                                                    </Grid>
+
+                                                    <!-- Channels -->
+                                                    <TextBlock Text="CHANNELS"
+                                                               FontSize="9" FontWeight="SemiBold"
+                                                               Foreground="{DynamicResource TextTertiary}"
+                                                               Margin="0,0,0,8"/>
+                                                    <ItemsControl ItemsSource="{Binding Channels}">
+                                                        <ItemsControl.ItemsPanel>
+                                                            <ItemsPanelTemplate>
+                                                                <WrapPanel/>
+                                                            </ItemsPanelTemplate>
+                                                        </ItemsControl.ItemsPanel>
+                                                        <ItemsControl.ItemTemplate>
+                                                            <DataTemplate>
+                                                                <CheckBox Classes="dark"
+                                                                          IsChecked="{Binding IsChannelActive}"
+                                                                          Margin="0,0,14,6">
+                                                                    <TextBlock Text="{Binding Name}"
+                                                                               Foreground="{DynamicResource TextSecondary}"
+                                                                               FontFamily="Consolas"
+                                                                               FontSize="11"/>
+                                                                </CheckBox>
+                                                            </DataTemplate>
+                                                        </ItemsControl.ItemTemplate>
+                                                    </ItemsControl>
+                                                </StackPanel>
+                                            </Border>
+                                        </DataTemplate>
+                                    </ItemsControl.ItemTemplate>
+                                </ItemsControl>
+
+                                <!-- ACTIONS -->
+                                <Rectangle Height="1"
+                                           Fill="{DynamicResource BorderDim}"
+                                           Margin="0,8,0,16"/>
+
+                                <!-- divergence: WPF DataTrigger-swapped Content → paired
+                                     TextBlocks toggled by SelectedProfile.IsProfileActive -->
+                                <Button Margin="0,0,0,8"
+                                        Theme="{StaticResource AccentPillButton}"
+                                        AutomationProperties.AutomationId="ActivateProfileButton"
+                                        Command="{Binding ActivateProfileCommand}"
+                                        CommandParameter="{Binding SelectedProfile}">
+                                    <Panel>
+                                        <TextBlock Text="ACTIVATE PROFILE"
+                                                   IsVisible="{Binding !SelectedProfile.IsProfileActive, FallbackValue=True}"/>
+                                        <TextBlock Text="DEACTIVATE PROFILE"
+                                                   IsVisible="{Binding SelectedProfile.IsProfileActive, FallbackValue=False}"/>
+                                    </Panel>
+                                </Button>
+
+                                <Button Content="DELETE PROFILE"
+                                        Theme="{StaticResource DangerPillButton}"
+                                        AutomationProperties.AutomationId="DeleteProfileButton"
+                                        Command="{Binding DeleteProfileCommand}"
+                                        CommandParameter="{Binding SelectedProfile}"/>
+
+                            </StackPanel>
+
+                            <!-- ═══════════════════════════════════════ -->
+                            <!--  NEW PROFILE DRAWER                    -->
+                            <!-- ═══════════════════════════════════════ -->
+                            <StackPanel IsVisible="{Binding IsNewProfile}">
+
+                                <!-- NAME -->
+                                <TextBlock Text="NAME"
+                                           Classes="sectionLabel"
+                                           Margin="0,8,0,8"/>
+                                <TextBox Theme="{StaticResource DrawerTextBox}"
+                                         AutomationProperties.AutomationId="NewProfileNameInput"
+                                         Text="{Binding NewProfileName}"/>
+
+                                <!-- CAPTURE shortcut -->
+                                <Button Content="CAPTURE FROM CURRENT SETTINGS"
+                                        Theme="{StaticResource PillButton}"
+                                        HorizontalAlignment="Left"
+                                        Margin="0,14,0,0"
+                                        ToolTip.Tip="Snapshot currently active channels and device settings"
+                                        AutomationProperties.AutomationId="SaveCurrentSettingsButton"
+                                        Command="{Binding SaveCurrentSettingsCommand}"/>
+
+                                <!-- DEVICES -->
+                                <TextBlock Text="DEVICES"
+                                           Classes="sectionLabel"
+                                           Margin="0,22,0,10"/>
+                                <Rectangle Height="1"
+                                           Fill="{DynamicResource BorderDim}"
+                                           Margin="0,0,0,12"/>
+
+                                <TextBlock Text="Select devices to include in this profile."
+                                           FontSize="11"
+                                           Foreground="{DynamicResource TextTertiary}"
+                                           Margin="0,0,0,12"/>
+
+                                <!-- No devices message (upstream DataTrigger on Count == 0
+                                     → `!` negation of the count) -->
+                                <TextBlock Text="No devices currently connected."
+                                           FontSize="11"
+                                           Foreground="{DynamicResource TextTertiary}"
+                                           Margin="0,0,0,12"
+                                           IsVisible="{Binding !NewDeviceItems.Count}"/>
+
+                                <ItemsControl ItemsSource="{Binding NewDeviceItems}">
+                                    <ItemsControl.ItemTemplate>
+                                        <DataTemplate>
+                                            <Border Background="{DynamicResource Surface}"
+                                                    BorderBrush="{DynamicResource BorderDim}"
+                                                    BorderThickness="1"
+                                                    CornerRadius="3"
+                                                    Padding="14,12"
+                                                    Margin="0,0,0,8">
+                                                <StackPanel>
+
+                                                    <!-- Device checkbox -->
+                                                    <CheckBox Classes="dark"
+                                                              AutomationProperties.AutomationId="NewProfileDeviceCheckbox"
+                                                              IsChecked="{Binding IsSelected}">
+                                                        <StackPanel Orientation="Horizontal">
+                                                            <TextBlock Text="{Binding Name}"
+                                                                       Foreground="{DynamicResource TextPrimary}"
+                                                                       FontSize="13" FontWeight="SemiBold"/>
+                                                            <TextBlock Text="{Binding SerialNo}"
+                                                                       Foreground="{DynamicResource TextTertiary}"
+                                                                       FontSize="10"
+                                                                       VerticalAlignment="Center"
+                                                                       Margin="10,0,0,0"/>
+                                                        </StackPanel>
+                                                    </CheckBox>
+
+                                                    <!-- Channels (shown when device is checked) -->
+                                                    <StackPanel Margin="22,10,0,0"
+                                                                IsVisible="{Binding IsSelected}">
+                                                        <TextBlock Text="CHANNELS"
+                                                                   FontSize="9" FontWeight="SemiBold"
+                                                                   Foreground="{DynamicResource TextTertiary}"
+                                                                   Margin="0,0,0,8"/>
+                                                        <ItemsControl ItemsSource="{Binding ChannelItems}">
+                                                            <ItemsControl.ItemsPanel>
+                                                                <ItemsPanelTemplate>
+                                                                    <WrapPanel/>
+                                                                </ItemsPanelTemplate>
+                                                            </ItemsControl.ItemsPanel>
+                                                            <ItemsControl.ItemTemplate>
+                                                                <DataTemplate>
+                                                                    <CheckBox Classes="dark"
+                                                                              IsChecked="{Binding IsSelected}"
+                                                                              Margin="0,0,14,6">
+                                                                        <TextBlock Text="{Binding Name}"
+                                                                                   Foreground="{DynamicResource TextSecondary}"
+                                                                                   FontFamily="Consolas"
+                                                                                   FontSize="11"/>
+                                                                    </CheckBox>
+                                                                </DataTemplate>
+                                                            </ItemsControl.ItemTemplate>
+                                                        </ItemsControl>
+                                                    </StackPanel>
+
+                                                </StackPanel>
+                                            </Border>
+                                        </DataTemplate>
+                                    </ItemsControl.ItemTemplate>
+                                </ItemsControl>
+
+                                <!-- FREQUENCY -->
+                                <TextBlock Text="SAMPLING FREQUENCY"
+                                           Classes="sectionLabel"
+                                           Margin="0,16,0,10"/>
+                                <Grid ColumnDefinitions="*,Auto">
+                                    <Slider Grid.Column="0"
+                                            Classes="dark"
+                                            Minimum="1" Maximum="1000"
+                                            IsSnapToTickEnabled="True"
+                                            TickFrequency="1"
+                                            Value="{Binding NewProfileFrequency, Delay=100}"/>
+                                    <TextBlock Grid.Column="1"
+                                               Foreground="{DynamicResource TextPrimary}"
+                                               FontFamily="Consolas"
+                                               FontSize="12"
+                                               VerticalAlignment="Center"
+                                               Margin="12,0,0,0">
+                                        <Run Text="{Binding NewProfileFrequency, Mode=OneWay}"/>
+                                        <Run Text=" Hz" Foreground="{DynamicResource TextTertiary}"/>
+                                    </TextBlock>
+                                </Grid>
+
+                                <!-- SAVE -->
+                                <Rectangle Height="1"
+                                           Fill="{DynamicResource BorderDim}"
+                                           Margin="0,20,0,16"/>
+                                <Button Content="SAVE PROFILE"
+                                        Theme="{StaticResource AccentPillButton}"
+                                        AutomationProperties.AutomationId="SaveNewProfileButton"
+                                        Command="{Binding SaveNewProfileCommand}"/>
+
+                            </StackPanel>
+
+                        </StackPanel>
+                    </ScrollViewer>
+                </Grid>
+            </Border>
+        </Grid>
+
+        <!-- ========== CONFIRM DIALOG (over everything) ========== -->
+        <Grid IsVisible="{Binding ConfirmOverlay.IsOpen, FallbackValue=False}"
+              ZIndex="20">
+            <!-- Scrim. Click = cancel (same pattern as the drawer). -->
+            <Button Theme="{StaticResource TransparentButtonStyle}"
+                    Command="{Binding ConfirmOverlay.NegativeCommand}">
+                <Rectangle Fill="#A0000000"/>
+            </Button>
+
+            <!-- Card -->
+            <Border Width="420"
+                    HorizontalAlignment="Center"
+                    VerticalAlignment="Center"
+                    Background="{DynamicResource SurfaceRaised}"
+                    BorderBrush="{DynamicResource BorderDim}"
+                    BorderThickness="1"
+                    CornerRadius="4"
+                    Padding="24">
+                <StackPanel>
+                    <TextBlock Text="{Binding ConfirmOverlay.Title}"
+                               FontSize="16"
+                               FontWeight="SemiBold"
+                               Foreground="{DynamicResource TextPrimary}"/>
+                    <TextBlock Text="{Binding ConfirmOverlay.Message}"
+                               FontSize="13"
+                               Foreground="{DynamicResource TextSecondary}"
+                               TextWrapping="Wrap"
+                               Margin="0,10,0,20"/>
+                    <StackPanel Orientation="Horizontal"
+                                HorizontalAlignment="Right">
+                        <Button Content="CANCEL"
+                                Theme="{StaticResource PillButton}"
+                                Command="{Binding ConfirmOverlay.NegativeCommand}"/>
+                        <Button Content="{Binding ConfirmOverlay.AffirmativeLabel}"
+                                Theme="{StaticResource AccentPillButton}"
+                                Margin="10,0,0,0"
+                                Command="{Binding ConfirmOverlay.AffirmativeCommand}"/>
+                    </StackPanel>
+                </StackPanel>
+            </Border>
+        </Grid>
+
+    </Grid>
 </UserControl>

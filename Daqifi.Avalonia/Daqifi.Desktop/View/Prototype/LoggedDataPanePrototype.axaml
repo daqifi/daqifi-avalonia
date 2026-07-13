@@ -1,5 +1,1065 @@
-<UserControl xmlns="https://github.com/avaloniaui"
+<UserControl x:Class="Daqifi.Desktop.View.Prototype.LoggedDataPanePrototype"
+             x:Name="Root"
+             xmlns="https://github.com/avaloniaui"
              xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml"
-             x:Class="Daqifi.Desktop.View.Prototype.LoggedDataPanePrototype">
-  <!-- Scaffolded by portomatic from upstream Daqifi.Desktop.View.Prototype.LoggedDataPanePrototype. Fill in the view; the code-behind ctor calls InitializeComponent(). -->
+             xmlns:oxy="http://oxyplot.org/avalonia"
+             xmlns:i="https://github.com/projektanker/icons.avalonia"
+             xmlns:local="using:Daqifi.Desktop.View"
+             xmlns:logger="using:Daqifi.Desktop.Logger">
+
+    <!--
+        Ported from Daqifi.Desktop/View/Prototype/LoggedDataPanePrototype.xaml.
+
+        Dialect decisions applied:
+        - Keyed WPF Styles on templated controls (PillButton family, SegmentedToggle,
+          PlotIconButton, TileIconButton, DrawerTextBox) → keyed ControlThemes with
+          pseudo-class selector styles (^:pointerover, ^:checked, ^:disabled, ^:selected).
+        - Keyed WPF Styles on non-templated elements (SectionLabel, InfoLabel, InfoValue,
+          DrawerTextField) → class styles in UserControl.Styles.
+        - BoolToVis / InvertedBoolToVis / Visibility DataTriggers → IsVisible bindings
+          (with ! negation); the "no session selected" MultiDataTrigger → MultiBinding
+          with app-registered BoolAndToVis + BooleanToInverse.
+        - iconPacks:PackIconMaterial → projektanker i:Icon (Kind kebab-cased, Width→FontSize).
+        - WPF MouseBinding (row click / scrim click) → transparent command Button
+          (established MainWindow scrim dialect).
+        - oxy WPF → oxy Avalonia; tracker template follows LiveGraphPane.axaml verbatim.
+        - MahApps ProgressRing → indeterminate ProgressBar.
+        - StaticResource token brushes → DynamicResource (tokens live in ThemeDictionaries).
+        - Upstream's FadeButton is referenced only in a comment (PlotIconButton already
+          replaced it upstream), so no local FadeButton equivalent is needed here.
+    -->
+
+    <UserControl.Resources>
+
+        <!-- Brushes come from /Daqifi.Desktop/Resources/DesignTokens.axaml via App.axaml -->
+
+        <ControlTheme x:Key="PillButton" TargetType="Button">
+            <Setter Property="Background" Value="Transparent"/>
+            <Setter Property="BorderBrush" Value="{DynamicResource BorderDim}"/>
+            <Setter Property="BorderThickness" Value="1"/>
+            <Setter Property="Foreground" Value="{DynamicResource TextSecondary}"/>
+            <Setter Property="Padding" Value="12,4"/>
+            <Setter Property="Margin" Value="0,0,6,0"/>
+            <Setter Property="FontSize" Value="10"/>
+            <Setter Property="FontWeight" Value="SemiBold"/>
+            <Setter Property="Cursor" Value="Hand"/>
+            <Setter Property="Template">
+                <ControlTemplate>
+                    <Border Background="{TemplateBinding Background}"
+                            BorderBrush="{TemplateBinding BorderBrush}"
+                            BorderThickness="{TemplateBinding BorderThickness}"
+                            CornerRadius="14"
+                            Padding="{TemplateBinding Padding}">
+                        <ContentPresenter HorizontalAlignment="Center" VerticalAlignment="Center"
+                                          Content="{TemplateBinding Content}"/>
+                    </Border>
+                </ControlTemplate>
+            </Setter>
+            <Style Selector="^:pointerover">
+                <Setter Property="BorderBrush" Value="{DynamicResource BorderBright}"/>
+                <Setter Property="Background" Value="#141821"/>
+                <Setter Property="Foreground" Value="{DynamicResource TextPrimary}"/>
+            </Style>
+            <Style Selector="^:disabled">
+                <Setter Property="Opacity" Value="0.35"/>
+            </Style>
+        </ControlTheme>
+
+        <ControlTheme x:Key="DangerPillButton" TargetType="Button" BasedOn="{StaticResource PillButton}">
+            <Setter Property="BorderBrush" Value="#4A1F28"/>
+            <Setter Property="Foreground" Value="{DynamicResource StatusRed}"/>
+            <Style Selector="^:pointerover">
+                <Setter Property="Background" Value="#2A0F14"/>
+                <Setter Property="BorderBrush" Value="{DynamicResource StatusRed}"/>
+                <Setter Property="Foreground" Value="{DynamicResource StatusRed}"/>
+            </Style>
+        </ControlTheme>
+
+        <ControlTheme x:Key="AccentPillButton" TargetType="Button" BasedOn="{StaticResource PillButton}">
+            <Setter Property="Background" Value="{DynamicResource Accent}"/>
+            <Setter Property="BorderBrush" Value="{DynamicResource Accent}"/>
+            <Setter Property="Foreground" Value="White"/>
+            <Setter Property="Padding" Value="16,6"/>
+            <Style Selector="^:pointerover">
+                <Setter Property="Background" Value="#1EB3F0"/>
+                <Setter Property="BorderBrush" Value="#1EB3F0"/>
+                <Setter Property="Foreground" Value="White"/>
+            </Style>
+        </ControlTheme>
+
+        <!-- Shared shape with MainWindow / DevicesPanePrototype SegmentedToggle
+             (this view's upstream uses a slightly wider 14,7 padding). -->
+        <ControlTheme x:Key="SegmentedToggle" TargetType="RadioButton">
+            <Setter Property="Foreground" Value="{DynamicResource TextSecondary}"/>
+            <Setter Property="FontSize" Value="10"/>
+            <Setter Property="FontWeight" Value="SemiBold"/>
+            <Setter Property="Cursor" Value="Hand"/>
+            <Setter Property="Template">
+                <ControlTemplate>
+                    <Border x:Name="Bg"
+                            Background="Transparent"
+                            CornerRadius="2"
+                            Padding="14,7">
+                        <ContentPresenter HorizontalAlignment="Center" VerticalAlignment="Center"
+                                          Content="{TemplateBinding Content}"/>
+                    </Border>
+                </ControlTemplate>
+            </Setter>
+            <Style Selector="^:checked /template/ Border#Bg">
+                <Setter Property="Background" Value="{DynamicResource SurfaceActive}"/>
+            </Style>
+            <Style Selector="^:checked">
+                <Setter Property="Foreground" Value="{DynamicResource TextPrimary}"/>
+            </Style>
+            <Style Selector="^:pointerover">
+                <Setter Property="Foreground" Value="{DynamicResource TextPrimary}"/>
+            </Style>
+        </ControlTheme>
+
+        <!-- Dark plot toolbar button (replaces light FadeButton for plot controls) -->
+        <ControlTheme x:Key="PlotIconButton" TargetType="Button">
+            <Setter Property="Background" Value="Transparent"/>
+            <Setter Property="BorderThickness" Value="0"/>
+            <Setter Property="Padding" Value="6"/>
+            <Setter Property="Cursor" Value="Hand"/>
+            <Setter Property="Template">
+                <ControlTemplate>
+                    <Border x:Name="Bg" Background="{TemplateBinding Background}" CornerRadius="4"
+                            Padding="{TemplateBinding Padding}">
+                        <ContentPresenter HorizontalAlignment="Center" VerticalAlignment="Center"
+                                          Content="{TemplateBinding Content}"/>
+                    </Border>
+                </ControlTemplate>
+            </Setter>
+            <Style Selector="^:pointerover /template/ Border#Bg">
+                <Setter Property="Background" Value="#1FFFFFFF"/>
+            </Style>
+        </ControlTheme>
+
+        <!-- Session tile icon button (gear / export / delete inside each row) -->
+        <ControlTheme x:Key="TileIconButton" TargetType="Button">
+            <Setter Property="Width" Value="28"/>
+            <Setter Property="Height" Value="28"/>
+            <Setter Property="Padding" Value="0"/>
+            <Setter Property="Background" Value="Transparent"/>
+            <Setter Property="BorderThickness" Value="0"/>
+            <Setter Property="Cursor" Value="Hand"/>
+            <Setter Property="Template">
+                <ControlTemplate>
+                    <Border x:Name="Bg" Background="Transparent" CornerRadius="4">
+                        <ContentPresenter HorizontalAlignment="Center" VerticalAlignment="Center"
+                                          Content="{TemplateBinding Content}"/>
+                    </Border>
+                </ControlTemplate>
+            </Setter>
+            <Style Selector="^:pointerover /template/ Border#Bg">
+                <Setter Property="Background" Value="#1FFFFFFF"/>
+            </Style>
+        </ControlTheme>
+
+        <!-- Round hover-highlight close button (upstream inline Button template;
+             same shape as MainWindow's RoundCloseButton). -->
+        <ControlTheme x:Key="RoundCloseButton" TargetType="Button">
+            <Setter Property="Background" Value="Transparent"/>
+            <Setter Property="BorderThickness" Value="0"/>
+            <Setter Property="Template">
+                <ControlTemplate>
+                    <Border x:Name="Bg" Background="Transparent" CornerRadius="14">
+                        <ContentPresenter HorizontalAlignment="Center" VerticalAlignment="Center"
+                                          Content="{TemplateBinding Content}"/>
+                    </Border>
+                </ControlTemplate>
+            </Setter>
+            <Style Selector="^:pointerover /template/ Border#Bg">
+                <Setter Property="Background" Value="#1FFFFFFF"/>
+            </Style>
+        </ControlTheme>
+
+        <!-- WPF MouseBinding → transparent command Button (MainWindow scrim dialect).
+             Transparent Background keeps the whole area hit-testable. -->
+        <ControlTheme x:Key="TransparentHitButton" TargetType="Button">
+            <Setter Property="Background" Value="Transparent"/>
+            <Setter Property="BorderThickness" Value="0"/>
+            <Setter Property="Padding" Value="0"/>
+            <Setter Property="HorizontalContentAlignment" Value="Stretch"/>
+            <Setter Property="VerticalContentAlignment" Value="Stretch"/>
+            <Setter Property="Template">
+                <ControlTemplate>
+                    <ContentPresenter Background="{TemplateBinding Background}"
+                                      Content="{TemplateBinding Content}"
+                                      HorizontalContentAlignment="{TemplateBinding HorizontalContentAlignment}"
+                                      VerticalContentAlignment="{TemplateBinding VerticalContentAlignment}"
+                                      Padding="{TemplateBinding Padding}"/>
+                </ControlTemplate>
+            </Setter>
+        </ControlTheme>
+
+        <!-- divergence: upstream DrawerTextBox rebuilt the (light) WPF TextBox chrome flat;
+             Fluent Dark is already dark, so this restyles the default theme and only
+             flattens the template border. Focus caret/selection chrome stays Fluent. -->
+        <ControlTheme x:Key="DrawerTextBox" TargetType="TextBox" BasedOn="{StaticResource {x:Type TextBox}}">
+            <Setter Property="Background" Value="Transparent"/>
+            <Setter Property="BorderThickness" Value="0"/>
+            <Setter Property="Foreground" Value="{DynamicResource TextPrimary}"/>
+            <Setter Property="FontFamily" Value="Consolas"/>
+            <Setter Property="FontSize" Value="13"/>
+            <Setter Property="Height" Value="32"/>
+            <Setter Property="MinHeight" Value="32"/>
+            <Setter Property="VerticalContentAlignment" Value="Center"/>
+            <Setter Property="CaretBrush" Value="{DynamicResource TextPrimary}"/>
+            <Style Selector="^:pointerover /template/ Border#PART_BorderElement">
+                <Setter Property="Background" Value="Transparent"/>
+                <Setter Property="BorderBrush" Value="Transparent"/>
+            </Style>
+            <Style Selector="^:focus /template/ Border#PART_BorderElement">
+                <Setter Property="Background" Value="Transparent"/>
+                <Setter Property="BorderBrush" Value="Transparent"/>
+            </Style>
+        </ControlTheme>
+
+    </UserControl.Resources>
+
+    <UserControl.Styles>
+
+        <Style Selector="TextBlock.sectionLabel">
+            <Setter Property="FontSize" Value="11"/>
+            <Setter Property="FontWeight" Value="SemiBold"/>
+            <Setter Property="Foreground" Value="{DynamicResource TextSecondary}"/>
+            <Setter Property="VerticalAlignment" Value="Center"/>
+        </Style>
+
+        <Style Selector="TextBlock.infoLabel">
+            <Setter Property="FontSize" Value="10"/>
+            <Setter Property="FontWeight" Value="SemiBold"/>
+            <Setter Property="Foreground" Value="{DynamicResource TextTertiary}"/>
+            <Setter Property="Margin" Value="0,0,0,3"/>
+        </Style>
+
+        <Style Selector="TextBlock.infoValue">
+            <Setter Property="FontFamily" Value="Consolas"/>
+            <Setter Property="FontSize" Value="13"/>
+            <Setter Property="Foreground" Value="{DynamicResource TextPrimary}"/>
+        </Style>
+
+        <Style Selector="Border.drawerTextField">
+            <Setter Property="Background" Value="{DynamicResource Surface}"/>
+            <Setter Property="BorderBrush" Value="{DynamicResource BorderDim}"/>
+            <Setter Property="BorderThickness" Value="1"/>
+            <Setter Property="CornerRadius" Value="3"/>
+            <Setter Property="Padding" Value="10,0"/>
+        </Style>
+
+        <!-- Legend items dim/strike when their series is hidden
+             (upstream DataTriggers on the legend item's IsVisible). -->
+        <Style Selector="Rectangle.seriesHidden">
+            <Setter Property="Opacity" Value="0.3"/>
+        </Style>
+        <Style Selector="TextBlock.seriesHidden">
+            <Setter Property="Opacity" Value="0.4"/>
+            <Setter Property="TextDecorations" Value="Strikethrough"/>
+        </Style>
+
+    </UserControl.Styles>
+
+    <Grid Background="{DynamicResource Surface}">
+
+        <!-- ========== MAIN CONTENT ========== -->
+        <Grid RowDefinitions="Auto,*">
+            <!-- Row 0: tab strip (APP LOGS / DEVICE LOGS); Row 1: content area -->
+
+            <!-- Tab strip -->
+            <Border Grid.Row="0"
+                    Background="{DynamicResource Surface}"
+                    BorderBrush="{DynamicResource BorderDim}"
+                    BorderThickness="0,0,0,1"
+                    Padding="20,0">
+                <StackPanel Orientation="Horizontal">
+                    <Border Background="{DynamicResource SurfaceRaised}"
+                            BorderBrush="{DynamicResource BorderDim}"
+                            BorderThickness="1"
+                            CornerRadius="3"
+                            Padding="3"
+                            Margin="0,8,0,8">
+                        <StackPanel Orientation="Horizontal">
+                            <RadioButton x:Name="AppLogsTab"
+                                         AutomationProperties.AutomationId="AppLogsTab"
+                                         GroupName="LoggedDataTab"
+                                         IsChecked="True"
+                                         Content="APP LOGS"
+                                         Theme="{StaticResource SegmentedToggle}"/>
+                            <RadioButton x:Name="DeviceLogsTab"
+                                         AutomationProperties.AutomationId="DeviceLogsTab"
+                                         GroupName="LoggedDataTab"
+                                         Content="DEVICE LOGS"
+                                         Theme="{StaticResource SegmentedToggle}"/>
+                        </StackPanel>
+                    </Border>
+                </StackPanel>
+            </Border>
+
+            <!-- APP LOGS content -->
+            <Grid Grid.Row="1"
+                  IsVisible="{Binding IsChecked, ElementName=AppLogsTab}">
+                <Grid.RowDefinitions>
+                    <!-- Plot area (main data view) -->
+                    <RowDefinition Height="2*"/>
+                    <!-- Separator -->
+                    <RowDefinition Height="1"/>
+                    <!-- Session list -->
+                    <RowDefinition Height="*" MinHeight="120"/>
+                    <!-- Status bar -->
+                    <RowDefinition Height="Auto"/>
+                </Grid.RowDefinitions>
+
+                <!-- ── Plot area ── -->
+                <Grid Grid.Row="0" ColumnDefinitions="*,Auto">
+
+                    <Grid Grid.Column="0" RowDefinitions="Auto,*,Auto,Auto">
+
+                        <!-- Session header strip (hidden when no data) -->
+                        <Border Grid.Row="0"
+                                Padding="20,10,20,8"
+                                BorderBrush="{DynamicResource BorderDim}"
+                                BorderThickness="0,0,0,1"
+                                IsVisible="{Binding DbLogger.HasSessionData}">
+                            <Grid ColumnDefinitions="*,Auto">
+                                <StackPanel Grid.Column="0">
+                                <TextBlock Text="{Binding DbLogger.CurrentSession.Name}"
+                                           FontFamily="Consolas"
+                                           FontSize="16"
+                                           FontWeight="Medium"
+                                           Foreground="{DynamicResource TextPrimary}"/>
+                                <StackPanel Orientation="Horizontal" Margin="0,3,0,0">
+                                    <!-- Started -->
+                                    <TextBlock Text="STARTED"
+                                               FontSize="9"
+                                               FontWeight="SemiBold"
+                                               Foreground="{DynamicResource TextTertiary}"
+                                               VerticalAlignment="Center"
+                                               Margin="0,1,5,0"/>
+                                    <TextBlock Text="{Binding DbLogger.CurrentSession.SessionStart, StringFormat='{}{0:M/d/yyyy h:mm tt}'}"
+                                               FontFamily="Consolas"
+                                               FontSize="11"
+                                               Foreground="{DynamicResource TextSecondary}"
+                                               VerticalAlignment="Center"/>
+
+                                    <!-- Sample rate (only when present) -->
+                                    <StackPanel Orientation="Horizontal" VerticalAlignment="Center"
+                                                IsVisible="{Binding DbLogger.CurrentSession.HasFrequencyDisplay}">
+                                        <TextBlock Text="  ·  " FontSize="11" Foreground="{DynamicResource TextTertiary}" VerticalAlignment="Center"/>
+                                        <TextBlock Text="SAMPLE RATE"
+                                                   FontSize="9"
+                                                   FontWeight="SemiBold"
+                                                   Foreground="{DynamicResource TextTertiary}"
+                                                   VerticalAlignment="Center"
+                                                   Margin="0,1,5,0"/>
+                                        <TextBlock Text="{Binding DbLogger.CurrentSession.FrequencyDisplay}"
+                                                   FontFamily="Consolas"
+                                                   FontSize="11"
+                                                   FontWeight="SemiBold"
+                                                   Foreground="{DynamicResource TextSecondary}"
+                                                   VerticalAlignment="Center"/>
+                                    </StackPanel>
+
+                                    <!-- Sample count -->
+                                    <TextBlock Text="  ·  " FontSize="11" Foreground="{DynamicResource TextTertiary}" VerticalAlignment="Center"/>
+                                    <TextBlock Text="SAMPLES"
+                                               FontSize="9"
+                                               FontWeight="SemiBold"
+                                               Foreground="{DynamicResource TextTertiary}"
+                                               VerticalAlignment="Center"
+                                               Margin="0,1,5,0"/>
+                                    <TextBlock Text="{Binding DbLogger.CurrentSessionSampleCountDisplay}"
+                                               ToolTip.Tip="{Binding DbLogger.CurrentSessionSampleCountTooltip}"
+                                               FontFamily="Consolas"
+                                               FontSize="11"
+                                               FontWeight="SemiBold"
+                                               Foreground="{DynamicResource TextSecondary}"
+                                               VerticalAlignment="Center"/>
+
+                                    <!-- Device count (multi-device only) -->
+                                    <StackPanel Orientation="Horizontal" VerticalAlignment="Center"
+                                                IsVisible="{Binding DbLogger.CurrentSession.HasMultipleDevices}">
+                                        <TextBlock Text="  ·  " FontSize="11" Foreground="{DynamicResource TextTertiary}" VerticalAlignment="Center"/>
+                                        <TextBlock Text="DEVICES"
+                                                   FontSize="9"
+                                                   FontWeight="SemiBold"
+                                                   Foreground="{DynamicResource TextTertiary}"
+                                                   VerticalAlignment="Center"
+                                                   Margin="0,1,5,0"/>
+                                        <TextBlock Text="{Binding DbLogger.CurrentSession.DeviceCount}"
+                                                   FontFamily="Consolas"
+                                                   FontSize="11"
+                                                   FontWeight="SemiBold"
+                                                   Foreground="{DynamicResource TextSecondary}"
+                                                   VerticalAlignment="Center"/>
+                                    </StackPanel>
+                                </StackPanel>
+                                </StackPanel>
+
+                                <!-- Plot toolbar: zoom + save image -->
+                                <StackPanel Grid.Column="1"
+                                            Orientation="Horizontal"
+                                            VerticalAlignment="Center">
+                                    <Button Theme="{StaticResource PlotIconButton}"
+                                            Command="{Binding DbLogger.ZoomOutXCommand}"
+                                            ToolTip.Tip="Zoom out (time)">
+                                        <i:Icon Value="mdi-magnify-minus-outline" FontSize="14"
+                                                Foreground="{DynamicResource TextSecondary}"/>
+                                    </Button>
+                                    <Button Theme="{StaticResource PlotIconButton}"
+                                            Command="{Binding DbLogger.ZoomInXCommand}"
+                                            ToolTip.Tip="Zoom in (time)">
+                                        <i:Icon Value="mdi-magnify-plus-outline" FontSize="14"
+                                                Foreground="{DynamicResource TextSecondary}"/>
+                                    </Button>
+                                    <Button Theme="{StaticResource PlotIconButton}"
+                                            Command="{Binding DbLogger.ZoomOutYCommand}"
+                                            ToolTip.Tip="Zoom out (analog)">
+                                        <i:Icon Value="mdi-arrow-expand-vertical" FontSize="14"
+                                                Foreground="{DynamicResource TextSecondary}"/>
+                                    </Button>
+                                    <Button Theme="{StaticResource PlotIconButton}"
+                                            Command="{Binding DbLogger.ZoomInYCommand}"
+                                            ToolTip.Tip="Zoom in (analog)">
+                                        <i:Icon Value="mdi-arrow-collapse-vertical" FontSize="14"
+                                                Foreground="{DynamicResource TextSecondary}"/>
+                                    </Button>
+                                    <Rectangle Width="1" Height="16" Margin="4,0"
+                                               Fill="{DynamicResource BorderDim}"
+                                               VerticalAlignment="Center"/>
+                                    <Button Theme="{StaticResource PlotIconButton}"
+                                            Command="{Binding DbLogger.ResetZoomCommand}"
+                                            CommandParameter="{Binding}"
+                                            ToolTip.Tip="Reset zoom">
+                                        <i:Icon Value="mdi-crosshairs" FontSize="14"
+                                                Foreground="{DynamicResource TextSecondary}"/>
+                                    </Button>
+                                    <Button Theme="{StaticResource PlotIconButton}"
+                                            Command="{Binding DbLogger.SaveGraphCommand}"
+                                            CommandParameter="{Binding}"
+                                            ToolTip.Tip="Save as image">
+                                        <i:Icon Value="mdi-image-outline" FontSize="14"
+                                                Foreground="{DynamicResource TextSecondary}"/>
+                                    </Button>
+                                </StackPanel>
+                            </Grid>
+                        </Border>
+
+                        <!-- Main plot -->
+                        <!-- divergence: upstream style-trigger set Visibility=Hidden (keep layout
+                             space) when no session data; Avalonia IsVisible collapses instead, but
+                             the plot sits in a star-sized row so the layout is unchanged. -->
+                        <oxy:PlotView Grid.Row="1"
+                                      Model="{Binding DbLogger.PlotModel}"
+                                      Background="{DynamicResource Surface}"
+                                      Margin="16,8,16,0"
+                                      IsVisible="{Binding DbLogger.HasSessionData}">
+                            <oxy:PlotView.DefaultTrackerTemplate>
+                                <ControlTemplate>
+                                    <oxy:TrackerControl Position="{Binding Position}"
+                                                        LineExtents="{Binding PlotModel.PlotArea}"
+                                                        Background="{DynamicResource SurfaceActive}"
+                                                        BorderBrush="{DynamicResource BorderBright}"
+                                                        BorderThickness="1"
+                                                        LineStroke="{DynamicResource BorderBright}"
+                                                        CornerRadius="4">
+                                        <TextBlock Text="{Binding Text}"
+                                                   Foreground="{DynamicResource TextPrimary}"
+                                                   FontFamily="Consolas"
+                                                   FontSize="11"
+                                                   LineHeight="18"
+                                                   Margin="10,7"/>
+                                    </oxy:TrackerControl>
+                                </ControlTemplate>
+                            </oxy:PlotView.DefaultTrackerTemplate>
+                        </oxy:PlotView>
+
+                        <!--
+                            UIA hook for the logged-data viewer (mirrors the PlotStatsText /
+                            SdLoggingElapsedText hooks; cf. UITest README gotcha #18). The session
+                            header strip collapses when no session is loaded and OxyPlot exposes no
+                            per-point UIA elements, so this always-present, invisible TextBlock is the
+                            harness's black-box proof that clicking a session row actually loaded it
+                            onto the plot: its Name reports the displayed session's sample count — 0
+                            with nothing displayed, the loaded count once DisplayLoggingSession runs.
+                            Opacity=0 + IsHitTestVisible=False keep it invisible and non-interactive
+                            while present in the automation tree (a collapsed element would be pruned).
+                        -->
+                        <TextBlock Grid.Row="1"
+                                   AutomationProperties.AutomationId="LoggedSessionStatsText"
+                                   Text="{Binding DbLogger.CurrentSessionSampleCount}"
+                                   AutomationProperties.Name="{Binding DbLogger.CurrentSessionSampleCount}"
+                                   HorizontalAlignment="Left"
+                                   VerticalAlignment="Top"
+                                   Opacity="0"
+                                   IsHitTestVisible="False"/>
+
+                        <!-- Empty state (no session selected) - only when sessions exist but none picked -->
+                        <StackPanel Grid.Row="1"
+                                    HorizontalAlignment="Center"
+                                    VerticalAlignment="Center">
+                            <StackPanel.IsVisible>
+                                <!-- upstream MultiDataTrigger: !DbLogger.HasSessionData AND HasLoggingSessions -->
+                                <MultiBinding Converter="{StaticResource BoolAndToVis}">
+                                    <Binding Path="DbLogger.HasSessionData" Converter="{StaticResource BooleanToInverse}"/>
+                                    <Binding Path="HasLoggingSessions"/>
+                                </MultiBinding>
+                            </StackPanel.IsVisible>
+                            <i:Icon Value="mdi-chart-line"
+                                    FontSize="48"
+                                    HorizontalAlignment="Center"
+                                    Foreground="{DynamicResource TextTertiary}"
+                                    Opacity="0.5"
+                                    Margin="0,0,0,16"/>
+                            <TextBlock Text="Select a session to view data"
+                                       FontSize="15"
+                                       FontWeight="Light"
+                                       Foreground="{DynamicResource TextPrimary}"
+                                       HorizontalAlignment="Center"/>
+                            <TextBlock Text="Choose a session from the list below"
+                                       FontSize="11"
+                                       Foreground="{DynamicResource TextTertiary}"
+                                       HorizontalAlignment="Center"
+                                       Margin="0,6,0,0"/>
+                        </StackPanel>
+
+                        <!-- Data-refining progress bar (between plot and minimap) -->
+                        <ProgressBar Grid.Row="2"
+                                     IsIndeterminate="{Binding DbLogger.IsRefiningData}"
+                                     IsVisible="{Binding DbLogger.IsRefiningData}"
+                                     Height="2"
+                                     MinHeight="2"
+                                     Margin="16,0,16,0"
+                                     Background="Transparent"
+                                     Foreground="{DynamicResource Accent}"
+                                     BorderThickness="0"/>
+
+                        <!-- Overview minimap -->
+                        <oxy:PlotView Grid.Row="3"
+                                      Model="{Binding DbLogger.MinimapPlotModel}"
+                                      Background="{DynamicResource Surface}"
+                                      Margin="16,0,16,8"
+                                      Height="80"
+                                      IsVisible="{Binding DbLogger.HasSessionData}"/>
+                    </Grid>
+
+                    <!-- Legend panel (collapsible, right side) -->
+                    <StackPanel Grid.Column="1"
+                                Orientation="Horizontal"
+                                VerticalAlignment="Stretch"
+                                IsVisible="{Binding DbLogger.HasSessionData}">
+
+                        <!-- Collapse/expand toggle (upstream DataTrigger swapped the icon Kind;
+                             here two icons toggle IsVisible on the same state). -->
+                        <Button Theme="{StaticResource PlotIconButton}"
+                                VerticalAlignment="Top"
+                                Margin="0,8,0,0"
+                                Command="{Binding DbLogger.ToggleLegendPanelCommand}"
+                                ToolTip.Tip="Toggle legend">
+                            <Panel>
+                                <i:Icon Value="mdi-chevron-left" FontSize="12"
+                                        Foreground="{DynamicResource TextSecondary}"
+                                        IsVisible="{Binding DbLogger.IsLegendPanelVisible}"/>
+                                <i:Icon Value="mdi-chevron-right" FontSize="12"
+                                        Foreground="{DynamicResource TextSecondary}"
+                                        IsVisible="{Binding !DbLogger.IsLegendPanelVisible}"/>
+                            </Panel>
+                        </Button>
+
+                        <!-- Grouped legend -->
+                        <ScrollViewer VerticalScrollBarVisibility="Auto"
+                                      HorizontalScrollBarVisibility="Disabled"
+                                      MaxHeight="500"
+                                      Margin="4,8,8,0"
+                                      IsVisible="{Binding DbLogger.IsLegendPanelVisible}">
+                            <ItemsControl ItemsSource="{Binding DbLogger.DeviceLegendGroups}">
+                                <ItemsControl.ItemTemplate>
+                                    <DataTemplate DataType="{x:Type logger:DeviceLegendGroup}">
+                                        <StackPanel Margin="0,4,0,8">
+                                            <TextBlock FontSize="9"
+                                                       FontWeight="SemiBold"
+                                                       Foreground="{DynamicResource TextTertiary}"
+                                                       Margin="0,0,0,4"
+                                                       ToolTip.Tip="{Binding DeviceSerialNo}">
+                                                <Run Text="{Binding TruncatedSerialNo, Mode=OneWay}"/>
+                                            </TextBlock>
+                                            <ItemsControl ItemsSource="{Binding Channels}">
+                                                <ItemsControl.ItemsPanel>
+                                                    <ItemsPanelTemplate>
+                                                        <UniformGrid Columns="2"/>
+                                                    </ItemsPanelTemplate>
+                                                </ItemsControl.ItemsPanel>
+                                                <ItemsControl.ItemTemplate>
+                                                    <DataTemplate DataType="{x:Type logger:LoggedSeriesLegendItem}">
+                                                        <!-- WPF RelativeSource AncestorType=UserControl → $parent[UserControl] -->
+                                                        <Button Command="{Binding $parent[UserControl].DataContext.ToggleLoggedSeriesVisibilityCommand}"
+                                                                CommandParameter="{Binding}"
+                                                                Padding="3,3"
+                                                                Margin="0,2,4,2"
+                                                                Theme="{StaticResource PlotIconButton}"
+                                                                ToolTip.Tip="Click to show/hide channel">
+                                                            <StackPanel Orientation="Horizontal" VerticalAlignment="Center">
+                                                                <Rectangle Width="10" Height="10"
+                                                                           Margin="0,0,5,0"
+                                                                           VerticalAlignment="Center"
+                                                                           Fill="{Binding SeriesColor, Converter={StaticResource OxyColorToBrushConverter}}"
+                                                                           Classes.seriesHidden="{Binding !IsVisible}"/>
+                                                                <TextBlock Text="{Binding ChannelName}"
+                                                                           FontSize="11"
+                                                                           Foreground="{DynamicResource TextSecondary}"
+                                                                           VerticalAlignment="Center"
+                                                                           Classes.seriesHidden="{Binding !IsVisible}"/>
+                                                            </StackPanel>
+                                                        </Button>
+                                                    </DataTemplate>
+                                                </ItemsControl.ItemTemplate>
+                                            </ItemsControl>
+                                        </StackPanel>
+                                    </DataTemplate>
+                                </ItemsControl.ItemTemplate>
+                            </ItemsControl>
+                        </ScrollViewer>
+                    </StackPanel>
+                </Grid>
+
+                <!-- Separator line between plot and session list -->
+                <Rectangle Grid.Row="1" Fill="{DynamicResource BorderDim}"/>
+
+                <!-- ── Session list ── -->
+                <Grid Grid.Row="2">
+                    <!-- Has sessions. The upstream UI-test-harness virtualization toggle is dropped
+                         (see code-behind note); production virtualization behavior is unchanged. -->
+                    <ListBox x:Name="SessionList"
+                             AutomationProperties.AutomationId="LoggedSessionList"
+                             ItemsSource="{Binding LoggingSessions}"
+                             SelectedItem="{Binding SelectedLoggingSession, Mode=TwoWay}"
+                             Background="Transparent"
+                             BorderThickness="0"
+                             ScrollViewer.HorizontalScrollBarVisibility="Disabled"
+                             SelectionMode="Single">
+                        <ListBox.ItemContainerTheme>
+                            <ControlTheme TargetType="ListBoxItem">
+                                <Setter Property="HorizontalContentAlignment" Value="Stretch"/>
+                                <Setter Property="Padding" Value="0"/>
+                                <Setter Property="Margin" Value="0"/>
+                                <Setter Property="Cursor" Value="Hand"/>
+                                <!-- Accessible name for the row: the templated name/date/sample
+                                     TextBlocks are not surfaced to UI Automation, so give the
+                                     container itself a spoken summary for screen readers. -->
+                                <Setter Property="AutomationProperties.Name" Value="{Binding AccessibilitySummary}"/>
+                                <Setter Property="Template">
+                                    <ControlTemplate>
+                                        <Border x:Name="TileBg"
+                                                Background="Transparent"
+                                                BorderBrush="{DynamicResource BorderDim}"
+                                                BorderThickness="0,0,0,1"
+                                                Cursor="Hand">
+                                            <Grid ColumnDefinitions="3,*,Auto">
+
+                                                <!-- Left accent stripe -->
+                                                <Rectangle x:Name="Stripe"
+                                                           Grid.Column="0"
+                                                           Fill="Transparent"/>
+
+                                                <!--
+                                                    Session info. The upstream row Border carried a LeftClick
+                                                    MouseBinding to DisplayLoggingSessionCommand plus a separate
+                                                    invisible 1x1 "DisplaySessionButton" so the UIA harness could
+                                                    invoke the same action (MouseBindings expose no InvokePattern).
+                                                    divergence: Avalonia has no InputBindings, so both collapse into
+                                                    this one transparent command Button wrapping the info area — it
+                                                    IS the user-facing click target and carries the InvokePattern +
+                                                    AutomationId for the harness. The per-row action buttons sit in
+                                                    the column beside it, exactly the region the upstream
+                                                    MouseBinding never received anyway (Buttons ate the click).
+                                                    Selection visuals stay intact because DisplaySessionAsync sets
+                                                    SelectedLoggingSession, which drives SelectedItem (TwoWay).
+                                                -->
+                                                <Button Grid.Column="1"
+                                                        Theme="{StaticResource TransparentHitButton}"
+                                                        AutomationProperties.AutomationId="DisplaySessionButton"
+                                                        Command="{Binding $parent[UserControl].DataContext.DisplayLoggingSessionCommand}"
+                                                        CommandParameter="{Binding}"
+                                                        Cursor="Hand"
+                                                        Focusable="False"
+                                                        HorizontalAlignment="Stretch"
+                                                        VerticalAlignment="Stretch">
+                                                    <StackPanel Margin="14,10,12,10"
+                                                                VerticalAlignment="Center">
+                                                        <TextBlock x:Name="SessionNameText"
+                                                                   Text="{Binding Name}"
+                                                                   FontFamily="Consolas"
+                                                                   FontSize="14"
+                                                                   FontWeight="Medium"
+                                                                   Foreground="{DynamicResource TextSecondary}"/>
+                                                        <StackPanel Orientation="Horizontal" Margin="0,3,0,0">
+                                                            <TextBlock Text="{Binding SessionStart, StringFormat='{}{0:M/d/yyyy h:mm tt}'}"
+                                                                       FontSize="10"
+                                                                       Foreground="{DynamicResource TextTertiary}"
+                                                                       VerticalAlignment="Center"/>
+                                                            <!-- Sample count chip -->
+                                                            <Border Background="{DynamicResource SurfaceRaised}"
+                                                                    BorderBrush="{DynamicResource BorderDim}"
+                                                                    BorderThickness="1"
+                                                                    CornerRadius="3"
+                                                                    Padding="6,1"
+                                                                    Margin="8,0,0,0"
+                                                                    VerticalAlignment="Center"
+                                                                    ToolTip.Tip="{Binding SampleCountTooltip}"
+                                                                    IsVisible="{Binding HasSampleCount}">
+                                                                <StackPanel Orientation="Horizontal">
+                                                                    <TextBlock Text="SAMPLES  "
+                                                                               FontSize="8"
+                                                                               FontWeight="SemiBold"
+                                                                               Foreground="{DynamicResource TextTertiary}"
+                                                                               VerticalAlignment="Center"/>
+                                                                    <TextBlock Text="{Binding SampleCountDisplay}"
+                                                                               FontSize="10"
+                                                                               FontWeight="SemiBold"
+                                                                               Foreground="{DynamicResource TextSecondary}"
+                                                                               VerticalAlignment="Center"/>
+                                                                </StackPanel>
+                                                            </Border>
+                                                            <!-- Sample rate chip -->
+                                                            <Border Background="{DynamicResource SurfaceRaised}"
+                                                                    BorderBrush="{DynamicResource BorderDim}"
+                                                                    BorderThickness="1"
+                                                                    CornerRadius="3"
+                                                                    Padding="6,1"
+                                                                    Margin="6,0,0,0"
+                                                                    VerticalAlignment="Center"
+                                                                    IsVisible="{Binding HasFrequencyDisplay}">
+                                                                <TextBlock Text="{Binding FrequencyDisplay}"
+                                                                           FontSize="10"
+                                                                           Foreground="{DynamicResource TextTertiary}"
+                                                                           VerticalAlignment="Center"/>
+                                                            </Border>
+                                                        </StackPanel>
+                                                    </StackPanel>
+                                                </Button>
+
+                                                <!-- Action buttons -->
+                                                <StackPanel Grid.Column="2"
+                                                            Orientation="Horizontal"
+                                                            VerticalAlignment="Center"
+                                                            Margin="0,0,12,0">
+                                                    <Button Theme="{StaticResource TileIconButton}"
+                                                            ToolTip.Tip="Session settings"
+                                                            Command="{Binding $parent[UserControl].DataContext.OpenLoggingSessionSettingsCommand}"
+                                                            CommandParameter="{Binding}">
+                                                        <i:Icon Value="mdi-cog" FontSize="13"
+                                                                Foreground="{DynamicResource TextTertiary}"/>
+                                                    </Button>
+                                                    <Button Theme="{StaticResource TileIconButton}"
+                                                            AutomationProperties.AutomationId="ExportSessionButton"
+                                                            ToolTip.Tip="Export session"
+                                                            Command="{Binding $parent[UserControl].DataContext.ExportLoggingSessionCommand}"
+                                                            CommandParameter="{Binding}">
+                                                        <i:Icon Value="mdi-download-circle-outline" FontSize="13"
+                                                                Foreground="{DynamicResource TextTertiary}"/>
+                                                    </Button>
+                                                    <Button Theme="{StaticResource TileIconButton}"
+                                                            AutomationProperties.AutomationId="DeleteSessionButton"
+                                                            ToolTip.Tip="Delete session"
+                                                            Command="{Binding $parent[UserControl].DataContext.DeleteLoggingSessionCommand}"
+                                                            CommandParameter="{Binding}">
+                                                        <i:Icon Value="mdi-trash-can-outline" FontSize="13"
+                                                                Foreground="{DynamicResource TextTertiary}"/>
+                                                    </Button>
+                                                </StackPanel>
+                                            </Grid>
+                                        </Border>
+                                    </ControlTemplate>
+                                </Setter>
+                                <!-- upstream ControlTemplate.Triggers -->
+                                <Style Selector="^:selected /template/ Rectangle#Stripe">
+                                    <Setter Property="Fill" Value="{DynamicResource Accent}"/>
+                                </Style>
+                                <Style Selector="^:selected /template/ Border#TileBg">
+                                    <Setter Property="Background" Value="{DynamicResource SurfaceRaised}"/>
+                                </Style>
+                                <Style Selector="^:selected /template/ TextBlock#SessionNameText">
+                                    <Setter Property="Foreground" Value="{DynamicResource TextPrimary}"/>
+                                </Style>
+                                <Style Selector="^:pointerover:not(:selected) /template/ Border#TileBg">
+                                    <Setter Property="Background" Value="{DynamicResource SurfaceHover}"/>
+                                </Style>
+                            </ControlTheme>
+                        </ListBox.ItemContainerTheme>
+                    </ListBox>
+
+                    <!-- Empty state (no sessions). upstream DataTrigger LoggingSessions.Count == 0;
+                         HasLoggingSessions is the VM's equivalent (Count > 0) and change-notifies. -->
+                    <StackPanel HorizontalAlignment="Center"
+                                VerticalAlignment="Center"
+                                IsVisible="{Binding !HasLoggingSessions}">
+                        <TextBlock Text="NO SESSIONS"
+                                   FontSize="11"
+                                   FontWeight="Bold"
+                                   Foreground="{DynamicResource TextTertiary}"
+                                   HorizontalAlignment="Center"
+                                   Margin="0,0,0,8"/>
+                        <TextBlock Text="Start logging or import an SD card log to get started."
+                                   FontSize="13"
+                                   FontWeight="Light"
+                                   Foreground="{DynamicResource TextPrimary}"
+                                   TextAlignment="Center"
+                                   TextWrapping="Wrap"
+                                   MaxWidth="320"
+                                   HorizontalAlignment="Center"/>
+                    </StackPanel>
+                </Grid>
+
+                <!-- ── Status bar ── -->
+                <Border Grid.Row="3"
+                        Background="#0A0C10"
+                        BorderBrush="{DynamicResource BorderDim}"
+                        BorderThickness="0,1,0,0"
+                        Padding="20,10">
+                    <Grid ColumnDefinitions="Auto,*,Auto">
+
+                        <!-- Left: Import SD Log -->
+                        <Button Grid.Column="0"
+                                Theme="{StaticResource AccentPillButton}"
+                                Content="↑  IMPORT SD LOG"
+                                Command="{Binding ImportSdCardLogFileCommand}"/>
+
+                        <!-- Right: Export All + Delete All -->
+                        <StackPanel Grid.Column="2" Orientation="Horizontal" VerticalAlignment="Center">
+                            <Button Theme="{StaticResource PillButton}"
+                                    AutomationProperties.AutomationId="ExportAllSessionsButton"
+                                    Content="EXPORT ALL"
+                                    Command="{Binding ExportAllLoggingSessionCommand}"
+                                    ToolTip.Tip="Export all sessions"/>
+                            <Button Theme="{StaticResource DangerPillButton}"
+                                    Content="DELETE ALL"
+                                    Command="{Binding DeleteAllLoggingSessionCommand}"
+                                    ToolTip.Tip="Delete all sessions"/>
+                        </StackPanel>
+                    </Grid>
+                </Border>
+
+            </Grid>
+
+            <!-- DEVICE LOGS content -->
+            <local:DeviceLogsView Grid.Row="1"
+                                  DataContext="{Binding DeviceLogsViewModel}"
+                                  IsVisible="{Binding IsChecked, ElementName=DeviceLogsTab}"/>
+
+        </Grid>
+
+        <!-- ========== SESSION SETTINGS DRAWER ========== -->
+        <Grid IsVisible="{Binding IsLoggingSessionSettingsOpen}"
+              ZIndex="10"
+              ColumnDefinitions="*,380">
+
+            <!-- Scrim (WPF MouseBinding → transparent command Button) -->
+            <Button Grid.Column="0"
+                    Theme="{StaticResource TransparentHitButton}"
+                    Focusable="False"
+                    Command="{Binding CloseLoggedSessionSettingsCommand}">
+                <Rectangle Fill="#A0000000"/>
+            </Button>
+
+            <!-- Drawer -->
+            <Border Grid.Column="1"
+                    Background="{DynamicResource SurfaceRaised}"
+                    BorderBrush="{DynamicResource BorderDim}"
+                    BorderThickness="1,0,0,0">
+                <Grid RowDefinitions="Auto,*">
+
+                    <!-- Drawer header -->
+                    <Grid Grid.Row="0" Margin="22,22,16,18" ColumnDefinitions="Auto,*,Auto">
+                        <Rectangle Grid.Column="0"
+                                   Width="3" Height="32"
+                                   Fill="{DynamicResource Accent}"
+                                   Margin="0,0,12,0"/>
+                        <StackPanel Grid.Column="1">
+                            <TextBlock Text="SESSION"
+                                       FontSize="9"
+                                       FontWeight="Bold"
+                                       Foreground="{DynamicResource TextTertiary}"/>
+                            <TextBlock Text="{Binding SelectedLoggingSession.Name}"
+                                       FontFamily="Consolas"
+                                       FontSize="20"
+                                       FontWeight="Medium"
+                                       Foreground="{DynamicResource TextPrimary}"/>
+                        </StackPanel>
+                        <Button Grid.Column="2"
+                                Theme="{StaticResource RoundCloseButton}"
+                                Width="28" Height="28"
+                                Foreground="{DynamicResource TextSecondary}"
+                                FontSize="16"
+                                Cursor="Hand"
+                                Content="&#xD7;"
+                                Command="{Binding CloseLoggedSessionSettingsCommand}"/>
+                    </Grid>
+
+                    <!-- Drawer body -->
+                    <ScrollViewer Grid.Row="1" VerticalScrollBarVisibility="Auto" Padding="22,0,22,22">
+                        <StackPanel>
+
+                            <!-- NAME -->
+                            <TextBlock Text="NAME"
+                                       Classes="sectionLabel"
+                                       Margin="0,8,0,8"/>
+                            <Border Classes="drawerTextField">
+                                <TextBox x:Name="SessionNameTextBox"
+                                         Theme="{StaticResource DrawerTextBox}"
+                                         Text="{Binding SelectedLoggingSession.Name, Mode=OneWay}"
+                                         TextChanged="OnSessionNameChanged"/>
+                            </Border>
+
+                            <!-- INFORMATION -->
+                            <TextBlock Text="INFORMATION"
+                                       Classes="sectionLabel"
+                                       Margin="0,22,0,10"/>
+                            <Border Background="{DynamicResource Surface}"
+                                    BorderBrush="{DynamicResource BorderDim}"
+                                    BorderThickness="1"
+                                    CornerRadius="3"
+                                    Padding="14,12">
+                                <Grid ColumnDefinitions="*,*" RowDefinitions="Auto,Auto">
+                                    <StackPanel Grid.Column="0" Grid.Row="0" Margin="0,0,0,10">
+                                        <TextBlock Text="STARTED" Classes="infoLabel"/>
+                                        <TextBlock Text="{Binding SelectedLoggingSession.SessionStart, StringFormat='{}{0:M/d/yyyy}'}"
+                                                   Classes="infoValue"/>
+                                    </StackPanel>
+                                    <StackPanel Grid.Column="1" Grid.Row="0" Margin="0,0,0,10">
+                                        <TextBlock Text="TIME" Classes="infoLabel"/>
+                                        <TextBlock Text="{Binding SelectedLoggingSession.SessionStart, StringFormat='{}{0:h:mm tt}'}"
+                                                   Classes="infoValue"/>
+                                    </StackPanel>
+                                    <StackPanel Grid.Column="0" Grid.Row="1">
+                                        <TextBlock Text="SAMPLES" Classes="infoLabel"/>
+                                        <TextBlock Text="{Binding SelectedLoggingSession.SampleCountDisplay}"
+                                                   ToolTip.Tip="{Binding SelectedLoggingSession.SampleCountTooltip}"
+                                                   Classes="infoValue"/>
+                                    </StackPanel>
+                                    <StackPanel Grid.Column="1" Grid.Row="1">
+                                        <TextBlock Text="SAMPLE RATE" Classes="infoLabel"/>
+                                        <TextBlock Text="{Binding SelectedLoggingSession.FrequencyDisplay}"
+                                                   Classes="infoValue"/>
+                                    </StackPanel>
+                                </Grid>
+                            </Border>
+
+                            <!-- ACTIONS -->
+                            <TextBlock Text="ACTIONS"
+                                       Classes="sectionLabel"
+                                       Margin="0,22,0,10"/>
+                            <StackPanel Orientation="Horizontal">
+                                <Button Theme="{StaticResource PillButton}"
+                                        Content="EXPORT"
+                                        Command="{Binding ExportLoggingSessionCommand}"
+                                        CommandParameter="{Binding SelectedLoggingSession}"/>
+                                <Button Theme="{StaticResource DangerPillButton}"
+                                        Content="DELETE"
+                                        Command="{Binding DeleteLoggingSessionCommand}"
+                                        CommandParameter="{Binding SelectedLoggingSession}"/>
+                            </StackPanel>
+
+                        </StackPanel>
+                    </ScrollViewer>
+                </Grid>
+            </Border>
+        </Grid>
+
+        <!-- ========== LOADING OVERLAY ========== -->
+        <Grid IsVisible="{Binding IsLoggedDataBusy, FallbackValue=False}"
+              ZIndex="20">
+            <Rectangle Fill="#CC000000" IsHitTestVisible="True"/>
+            <StackPanel HorizontalAlignment="Center" VerticalAlignment="Center">
+                <!-- MahApps ProgressRing → indeterminate ProgressBar -->
+                <ProgressBar IsIndeterminate="{Binding IsLoggedDataBusy, Mode=OneWay}"
+                             Foreground="{DynamicResource Accent}"
+                             Width="120" Height="4"/>
+                <TextBlock Text="{Binding LoggedDataBusyReason}"
+                           FontSize="13"
+                           FontWeight="SemiBold"
+                           Foreground="{DynamicResource TextPrimary}"
+                           HorizontalAlignment="Center"
+                           Margin="0,16,0,0"/>
+            </StackPanel>
+        </Grid>
+
+        <!--
+            divergence: WPF's IsVisibleChanged event has no Avalonia XAML analog. This
+            zero-size, non-hit-testable sentinel mirrors the confirm overlay's IsOpen
+            state and forwards AvaloniaObject.PropertyChanged to the code-behind handler,
+            which reacts only to a true NewValue (this element's IsVisible flip when the
+            overlay opens) and moves focus to ConfirmCancelButton. Attaching
+            PropertyChanged to the overlay grid itself would also fire on its
+            IsPointerOver transitions and steal focus on hover. The PropertyChanged
+            attribute is last so construction-time property sets don't invoke the handler.
+        -->
+        <Control Width="0" Height="0"
+                 IsHitTestVisible="False"
+                 Focusable="False"
+                 IsVisible="{Binding ConfirmOverlay.IsOpen}"
+                 PropertyChanged="OnConfirmOverlayIsVisibleChanged"/>
+
+        <!-- ========== CONFIRM DIALOG (over everything) ========== -->
+        <!-- Focusable + Cycle traps Tab inside the overlay so keyboard focus can't reach
+             the now-scrim-covered controls behind. Initial focus is moved to the Cancel
+             button by code-behind via the sentinel above so the safe option is the default. -->
+        <Grid x:Name="ConfirmOverlayHost"
+              IsVisible="{Binding ConfirmOverlay.IsOpen}"
+              ZIndex="30"
+              Focusable="True"
+              KeyboardNavigation.TabNavigation="Cycle">
+            <!-- Scrim. Click = cancel (same pattern as the drawer). -->
+            <Button Theme="{StaticResource TransparentHitButton}"
+                    Focusable="False"
+                    Command="{Binding ConfirmOverlay.NegativeCommand}">
+                <Rectangle Fill="#A0000000"/>
+            </Button>
+
+            <!-- Card -->
+            <Border Width="420"
+                    HorizontalAlignment="Center"
+                    VerticalAlignment="Center"
+                    Background="{DynamicResource SurfaceRaised}"
+                    BorderBrush="{DynamicResource BorderDim}"
+                    BorderThickness="1"
+                    CornerRadius="4"
+                    Padding="24">
+                <StackPanel>
+                    <TextBlock Text="{Binding ConfirmOverlay.Title}"
+                               FontSize="16"
+                               FontWeight="SemiBold"
+                               Foreground="{DynamicResource TextPrimary}"/>
+                    <TextBlock Text="{Binding ConfirmOverlay.Message}"
+                               FontSize="13"
+                               Foreground="{DynamicResource TextSecondary}"
+                               TextWrapping="Wrap"
+                               Margin="0,10,0,20"/>
+                    <StackPanel Orientation="Horizontal"
+                                HorizontalAlignment="Right">
+                        <Button x:Name="ConfirmCancelButton"
+                                Content="CANCEL"
+                                Theme="{StaticResource PillButton}"
+                                IsCancel="True"
+                                Command="{Binding ConfirmOverlay.NegativeCommand}"/>
+                        <!-- Affirmative is one of two styles depending on whether the
+                             confirmed action is destructive; only one is visible at a time. -->
+                        <Button Content="{Binding ConfirmOverlay.AffirmativeLabel}"
+                                AutomationProperties.AutomationId="ConfirmAffirmativeButton"
+                                Theme="{StaticResource AccentPillButton}"
+                                Margin="10,0,0,0"
+                                Command="{Binding ConfirmOverlay.AffirmativeCommand}"
+                                IsVisible="{Binding !ConfirmOverlay.AffirmativeIsDestructive}"/>
+                        <Button Content="{Binding ConfirmOverlay.AffirmativeLabel}"
+                                AutomationProperties.AutomationId="ConfirmAffirmativeButton"
+                                Theme="{StaticResource DangerPillButton}"
+                                Margin="10,0,0,0"
+                                Command="{Binding ConfirmOverlay.AffirmativeCommand}"
+                                IsVisible="{Binding ConfirmOverlay.AffirmativeIsDestructive}"/>
+                    </StackPanel>
+                </StackPanel>
+            </Border>
+        </Grid>
+
+    </Grid>
 </UserControl>

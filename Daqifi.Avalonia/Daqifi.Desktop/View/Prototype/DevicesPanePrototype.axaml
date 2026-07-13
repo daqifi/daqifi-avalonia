@@ -1,21 +1,134 @@
 <UserControl xmlns="https://github.com/avaloniaui"
              xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml"
+             xmlns:vm="using:Daqifi.Desktop.ViewModels"
+             xmlns:networkDataModel="using:Daqifi.Core.Device.Network"
+             xmlns:sdCard="using:Daqifi.Core.Device.SdCard"
+             xmlns:i="https://github.com/projektanker/icons.avalonia"
              xmlns:ia="using:Avalonia.Xaml.Interactivity"
              xmlns:iac="using:Avalonia.Xaml.Interactions.Core"
              x:Class="Daqifi.Desktop.View.Prototype.DevicesPanePrototype">
 
     <!--
+        Ported from Daqifi.Desktop/View/Prototype/DevicesPanePrototype.xaml (upstream WPF).
+
         hal: xaml_behaviors — Microsoft.Xaml.Behaviors.Wpf → Avalonia.Xaml.Behaviors:
         i:Interaction.Triggers/EventTrigger/InvokeCommandAction become
         ia:Interaction.Behaviors + iac:EventTriggerBehavior/InvokeCommandAction.
         WPF BooleanToInverse converter → Avalonia `!` binding negation.
+        (xmlns:i is repurposed for projektanker icons per the downstream convention.)
 
-        The logging-mode switch below is the upstream behaviors usage site;
-        the rest of the pane (device tiles, info drawer, firmware panel)
-        lands with this view's own apply step.
+        Dialect decisions:
+        - Token brushes via DynamicResource (downstream convention; upstream used StaticResource).
+        - BoolToVis / InvertedBoolToVis Visibility bindings → IsVisible="{Binding X}" / "{Binding !X}";
+          the debug-gated MultiBindings keep the app-registered BoolAndToVis converter (returns
+          bool downstream), FallbackValue Collapsed → False.
+        - Keyed Styles on templated controls (PillButton family, DrawerComboBox, SegmentedToggle)
+          and the inline gear/close Button templates → keyed ControlThemes; ControlTemplate.Triggers
+          → nested ^:pseudo-class styles. Keyed TextBlock/Border/TextBox styles → class styles
+          (sectionLabel / drawerSectionLabel / infoLabel / infoValue / drawerTextField / drawerTextBox).
+        - divergence: upstream's self-contained dark ComboBox template exists only to override the
+          MahApps Light theme; Fluent Dark is already dark, so DrawerComboBox / DrawerComboBoxItem
+          are BasedOn the Fluent defaults with token-brush and metric overrides only.
+        - divergence: ObjectDataProvider Enum.GetValues resources have no Avalonia analog; the enum
+          members are declared inline as ComboBox items (source: Daqifi.Core SdCardLogFormat,
+          WifiMode, WifiSecurityType — keep in sync if the core enums change).
+        - divergence: Border/Rectangle InputBindings MouseBinding (tile-open, scrim-close) →
+          iac:EventTriggerBehavior EventName="Tapped". Interactive children (gear button, radios)
+          mark their pointer events handled, so a click on them does not also raise Tapped on the
+          tile — same effective semantics as WPF's MouseBinding.
+        - divergence: ElementName=Root bindings (upstream x:Name="Root" on the UserControl) →
+          $parent[UserControl] — Avalonia DataTemplates open their own name scope, so an
+          ElementName reference across the template boundary would not resolve.
+        - iconPacks:PackIconMaterial Kind="X" Width/Height=N → i:Icon Value="mdi-x" FontSize=N.
+        - Panel.ZIndex → ZIndex; ToolTip → ToolTip.Tip; UpdateSourceTrigger dropped (Avalonia
+          default); the slider's Delay=500 binding carries over (supported by Avalonia bindings).
     -->
 
     <UserControl.Resources>
+
+        <!-- Brushes (Surface, BorderDim, TextPrimary, Accent, StatusAmber, …) come from /Resources/DesignTokens.axaml via App.axaml. -->
+
+        <!-- Pill buttons: CornerRadius-14 outline chips; hover states from
+             upstream Style.Triggers → ^:pointerover setters (template-bound). -->
+        <ControlTheme x:Key="PillButton" TargetType="Button">
+            <Setter Property="Background" Value="Transparent"/>
+            <Setter Property="BorderBrush" Value="{DynamicResource BorderDim}"/>
+            <Setter Property="BorderThickness" Value="1"/>
+            <Setter Property="Foreground" Value="{DynamicResource TextSecondary}"/>
+            <Setter Property="Padding" Value="12,4"/>
+            <Setter Property="Margin" Value="0,0,6,0"/>
+            <Setter Property="FontSize" Value="10"/>
+            <Setter Property="FontWeight" Value="SemiBold"/>
+            <Setter Property="Cursor" Value="Hand"/>
+            <Setter Property="Template">
+                <ControlTemplate>
+                    <Border Background="{TemplateBinding Background}"
+                            BorderBrush="{TemplateBinding BorderBrush}"
+                            BorderThickness="{TemplateBinding BorderThickness}"
+                            CornerRadius="14"
+                            Padding="{TemplateBinding Padding}">
+                        <ContentPresenter Content="{TemplateBinding Content}"
+                                          ContentTemplate="{TemplateBinding ContentTemplate}"
+                                          HorizontalAlignment="Center" VerticalAlignment="Center"/>
+                    </Border>
+                </ControlTemplate>
+            </Setter>
+            <Style Selector="^:pointerover">
+                <Setter Property="BorderBrush" Value="{DynamicResource BorderBright}"/>
+                <Setter Property="Background" Value="#141821"/>
+                <Setter Property="Foreground" Value="{DynamicResource TextPrimary}"/>
+            </Style>
+        </ControlTheme>
+
+        <ControlTheme x:Key="AccentPillButton" TargetType="Button" BasedOn="{StaticResource PillButton}">
+            <Setter Property="Background" Value="{DynamicResource Accent}"/>
+            <Setter Property="BorderBrush" Value="{DynamicResource Accent}"/>
+            <Setter Property="Foreground" Value="White"/>
+            <Setter Property="Padding" Value="16,6"/>
+            <Style Selector="^:pointerover">
+                <Setter Property="Background" Value="#1EB3F0"/>
+                <Setter Property="BorderBrush" Value="#1EB3F0"/>
+                <Setter Property="Foreground" Value="White"/>
+            </Style>
+            <Style Selector="^:disabled">
+                <Setter Property="Opacity" Value="0.4"/>
+            </Style>
+        </ControlTheme>
+
+        <ControlTheme x:Key="DangerPillButton" TargetType="Button" BasedOn="{StaticResource PillButton}">
+            <Setter Property="BorderBrush" Value="#4A1F28"/>
+            <Setter Property="Foreground" Value="{DynamicResource StatusRed}"/>
+            <Style Selector="^:pointerover">
+                <Setter Property="Background" Value="#2A0F14"/>
+                <Setter Property="BorderBrush" Value="{DynamicResource StatusRed}"/>
+                <Setter Property="Foreground" Value="{DynamicResource StatusRed}"/>
+            </Style>
+        </ControlTheme>
+
+        <!-- divergence: upstream rebuilt the whole ComboBox template to defeat the MahApps
+             light theme; Fluent Dark needs only token brushes + drawer metrics on top of
+             the stock template (dropdown chevron/popup already dark). -->
+        <ControlTheme x:Key="DrawerComboBoxItem" TargetType="ComboBoxItem"
+                      BasedOn="{StaticResource {x:Type ComboBoxItem}}">
+            <Setter Property="Foreground" Value="{DynamicResource TextPrimary}"/>
+            <Setter Property="FontSize" Value="12"/>
+            <Setter Property="Padding" Value="10,6"/>
+        </ControlTheme>
+
+        <ControlTheme x:Key="DrawerComboBox" TargetType="ComboBox"
+                      BasedOn="{StaticResource {x:Type ComboBox}}">
+            <Setter Property="Background" Value="{DynamicResource Surface}"/>
+            <Setter Property="Foreground" Value="{DynamicResource TextPrimary}"/>
+            <Setter Property="BorderBrush" Value="{DynamicResource BorderDim}"/>
+            <Setter Property="BorderThickness" Value="1"/>
+            <Setter Property="CornerRadius" Value="3"/>
+            <Setter Property="Height" Value="32"/>
+            <Setter Property="FontSize" Value="12"/>
+            <Setter Property="Padding" Value="10,0"/>
+            <Setter Property="VerticalContentAlignment" Value="Center"/>
+            <Setter Property="ItemContainerTheme" Value="{StaticResource DrawerComboBoxItem}"/>
+        </ControlTheme>
+
         <!-- Segmented toggle (shared shape with MainWindow's AppSettings.SegmentedToggle) -->
         <ControlTheme x:Key="SegmentedToggle" TargetType="RadioButton">
             <Setter Property="Foreground" Value="{DynamicResource TextSecondary}"/>
@@ -43,57 +156,700 @@
                 <Setter Property="Foreground" Value="{DynamicResource TextPrimary}"/>
             </Style>
         </ControlTheme>
+
+        <!-- Tile gear (upstream inline Button template → ControlTheme) -->
+        <ControlTheme x:Key="TileGearButton" TargetType="Button">
+            <Setter Property="Background" Value="Transparent"/>
+            <Setter Property="Cursor" Value="Hand"/>
+            <Setter Property="Template">
+                <ControlTemplate>
+                    <Border x:Name="Bg" Background="Transparent" CornerRadius="11">
+                        <i:Icon Value="mdi-cog" FontSize="11"
+                                Foreground="{DynamicResource TextTertiary}"
+                                HorizontalAlignment="Center"
+                                VerticalAlignment="Center"/>
+                    </Border>
+                </ControlTemplate>
+            </Setter>
+            <Style Selector="^:pointerover /template/ Border#Bg">
+                <Setter Property="Background" Value="#33000000"/>
+            </Style>
+        </ControlTheme>
+
+        <!-- Drawer close (upstream inline Button template → ControlTheme) -->
+        <ControlTheme x:Key="DrawerCloseButton" TargetType="Button">
+            <Setter Property="Background" Value="Transparent"/>
+            <Setter Property="Cursor" Value="Hand"/>
+            <Setter Property="Template">
+                <ControlTemplate>
+                    <Border x:Name="Bg" Background="Transparent" CornerRadius="14">
+                        <ContentPresenter Content="{TemplateBinding Content}"
+                                          HorizontalAlignment="Center" VerticalAlignment="Center"/>
+                    </Border>
+                </ControlTemplate>
+            </Setter>
+            <Style Selector="^:pointerover /template/ Border#Bg">
+                <Setter Property="Background" Value="#1FFFFFFF"/>
+            </Style>
+        </ControlTheme>
+
+        <DataTemplate x:Key="DeviceTileTemplate" DataType="vm:DeviceTileViewModel">
+            <Border Width="280" Height="116" Margin="0,0,12,12"
+                    Background="{Binding TileBackground}"
+                    BorderBrush="{Binding TileBorderBrush}"
+                    BorderThickness="1"
+                    CornerRadius="4"
+                    Classes="deviceTile">
+                <!-- Upstream MouseBinding LeftClick → Tapped behavior; the gear button
+                     handles its own pointer events, so it doesn't re-trigger this. -->
+                <ia:Interaction.Behaviors>
+                    <iac:EventTriggerBehavior EventName="Tapped">
+                        <iac:InvokeCommandAction Command="{Binding $parent[UserControl].DataContext.OpenSettingsCommand}"
+                                                 CommandParameter="{Binding}"/>
+                    </iac:EventTriggerBehavior>
+                </ia:Interaction.Behaviors>
+                <Grid ColumnDefinitions="3,*">
+                    <Rectangle Grid.Column="0" Fill="{Binding StripeBrush}"/>
+                    <Grid Grid.Column="1" Margin="14,12,12,12" RowDefinitions="Auto,*,Auto">
+
+                        <!-- Name + connection chip -->
+                        <Grid Grid.Row="0" ColumnDefinitions="*,Auto">
+                            <TextBlock Grid.Column="0"
+                                       Text="{Binding Name}"
+                                       FontFamily="Consolas"
+                                       FontSize="18"
+                                       FontWeight="Medium"
+                                       Foreground="{DynamicResource TextPrimary}"/>
+                            <Border Grid.Column="1"
+                                    Background="#141821"
+                                    BorderBrush="{Binding StripeBrush}"
+                                    BorderThickness="1"
+                                    CornerRadius="3"
+                                    Padding="6,2"
+                                    VerticalAlignment="Center">
+                                <TextBlock Text="{Binding ConnectionLabel}"
+                                           FontSize="9"
+                                           FontWeight="SemiBold"
+                                           Foreground="{Binding StripeBrush}"/>
+                            </Border>
+                        </Grid>
+
+                        <!-- Identity -->
+                        <StackPanel Grid.Row="1" Margin="0,6,0,0">
+                            <TextBlock Text="{Binding Identifier}"
+                                       FontFamily="Consolas"
+                                       FontSize="11"
+                                       Foreground="{DynamicResource TextSecondary}"/>
+                            <TextBlock Text="{Binding SerialNumber}"
+                                       FontFamily="Consolas"
+                                       FontSize="11"
+                                       Margin="0,2,0,0"
+                                       Foreground="{DynamicResource TextTertiary}"/>
+                        </StackPanel>
+
+                        <!-- Bottom row: firmware + gear -->
+                        <Grid Grid.Row="2" ColumnDefinitions="*,Auto,Auto">
+
+                            <StackPanel Grid.Column="0" VerticalAlignment="Center">
+                                <StackPanel Orientation="Horizontal">
+                                    <TextBlock Text="FW"
+                                               FontSize="9"
+                                               FontWeight="SemiBold"
+                                               Foreground="{DynamicResource TextTertiary}"
+                                               VerticalAlignment="Center"/>
+                                    <TextBlock Text="{Binding Version}"
+                                               FontFamily="Consolas"
+                                               FontSize="11"
+                                               Margin="6,0,0,0"
+                                               Foreground="{DynamicResource TextSecondary}"
+                                               VerticalAlignment="Center"/>
+                                </StackPanel>
+                                <!-- WiFi module version: USB Nyquist (WINC1500) devices only -->
+                                <StackPanel Orientation="Horizontal" Margin="0,2,0,0">
+                                    <!-- Debug-gated: hide the per-tile WiFi version unless debug mode is on. -->
+                                    <StackPanel.IsVisible>
+                                        <MultiBinding Converter="{StaticResource BoolAndToVis}" FallbackValue="False">
+                                            <Binding Path="ShowWifiVersion"/>
+                                            <Binding Path="$parent[UserControl].DataContext.Shell.IsDebugModeEnabled"/>
+                                        </MultiBinding>
+                                    </StackPanel.IsVisible>
+                                    <TextBlock Text="WIFI"
+                                               FontSize="9"
+                                               FontWeight="SemiBold"
+                                               Foreground="{DynamicResource TextTertiary}"
+                                               VerticalAlignment="Center"/>
+                                    <TextBlock Text="{Binding WifiVersion}"
+                                               FontFamily="Consolas"
+                                               FontSize="11"
+                                               Margin="6,0,0,0"
+                                               Foreground="{DynamicResource TextSecondary}"
+                                               VerticalAlignment="Center"/>
+                                </StackPanel>
+                            </StackPanel>
+
+                            <Border Grid.Column="1"
+                                    Background="#2A1A0A"
+                                    BorderBrush="{DynamicResource StatusAmber}"
+                                    BorderThickness="1"
+                                    CornerRadius="3"
+                                    Padding="6,2"
+                                    Margin="0,0,8,0"
+                                    VerticalAlignment="Center"
+                                    IsVisible="{Binding IsFirmwareOutdated}"
+                                    ToolTip.Tip="A firmware update is available for this device.">
+                                <TextBlock Text="UPDATE"
+                                           FontSize="9"
+                                           FontWeight="SemiBold"
+                                           Foreground="{DynamicResource StatusAmber}"/>
+                            </Border>
+
+                            <Button Grid.Column="2"
+                                    Width="22" Height="22"
+                                    Theme="{StaticResource TileGearButton}"
+                                    ToolTip.Tip="Device settings"
+                                    AutomationProperties.AutomationId="DeviceSettingsButton"
+                                    Command="{Binding $parent[UserControl].DataContext.OpenSettingsCommand}"
+                                    CommandParameter="{Binding}"/>
+                        </Grid>
+                    </Grid>
+                </Grid>
+            </Border>
+        </DataTemplate>
+
+        <ItemsPanelTemplate x:Key="TileWrap">
+            <WrapPanel/>
+        </ItemsPanelTemplate>
+
     </UserControl.Resources>
 
-    <StackPanel Margin="16">
+    <UserControl.Styles>
+        <!-- Upstream keyed TextBlock/Border/TextBox styles → class styles -->
+        <Style Selector="TextBlock.sectionLabel">
+            <Setter Property="FontSize" Value="11"/>
+            <Setter Property="FontWeight" Value="SemiBold"/>
+            <Setter Property="Foreground" Value="{DynamicResource TextSecondary}"/>
+            <Setter Property="VerticalAlignment" Value="Center"/>
+        </Style>
 
-        <TextBlock Text="LOGGING MODE" FontSize="11" FontWeight="SemiBold"
-                   Foreground="{DynamicResource TextSecondary}" Margin="0,0,0,6"/>
-        <Border Background="{DynamicResource Surface}"
-                BorderBrush="{DynamicResource BorderDim}"
-                BorderThickness="1"
-                CornerRadius="3"
-                Padding="3"
-                HorizontalAlignment="Left">
-            <Grid ColumnDefinitions="*,*">
-                <!-- Drive the mode switch off Checked rather than Command: a RadioButton's
-                     bound Command fires only on a real Click, which a background UI-automation
-                     host cannot raise. Checking the button through the automation Toggle
-                     pattern raises Checked (not Click), so an EventTriggerBehavior on Checked
-                     keeps the control drivable both interactively and from the automation
-                     harness. The SelectedLoggingMode setter is idempotent, so the extra
-                     Checked that fires when the OneWay binding refreshes after a switch is a
-                     harmless no-op. -->
-                <RadioButton Grid.Column="0"
-                             Content="STREAM TO APP"
-                             AutomationProperties.AutomationId="LoggingModeStreamToApp"
-                             GroupName="LoggingMode"
-                             IsChecked="{Binding !Shell.IsLogToDeviceMode, Mode=OneWay}"
-                             Theme="{StaticResource SegmentedToggle}">
-                    <ia:Interaction.Behaviors>
-                        <iac:EventTriggerBehavior EventName="Checked">
-                            <iac:InvokeCommandAction Command="{Binding SetLoggingModeCommand}"
-                                                     CommandParameter="Stream to App"/>
-                        </iac:EventTriggerBehavior>
-                    </ia:Interaction.Behaviors>
-                </RadioButton>
-                <RadioButton Grid.Column="1"
-                             Content="LOG TO DEVICE"
-                             AutomationProperties.AutomationId="LoggingModeLogToDevice"
-                             GroupName="LoggingMode"
-                             IsEnabled="{Binding SelectedTile.IsUsb}"
-                             IsChecked="{Binding Shell.IsLogToDeviceMode, Mode=OneWay}"
-                             Theme="{StaticResource SegmentedToggle}"
-                             ToolTip.Tip="SD card logging requires USB. WiFi devices do not support SD card logging.">
-                    <ia:Interaction.Behaviors>
-                        <iac:EventTriggerBehavior EventName="Checked">
-                            <iac:InvokeCommandAction Command="{Binding SetLoggingModeCommand}"
-                                                     CommandParameter="Log to Device"/>
-                        </iac:EventTriggerBehavior>
-                    </ia:Interaction.Behaviors>
-                </RadioButton>
-            </Grid>
-        </Border>
+        <!-- Use with sectionLabel: Classes="sectionLabel drawerSectionLabel" (upstream BasedOn) -->
+        <Style Selector="TextBlock.drawerSectionLabel">
+            <Setter Property="Margin" Value="0,22,0,8"/>
+        </Style>
 
-    </StackPanel>
+        <Style Selector="TextBlock.infoLabel">
+            <Setter Property="FontSize" Value="10"/>
+            <Setter Property="FontWeight" Value="SemiBold"/>
+            <Setter Property="Foreground" Value="{DynamicResource TextTertiary}"/>
+            <Setter Property="Margin" Value="0,0,0,3"/>
+        </Style>
+
+        <Style Selector="TextBlock.infoValue">
+            <Setter Property="FontFamily" Value="Consolas"/>
+            <Setter Property="FontSize" Value="13"/>
+            <Setter Property="Foreground" Value="{DynamicResource TextPrimary}"/>
+        </Style>
+
+        <!-- Dark text field: Border chrome + borderless TextBox (ConnectionDialog dialect) -->
+        <Style Selector="Border.drawerTextField">
+            <Setter Property="Background" Value="{DynamicResource Surface}"/>
+            <Setter Property="BorderBrush" Value="{DynamicResource BorderDim}"/>
+            <Setter Property="BorderThickness" Value="1"/>
+            <Setter Property="CornerRadius" Value="3"/>
+            <Setter Property="Padding" Value="10,0"/>
+        </Style>
+
+        <Style Selector="TextBox.drawerTextBox">
+            <Setter Property="Background" Value="Transparent"/>
+            <Setter Property="BorderThickness" Value="0"/>
+            <Setter Property="Foreground" Value="{DynamicResource TextPrimary}"/>
+            <Setter Property="FontFamily" Value="Consolas"/>
+            <Setter Property="FontSize" Value="13"/>
+            <Setter Property="Height" Value="32"/>
+            <Setter Property="VerticalContentAlignment" Value="Center"/>
+            <Setter Property="CaretBrush" Value="{DynamicResource TextPrimary}"/>
+        </Style>
+
+        <!-- Device tile hover (upstream Border.Style trigger) -->
+        <Style Selector="Border.deviceTile">
+            <Setter Property="Cursor" Value="Hand"/>
+        </Style>
+        <Style Selector="Border.deviceTile:pointerover">
+            <Setter Property="Opacity" Value="0.92"/>
+        </Style>
+    </UserControl.Styles>
+
+    <Grid Background="{DynamicResource Surface}">
+
+        <!-- ========== CONNECTED STATE ========== -->
+        <Grid IsVisible="{Binding HasConnectedDevice}" RowDefinitions="Auto,*,Auto">
+
+            <!-- Header -->
+            <StackPanel Grid.Row="0" Margin="28,22,28,14">
+                <TextBlock Text="DEVICES"
+                           FontSize="10"
+                           FontWeight="Bold"
+                           Foreground="{DynamicResource TextTertiary}"
+                           Margin="0,0,0,2"/>
+                <StackPanel Orientation="Horizontal">
+                    <TextBlock FontSize="24"
+                               FontWeight="Light"
+                               Foreground="{DynamicResource TextPrimary}">
+                        <Run Text="{Binding Devices.Count, Mode=OneWay}"/>
+                        <Run Text=" CONNECTED"/>
+                    </TextBlock>
+                    <Ellipse Width="6" Height="6"
+                             Fill="{DynamicResource StatusGreen}"
+                             VerticalAlignment="Center"
+                             Margin="14,4,0,0"/>
+                </StackPanel>
+            </StackPanel>
+
+            <!-- Tiles -->
+            <ScrollViewer Grid.Row="1"
+                          VerticalScrollBarVisibility="Auto"
+                          HorizontalScrollBarVisibility="Disabled"
+                          Padding="28,0,28,0">
+                <ItemsControl ItemsSource="{Binding Devices}"
+                              AutomationProperties.AutomationId="ConnectedDeviceList"
+                              ItemTemplate="{StaticResource DeviceTileTemplate}"
+                              ItemsPanel="{StaticResource TileWrap}"
+                              Margin="0,0,0,24"/>
+            </ScrollViewer>
+
+            <!-- Status bar -->
+            <Border Grid.Row="2"
+                    Background="#0A0C10"
+                    BorderBrush="{DynamicResource BorderDim}"
+                    BorderThickness="0,1,0,0"
+                    Padding="28,12">
+                <Grid ColumnDefinitions="Auto,*,Auto">
+                    <StackPanel Orientation="Horizontal" VerticalAlignment="Center">
+                        <Ellipse Width="7" Height="7"
+                                 Fill="{DynamicResource StatusGreen}"
+                                 Margin="0,0,10,0"/>
+                        <TextBlock FontSize="10"
+                                   FontWeight="SemiBold"
+                                   Foreground="{DynamicResource TextSecondary}"
+                                   VerticalAlignment="Center">
+                            <Run Text="{Binding Devices.Count, Mode=OneWay}"/>
+                            <Run Text=" DEVICES CONNECTED"/>
+                        </TextBlock>
+                    </StackPanel>
+                    <StackPanel Grid.Column="2" Orientation="Horizontal" VerticalAlignment="Center">
+                        <Button Theme="{StaticResource AccentPillButton}"
+                                AutomationProperties.AutomationId="AddDeviceButton"
+                                Content="+ ADD DEVICE"
+                                Command="{Binding AddDeviceCommand}"/>
+                    </StackPanel>
+                </Grid>
+            </Border>
+        </Grid>
+
+        <!-- ========== SETTINGS DRAWER ========== -->
+        <Grid IsVisible="{Binding IsSettingsOpen}"
+              ZIndex="10"
+              ColumnDefinitions="*,420">
+
+            <!-- Scrim (upstream MouseBinding LeftClick → Tapped behavior) -->
+            <Rectangle Grid.Column="0" Fill="#A0000000">
+                <ia:Interaction.Behaviors>
+                    <iac:EventTriggerBehavior EventName="Tapped">
+                        <iac:InvokeCommandAction Command="{Binding CloseSettingsCommand}"/>
+                    </iac:EventTriggerBehavior>
+                </ia:Interaction.Behaviors>
+            </Rectangle>
+
+            <!-- Drawer -->
+            <Border Grid.Column="1"
+                    Background="{DynamicResource SurfaceRaised}"
+                    BorderBrush="{DynamicResource BorderDim}"
+                    BorderThickness="1,0,0,0">
+                <Grid RowDefinitions="Auto,*">
+
+                    <!-- Header -->
+                    <Grid Grid.Row="0" Margin="22,22,16,18" ColumnDefinitions="Auto,*,Auto">
+                        <Rectangle Grid.Column="0"
+                                   Width="3" Height="32"
+                                   Fill="{Binding SelectedTile.StripeBrush}"
+                                   Margin="0,0,12,0"/>
+                        <StackPanel Grid.Column="1">
+                            <TextBlock Text="DEVICE"
+                                       FontSize="9"
+                                       FontWeight="Bold"
+                                       Foreground="{DynamicResource TextTertiary}"/>
+                            <TextBlock Text="{Binding SelectedTile.Name}"
+                                       FontFamily="Consolas"
+                                       FontSize="20"
+                                       FontWeight="Medium"
+                                       Foreground="{DynamicResource TextPrimary}"/>
+                        </StackPanel>
+                        <Button Grid.Column="2"
+                                Width="28" Height="28"
+                                Theme="{StaticResource DrawerCloseButton}"
+                                Foreground="{DynamicResource TextSecondary}"
+                                FontSize="16"
+                                Content="&#xD7;"
+                                Command="{Binding CloseSettingsCommand}"/>
+                    </Grid>
+
+                    <ScrollViewer Grid.Row="1" VerticalScrollBarVisibility="Auto" Padding="22,0,22,22">
+                        <StackPanel>
+
+                            <!-- INFORMATION -->
+                            <TextBlock Text="INFORMATION" Classes="sectionLabel" Margin="0,8,0,10"/>
+                            <Border Background="{DynamicResource Surface}"
+                                    BorderBrush="{DynamicResource BorderDim}"
+                                    BorderThickness="1"
+                                    CornerRadius="3"
+                                    Padding="14,12">
+                                <Grid ColumnDefinitions="*,*" RowDefinitions="Auto,Auto,Auto">
+                                    <StackPanel Grid.Column="0" Grid.Row="0" Margin="0,0,0,10">
+                                        <TextBlock Text="CONNECTION" Classes="infoLabel"/>
+                                        <TextBlock Text="{Binding SelectedTile.ConnectionLabel}"
+                                                   Classes="infoValue"/>
+                                    </StackPanel>
+                                    <StackPanel Grid.Column="1" Grid.Row="0" Margin="0,0,0,10">
+                                        <TextBlock Text="IDENTIFIER" Classes="infoLabel"/>
+                                        <TextBlock Text="{Binding SelectedTile.Identifier}"
+                                                   Classes="infoValue"/>
+                                    </StackPanel>
+                                    <StackPanel Grid.Column="0" Grid.Row="1">
+                                        <TextBlock Text="SERIAL" Classes="infoLabel"/>
+                                        <TextBlock Text="{Binding SelectedTile.SerialNumber}"
+                                                   Classes="infoValue"/>
+                                    </StackPanel>
+                                    <StackPanel Grid.Column="1" Grid.Row="1">
+                                        <TextBlock Text="FIRMWARE" Classes="infoLabel"/>
+                                        <TextBlock Text="{Binding SelectedTile.Version}"
+                                                   Classes="infoValue"/>
+                                    </StackPanel>
+                                    <!-- WiFi module firmware (USB Nyquist/WINC1500 devices only) — debug-gated. -->
+                                    <StackPanel Grid.Column="0" Grid.Row="2" Margin="0,10,0,0">
+                                        <StackPanel.IsVisible>
+                                            <MultiBinding Converter="{StaticResource BoolAndToVis}" FallbackValue="False">
+                                                <Binding Path="SelectedTile.ShowWifiVersion"/>
+                                                <Binding Path="Shell.IsDebugModeEnabled"/>
+                                            </MultiBinding>
+                                        </StackPanel.IsVisible>
+                                        <TextBlock Text="WIFI FW" Classes="infoLabel"/>
+                                        <TextBlock Text="{Binding SelectedTile.WifiVersion}"
+                                                   Classes="infoValue"/>
+                                    </StackPanel>
+                                </Grid>
+                            </Border>
+
+                            <!-- DATA ACQUISITION -->
+                            <TextBlock Text="DATA ACQUISITION" Classes="sectionLabel drawerSectionLabel"/>
+
+                            <TextBlock Text="LOGGING MODE" Classes="infoLabel" Margin="0,0,0,6"/>
+                            <Border Background="{DynamicResource Surface}"
+                                    BorderBrush="{DynamicResource BorderDim}"
+                                    BorderThickness="1"
+                                    CornerRadius="3"
+                                    Padding="3">
+                                <Grid ColumnDefinitions="*,*">
+                                    <!-- Drive the mode switch off Checked rather than Command: a RadioButton's
+                                         bound Command fires only on a real Click, which a background UI-automation
+                                         host cannot raise. Checking the button through the automation Toggle
+                                         pattern raises Checked (not Click), so an EventTriggerBehavior on Checked
+                                         keeps the control drivable both interactively and from the automation
+                                         harness. The SelectedLoggingMode setter is idempotent, so the extra
+                                         Checked that fires when the OneWay binding refreshes after a switch is a
+                                         harmless no-op. -->
+                                    <RadioButton Grid.Column="0"
+                                                 Content="STREAM TO APP"
+                                                 AutomationProperties.AutomationId="LoggingModeStreamToApp"
+                                                 GroupName="LoggingMode"
+                                                 IsChecked="{Binding !Shell.IsLogToDeviceMode, Mode=OneWay}"
+                                                 Theme="{StaticResource SegmentedToggle}">
+                                        <ia:Interaction.Behaviors>
+                                            <iac:EventTriggerBehavior EventName="Checked">
+                                                <iac:InvokeCommandAction Command="{Binding SetLoggingModeCommand}"
+                                                                         CommandParameter="Stream to App"/>
+                                            </iac:EventTriggerBehavior>
+                                        </ia:Interaction.Behaviors>
+                                    </RadioButton>
+                                    <RadioButton Grid.Column="1"
+                                                 Content="LOG TO DEVICE"
+                                                 AutomationProperties.AutomationId="LoggingModeLogToDevice"
+                                                 GroupName="LoggingMode"
+                                                 IsEnabled="{Binding SelectedTile.IsUsb}"
+                                                 IsChecked="{Binding Shell.IsLogToDeviceMode, Mode=OneWay}"
+                                                 Theme="{StaticResource SegmentedToggle}"
+                                                 ToolTip.Tip="SD card logging requires USB. WiFi devices do not support SD card logging.">
+                                        <ia:Interaction.Behaviors>
+                                            <iac:EventTriggerBehavior EventName="Checked">
+                                                <iac:InvokeCommandAction Command="{Binding SetLoggingModeCommand}"
+                                                                         CommandParameter="Log to Device"/>
+                                            </iac:EventTriggerBehavior>
+                                        </ia:Interaction.Behaviors>
+                                    </RadioButton>
+                                </Grid>
+                            </Border>
+
+                            <TextBlock Text="FREQUENCY (Hz)" Classes="infoLabel" Margin="0,16,0,6"/>
+                            <Grid ColumnDefinitions="Auto,*">
+                                <Border Grid.Column="0"
+                                        Classes="drawerTextField"
+                                        Width="80"
+                                        Margin="0,0,10,0">
+                                    <TextBox Text="{Binding ElementName=FrequencySlider, Path=Value, Mode=TwoWay}"
+                                             Classes="drawerTextBox"
+                                             TextAlignment="Center"
+                                             FontSize="16"/>
+                                </Border>
+                                <Slider Grid.Column="1"
+                                        x:Name="FrequencySlider"
+                                        AutomationProperties.AutomationId="SamplingFrequencyInput"
+                                        Minimum="1" Maximum="1000"
+                                        TickFrequency="1"
+                                        IsSnapToTickEnabled="True"
+                                        VerticalAlignment="Center"
+                                        Value="{Binding FrequencyHz, Delay=500}"/>
+                            </Grid>
+
+                            <!-- DATA FORMAT (visible only when logging to device) -->
+                            <StackPanel IsVisible="{Binding Shell.IsLogToDeviceMode}">
+                                <TextBlock Text="DATA FORMAT" Classes="infoLabel" Margin="0,16,0,6"/>
+                                <!-- divergence: ObjectDataProvider Enum.GetValues → inline enum items -->
+                                <ComboBox Theme="{StaticResource DrawerComboBox}"
+                                          AutomationProperties.AutomationId="SdCardFormatSelector"
+                                          SelectedItem="{Binding Shell.SelectedSdCardLogFormat, Mode=TwoWay}">
+                                    <sdCard:SdCardLogFormat>Protobuf</sdCard:SdCardLogFormat>
+                                    <sdCard:SdCardLogFormat>Json</sdCard:SdCardLogFormat>
+                                    <sdCard:SdCardLogFormat>Csv</sdCard:SdCardLogFormat>
+                                </ComboBox>
+                            </StackPanel>
+
+                            <!-- NETWORK -->
+                            <TextBlock Text="NETWORK" Classes="sectionLabel drawerSectionLabel"/>
+
+                            <TextBlock Text="MODE" Classes="infoLabel" Margin="0,0,0,6"/>
+                            <!-- divergence: ObjectDataProvider Enum.GetValues → inline enum items -->
+                            <ComboBox Theme="{StaticResource DrawerComboBox}"
+                                      SelectedItem="{Binding SelectedDevice.NetworkConfiguration.Mode}">
+                                <ComboBox.ItemTemplate>
+                                    <DataTemplate>
+                                        <TextBlock Text="{Binding Converter={StaticResource EnumDescription}}"/>
+                                    </DataTemplate>
+                                </ComboBox.ItemTemplate>
+                                <networkDataModel:WifiMode>ExistingNetwork</networkDataModel:WifiMode>
+                                <networkDataModel:WifiMode>SelfHosted</networkDataModel:WifiMode>
+                            </ComboBox>
+
+                            <TextBlock Text="SECURITY" Classes="infoLabel" Margin="0,14,0,6"/>
+                            <!-- divergence: ObjectDataProvider Enum.GetValues → inline enum items -->
+                            <ComboBox Theme="{StaticResource DrawerComboBox}"
+                                      SelectedItem="{Binding SelectedDevice.NetworkConfiguration.SecurityType}">
+                                <ComboBox.ItemTemplate>
+                                    <DataTemplate>
+                                        <TextBlock Text="{Binding Converter={StaticResource EnumDescription}}"/>
+                                    </DataTemplate>
+                                </ComboBox.ItemTemplate>
+                                <networkDataModel:WifiSecurityType>None</networkDataModel:WifiSecurityType>
+                                <networkDataModel:WifiSecurityType>WpaPskPhrase</networkDataModel:WifiSecurityType>
+                            </ComboBox>
+
+                            <TextBlock Text="SSID" Classes="infoLabel" Margin="0,14,0,6"/>
+                            <Border Classes="drawerTextField">
+                                <TextBox Classes="drawerTextBox"
+                                         Text="{Binding SelectedDevice.NetworkConfiguration.Ssid, Mode=TwoWay}"/>
+                            </Border>
+
+                            <TextBlock Text="PASSWORD" Classes="infoLabel" Margin="0,14,0,6"/>
+                            <Border Classes="drawerTextField">
+                                <TextBox Classes="drawerTextBox"
+                                         Text="{Binding SelectedDevice.NetworkConfiguration.Password, Mode=TwoWay}"/>
+                            </Border>
+
+                            <Button Theme="{StaticResource AccentPillButton}"
+                                    Content="APPLY NETWORK SETTINGS"
+                                    HorizontalAlignment="Right"
+                                    Margin="0,14,0,0"
+                                    Command="{Binding Shell.UpdateNetworkConfigurationCommand}"/>
+
+                            <StackPanel Orientation="Horizontal"
+                                        Margin="0,10,0,0"
+                                        IsVisible="{Binding Shell.NetworkSettingsApplied}">
+                                <i:Icon Value="mdi-check-circle-outline"
+                                        FontSize="12"
+                                        Foreground="{DynamicResource StatusGreen}"
+                                        VerticalAlignment="Center"
+                                        Margin="0,0,6,0"/>
+                                <TextBlock Text="Settings applied"
+                                           Foreground="{DynamicResource StatusGreen}"
+                                           FontSize="11"
+                                           VerticalAlignment="Center"/>
+                            </StackPanel>
+
+                            <StackPanel Orientation="Horizontal"
+                                        Margin="0,10,0,0"
+                                        IsVisible="{Binding Shell.HasNetworkSettingsError}">
+                                <i:Icon Value="mdi-alert-circle-outline"
+                                        FontSize="12"
+                                        Foreground="{DynamicResource StatusRed}"
+                                        VerticalAlignment="Top"
+                                        Margin="0,2,6,0"/>
+                                <TextBlock Text="{Binding Shell.NetworkSettingsError}"
+                                           Foreground="{DynamicResource StatusRed}"
+                                           FontSize="11"
+                                           TextWrapping="Wrap"
+                                           MaxWidth="320"
+                                           VerticalAlignment="Center"/>
+                            </StackPanel>
+
+                            <!-- FIRMWARE -->
+                            <TextBlock Text="FIRMWARE" Classes="sectionLabel drawerSectionLabel"/>
+
+                            <!-- USB: file picker + upload -->
+                            <StackPanel IsVisible="{Binding SelectedDeviceSupportsFirmwareUpdate}">
+                                <TextBlock Text="FIRMWARE FILE" Classes="infoLabel" Margin="0,0,0,6"/>
+                                <Grid ColumnDefinitions="*,Auto">
+                                    <Border Grid.Column="0" Classes="drawerTextField" Margin="0,0,8,0">
+                                        <TextBox Classes="drawerTextBox"
+                                                 Text="{Binding Shell.FirmwareFilePath, Mode=TwoWay}"/>
+                                    </Border>
+                                    <Button Grid.Column="1"
+                                            Theme="{StaticResource PillButton}"
+                                            Content="BROWSE"
+                                            Command="{Binding Shell.BrowseForFirmwareCommand}"/>
+                                </Grid>
+
+                                <TextBlock Text="PROGRESS" Classes="infoLabel" Margin="0,16,0,6"/>
+                                <Grid ColumnDefinitions="*,Auto">
+                                    <ProgressBar Grid.Column="0"
+                                                 Height="10"
+                                                 VerticalAlignment="Center"
+                                                 Minimum="0" Maximum="100"
+                                                 Background="{DynamicResource Surface}"
+                                                 Foreground="{DynamicResource Accent}"
+                                                 BorderBrush="{DynamicResource BorderDim}"
+                                                 Value="{Binding Shell.UploadFirmwareProgress}"/>
+                                    <Button Grid.Column="1"
+                                            Theme="{StaticResource AccentPillButton}"
+                                            Content="UPDATE"
+                                            Margin="8,0,0,0"
+                                            Command="{Binding Shell.UploadFirmwareCommand}"/>
+                                </Grid>
+
+                                <!-- WiFi module firmware (Nyquist/WINC1500 devices only) — debug-gated:
+                                     normal users don't see WiFi-firmware controls unless debug mode is on. -->
+                                <StackPanel>
+                                    <StackPanel.IsVisible>
+                                        <MultiBinding Converter="{StaticResource BoolAndToVis}" FallbackValue="False">
+                                            <Binding Path="Shell.SelectedDevice.HasWincWifiModule"/>
+                                            <Binding Path="Shell.IsDebugModeEnabled"/>
+                                        </MultiBinding>
+                                    </StackPanel.IsVisible>
+                                    <TextBlock Text="WIFI MODULE VERSION" Classes="infoLabel" Margin="0,16,0,3"/>
+                                    <TextBlock Text="{Binding Shell.SelectedDevice.WifiFirmwareVersion}"
+                                               Classes="infoValue"/>
+
+                                    <!-- Amber prompt only when the module is out of date or unreadable -->
+                                    <Border Background="#2A1A0A"
+                                            BorderBrush="{DynamicResource StatusAmber}"
+                                            BorderThickness="1"
+                                            CornerRadius="3"
+                                            Padding="12,10"
+                                            Margin="0,8,0,0"
+                                            IsVisible="{Binding Shell.SelectedDevice.IsWifiFirmwareOutdated}">
+                                        <TextBlock Text="WiFi module firmware is out of date (or could not be read) and should be updated."
+                                                   FontSize="11"
+                                                   Foreground="{DynamicResource StatusAmber}"
+                                                   TextWrapping="Wrap"/>
+                                    </Border>
+
+                                    <!-- Flash control always available for WINC1500 devices: lets the line
+                                         re-flash the WiFi module on demand (e.g. a prior flash that didn't
+                                         take), not only when it reports as out of date. -->
+                                    <Grid Margin="0,8,0,0" ColumnDefinitions="*,Auto">
+                                        <ProgressBar Grid.Column="0"
+                                                     Height="10"
+                                                     VerticalAlignment="Center"
+                                                     Minimum="0" Maximum="100"
+                                                     Background="{DynamicResource Surface}"
+                                                     Foreground="{DynamicResource Accent}"
+                                                     BorderBrush="{DynamicResource BorderDim}"
+                                                     Value="{Binding Shell.UploadWiFiProgress}"/>
+                                        <Button Grid.Column="1"
+                                                Theme="{StaticResource AccentPillButton}"
+                                                Content="FLASH WIFI"
+                                                Margin="8,0,0,0"
+                                                Command="{Binding Shell.UpdateWifiFirmwareOnlyCommand}"/>
+                                    </Grid>
+                                </StackPanel>
+                            </StackPanel>
+
+                            <!-- WiFi: informational message -->
+                            <Border Background="#2A1A0A"
+                                    BorderBrush="{DynamicResource StatusAmber}"
+                                    BorderThickness="1"
+                                    CornerRadius="3"
+                                    Padding="12,10"
+                                    IsVisible="{Binding !SelectedDeviceSupportsFirmwareUpdate}">
+                                <TextBlock Text="Firmware updates require a USB connection."
+                                           FontSize="11"
+                                           Foreground="{DynamicResource StatusAmber}"
+                                           TextWrapping="Wrap"/>
+                            </Border>
+
+                            <!-- ACTIONS -->
+                            <TextBlock Text="ACTIONS" Classes="sectionLabel drawerSectionLabel"/>
+                            <StackPanel Orientation="Horizontal">
+                                <Button Theme="{StaticResource PillButton}"
+                                        Content="REBOOT"
+                                        Command="{Binding RebootSelectedCommand}"/>
+                                <Button Theme="{StaticResource DangerPillButton}"
+                                        Content="DISCONNECT"
+                                        AutomationProperties.AutomationId="DisconnectSelectedButton"
+                                        Command="{Binding DisconnectSelectedCommand}"/>
+                            </StackPanel>
+
+                        </StackPanel>
+                    </ScrollViewer>
+                </Grid>
+            </Border>
+        </Grid>
+
+        <!-- ========== EMPTY STATE ========== -->
+        <Grid IsVisible="{Binding !HasConnectedDevice}">
+            <StackPanel HorizontalAlignment="Center"
+                        VerticalAlignment="Center"
+                        MaxWidth="420">
+                <Border Width="96" Height="96"
+                        CornerRadius="48"
+                        Background="{DynamicResource SurfaceRaised}"
+                        BorderBrush="{DynamicResource BorderDim}"
+                        BorderThickness="1"
+                        HorizontalAlignment="Center"
+                        Margin="0,0,0,28">
+                    <i:Icon Value="mdi-chip"
+                            FontSize="40"
+                            Foreground="{DynamicResource TextTertiary}"
+                            HorizontalAlignment="Center"
+                            VerticalAlignment="Center"/>
+                </Border>
+                <TextBlock Text="NO DEVICES CONNECTED"
+                           FontSize="11"
+                           FontWeight="Bold"
+                           Foreground="{DynamicResource TextTertiary}"
+                           HorizontalAlignment="Center"
+                           Margin="0,0,0,10"/>
+                <TextBlock Text="Connect a DAQiFi device over USB or WiFi to get started."
+                           FontSize="15"
+                           FontWeight="Light"
+                           Foreground="{DynamicResource TextPrimary}"
+                           TextAlignment="Center"
+                           TextWrapping="Wrap"
+                           HorizontalAlignment="Center"
+                           Margin="0,0,0,20"/>
+                <Button Theme="{StaticResource AccentPillButton}"
+                        AutomationProperties.AutomationId="AddDeviceButtonEmpty"
+                        Content="+ ADD DEVICE"
+                        HorizontalAlignment="Center"
+                        Command="{Binding AddDeviceCommand}"/>
+            </StackPanel>
+        </Grid>
+
+    </Grid>
 </UserControl>

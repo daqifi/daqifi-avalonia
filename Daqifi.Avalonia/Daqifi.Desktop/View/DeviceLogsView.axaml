@@ -1,5 +1,480 @@
 <UserControl xmlns="https://github.com/avaloniaui"
              xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml"
+             xmlns:i="https://github.com/projektanker/icons.avalonia"
+             xmlns:converters="using:Daqifi.Desktop.Converters"
              x:Class="Daqifi.Desktop.View.DeviceLogsView">
-  <!-- Scaffolded by portomatic from upstream Daqifi.Desktop.View.DeviceLogsView. Fill in the view; the code-behind ctor calls InitializeComponent(). -->
+    <!--
+        Ported from Daqifi.Desktop/View/DeviceLogsView.xaml.
+
+        Dialect decisions:
+        - Local DarkComboBox/DarkComboBoxItem templates (incl. their Popup) dropped in favor
+          of the app-merged DarkComboBox theme (Resources/DarkDialog.axaml); the upstream
+          copy existed only to fix the MahApps light dropdown, which Fluent Dark already
+          fixes. Upstream metrics (Height 32, FontSize 12, Consolas, Padding 10,0) kept
+          element-level. DisplayMemberPath → DisplayMemberBinding.
+        - ListView+GridView → DataGrid with template columns (established DebugWindow
+          dialect; theme included from App.axaml). DarkListViewItem's bottom border maps
+          to horizontal gridlines (BorderDim); its Padding 0,10 maps to cell-content
+          Margin + header Padding 4,10; hover → DataGridRow BackgroundRectangle override.
+        - PillButton/AccentPillButton keyed Styles → local ControlThemes with
+          :pointerover/:disabled pseudo-classes (established ConnectionDialog dialect);
+          upstream BasedOn inheritance flattened into the accent theme.
+        - Visibility+converters → IsVisible; InvertedBoolToVis → !CanAccessSdCard;
+          NotNullToVisibilityConverter → app-registered NotNullToVis (returns bool).
+        - Empty-string DataTriggers → StringConverters.IsNotNullOrEmpty on IsVisible;
+          the HasSdCardError foreground DataTrigger → Classes.sdError + class styles.
+        - PackIconMaterial → projektanker i:Icon (Kind kebab-cased, Width/Height → FontSize).
+        - MahApps ProgressRing → indeterminate ProgressBar (MainWindow busy-overlay dialect).
+        - ConnectionTypeToColorConverter registered locally (upstream parity).
+    -->
+    <UserControl.Resources>
+
+        <converters:ConnectionTypeToColorConverter x:Key="ConnectionTypeToColorConverter"/>
+
+        <!-- Pill button (matches LoggedDataPanePrototype / DevicesPanePrototype) -->
+        <ControlTheme x:Key="PillButton" TargetType="Button">
+            <Setter Property="Background" Value="Transparent"/>
+            <Setter Property="BorderBrush" Value="{StaticResource BorderDim}"/>
+            <Setter Property="BorderThickness" Value="1"/>
+            <Setter Property="Foreground" Value="{StaticResource TextSecondary}"/>
+            <Setter Property="Padding" Value="12,4"/>
+            <Setter Property="Margin" Value="0,0,6,0"/>
+            <Setter Property="FontSize" Value="10"/>
+            <Setter Property="FontWeight" Value="SemiBold"/>
+            <Setter Property="Cursor" Value="Hand"/>
+            <Setter Property="Template">
+                <ControlTemplate>
+                    <Border x:Name="Bg"
+                            Background="{TemplateBinding Background}"
+                            BorderBrush="{TemplateBinding BorderBrush}"
+                            BorderThickness="{TemplateBinding BorderThickness}"
+                            CornerRadius="14"
+                            Padding="{TemplateBinding Padding}">
+                        <ContentPresenter Content="{TemplateBinding Content}"
+                                          HorizontalAlignment="Center" VerticalAlignment="Center"/>
+                    </Border>
+                </ControlTemplate>
+            </Setter>
+            <!-- WPF IsMouseOver trigger → :pointerover -->
+            <Style Selector="^:pointerover">
+                <Setter Property="Foreground" Value="{StaticResource TextPrimary}"/>
+            </Style>
+            <Style Selector="^:pointerover /template/ Border#Bg">
+                <Setter Property="Background" Value="#141821"/>
+                <Setter Property="BorderBrush" Value="{StaticResource BorderBright}"/>
+            </Style>
+            <Style Selector="^:disabled">
+                <Setter Property="Opacity" Value="0.35"/>
+            </Style>
+        </ControlTheme>
+
+        <!-- Upstream: BasedOn PillButton — flattened into a standalone theme -->
+        <ControlTheme x:Key="AccentPillButton" TargetType="Button">
+            <Setter Property="Background" Value="{StaticResource Accent}"/>
+            <Setter Property="BorderBrush" Value="{StaticResource Accent}"/>
+            <Setter Property="BorderThickness" Value="1"/>
+            <Setter Property="Foreground" Value="White"/>
+            <Setter Property="Padding" Value="16,6"/>
+            <Setter Property="Margin" Value="0,0,6,0"/>
+            <Setter Property="FontSize" Value="10"/>
+            <Setter Property="FontWeight" Value="SemiBold"/>
+            <Setter Property="Cursor" Value="Hand"/>
+            <Setter Property="Template">
+                <ControlTemplate>
+                    <Border x:Name="Bg"
+                            Background="{TemplateBinding Background}"
+                            BorderBrush="{TemplateBinding BorderBrush}"
+                            BorderThickness="{TemplateBinding BorderThickness}"
+                            CornerRadius="14"
+                            Padding="{TemplateBinding Padding}">
+                        <ContentPresenter Content="{TemplateBinding Content}"
+                                          HorizontalAlignment="Center" VerticalAlignment="Center"/>
+                    </Border>
+                </ControlTemplate>
+            </Setter>
+            <Style Selector="^:pointerover /template/ Border#Bg">
+                <Setter Property="Background" Value="#1EB3F0"/>
+                <Setter Property="BorderBrush" Value="#1EB3F0"/>
+            </Style>
+            <Style Selector="^:disabled">
+                <Setter Property="Opacity" Value="0.35"/>
+            </Style>
+        </ControlTheme>
+
+    </UserControl.Resources>
+
+    <UserControl.Styles>
+
+        <!-- SD status line: default vs error foreground (upstream DataTrigger on
+             HasSdCardError → Classes.sdError; class-based so the style can win) -->
+        <Style Selector="TextBlock.sdStatus">
+            <Setter Property="Foreground" Value="{StaticResource TextSecondary}"/>
+        </Style>
+        <Style Selector="TextBlock.sdStatus.sdError">
+            <Setter Property="Foreground" Value="#E05555"/>
+        </Style>
+
+        <!-- DarkColumnHeader equivalent (upstream GridViewColumnHeader restyle).
+             divergence: no 1px bottom rule under the header row — Avalonia's DataGrid
+             header has no border knob; the horizontal gridlines carry the row rules. -->
+        <Style Selector="DataGridColumnHeader">
+            <Setter Property="Background" Value="Transparent"/>
+            <Setter Property="Foreground" Value="{StaticResource TextTertiary}"/>
+            <Setter Property="FontSize" Value="10"/>
+            <Setter Property="FontWeight" Value="Bold"/>
+            <Setter Property="Padding" Value="4,10"/>
+            <Setter Property="SeparatorBrush" Value="Transparent"/>
+        </Style>
+
+        <!-- DarkListViewItem equivalent: transparent rows, SurfaceHover on hover.
+             divergence: upstream had no selection visual (template ignored IsSelected);
+             the Fluent blue selection is normalized to the same SurfaceHover. -->
+        <Style Selector="DataGridRow:pointerover /template/ Rectangle#BackgroundRectangle">
+            <Setter Property="Fill" Value="{StaticResource SurfaceHover}"/>
+            <Setter Property="Opacity" Value="1"/>
+        </Style>
+        <Style Selector="DataGridRow:selected /template/ Rectangle#BackgroundRectangle">
+            <Setter Property="Fill" Value="{StaticResource SurfaceHover}"/>
+            <Setter Property="Opacity" Value="1"/>
+        </Style>
+        <!-- Suppress cell focus/currency adornments (no upstream analog) -->
+        <Style Selector="DataGridCell /template/ Grid#FocusVisual">
+            <Setter Property="IsVisible" Value="False"/>
+        </Style>
+        <Style Selector="DataGridCell /template/ Rectangle#CurrencyVisual">
+            <Setter Property="IsVisible" Value="False"/>
+        </Style>
+
+    </UserControl.Styles>
+
+    <Grid Background="{StaticResource Surface}" RowDefinitions="Auto,Auto,*">
+
+        <!-- Device selector row -->
+        <Grid Grid.Row="0" Margin="20,16,20,8" ColumnDefinitions="Auto,*,Auto,Auto">
+
+            <TextBlock Grid.Column="0"
+                       Text="DEVICE"
+                       FontSize="10"
+                       FontWeight="Bold"
+                       Foreground="{StaticResource TextTertiary}"
+                       VerticalAlignment="Center"
+                       Margin="0,0,12,0"/>
+
+            <ComboBox Grid.Column="1"
+                      Theme="{StaticResource DarkComboBox}"
+                      ItemsSource="{Binding ConnectedDevices}"
+                      SelectedItem="{Binding SelectedDevice}"
+                      DisplayMemberBinding="{Binding DeviceDisplayName}"
+                      Height="32"
+                      FontSize="12"
+                      FontFamily="Consolas"
+                      Padding="10,0"
+                      HorizontalAlignment="Stretch"
+                      Margin="0,0,12,0"/>
+
+            <Button Grid.Column="2"
+                    Theme="{StaticResource PillButton}"
+                    AutomationProperties.AutomationId="RefreshSdCardFilesButton"
+                    Command="{Binding RefreshFilesCommand}"
+                    ToolTip.Tip="{Binding ConnectionTypeMessage}"
+                    IsEnabled="{Binding CanAccessSdCard}">
+                <StackPanel Orientation="Horizontal" VerticalAlignment="Center">
+                    <i:Icon Value="mdi-refresh" FontSize="10" Margin="0,0,5,0" VerticalAlignment="Center"/>
+                    <TextBlock Text="REFRESH"/>
+                </StackPanel>
+            </Button>
+
+            <Button Grid.Column="3"
+                    Theme="{StaticResource AccentPillButton}"
+                    Command="{Binding ImportAllFilesCommand}"
+                    ToolTip.Tip="Import all files to application"
+                    IsEnabled="{Binding CanAccessSdCard}">
+                <StackPanel Orientation="Horizontal" VerticalAlignment="Center">
+                    <i:Icon Value="mdi-import" FontSize="11" Margin="0,0,5,0" VerticalAlignment="Center"/>
+                    <TextBlock Text="IMPORT ALL"/>
+                </StackPanel>
+            </Button>
+        </Grid>
+
+        <!-- Connection + SD card status -->
+        <Border Grid.Row="1"
+                Margin="20,0,20,8"
+                Padding="10,6"
+                Background="{StaticResource SurfaceRaised}"
+                BorderBrush="{StaticResource BorderDim}"
+                BorderThickness="1"
+                CornerRadius="3"
+                IsVisible="{Binding SelectedDevice, Converter={StaticResource NotNullToVis}}">
+            <StackPanel Orientation="Horizontal" VerticalAlignment="Center">
+                <Ellipse Width="6" Height="6"
+                         Margin="0,0,8,0"
+                         VerticalAlignment="Center"
+                         Fill="{Binding SelectedDevice.ConnectionType, Converter={StaticResource ConnectionTypeToColorConverter}}"/>
+                <TextBlock Text="{Binding ConnectionTypeMessage}"
+                           FontSize="11"
+                           FontWeight="SemiBold"
+                           Foreground="{StaticResource TextSecondary}"
+                           VerticalAlignment="Center"/>
+                <!-- SD card status — includes its own " · " prefix; hidden when empty.
+                     The UIA Name mirrors the bound Text (a direct binding, not a Style
+                     trigger), so the FlaUI harness reads the live "SD card OK · N files"
+                     line from here to assert the SD file count after a logging run. -->
+                <TextBlock Text="{Binding SdCardStatusLine}"
+                           AutomationProperties.AutomationId="SdCardStatusText"
+                           FontSize="11"
+                           VerticalAlignment="Center"
+                           Classes="sdStatus"
+                           Classes.sdError="{Binding HasSdCardError}"
+                           IsVisible="{Binding SdCardStatusLine, Converter={x:Static StringConverters.IsNotNullOrEmpty}}"/>
+            </StackPanel>
+        </Border>
+
+        <!-- File list area -->
+        <Grid Grid.Row="2" Margin="20,0,20,16">
+            <!-- Empty state: no files on SD card -->
+            <StackPanel VerticalAlignment="Center"
+                        HorizontalAlignment="Center"
+                        IsVisible="{Binding HasNoFiles}">
+                <i:Icon Value="mdi-file-document-outline"
+                        FontSize="40"
+                        Foreground="{StaticResource TextTertiary}"
+                        Opacity="0.5"
+                        HorizontalAlignment="Center"
+                        Margin="0,0,0,12"/>
+                <TextBlock Text="NO FILES"
+                           FontSize="11"
+                           FontWeight="Bold"
+                           Foreground="{StaticResource TextTertiary}"
+                           HorizontalAlignment="Center"
+                           Margin="0,0,0,6"/>
+                <TextBlock Text="Files will appear here when the device logs data to its SD card."
+                           FontSize="13"
+                           FontWeight="Light"
+                           Foreground="{StaticResource TextPrimary}"
+                           HorizontalAlignment="Center"
+                           TextWrapping="Wrap"
+                           TextAlignment="Center"
+                           MaxWidth="320"/>
+            </StackPanel>
+
+            <!-- Empty state: no device selected / WiFi (cannot access SD) -->
+            <StackPanel VerticalAlignment="Center"
+                        HorizontalAlignment="Center"
+                        IsVisible="{Binding !CanAccessSdCard}">
+                <i:Icon Value="mdi-usb-port"
+                        FontSize="40"
+                        Foreground="{StaticResource TextTertiary}"
+                        Opacity="0.5"
+                        HorizontalAlignment="Center"
+                        Margin="0,0,0,12"/>
+                <TextBlock Text="USB REQUIRED"
+                           FontSize="11"
+                           FontWeight="Bold"
+                           Foreground="{StaticResource TextTertiary}"
+                           HorizontalAlignment="Center"
+                           Margin="0,0,0,6"/>
+                <TextBlock Text="Connect a device over USB to browse its SD card."
+                           FontSize="13"
+                           FontWeight="Light"
+                           Foreground="{StaticResource TextPrimary}"
+                           HorizontalAlignment="Center"
+                           TextWrapping="Wrap"
+                           TextAlignment="Center"
+                           MaxWidth="320"/>
+            </StackPanel>
+
+            <!-- Empty state: SD card not installed -->
+            <StackPanel VerticalAlignment="Center"
+                        HorizontalAlignment="Center"
+                        IsVisible="{Binding HasSdCardNotPresent}">
+                <i:Icon Value="mdi-sd"
+                        FontSize="40"
+                        Foreground="{StaticResource TextTertiary}"
+                        Opacity="0.5"
+                        HorizontalAlignment="Center"
+                        Margin="0,0,0,12"/>
+                <TextBlock Text="NO SD CARD"
+                           FontSize="11"
+                           FontWeight="Bold"
+                           Foreground="{StaticResource TextTertiary}"
+                           HorizontalAlignment="Center"
+                           Margin="0,0,0,6"/>
+                <TextBlock Text="No SD card installed. Insert a FAT32-formatted card and click Refresh."
+                           FontSize="13"
+                           FontWeight="Light"
+                           Foreground="{StaticResource TextPrimary}"
+                           HorizontalAlignment="Center"
+                           TextWrapping="Wrap"
+                           TextAlignment="Center"
+                           MaxWidth="320"
+                           Margin="0,0,0,16"/>
+                <Button Theme="{StaticResource PillButton}"
+                        Command="{Binding CopyDiagnosticInfoCommand}"
+                        HorizontalAlignment="Center"
+                        Margin="0">
+                    <StackPanel Orientation="Horizontal">
+                        <i:Icon Value="mdi-content-copy"
+                                FontSize="10"
+                                Margin="0,0,5,0"
+                                VerticalAlignment="Center"/>
+                        <TextBlock Text="COPY DIAGNOSTICS"/>
+                    </StackPanel>
+                </Button>
+            </StackPanel>
+
+            <!-- Empty state: SD card error -->
+            <StackPanel VerticalAlignment="Center"
+                        HorizontalAlignment="Center"
+                        IsVisible="{Binding HasSdCardError}">
+                <i:Icon Value="mdi-alert-circle-outline"
+                        FontSize="40"
+                        Foreground="#E05555"
+                        Opacity="0.8"
+                        HorizontalAlignment="Center"
+                        Margin="0,0,0,12"/>
+                <TextBlock Text="SD CARD ERROR"
+                           FontSize="11"
+                           FontWeight="Bold"
+                           Foreground="#E05555"
+                           HorizontalAlignment="Center"
+                           Margin="0,0,0,6"/>
+                <TextBlock Text="{Binding SdCardErrorMessage}"
+                           FontSize="12"
+                           FontFamily="Consolas"
+                           Foreground="{StaticResource TextSecondary}"
+                           HorizontalAlignment="Center"
+                           TextWrapping="Wrap"
+                           TextAlignment="Center"
+                           MaxWidth="360"
+                           Margin="0,0,0,8"
+                           IsVisible="{Binding SdCardErrorMessage, Converter={x:Static StringConverters.IsNotNullOrEmpty}}"/>
+                <TextBlock Text="The card may be corrupt or busy. Try a different card or reformat (FAT32)."
+                           FontSize="13"
+                           FontWeight="Light"
+                           Foreground="{StaticResource TextPrimary}"
+                           HorizontalAlignment="Center"
+                           TextWrapping="Wrap"
+                           TextAlignment="Center"
+                           MaxWidth="320"
+                           Margin="0,0,0,16"/>
+                <Button Theme="{StaticResource PillButton}"
+                        Command="{Binding CopyDiagnosticInfoCommand}"
+                        HorizontalAlignment="Center"
+                        Margin="0">
+                    <StackPanel Orientation="Horizontal">
+                        <i:Icon Value="mdi-content-copy"
+                                FontSize="10"
+                                Margin="0,0,5,0"
+                                VerticalAlignment="Center"/>
+                        <TextBlock Text="COPY DIAGNOSTICS"/>
+                    </StackPanel>
+                </Button>
+            </StackPanel>
+
+            <!-- File list (visible only when USB device has at least one file).
+                 divergence: WPF ListView+GridView → DataGrid with template columns;
+                 upstream headers/rows were non-interactive, so reorder/resize/sort off. -->
+            <DataGrid Name="DeviceFilesList"
+                      AutomationProperties.AutomationId="SdCardFileList"
+                      ItemsSource="{Binding DeviceFiles}"
+                      IsVisible="{Binding HasFiles}"
+                      Background="Transparent"
+                      BorderThickness="0"
+                      Foreground="{StaticResource TextPrimary}"
+                      RowBackground="Transparent"
+                      AutoGenerateColumns="False"
+                      IsReadOnly="True"
+                      HeadersVisibility="Column"
+                      GridLinesVisibility="Horizontal"
+                      HorizontalGridLinesBrush="{StaticResource BorderDim}"
+                      CanUserReorderColumns="False"
+                      CanUserResizeColumns="False"
+                      CanUserSortColumns="False"
+                      ScrollViewer.HorizontalScrollBarVisibility="Disabled">
+                <DataGrid.Columns>
+                    <DataGridTemplateColumn Header="NAME" Width="320">
+                        <DataGridTemplateColumn.CellTemplate>
+                            <DataTemplate>
+                                <TextBlock Text="{Binding FileName}"
+                                           AutomationProperties.AutomationId="SdCardFileNameText"
+                                           FontFamily="Consolas"
+                                           FontSize="13"
+                                           Foreground="{StaticResource TextPrimary}"
+                                           VerticalAlignment="Center"
+                                           Margin="4,10"/>
+                            </DataTemplate>
+                        </DataGridTemplateColumn.CellTemplate>
+                    </DataGridTemplateColumn>
+                    <DataGridTemplateColumn Header="CREATED" Width="200">
+                        <DataGridTemplateColumn.CellTemplate>
+                            <DataTemplate>
+                                <TextBlock Text="{Binding CreatedDateDisplay}"
+                                           FontFamily="Consolas"
+                                           FontSize="12"
+                                           Foreground="{StaticResource TextSecondary}"
+                                           VerticalAlignment="Center"
+                                           Margin="4,10"/>
+                            </DataTemplate>
+                        </DataGridTemplateColumn.CellTemplate>
+                    </DataGridTemplateColumn>
+                    <DataGridTemplateColumn Header="FORMAT" Width="100">
+                        <DataGridTemplateColumn.CellTemplate>
+                            <DataTemplate>
+                                <Border Background="{StaticResource SurfaceRaised}"
+                                        BorderBrush="{StaticResource BorderDim}"
+                                        BorderThickness="1"
+                                        CornerRadius="3"
+                                        Padding="6,1"
+                                        HorizontalAlignment="Left"
+                                        VerticalAlignment="Center"
+                                        Margin="4,10">
+                                    <TextBlock Text="{Binding FormatDisplay}"
+                                               FontSize="10"
+                                               FontWeight="SemiBold"
+                                               Foreground="{StaticResource TextSecondary}"/>
+                                </Border>
+                            </DataTemplate>
+                        </DataGridTemplateColumn.CellTemplate>
+                    </DataGridTemplateColumn>
+                    <DataGridTemplateColumn Header="" Width="120">
+                        <DataGridTemplateColumn.CellTemplate>
+                            <DataTemplate>
+                                <Button Theme="{StaticResource PillButton}"
+                                        AutomationProperties.AutomationId="ImportSdCardFileButton"
+                                        Command="{Binding DataContext.ImportFileCommand, ElementName=DeviceFilesList}"
+                                        CommandParameter="{Binding}"
+                                        HorizontalAlignment="Left"
+                                        VerticalAlignment="Center"
+                                        Margin="4,10"
+                                        ToolTip.Tip="Import this file to application">
+                                    <StackPanel Orientation="Horizontal">
+                                        <i:Icon Value="mdi-import" FontSize="10" Margin="0,0,5,0" VerticalAlignment="Center"/>
+                                        <TextBlock Text="IMPORT"/>
+                                    </StackPanel>
+                                </Button>
+                            </DataTemplate>
+                        </DataGridTemplateColumn.CellTemplate>
+                    </DataGridTemplateColumn>
+                </DataGrid.Columns>
+            </DataGrid>
+        </Grid>
+
+        <!-- Loading overlay -->
+        <Grid Grid.RowSpan="3" IsVisible="{Binding IsBusy}">
+            <Rectangle Fill="{StaticResource Surface}" Opacity="0.85" IsHitTestVisible="False"/>
+            <StackPanel VerticalAlignment="Center" HorizontalAlignment="Center">
+                <!-- MahApps ProgressRing → indeterminate ProgressBar -->
+                <ProgressBar IsIndeterminate="{Binding IsBusy, Mode=OneWay}"
+                             Foreground="{StaticResource Accent}"
+                             Width="120" Height="4"
+                             HorizontalAlignment="Center"/>
+                <TextBlock Text="{Binding BusyMessage}"
+                           FontSize="12"
+                           FontWeight="SemiBold"
+                           Foreground="{StaticResource TextPrimary}"
+                           HorizontalAlignment="Center"
+                           Margin="0,14,0,0"/>
+            </StackPanel>
+        </Grid>
+    </Grid>
 </UserControl>
