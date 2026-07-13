@@ -241,9 +241,18 @@ public partial class ConnectionDialogViewModel : ObservableObject
         }
     }
 
+    // Watchdog bounds (serial loop only): with Daqifi.Core 1.0.0 a wedged CDC device hangs
+    // DiscoverAsync forever (core#294 — SerialPort.Open() stuck in native GetCommState, no
+    // per-port timeout, and DeviceDiscovered gated behind Task.WhenAll, so one zombie port
+    // silences every healthy device). Remove once the app consumes a core release with the
+    // #294 fix (PR daqifi-core#295).
+    private const int SerialSweepWatchdogMs = 30_000;
+    private const int MaxConsecutiveWatchdogTrips = 3;
+
     // @port: Daqifi.Desktop.ViewModels.ConnectionDialogViewModel.RunContinuousSerialDiscoveryAsync
     private async Task RunContinuousSerialDiscoveryAsync(CancellationToken cancellationToken)
     {
+        var consecutiveTrips = 0;
         try
         {
             while (!cancellationToken.IsCancellationRequested && _serialFinder != null)
@@ -254,7 +263,45 @@ public partial class ConnectionDialogViewModel : ObservableObject
                 // thread, and a wedged CDC device (Open() stuck in native GetCommState — observed
                 // live 2026-07-13) freezes the whole app. Upstream WPF has the same latent bug.
                 var finder = _serialFinder;
-                await Task.Run(() => finder.DiscoverAsync(cancellationToken), cancellationToken);
+                var sweep = Task.Run(() => finder.DiscoverAsync(cancellationToken), cancellationToken);
+
+                var winner = await Task.WhenAny(sweep, Task.Delay(SerialSweepWatchdogMs, cancellationToken));
+                if (winner != sweep)
+                {
+                    cancellationToken.ThrowIfCancellationRequested();
+                    consecutiveTrips++;
+                    Common.Loggers.AppLogger.Instance.Warning(
+                        $"Serial discovery sweep exceeded {SerialSweepWatchdogMs / 1000}s " +
+                        $"(trip {consecutiveTrips}/{MaxConsecutiveWatchdogTrips}) — a serial port is " +
+                        "likely wedged; USB discovery may be incomplete.");
+                    // Observe the abandoned sweep's eventual fault so it can't surface as an
+                    // UnobservedTaskException. Its stuck probe thread is uncancellable; the
+                    // abandoned finder leaks with it (bounded by MaxConsecutiveWatchdogTrips,
+                    // and intentionally NOT disposed — disposing its in-use semaphore would
+                    // just add an ObjectDisposedException to the abandoned task).
+                    _ = sweep.ContinueWith(
+                        static t => _ = t.Exception,
+                        CancellationToken.None,
+                        TaskContinuationOptions.NotOnRanToCompletion | TaskContinuationOptions.ExecuteSynchronously,
+                        TaskScheduler.Default);
+
+                    if (consecutiveTrips >= MaxConsecutiveWatchdogTrips)
+                    {
+                        Common.Loggers.AppLogger.Instance.Error(
+                            "Serial discovery stopped after repeated wedged sweeps. Power-cycle the " +
+                            "unresponsive USB device and reopen the connection dialog.");
+                        return;
+                    }
+
+                    // Rebuild the finder so healthy ports get fresh sweeps on the next iteration.
+                    finder.DeviceDiscovered -= HandleCoreSerialDeviceDiscovered;
+                    _serialFinder = new Daqifi.Core.Device.Discovery.SerialDeviceFinder();
+                    _serialFinder.DeviceDiscovered += HandleCoreSerialDeviceDiscovered;
+                    continue;
+                }
+
+                consecutiveTrips = 0;
+                await sweep; // propagate faults/cancellation exactly like the bare await did
                 // Serial discovery is quick, pause longer between scans
                 await Task.Delay(2000, cancellationToken);
             }
