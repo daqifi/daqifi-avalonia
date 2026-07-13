@@ -2,7 +2,7 @@ schema_version: 1
 shard: Common
 upstream_root: Daqifi.Desktop.Common
 downstream_root: Daqifi.Avalonia/Daqifi.Desktop.Common
-last_synced_upstream_sha: null
+last_synced_upstream_sha: bbb34ffca7bbc5226469270a8732532708a2f697
 files:
 - upstream: Daqifi.Desktop.Common/AppDataPaths.cs
   downstream: Daqifi.Avalonia/Daqifi.Desktop.Common/AppDataPaths.cs
@@ -28,11 +28,364 @@ files:
   notes: ' (scaffolded)'
   rationale: null
   last_synced_sha: null
-symbols: []
+symbols:
+- upstream:
+    kind: class
+    qualified: Daqifi.Desktop.Common.AppDataPaths
+    file: Daqifi.Desktop.Common/AppDataPaths.cs
+  downstream:
+    kind: class
+    qualified: Daqifi.Desktop.Common.AppDataPaths
+    file: Daqifi.Avalonia/Daqifi.Desktop.Common/AppDataPaths.cs
+  relation: one_to_one
+  last_synced_sha: bbb34ffca7bbc5226469270a8732532708a2f697
+  notes: null
+  rationale: null
+  members:
+  - upstream: IsTestMode { get; }
+    downstream: IsTestMode { get; }
+    relation: one_to_one
+    notes: null
+    backlog_id: null
+    last_synced_sha: null
+  - upstream: TestExportPath { get; }
+    downstream: TestExportPath { get; }
+    relation: one_to_one
+    notes: null
+    backlog_id: null
+    last_synced_sha: null
+  - upstream: IsElevated { get; }
+    downstream: IsElevated { get; }
+    relation: one_to_one
+    notes: null
+    backlog_id: null
+    last_synced_sha: null
+  - upstream: DataDirectory { get; }
+    downstream: DataDirectory { get; }
+    relation: one_to_one
+    notes: null
+    backlog_id: null
+    last_synced_sha: null
+  - upstream: LogDirectory { get; }
+    downstream: LogDirectory { get; }
+    relation: one_to_one
+    notes: null
+    backlog_id: null
+    last_synced_sha: null
+  - upstream: ResolveTestExportPath()
+    downstream: ResolveTestExportPath()
+    relation: one_to_one
+    notes: null
+    backlog_id: null
+    last_synced_sha: null
+  - upstream: ComputeIsElevated()
+    downstream: ComputeIsElevated()
+    relation: one_to_one
+    notes: null
+    backlog_id: null
+    last_synced_sha: null
+- upstream:
+    kind: class
+    qualified: Daqifi.Desktop.Common.Loggers.AppLogger
+    file: Daqifi.Desktop.Common/Loggers/AppLogger.cs
+  downstream:
+    kind: class
+    qualified: Daqifi.Desktop.Common.Loggers.AppLogger
+    file: Daqifi.Avalonia/Daqifi.Desktop.Common/Loggers/AppLogger.cs
+  relation: one_to_one
+  last_synced_sha: bbb34ffca7bbc5226469270a8732532708a2f697
+  notes: null
+  rationale: null
+  members:
+  - upstream: _logger
+    downstream: _logger
+    relation: one_to_one
+    notes: null
+    backlog_id: null
+    last_synced_sha: null
+  - upstream: _sentryDisposable
+    downstream: _sentryDisposable
+    relation: one_to_one
+    notes: null
+    backlog_id: null
+    last_synced_sha: null
+  - upstream: IsTestMode
+    downstream: IsTestMode
+    relation: one_to_one
+    notes: null
+    backlog_id: null
+    last_synced_sha: null
+  - upstream: Instance { get; }
+    downstream: Instance { get; }
+    relation: one_to_one
+    notes: null
+    backlog_id: null
+    last_synced_sha: null
+  - upstream: IsRunningInTestEnvironment()
+    downstream: IsRunningInTestEnvironment()
+    relation: one_to_one
+    notes: null
+    backlog_id: null
+    last_synced_sha: null
+  - upstream: AppLogger()
+    downstream: AppLogger()
+    relation: one_to_one
+    notes: null
+    backlog_id: null
+    last_synced_sha: null
+  - upstream: Information(string message)
+    downstream: Information(string message)
+    relation: one_to_one
+    notes: null
+    backlog_id: null
+    last_synced_sha: null
+  - upstream: Warning(string message)
+    downstream: Warning(string message)
+    relation: one_to_one
+    notes: null
+    backlog_id: null
+    last_synced_sha: null
+  - upstream: Warning(Exception ex, string message)
+    downstream: Warning(Exception ex, string message)
+    relation: one_to_one
+    notes: null
+    backlog_id: null
+    last_synced_sha: null
+  - upstream: Error(string message)
+    downstream: Error(string message)
+    relation: one_to_one
+    notes: null
+    backlog_id: null
+    last_synced_sha: null
+  - upstream: Error(Exception ex, string message)
+    downstream: Error(Exception ex, string message)
+    relation: one_to_one
+    notes: null
+    backlog_id: null
+    last_synced_sha: null
+  - upstream: AddBreadcrumb(string category, string message, BreadcrumbLevel level
+      = BreadcrumbLevel.Info)
+    downstream: AddBreadcrumb(string category, string message, BreadcrumbLevel level
+      = BreadcrumbLevel.Info)
+    relation: one_to_one
+    notes: null
+    backlog_id: null
+    last_synced_sha: null
+  - upstream: SetDeviceContext(string model, string serialNumber, string firmwareVersion,
+      string connectionType, int activeChannels)
+    downstream: SetDeviceContext(string model, string serialNumber, string firmwareVersion,
+      string connectionType, int activeChannels)
+    relation: one_to_one
+    notes: null
+    backlog_id: null
+    last_synced_sha: null
+  - upstream: ClearDeviceContext()
+    downstream: ClearDeviceContext()
+    relation: one_to_one
+    notes: null
+    backlog_id: null
+    last_synced_sha: null
+  - upstream: Shutdown()
+    downstream: Shutdown()
+    relation: one_to_one
+    notes: null
+    backlog_id: null
+    last_synced_sha: null
+  - upstream: MapBreadcrumbLevel(BreadcrumbLevel level)
+    downstream: MapBreadcrumbLevel(BreadcrumbLevel level)
+    relation: one_to_one
+    notes: null
+    backlog_id: null
+    last_synced_sha: null
+- upstream:
+    kind: interface
+    qualified: Daqifi.Desktop.Common.Loggers.IAppLogger
+    file: Daqifi.Desktop.Common/Loggers/IAppLogger.cs
+  downstream:
+    kind: interface
+    qualified: Daqifi.Desktop.Common.Loggers.IAppLogger
+    file: Daqifi.Avalonia/Daqifi.Desktop.Common/Loggers/IAppLogger.cs
+  relation: one_to_one
+  last_synced_sha: bbb34ffca7bbc5226469270a8732532708a2f697
+  notes: null
+  rationale: null
+  members:
+  - upstream: Information(string message)
+    downstream: Information(string message)
+    relation: one_to_one
+    notes: null
+    backlog_id: null
+    last_synced_sha: null
+  - upstream: Warning(string message)
+    downstream: Warning(string message)
+    relation: one_to_one
+    notes: null
+    backlog_id: null
+    last_synced_sha: null
+  - upstream: Warning(Exception ex, string message)
+    downstream: Warning(Exception ex, string message)
+    relation: one_to_one
+    notes: null
+    backlog_id: null
+    last_synced_sha: null
+  - upstream: Error(string message)
+    downstream: Error(string message)
+    relation: one_to_one
+    notes: null
+    backlog_id: null
+    last_synced_sha: null
+  - upstream: Error(Exception ex, string message)
+    downstream: Error(Exception ex, string message)
+    relation: one_to_one
+    notes: null
+    backlog_id: null
+    last_synced_sha: null
+  - upstream: AddBreadcrumb(string category, string message, BreadcrumbLevel level
+      = BreadcrumbLevel.Info)
+    downstream: AddBreadcrumb(string category, string message, BreadcrumbLevel level
+      = BreadcrumbLevel.Info)
+    relation: one_to_one
+    notes: null
+    backlog_id: null
+    last_synced_sha: null
+  - upstream: SetDeviceContext(string model, string serialNumber, string firmwareVersion,
+      string connectionType, int activeChannels)
+    downstream: SetDeviceContext(string model, string serialNumber, string firmwareVersion,
+      string connectionType, int activeChannels)
+    relation: one_to_one
+    notes: null
+    backlog_id: null
+    last_synced_sha: null
+  - upstream: ClearDeviceContext()
+    downstream: ClearDeviceContext()
+    relation: one_to_one
+    notes: null
+    backlog_id: null
+    last_synced_sha: null
+  - upstream: Shutdown()
+    downstream: Shutdown()
+    relation: one_to_one
+    notes: null
+    backlog_id: null
+    last_synced_sha: null
+- upstream:
+    kind: enum
+    qualified: Daqifi.Desktop.Common.Loggers.BreadcrumbLevel
+    file: Daqifi.Desktop.Common/Loggers/IAppLogger.cs
+  downstream:
+    kind: enum
+    qualified: Daqifi.Desktop.Common.Loggers.BreadcrumbLevel
+    file: Daqifi.Avalonia/Daqifi.Desktop.Common/Loggers/IAppLogger.cs
+  relation: one_to_one
+  last_synced_sha: bbb34ffca7bbc5226469270a8732532708a2f697
+  notes: null
+  rationale: null
+  members:
+  - upstream: Debug
+    downstream: Debug
+    relation: one_to_one
+    notes: null
+    backlog_id: null
+    last_synced_sha: null
+  - upstream: Info
+    downstream: Info
+    relation: one_to_one
+    notes: null
+    backlog_id: null
+    last_synced_sha: null
+  - upstream: Warning
+    downstream: Warning
+    relation: one_to_one
+    notes: null
+    backlog_id: null
+    last_synced_sha: null
+  - upstream: Error
+    downstream: Error
+    relation: one_to_one
+    notes: null
+    backlog_id: null
+    last_synced_sha: null
+  - upstream: Critical
+    downstream: Critical
+    relation: one_to_one
+    notes: null
+    backlog_id: null
+    last_synced_sha: null
+- upstream:
+    kind: class
+    qualified: Daqifi.Desktop.Common.Loggers.NoOpLogger
+    file: Daqifi.Desktop.Common/Loggers/NoOpLogger.cs
+  downstream:
+    kind: class
+    qualified: Daqifi.Desktop.Common.Loggers.NoOpLogger
+    file: Daqifi.Avalonia/Daqifi.Desktop.Common/Loggers/NoOpLogger.cs
+  relation: one_to_one
+  last_synced_sha: bbb34ffca7bbc5226469270a8732532708a2f697
+  notes: null
+  rationale: null
+  members:
+  - upstream: Information(string message)
+    downstream: Information(string message)
+    relation: one_to_one
+    notes: null
+    backlog_id: null
+    last_synced_sha: null
+  - upstream: Warning(string message)
+    downstream: Warning(string message)
+    relation: one_to_one
+    notes: null
+    backlog_id: null
+    last_synced_sha: null
+  - upstream: Warning(Exception ex, string message)
+    downstream: Warning(Exception ex, string message)
+    relation: one_to_one
+    notes: null
+    backlog_id: null
+    last_synced_sha: null
+  - upstream: Error(string message)
+    downstream: Error(string message)
+    relation: one_to_one
+    notes: null
+    backlog_id: null
+    last_synced_sha: null
+  - upstream: Error(Exception ex, string message)
+    downstream: Error(Exception ex, string message)
+    relation: one_to_one
+    notes: null
+    backlog_id: null
+    last_synced_sha: null
+  - upstream: AddBreadcrumb(string category, string message, BreadcrumbLevel level
+      = BreadcrumbLevel.Info)
+    downstream: AddBreadcrumb(string category, string message, BreadcrumbLevel level
+      = BreadcrumbLevel.Info)
+    relation: one_to_one
+    notes: null
+    backlog_id: null
+    last_synced_sha: null
+  - upstream: SetDeviceContext(string model, string serialNumber, string firmwareVersion,
+      string connectionType, int activeChannels)
+    downstream: SetDeviceContext(string model, string serialNumber, string firmwareVersion,
+      string connectionType, int activeChannels)
+    relation: one_to_one
+    notes: null
+    backlog_id: null
+    last_synced_sha: null
+  - upstream: ClearDeviceContext()
+    downstream: ClearDeviceContext()
+    relation: one_to_one
+    notes: null
+    backlog_id: null
+    last_synced_sha: null
+  - upstream: Shutdown()
+    downstream: Shutdown()
+    relation: one_to_one
+    notes: null
+    backlog_id: null
+    last_synced_sha: null
 divergences: []
 backlog: []
 hal_pairs: []
 mechanisms: []
 downstream_only: []
 downstream_only_files: []
-updated_at: '2026-07-12T01:26:57.122507Z'
+updated_at: '2026-07-13T19:44:20.865846Z'
