@@ -219,7 +219,10 @@ public partial class ConnectionDialogViewModel : ObservableObject
         {
             while (!cancellationToken.IsCancellationRequested && _wifiFinder != null)
             {
-                await _wifiFinder.DiscoverAsync(cancellationToken);
+                // Task.Run for the same reason as the serial loop below: keep any
+                // synchronous-before-first-await work inside Core's finder off the UI thread.
+                var finder = _wifiFinder;
+                await Task.Run(() => finder.DiscoverAsync(cancellationToken), cancellationToken);
                 // Brief pause before next discovery cycle
                 await Task.Delay(3000, cancellationToken);
             }
@@ -245,7 +248,13 @@ public partial class ConnectionDialogViewModel : ObservableObject
         {
             while (!cancellationToken.IsCancellationRequested && _serialFinder != null)
             {
-                await _serialFinder.DiscoverAsync(cancellationToken);
+                // Task.Run: Core's SerialDeviceFinder.DiscoverAsync is async-in-name-only up to its
+                // first await — it synchronously SerialPort.Open()s every candidate port on the
+                // CALLING thread. Called bare after the Task.Delay resume, that thread is the UI
+                // thread, and a wedged CDC device (Open() stuck in native GetCommState — observed
+                // live 2026-07-13) freezes the whole app. Upstream WPF has the same latent bug.
+                var finder = _serialFinder;
+                await Task.Run(() => finder.DiscoverAsync(cancellationToken), cancellationToken);
                 // Serial discovery is quick, pause longer between scans
                 await Task.Delay(2000, cancellationToken);
             }
