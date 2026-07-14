@@ -34,8 +34,9 @@ suite: core-acquisition
 scenarios:
   - name: connect-defaults
     description: >
-      Post-connect VM parity, plus the RATE-seed fix (DIV-DS-003,
-      upstream bug daqifi-desktop#686) pinned downstream-only.
+      Post-connect VM parity, plus the RATE-seed behavior (once
+      DIV-DS-003; upstream fixed #686 in 125b33e, reconciled at the
+      2026-07-14 sync) pinned downstream-only.
     steps:
       - act: "invoke:ConnectFirstDevice"
       - observe: "vm:ConnectionState"
@@ -49,10 +50,11 @@ scenarios:
       - observe: "vm:RateSeededAfterConnect"
         side: downstream
         expect: true
-      # The raw field itself is waived for parity: upstream inherits the
-      # 0-Hz bug (filed as daqifi-desktop#686).
+      # Real parity since the 2026-07-14 sync: upstream fixed #686 in
+      # 125b33e and the port adopted its clamp semantics (DIV-DS-003
+      # retired) — both apps must now seed the same value.
       - observe: "vm:SelectedStreamingFrequency"
-        divergence: DIV-DS-003
+        compare: numeric
 
   - name: stream-and-plot
     description: >
@@ -73,10 +75,10 @@ scenarios:
 
   - name: discovery-resilience
     description: >
-      The UI thread stays responsive during discovery (DIV-DS-001; upstream
-      runs Core's sync-opening DiscoverAsync ON the UI thread — filed as
-      daqifi-desktop#685). Downstream-only: upstream fails this by design
-      until #685 lands.
+      The UI thread stays responsive during discovery (DIV-DS-001;
+      upstream fixed #685 in c4c63fa — reconciled at the 2026-07-14
+      sync). Kept downstream-only as a regression pin on OUR build; the
+      remaining DIV-DS-001 delta is the Core-1.0.0 watchdog/drain.
     steps:
       - act: "invoke:OpenConnectionDialog"
         side: downstream

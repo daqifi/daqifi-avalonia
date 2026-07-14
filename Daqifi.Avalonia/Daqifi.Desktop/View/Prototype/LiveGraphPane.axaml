@@ -227,7 +227,8 @@
                         <TextBlock FontFamily="Consolas"
                                    FontSize="11"
                                    Foreground="{DynamicResource TextSecondary}"
-                                   VerticalAlignment="Center">
+                                   VerticalAlignment="Center"
+                                   AutomationProperties.AutomationId="StreamRateText">
                             <Run Text="{Binding SelectedStreamingFrequency}"/><Run Text=" Hz"/>
                         </TextBlock>
                     </StackPanel>

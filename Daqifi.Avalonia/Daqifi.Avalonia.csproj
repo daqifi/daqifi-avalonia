@@ -19,7 +19,6 @@
 
 	<ItemGroup>
 		<!-- Mirrors upstream Daqifi.Desktop.csproj's Compile Remove list — legacy files kept in-tree but never compiled -->
-		<Compile Remove="Daqifi.Desktop\Loggers\CsvLogger.cs" />
 		<Compile Remove="Daqifi.Desktop\ViewModels\PlottingViewModel.cs" />
 		<Compile Remove="Daqifi.Desktop\ViewModels\PlotViewModel.cs" />
 		<Compile Remove="Daqifi.Desktop\ViewModels\ViewModelLocator.cs" />

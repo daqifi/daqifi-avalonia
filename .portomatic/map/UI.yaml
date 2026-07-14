@@ -2,7 +2,7 @@ schema_version: 1
 shard: UI
 upstream_root: Daqifi.Desktop
 downstream_root: Daqifi.Avalonia
-last_synced_upstream_sha: bbb34ffca7bbc5226469270a8732532708a2f697
+last_synced_upstream_sha: c4c63faca6db7e036a5739a1ae3829a045233617
 files:
 - upstream: Daqifi.Desktop/App.xaml.cs
   downstream: Daqifi.Avalonia/Daqifi.Desktop/App.cs
@@ -412,20 +412,8 @@ files:
   notes: ' (scaffolded)'
   rationale: null
   last_synced_sha: null
-- upstream: Daqifi.Desktop/Helpers/VersionHelper.cs
-  downstream: Daqifi.Avalonia/Daqifi.Desktop/Helpers/VersionHelper.cs
-  relation: subset
-  notes: ' (scaffolded)'
-  rationale: null
-  last_synced_sha: null
 - upstream: Daqifi.Desktop/Loggers/AppLoggerLoggerProvider.cs
   downstream: Daqifi.Avalonia/Daqifi.Desktop/Loggers/AppLoggerLoggerProvider.cs
-  relation: subset
-  notes: ' (scaffolded)'
-  rationale: null
-  last_synced_sha: null
-- upstream: Daqifi.Desktop/Loggers/CsvLogger.cs
-  downstream: Daqifi.Avalonia/Daqifi.Desktop/Loggers/CsvLogger.cs
   relation: subset
   notes: ' (scaffolded)'
   rationale: null
@@ -8566,80 +8554,6 @@ symbols:
     backlog_id: null
     last_synced_sha: null
 - upstream:
-    kind: record
-    qualified: Daqifi.Desktop.Helpers.VersionHelper.VersionInfo
-    file: Daqifi.Desktop/Helpers/VersionHelper.cs
-  downstream:
-    kind: record
-    qualified: Daqifi.Desktop.Helpers.VersionHelper.VersionInfo
-    file: Daqifi.Avalonia/Daqifi.Desktop/Helpers/VersionHelper.cs
-  relation: one_to_one
-  last_synced_sha: bbb34ffca7bbc5226469270a8732532708a2f697
-  notes: null
-  rationale: null
-  members:
-  - upstream: IsPreRelease { get; }
-    downstream: IsPreRelease { get; }
-    relation: one_to_one
-    notes: null
-    backlog_id: null
-    last_synced_sha: null
-  - upstream: CompareTo(VersionInfo other)
-    downstream: CompareTo(VersionInfo other)
-    relation: one_to_one
-    notes: null
-    backlog_id: null
-    last_synced_sha: null
-  - upstream: GetPrecedenceRank(string? label)
-    downstream: GetPrecedenceRank(string? label)
-    relation: one_to_one
-    notes: null
-    backlog_id: null
-    last_synced_sha: null
-  - upstream: ToString()
-    downstream: ToString()
-    relation: one_to_one
-    notes: null
-    backlog_id: null
-    last_synced_sha: null
-- upstream:
-    kind: class
-    qualified: Daqifi.Desktop.Helpers.VersionHelper
-    file: Daqifi.Desktop/Helpers/VersionHelper.cs
-  downstream:
-    kind: class
-    qualified: Daqifi.Desktop.Helpers.VersionHelper
-    file: Daqifi.Avalonia/Daqifi.Desktop/Helpers/VersionHelper.cs
-  relation: one_to_one
-  last_synced_sha: bbb34ffca7bbc5226469270a8732532708a2f697
-  notes: null
-  rationale: null
-  members:
-  - upstream: FullVersionRegex
-    downstream: FullVersionRegex
-    relation: one_to_one
-    notes: null
-    backlog_id: null
-    last_synced_sha: null
-  - upstream: TryParseVersionInfo(string? input, out VersionInfo version)
-    downstream: TryParseVersionInfo(string? input, out VersionInfo version)
-    relation: one_to_one
-    notes: null
-    backlog_id: null
-    last_synced_sha: null
-  - upstream: Compare(string? left, string? right)
-    downstream: Compare(string? left, string? right)
-    relation: one_to_one
-    notes: null
-    backlog_id: null
-    last_synced_sha: null
-  - upstream: NormalizeVersionString(string? input)
-    downstream: NormalizeVersionString(string? input)
-    relation: one_to_one
-    notes: null
-    backlog_id: null
-    last_synced_sha: null
-- upstream:
     kind: class
     qualified: Daqifi.Desktop.Loggers.AppLoggerLoggerProvider.AppLoggerBridge.NullScope
     file: Daqifi.Desktop/Loggers/AppLoggerLoggerProvider.cs
@@ -8756,61 +8670,6 @@ symbols:
     last_synced_sha: null
   - upstream: Dispose()
     downstream: Dispose()
-    relation: one_to_one
-    notes: null
-    backlog_id: null
-    last_synced_sha: null
-- upstream:
-    kind: class
-    qualified: Daqifi.Desktop.Logger.CsvLogger
-    file: Daqifi.Desktop/Loggers/CsvLogger.cs
-  downstream:
-    kind: class
-    qualified: Daqifi.Desktop.Logger.CsvLogger
-    file: Daqifi.Avalonia/Daqifi.Desktop/Loggers/CsvLogger.cs
-  relation: one_to_one
-  last_synced_sha: bbb34ffca7bbc5226469270a8732532708a2f697
-  notes: null
-  rationale: null
-  members:
-  - upstream: _filename
-    downstream: _filename
-    relation: one_to_one
-    notes: null
-    backlog_id: null
-    last_synced_sha: null
-  - upstream: _loggedChannels
-    downstream: _loggedChannels
-    relation: one_to_one
-    notes: null
-    backlog_id: null
-    last_synced_sha: null
-  - upstream: LoggedChannels { get; set; }
-    downstream: LoggedChannels { get; set; }
-    relation: one_to_one
-    notes: null
-    backlog_id: null
-    last_synced_sha: null
-  - upstream: Filename { get; set; }
-    downstream: Filename { get; set; }
-    relation: one_to_one
-    notes: null
-    backlog_id: null
-    last_synced_sha: null
-  - upstream: CsvLogger(string filename)
-    downstream: null
-    relation: not_yet_ported
-    notes: null
-    backlog_id: null
-    last_synced_sha: null
-  - upstream: Log(AbstractChannel channel)
-    downstream: Log(AbstractChannel channel)
-    relation: one_to_one
-    notes: null
-    backlog_id: null
-    last_synced_sha: null
-  - upstream: AddChannelSeries(IChannel newChannel)
-    downstream: AddChannelSeries(IChannel newChannel)
     relation: one_to_one
     notes: null
     backlog_id: null
@@ -19227,12 +19086,15 @@ divergences:
   upstream_symbol: Daqifi.Desktop.ViewModels.ConnectionDialogViewModel
   downstream_symbol: Daqifi.Desktop.ViewModels.ConnectionDialogViewModel
   kind: behavioral
-  rationale: "Bench-QA hardening (commits ccdc0b6/b681d2e/a927fa0/350c507): discovery\
-    \ loops run off the UI thread via Task.Run (upstream runs Core's sync-opening\
-    \ DiscoverAsync ON the UI thread \u2014 filed upstream as daqifi-desktop#685),\
-    \ plus a 10s serial-sweep watchdog and a bounded stop-path sweep drain to survive\
-    \ wedged COM ports on Daqifi.Core 1.0.0. Remove the watchdog once the app consumes\
-    \ a Core release containing daqifi-core#295.\n"
+  rationale: 'Bench-QA hardening beyond upstream: a 10s serial-sweep watchdog and
+    a bounded stop-path sweep drain survive wedged COM ports on Daqifi.Core 1.0.0
+    (commits ccdc0b6/a927fa0/350c507). The off-UI-thread Task.Run discovery AND the
+    generation-lifetime guard (ContinueWith clears the tracked task only on true completion;
+    async stops leave it set and skip finder/CTS disposal on timeout) are upstream
+    parity as of c4c63fa (#689, reconciled at the 2026-07-14 sync). Remove the watchdog+drain
+    once the app consumes a Core release containing daqifi-core#295.
+
+    '
   accepted_at: '2026-07-13'
 - id: DIV-DS-002
   upstream_path: Daqifi.Desktop/Loggers/PlotLogger.cs
@@ -19244,18 +19106,6 @@ divergences:
     \ \u2014 Avalonia renders on demand and a below-Normal timer risks never pumping\
     \ on a static UI; WPF's composition loop has no such hazard. Temporary plot-tick\
     \ QA breadcrumbs also live here until plotting is trusted (remove-when noted in-file).\n"
-  accepted_at: '2026-07-13'
-- id: DIV-DS-003
-  upstream_path: Daqifi.Desktop/ViewModels/DaqifiViewModel.cs
-  downstream_path: Daqifi.Avalonia/Daqifi.Desktop/ViewModels/DaqifiViewModel.cs
-  upstream_symbol: Daqifi.Desktop.ViewModels.DaqifiViewModel
-  downstream_symbol: Daqifi.Desktop.ViewModels.DaqifiViewModel
-  kind: behavioral
-  rationale: "UpdateConnectedDeviceUI seeds SelectedStreamingFrequency from the connected\
-    \ device (commit a0a0e80) \u2014 upstream never seeds the VM field, so the RATE\
-    \ chip shows 0 Hz until the user touches the slider (inherited bug, filed upstream\
-    \ as daqifi-desktop#686). Keep the seed even after upstream fixes it their way;\
-    \ reconcile at that sync.\n"
   accepted_at: '2026-07-13'
 - id: DIV-DS-004
   upstream_path: Daqifi.Desktop/View/DeviceLogsView.xaml
