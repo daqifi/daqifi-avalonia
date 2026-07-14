@@ -139,6 +139,61 @@ divergences:
   rationale: token match tie (divergent) score 0.60
   upstream_path: null
   upstream_symbol: Daqifi.Desktop.Services.WpfMessageBoxService
+- accepted_at: '2026-07-13'
+  downstream_path: Daqifi.Avalonia/Daqifi.Desktop/ViewModels/ConnectionDialogViewModel.cs
+  downstream_symbol: Daqifi.Desktop.ViewModels.ConnectionDialogViewModel
+  id: DIV-DS-001
+  kind: behavioral
+  rationale: 'Bench-QA hardening (commits ccdc0b6/b681d2e/a927fa0/350c507): discovery
+    loops run off the UI thread via Task.Run (upstream runs Core''s sync-opening
+    DiscoverAsync ON the UI thread — filed upstream as daqifi-desktop#685), plus a
+    10s serial-sweep watchdog and a bounded stop-path sweep drain to survive wedged
+    COM ports on Daqifi.Core 1.0.0. Remove the watchdog once the app consumes a Core
+    release containing daqifi-core#295.
+
+    '
+  upstream_path: Daqifi.Desktop/ViewModels/ConnectionDialogViewModel.cs
+  upstream_symbol: Daqifi.Desktop.ViewModels.ConnectionDialogViewModel
+- accepted_at: '2026-07-13'
+  downstream_path: Daqifi.Avalonia/Daqifi.Desktop/Loggers/PlotLogger.cs
+  downstream_symbol: Daqifi.Desktop.Loggers.PlotLogger
+  id: DIV-DS-002
+  kind: behavioral
+  rationale: 'Render timer runs at DispatcherPriority.Normal, not Render (commit a927fa0)
+    — Avalonia renders on demand and a below-Normal timer risks never pumping on a
+    static UI; WPF''s composition loop has no such hazard. Temporary plot-tick QA
+    breadcrumbs also live here until plotting is trusted (remove-when noted in-file).
+
+    '
+  upstream_path: Daqifi.Desktop/Loggers/PlotLogger.cs
+  upstream_symbol: Daqifi.Desktop.Loggers.PlotLogger
+- accepted_at: '2026-07-13'
+  downstream_path: Daqifi.Avalonia/Daqifi.Desktop/ViewModels/DaqifiViewModel.cs
+  downstream_symbol: Daqifi.Desktop.ViewModels.DaqifiViewModel
+  id: DIV-DS-003
+  kind: behavioral
+  rationale: 'UpdateConnectedDeviceUI seeds SelectedStreamingFrequency from the connected
+    device (commit a0a0e80) — upstream never seeds the VM field, so the RATE chip
+    shows 0 Hz until the user touches the slider (inherited bug, filed upstream as
+    daqifi-desktop#686). Keep the seed even after upstream fixes it their way; reconcile
+    at that sync.
+
+    '
+  upstream_path: Daqifi.Desktop/ViewModels/DaqifiViewModel.cs
+  upstream_symbol: Daqifi.Desktop.ViewModels.DaqifiViewModel
+- accepted_at: '2026-07-13'
+  downstream_path: Daqifi.Avalonia/Daqifi.Desktop/View/DeviceLogsView.axaml
+  downstream_symbol: null
+  id: DIV-DS-004
+  kind: api_shape
+  rationale: 'Per-row SD IMPORT button binds Command via $parent[DataGrid].DataContext
+    (commit 5d42863) — Avalonia ElementName bindings cannot cross the DataGrid
+    cell-template name scope, so upstream''s ElementName=DeviceFilesList form is
+    silently dead. Same name-scope rule ProfilesPane hit; catalog idiom.
+
+    '
+  upstream_path: Daqifi.Desktop/View/DeviceLogsView.xaml
+  upstream_symbol: null
 downstream_only:
 - added_at: null
   downstream:
@@ -300,8 +355,16 @@ downstream_only:
   rationale: portomatic scaffold shared MVVM base (ObservableObject) emitted for scaffolded
     ViewModels; no upstream parent.
 downstream_only_files:
-- added_at: null
+- added_at: '2026-07-13'
+  downstream: third_party/oxyplot-avalonia/
+  notes: retire-when + local mods documented in third_party/oxyplot-avalonia/VENDORED.md
+  rationale: 'Vendored official OxyPlot.Avalonia source pinned @ 9913a97 (commit caac2b2):
+    the NuGet release (2.1.0) targets Avalonia 0.10 and crashes at first PlotView
+    construction under Avalonia 11. Directory sanction — one row covers the tree.'
+- added_at: '2026-07-13'
   downstream: Daqifi.Avalonia/Program.cs
+  notes: null
+  rationale: Avalonia entry point; no upstream counterpart (WPF uses generated Main).
   notes: null
   rationale: Avalonia entry point; no upstream counterpart (WPF uses generated Main).
 - added_at: null
