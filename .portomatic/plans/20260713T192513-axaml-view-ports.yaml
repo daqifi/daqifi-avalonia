@@ -23,7 +23,7 @@ steps:
   assigned_to: patch-author
   status: done
   classification: null
-  shard: domain
+  shard: UI
   commit_sha: null
   file: null
   target_symbol: null
@@ -55,7 +55,7 @@ steps:
   assigned_to: patch-author
   status: done
   classification: null
-  shard: domain
+  shard: UI
   commit_sha: null
   file: null
   target_symbol: null
@@ -86,7 +86,7 @@ steps:
   assigned_to: patch-author
   status: done
   classification: null
-  shard: domain
+  shard: UI
   commit_sha: null
   file: null
   target_symbol: null
@@ -118,7 +118,7 @@ steps:
   assigned_to: patch-author
   status: done
   classification: null
-  shard: domain
+  shard: UI
   commit_sha: null
   file: null
   target_symbol: null
@@ -149,7 +149,7 @@ steps:
   assigned_to: verifier
   status: done
   classification: null
-  shard: domain
+  shard: UI
   commit_sha: null
   file: null
   target_symbol: null

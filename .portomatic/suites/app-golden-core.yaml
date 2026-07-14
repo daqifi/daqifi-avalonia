@@ -1,0 +1,98 @@
+# First app-golden suite for the daqifi-desktop (WPF) ↔ daqifi-avalonia port.
+#
+# Two jobs:
+#   1. Cross-app PARITY on the core acquisition path (discover → connect →
+#      stream → plot) — `side: both` steps compare the two apps.
+#   2. Pin the bench-QA fixes as DOWNSTREAM-ONLY expectations (`side:
+#      downstream` + `expect:`). Parity goldens can't catch inherited bugs:
+#      where upstream is wrong the same way (desktop#685/#686), a parity
+#      compare PASSES on the shared bug. Each pin cites its divergence
+#      record (DIV-DS-00x in map/UI.yaml).
+#
+# Driver contract (to be implemented by the real app drivers — FlaUI for
+# WPF, headless/Appium for Avalonia; the fake driver serves until then):
+#   act  invoke:ConnectFirstDevice   discover, then connect the first device
+#                                    (sim or bench rig).
+#   act  invoke:StartStreaming /     toggle streaming on the connected device.
+#        invoke:StopStreaming
+#   vm:ConnectionState               "connected" | "disconnected".
+#   vm:ConnectedDeviceCount          number of connected devices.
+#   vm:RateSeededAfterConnect        true iff SelectedStreamingFrequency > 0
+#                                    immediately after connect (no user input).
+#   vm:SelectedStreamingFrequency    the VM RATE field, Hz.
+#   vm:PlotSampleCountIncreasing     true iff plotted sample count strictly
+#                                    increases over a 2 s observation window
+#                                    while streaming.
+#   vm:UiResponsiveDuringDiscovery   true iff a UI-thread no-op dispatched
+#                                    during an active discovery sweep completes
+#                                    within 500 ms.
+#   ui:DeviceLogsView.SdImportCommandBound
+#                                    true iff the per-row SD IMPORT button in
+#                                    the device-logs grid resolves a non-null
+#                                    Command through its binding.
+suite: core-acquisition
+scenarios:
+  - name: connect-defaults
+    description: >
+      Post-connect VM parity, plus the RATE-seed fix (DIV-DS-003,
+      upstream bug daqifi-desktop#686) pinned downstream-only.
+    steps:
+      - act: "invoke:ConnectFirstDevice"
+      - observe: "vm:ConnectionState"
+        expect: "connected"
+      - observe: "vm:ConnectedDeviceCount"
+        expect: 1
+        compare: numeric
+      # DIV-DS-003 pin: the VM seeds SelectedStreamingFrequency from the
+      # connected device. Upstream shows 0 Hz until the slider is touched —
+      # a parity compare would pass on that shared wrong value.
+      - observe: "vm:RateSeededAfterConnect"
+        side: downstream
+        expect: true
+      # The raw field itself is waived for parity: upstream inherits the
+      # 0-Hz bug (filed as daqifi-desktop#686).
+      - observe: "vm:SelectedStreamingFrequency"
+        divergence: DIV-DS-003
+
+  - name: stream-and-plot
+    description: >
+      Streaming reaches the plot on both apps; the Normal-priority render
+      timer (DIV-DS-002) is pinned downstream-only — an on-demand renderer
+      with a below-Normal timer can stall on a static UI.
+    steps:
+      - act: "invoke:ConnectFirstDevice"
+      - act: "invoke:StartStreaming"
+      - observe: "vm:ConnectionState"
+        expect: "connected"
+      # DIV-DS-002 pin: samples must keep flowing into the plot without
+      # user interaction forcing render pumps.
+      - observe: "vm:PlotSampleCountIncreasing"
+        side: downstream
+        expect: true
+      - act: "invoke:StopStreaming"
+
+  - name: discovery-resilience
+    description: >
+      The UI thread stays responsive during discovery (DIV-DS-001; upstream
+      runs Core's sync-opening DiscoverAsync ON the UI thread — filed as
+      daqifi-desktop#685). Downstream-only: upstream fails this by design
+      until #685 lands.
+    steps:
+      - act: "invoke:OpenConnectionDialog"
+        side: downstream
+      - observe: "vm:UiResponsiveDuringDiscovery"
+        side: downstream
+        expect: true
+
+  - name: device-logs-sd-import
+    description: >
+      The per-row SD IMPORT button is actually wired (DIV-DS-004): Avalonia
+      ElementName bindings die silently across the DataGrid cell-template
+      name scope, so the port binds via $parent[DataGrid].DataContext. The
+      pin asserts the command RESOLVES — the exact failure mode was a
+      dead button with no error anywhere.
+    steps:
+      - observe: "ui:DeviceLogsView.SdImportCommandBound"
+        side: downstream
+        tier: ui
+        expect: true
