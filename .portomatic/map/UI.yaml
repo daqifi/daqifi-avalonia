@@ -1048,6 +1048,20 @@ files:
   notes: null
   rationale: null
   last_synced_sha: bbb34ffca7bbc5226469270a8732532708a2f697
+- upstream: Daqifi.Desktop/Loggers/CsvLogger.cs
+  downstream: Daqifi.Avalonia/Daqifi.Desktop/Loggers/CsvLogger.cs
+  relation: dropped
+  notes: null
+  rationale: 'Dead code deleted on BOTH sides: upstream 4c060cc (superseded by Core
+    CsvExporter), port mirrored at the 2026-07-14 sync (6c0827f).'
+  last_synced_sha: c4c63faca6db7e036a5739a1ae3829a045233617
+- upstream: Daqifi.Desktop/Helpers/VersionHelper.cs
+  downstream: Daqifi.Avalonia/Daqifi.Desktop/Helpers/VersionHelper.cs
+  relation: dropped
+  notes: null
+  rationale: 'Deleted on BOTH sides: upstream cf20bff replaced it with Core''s FirmwareVersion,
+    port mirrored at the 2026-07-14 sync (6c0827f).'
+  last_synced_sha: c4c63faca6db7e036a5739a1ae3829a045233617
 symbols:
 - upstream:
     kind: class
