@@ -5,9 +5,12 @@ namespace Daqifi.Avalonia.Views;
 
 public partial class MobileShellView : UserControl
 {
+    private readonly MobileShellViewModel _viewModel = new();
+
     public MobileShellView()
     {
         InitializeComponent();
+        DataContext = _viewModel;
         var version = Assembly.GetExecutingAssembly()
             .GetCustomAttribute<AssemblyInformationalVersionAttribute>()
             ?.InformationalVersion ?? "dev";
@@ -16,5 +19,6 @@ public partial class MobileShellView : UserControl
         var sha = plus >= 0 && version.Length > plus + 8
             ? $" ({version.Substring(plus + 1, 7)})" : "";
         VersionText.Text = $"v{(plus >= 0 ? version[..plus] : version)}{sha}";
+        DetachedFromVisualTree += (_, _) => _viewModel.Dispose();
     }
 }

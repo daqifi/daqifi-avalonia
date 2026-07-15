@@ -1,21 +1,76 @@
 <UserControl xmlns="https://github.com/avaloniaui"
              xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml"
-             x:Class="Daqifi.Avalonia.Views.MobileShellView">
-	<!-- Mobile shell (#221 five-platform goal): first boot target for the
-	     Android/iOS heads. The desktop absorption host (DI, SQLite paths,
-	     serial/WMI transports) is desktop-only, so mobile boots this shell
-	     until the mobile UI ports — WiFi/TCP transports only (DIV-UI-003). -->
-	<Border Background="#0B3C5D">
-		<StackPanel VerticalAlignment="Center" HorizontalAlignment="Center" Spacing="12">
-			<TextBlock Text="DAQiFi"
-			           FontSize="42" FontWeight="Bold"
-			           Foreground="White" HorizontalAlignment="Center" />
-			<TextBlock x:Name="VersionText"
-			           FontSize="16" Foreground="#9FB8CC"
-			           HorizontalAlignment="Center" />
-			<TextBlock Text="Mobile head online — WiFi device UI ports next."
-			           FontSize="14" Foreground="#9FB8CC"
-			           HorizontalAlignment="Center" />
-		</StackPanel>
+             xmlns:views="clr-namespace:Daqifi.Avalonia.Views"
+             x:Class="Daqifi.Avalonia.Views.MobileShellView"
+             x:DataType="views:MobileShellViewModel">
+	<!-- Mobile shell (#221 five-platform goal): WiFi discovery + connect on
+	     the SAME ported stack the desktop uses. WiFi/TCP only (DIV-UI-003). -->
+	<Border Background="#0B3C5D" Padding="20,48,20,24">
+		<DockPanel>
+			<StackPanel DockPanel.Dock="Top" Spacing="6">
+				<TextBlock Text="DAQiFi"
+				           FontSize="34" FontWeight="Bold"
+				           Foreground="White" HorizontalAlignment="Center" />
+				<TextBlock x:Name="VersionText"
+				           FontSize="13" Foreground="#9FB8CC"
+				           HorizontalAlignment="Center" />
+			</StackPanel>
+
+			<Button DockPanel.Dock="Top"
+			        Command="{Binding ScanCommand}"
+			        HorizontalAlignment="Stretch"
+			        HorizontalContentAlignment="Center"
+			        Margin="0,20,0,10" Padding="0,14"
+			        FontSize="17" FontWeight="SemiBold"
+			        Foreground="White" Background="#1D6FA5"
+			        CornerRadius="10">
+				<Panel>
+					<TextBlock Text="Scan for devices" IsVisible="{Binding !IsScanning}" />
+					<TextBlock Text="Stop scanning" IsVisible="{Binding IsScanning}" />
+				</Panel>
+			</Button>
+
+			<StackPanel DockPanel.Dock="Bottom" Spacing="8" Margin="0,12,0,0">
+				<TextBlock Text="{Binding Status}"
+				           TextWrapping="Wrap"
+				           FontSize="14" Foreground="#C9DAE8" />
+				<!-- Manual IP: AP client-isolation drops broadcast discovery
+				     on many networks; connect directly like the desktop app. -->
+				<TextBlock Text="Or connect by IP (data port 9760):"
+				           FontSize="12" Foreground="#7F9BB0" />
+				<Grid ColumnDefinitions="*,90,Auto" ColumnSpacing="8">
+					<TextBox Grid.Column="0" Text="{Binding ManualIp}"
+					         Watermark="192.168.1.234" FontSize="15" />
+					<TextBox Grid.Column="1" Text="{Binding ManualPort}"
+					         FontSize="15" />
+					<Button Grid.Column="2" Content="Connect"
+					        Command="{Binding ManualConnectCommand}"
+					        Foreground="White" Background="#1D6FA5"
+					        Padding="14,8" CornerRadius="8" />
+				</Grid>
+			</StackPanel>
+
+			<ScrollViewer>
+				<ItemsControl ItemsSource="{Binding Devices}">
+					<ItemsControl.ItemTemplate>
+						<DataTemplate x:DataType="views:MobileDeviceItem">
+							<Button Command="{Binding ConnectCommand}"
+							        HorizontalAlignment="Stretch"
+							        HorizontalContentAlignment="Stretch"
+							        Margin="0,6" Padding="16,12"
+							        Background="#12507B" CornerRadius="12">
+								<StackPanel Spacing="4">
+									<TextBlock Text="{Binding Name}"
+									           FontSize="17" FontWeight="SemiBold"
+									           Foreground="White" />
+									<TextBlock Text="{Binding Detail}"
+									           FontSize="13" Foreground="#9FB8CC" />
+								</StackPanel>
+							</Button>
+						</DataTemplate>
+					</ItemsControl.ItemTemplate>
+				</ItemsControl>
+			</ScrollViewer>
+		</DockPanel>
 	</Border>
 </UserControl>
