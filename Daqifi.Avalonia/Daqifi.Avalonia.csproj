@@ -10,6 +10,10 @@
 		<AllowUnsafeBlocks>true</AllowUnsafeBlocks>
 		<ApplicationManifest>app.manifest</ApplicationManifest>
 		<AvaloniaUseCompiledBindingsByDefault>false</AvaloniaUseCompiledBindingsByDefault>
+		<!-- Restore-graph breadth only (NETSDK1047): the Android head consumes
+		     this project per-RID, so its RIDs must exist in our assets targets.
+		     Desktop publish targets still pass -r explicitly. -->
+		<RuntimeIdentifiers>win-x64;linux-x64;osx-x64;osx-arm64;android-arm64;android-x64</RuntimeIdentifiers>
 	</PropertyGroup>
 
 	<ItemGroup>

@@ -1,3 +1,4 @@
 <Solution>
   <Project Path="Daqifi.Avalonia/Daqifi.Avalonia.csproj" />
+  <Project Path="Daqifi.Avalonia.Android/Daqifi.Avalonia.Android.csproj" />
 </Solution>

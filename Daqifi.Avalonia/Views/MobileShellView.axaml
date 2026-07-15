@@ -1,0 +1,21 @@
+<UserControl xmlns="https://github.com/avaloniaui"
+             xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml"
+             x:Class="Daqifi.Avalonia.Views.MobileShellView">
+	<!-- Mobile shell (#221 five-platform goal): first boot target for the
+	     Android/iOS heads. The desktop absorption host (DI, SQLite paths,
+	     serial/WMI transports) is desktop-only, so mobile boots this shell
+	     until the mobile UI ports — WiFi/TCP transports only (DIV-UI-003). -->
+	<Border Background="#0B3C5D">
+		<StackPanel VerticalAlignment="Center" HorizontalAlignment="Center" Spacing="12">
+			<TextBlock Text="DAQiFi"
+			           FontSize="42" FontWeight="Bold"
+			           Foreground="White" HorizontalAlignment="Center" />
+			<TextBlock x:Name="VersionText"
+			           FontSize="16" Foreground="#9FB8CC"
+			           HorizontalAlignment="Center" />
+			<TextBlock Text="Mobile head online — WiFi device UI ports next."
+			           FontSize="14" Foreground="#9FB8CC"
+			           HorizontalAlignment="Center" />
+		</StackPanel>
+	</Border>
+</UserControl>

@@ -1,0 +1,11 @@
+<?xml version="1.0" encoding="utf-8"?>
+<resources>
+	<!-- AvaloniaMainActivity extends AppCompatActivity — the theme must be
+	     an AppCompat descendant (a platform Material parent crashes at
+	     launch with IllegalStateException). -->
+	<style name="MyTheme.NoActionBar" parent="Theme.AppCompat.DayNight.NoActionBar">
+		<item name="android:windowNoTitle">true</item>
+		<item name="android:windowActionBar">false</item>
+		<item name="android:statusBarColor">#0B3C5D</item>
+	</style>
+</resources>

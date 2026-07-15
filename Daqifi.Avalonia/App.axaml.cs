@@ -26,6 +26,15 @@ public partial class App : Application
             Daqifi.Desktop.App.Initialize(desktop);
             desktop.Exit += (_, _) => Daqifi.Desktop.App.OnExit();
         }
+        else if (ApplicationLifetime is ISingleViewApplicationLifetime singleView)
+        {
+            // Mobile heads (Android/iOS, the five-platform goal) boot the
+            // shell view — the desktop absorption host is desktop-only
+            // (serial/WMI transports, SQLite app-data paths); mobile is
+            // WiFi/TCP per the recorded DIV-UI-003 divergence and its UI
+            // ports incrementally.
+            singleView.MainView = new Views.MobileShellView();
+        }
 
         base.OnFrameworkInitializationCompleted();
     }

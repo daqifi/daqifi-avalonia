@@ -14,3 +14,4 @@ artifacts/
 
 # agent tooling (regenerate via portomatic's install-skill-pack.sh)
 .claude/
+publish*/
