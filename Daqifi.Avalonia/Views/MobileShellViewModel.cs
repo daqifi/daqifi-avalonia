@@ -41,10 +41,20 @@ public partial class MobileShellViewModel : ObservableObject, IDisposable
     private bool _isScanning;
 
     [ObservableProperty]
+    [NotifyPropertyChangedFor(nameof(ShowChannelSelector))]
+    [NotifyPropertyChangedFor(nameof(ShowDeviceList))]
     private bool _isConnected;
 
     [ObservableProperty]
+    [NotifyPropertyChangedFor(nameof(ShowChannelSelector))]
+    [NotifyPropertyChangedFor(nameof(ShowDeviceList))]
     private bool _isStreaming;
+
+    // Middle-pane visibility (mutually exclusive by state): scan-result device
+    // list before connecting, channel + rate selector once connected, live plot
+    // while streaming.
+    public bool ShowDeviceList => !IsConnected && !IsStreaming;
+    public bool ShowChannelSelector => IsConnected && !IsStreaming;
 
     // Rolling per-channel buffers the LivePlot renders. Palette is the
     // desktop channel colors, cycled.
@@ -63,6 +73,29 @@ public partial class MobileShellViewModel : ObservableObject, IDisposable
         0xFF4FC3F7, 0xFFFFB74D, 0xFF81C784, 0xFFE57373,
         0xFFBA68C8, 0xFF4DD0E1, 0xFFFFD54F, 0xFFA1887F,
     ];
+
+    // Per-channel stream selection — populated on connect from the device's
+    // analog input channels; the user picks which to stream (all on by default).
+    public ObservableCollection<ChannelToggle> Channels { get; } = [];
+
+    // Shared sample rate (Hz) for every enabled channel; DAQiFi streams all
+    // enabled channels at one rate. 100 Hz is the desktop default.
+    public int[] AvailableRates { get; } = [10, 50, 100, 200, 500, 1000];
+
+    [ObservableProperty]
+    private int _sampleRate = 100;
+
+    [RelayCommand]
+    private void SelectAllChannels()
+    {
+        foreach (var c in Channels) { c.IsSelected = true; }
+    }
+
+    [RelayCommand]
+    private void SelectNoChannels()
+    {
+        foreach (var c in Channels) { c.IsSelected = false; }
+    }
 
     [RelayCommand]
     private void Scan()
@@ -157,12 +190,21 @@ public partial class MobileShellViewModel : ObservableObject, IDisposable
             if (ok)
             {
                 _connected = device;
+                // Populate the per-channel selection list (all on by default)
+                // before flipping IsConnected so the selector shows with data.
+                var analog = device.DataChannels
+                    .Where(c => c.Type == ChannelType.Analog && !c.IsOutput)
+                    .OrderBy(c => c.Index)
+                    .ToList();
+                Channels.Clear();
+                foreach (var ch in analog)
+                {
+                    Channels.Add(new ChannelToggle(ch.Name, ch.Index));
+                }
                 IsConnected = true;
-                var analog = device.DataChannels.Count(
-                    c => c.Type == ChannelType.Analog && !c.IsOutput);
                 Status = $"Connected: {device.Name}  •  SN {device.Metadata.SerialNumber ?? "?"}"
                        + $"  •  FW {device.Metadata.FirmwareVersion ?? "?"}"
-                       + $"  •  {analog} analog ch";
+                       + $"  •  {analog.Count} analog ch — pick channels + rate, then stream";
             }
             else
             {
@@ -182,15 +224,18 @@ public partial class MobileShellViewModel : ObservableObject, IDisposable
         if (device == null) { return; }
         if (IsStreaming) { StopStream(); return; }
 
-        // Enable every analog INPUT channel on the device (AddChannel sends
-        // the EnableAdcChannels SCPI + marks it active), wire a rolling
-        // series per channel, set the rate, and start streaming.
+        // Enable the analog INPUT channels the user selected (AddChannel sends
+        // the EnableAdcChannels SCPI + marks it active), wire a rolling series
+        // per channel, set the rate, and start streaming. Look each selected
+        // name up in the CURRENT DataChannels (immune to instance churn).
+        var selected = Channels.Where(c => c.IsSelected).Select(c => c.Name).ToHashSet();
         var analog = device.DataChannels
-            .Where(c => c.Type == ChannelType.Analog && !c.IsOutput)
+            .Where(c => c.Type == ChannelType.Analog && !c.IsOutput && selected.Contains(c.Name))
+            .OrderBy(c => c.Index)
             .ToList();
         if (analog.Count == 0)
         {
-            Status = "No analog input channels to stream.";
+            Status = "Select at least one channel to stream.";
             return;
         }
 
@@ -219,7 +264,7 @@ public partial class MobileShellViewModel : ObservableObject, IDisposable
 
         try
         {
-            device.StreamingFrequency = 100;
+            device.StreamingFrequency = SampleRate;
             device.InitializeStreaming();
         }
         catch (Exception ex)
@@ -230,7 +275,7 @@ public partial class MobileShellViewModel : ObservableObject, IDisposable
         }
         IsStreaming = device.IsStreaming;
         Status = IsStreaming
-            ? $"Streaming {analog.Count} analog channel(s) @ 100 Hz"
+            ? $"Streaming {analog.Count} channel(s) @ {SampleRate} Hz"
             : "Device did not enter streaming.";
     }
 
@@ -307,4 +352,24 @@ public partial class MobileDeviceItem : ObservableObject
 
     [RelayCommand]
     private Task Connect() => _owner.ConnectAsync(this);
+}
+
+/// <summary>
+/// One selectable analog input channel in the pre-stream picker. Bound to a
+/// checkbox; <see cref="MobileShellViewModel.StreamToggle"/> enables only the
+/// selected names. Keyed by stable name ("AI0".."AI15"), not instance.
+/// </summary>
+public partial class ChannelToggle : ObservableObject
+{
+    public ChannelToggle(string name, int index)
+    {
+        Name = name;
+        Index = index;
+    }
+
+    public string Name { get; }
+    public int Index { get; }
+
+    [ObservableProperty]
+    private bool _isSelected = true;
 }

@@ -47,6 +47,48 @@
 				</Panel>
 			</Button>
 
+			<!-- Channel + sample-rate picker: shown once connected, before streaming -->
+			<Border DockPanel.Dock="Top" IsVisible="{Binding ShowChannelSelector}"
+			        Background="#12507B" CornerRadius="12"
+			        Padding="14,12" Margin="0,0,0,10">
+				<StackPanel Spacing="10">
+					<Grid ColumnDefinitions="Auto,*,Auto,Auto" VerticalAlignment="Center">
+						<TextBlock Grid.Column="0" Text="Rate (Hz):"
+						           VerticalAlignment="Center" FontSize="15"
+						           Foreground="#C9DAE8" Margin="0,0,10,0" />
+						<ComboBox Grid.Column="1" MinWidth="90" HorizontalAlignment="Left"
+						          ItemsSource="{Binding AvailableRates}"
+						          SelectedItem="{Binding SampleRate}" />
+						<Button Grid.Column="2" Content="All"
+						        Command="{Binding SelectAllChannelsCommand}"
+						        Foreground="White" Background="#1D6FA5"
+						        Padding="14,6" CornerRadius="8" Margin="0,0,6,0" />
+						<Button Grid.Column="3" Content="None"
+						        Command="{Binding SelectNoChannelsCommand}"
+						        Foreground="White" Background="#0E4468"
+						        Padding="14,6" CornerRadius="8" />
+					</Grid>
+					<TextBlock Text="Channels to stream:" FontSize="13" Foreground="#7F9BB0" />
+					<ScrollViewer MaxHeight="360">
+						<ItemsControl ItemsSource="{Binding Channels}">
+							<ItemsControl.ItemsPanel>
+								<ItemsPanelTemplate>
+									<UniformGrid Columns="2" />
+								</ItemsPanelTemplate>
+							</ItemsControl.ItemsPanel>
+							<ItemsControl.ItemTemplate>
+								<DataTemplate x:DataType="views:ChannelToggle">
+									<CheckBox IsChecked="{Binding IsSelected}"
+									          Content="{Binding Name}"
+									          Foreground="White" FontSize="15"
+									          Margin="0,2" />
+								</DataTemplate>
+							</ItemsControl.ItemTemplate>
+						</ItemsControl>
+					</ScrollViewer>
+				</StackPanel>
+			</Border>
+
 			<!-- Live plot fills the middle while streaming -->
 			<views:LivePlot x:Name="Plot" DockPanel.Dock="Top"
 			                IsVisible="{Binding IsStreaming}"
@@ -72,7 +114,7 @@
 				</Grid>
 			</StackPanel>
 
-			<ScrollViewer IsVisible="{Binding !IsStreaming}">
+			<ScrollViewer IsVisible="{Binding ShowDeviceList}">
 				<ItemsControl ItemsSource="{Binding Devices}">
 					<ItemsControl.ItemTemplate>
 						<DataTemplate x:DataType="views:MobileDeviceItem">
