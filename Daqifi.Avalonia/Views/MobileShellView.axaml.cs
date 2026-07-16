@@ -31,6 +31,7 @@ public partial class MobileShellView : UserControl
         {
             if (_viewModel.IsStreaming)
             {
+                _viewModel.PollActiveSamples();
                 Plot.SampleCount = _viewModel.TotalSamples;
                 Plot.Pulse();
             }

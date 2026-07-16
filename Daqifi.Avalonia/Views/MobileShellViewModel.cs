@@ -1,5 +1,4 @@
 using System.Collections.ObjectModel;
-using System.ComponentModel;
 using System.Net;
 using Avalonia.Threading;
 using CommunityToolkit.Mvvm.ComponentModel;
@@ -50,9 +49,15 @@ public partial class MobileShellViewModel : ObservableObject, IDisposable
     // Rolling per-channel buffers the LivePlot renders. Palette is the
     // desktop channel colors, cycled.
     public ObservableCollection<ChannelSeries> Series { get; } = [];
-    private readonly Dictionary<IChannel, ChannelSeries> _seriesByChannel = [];
+    // Keyed by channel NAME (stable "AI0".."AI15"), NOT instance: enabling
+    // channels makes the device re-sync DataChannels with fresh instances,
+    // so an instance-keyed map (or a PropertyChanged subscription on the
+    // originals) would miss every sample. The render timer polls the CURRENT
+    // DataChannels each tick — immune to that instance churn.
+    private readonly Dictionary<string, ChannelSeries> _seriesByName = [];
+    private readonly Dictionary<string, long> _lastTicksByName = [];
     private long _totalSamples;
-    public long TotalSamples => System.Threading.Interlocked.Read(ref _totalSamples);
+    public long TotalSamples => _totalSamples;
     private static readonly uint[] Palette =
     [
         0xFF4FC3F7, 0xFFFFB74D, 0xFF81C784, 0xFFE57373,
@@ -199,21 +204,16 @@ public partial class MobileShellViewModel : ObservableObject, IDisposable
         catch { /* best-effort; InitializeStreaming still gates on IsStreaming */ }
 
         Series.Clear();
-        _seriesByChannel.Clear();
-        System.Threading.Interlocked.Exchange(ref _totalSamples, 0);
+        _seriesByName.Clear();
+        _lastTicksByName.Clear();
+        _totalSamples = 0;
         var i = 0;
         foreach (var channel in analog)
         {
             device.AddChannel(channel);
             var s = new ChannelSeries(channel.Name, Palette[i % Palette.Length], 600);
             Series.Add(s);
-            _seriesByChannel[channel] = s;
-            // IChannel doesn't surface INPC, but every concrete channel is an
-            // ObservableObject (AbstractChannel) and raises it on ActiveSample.
-            if (channel is INotifyPropertyChanged inpc)
-            {
-                inpc.PropertyChanged += OnChannelSampled;
-            }
+            _seriesByName[channel.Name] = s;
             i++;
         }
 
@@ -234,29 +234,36 @@ public partial class MobileShellViewModel : ObservableObject, IDisposable
             : "Device did not enter streaming.";
     }
 
-    private void OnChannelSampled(object? sender, PropertyChangedEventArgs e)
+    /// <summary>
+    /// Pull the latest sample off each active analog channel into its series.
+    /// Called on the UI thread by the render timer — reads the CURRENT
+    /// DataChannels (immune to the enable-time instance re-sync) and appends
+    /// only genuinely-new samples (dedup by the sample's device timestamp).
+    /// </summary>
+    public void PollActiveSamples()
     {
-        // Runs on Core's receive thread — append is lock-guarded; the plot
-        // reads the buffer on the UI render timer.
-        if (e.PropertyName != nameof(IChannel.ActiveSample)) { return; }
-        if (sender is IChannel channel
-            && _seriesByChannel.TryGetValue(channel, out var series)
-            && channel.ActiveSample != null)
+        var device = _connected;
+        if (device == null || !IsStreaming) { return; }
+        foreach (var channel in device.DataChannels)
         {
-            series.Append(channel.ActiveSample.Value);
-            System.Threading.Interlocked.Increment(ref _totalSamples);
+            if (channel.Type != ChannelType.Analog || channel.IsOutput) { continue; }
+            if (!channel.IsActive) { continue; }
+            var sample = channel.ActiveSample;
+            if (sample == null) { continue; }
+            if (!_seriesByName.TryGetValue(channel.Name, out var series)) { continue; }
+            var ticks = sample.TimestampTicks;
+            if (_lastTicksByName.TryGetValue(channel.Name, out var last) && last == ticks)
+            {
+                continue;   // same frame as last poll — don't double-count
+            }
+            _lastTicksByName[channel.Name] = ticks;
+            series.Append(sample.Value);
+            _totalSamples++;
         }
     }
 
     private void StopStream()
     {
-        foreach (var channel in _seriesByChannel.Keys)
-        {
-            if (channel is INotifyPropertyChanged inpc)
-            {
-                inpc.PropertyChanged -= OnChannelSampled;
-            }
-        }
         try { _connected?.StopStreaming(); }
         catch { /* best-effort */ }
         IsStreaming = false;
