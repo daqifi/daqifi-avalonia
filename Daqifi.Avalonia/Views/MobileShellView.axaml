@@ -18,6 +18,7 @@
 
 			<Button DockPanel.Dock="Top"
 			        Command="{Binding ScanCommand}"
+			        IsVisible="{Binding !IsStreaming}"
 			        HorizontalAlignment="Stretch"
 			        HorizontalContentAlignment="Center"
 			        Margin="0,20,0,10" Padding="0,14"
@@ -29,6 +30,27 @@
 					<TextBlock Text="Stop scanning" IsVisible="{Binding IsScanning}" />
 				</Panel>
 			</Button>
+
+			<!-- Stream toggle appears once a device is connected -->
+			<Button DockPanel.Dock="Top"
+			        Command="{Binding StreamToggleCommand}"
+			        IsVisible="{Binding IsConnected}"
+			        HorizontalAlignment="Stretch"
+			        HorizontalContentAlignment="Center"
+			        Margin="0,0,0,10" Padding="0,14"
+			        FontSize="17" FontWeight="SemiBold"
+			        Foreground="White" Background="#2E8B57"
+			        CornerRadius="10">
+				<Panel>
+					<TextBlock Text="Start streaming" IsVisible="{Binding !IsStreaming}" />
+					<TextBlock Text="Stop streaming" IsVisible="{Binding IsStreaming}" />
+				</Panel>
+			</Button>
+
+			<!-- Live plot fills the middle while streaming -->
+			<views:LivePlot x:Name="Plot" DockPanel.Dock="Top"
+			                IsVisible="{Binding IsStreaming}"
+			                Height="360" Margin="0,0,0,10" />
 
 			<StackPanel DockPanel.Dock="Bottom" Spacing="8" Margin="0,12,0,0">
 				<TextBlock Text="{Binding Status}"
@@ -50,7 +72,7 @@
 				</Grid>
 			</StackPanel>
 
-			<ScrollViewer>
+			<ScrollViewer IsVisible="{Binding !IsStreaming}">
 				<ItemsControl ItemsSource="{Binding Devices}">
 					<ItemsControl.ItemTemplate>
 						<DataTemplate x:DataType="views:MobileDeviceItem">

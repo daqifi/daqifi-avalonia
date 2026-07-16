@@ -1,10 +1,13 @@
 using System.Collections.ObjectModel;
+using System.ComponentModel;
 using System.Net;
 using Avalonia.Threading;
 using CommunityToolkit.Mvvm.ComponentModel;
 using CommunityToolkit.Mvvm.Input;
 using Daqifi.Avalonia.Services;
+using Daqifi.Desktop.Channel;
 using Daqifi.Desktop.Device.WiFiDevice;
+using ChannelType = Daqifi.Core.Channel.ChannelType;
 
 namespace Daqifi.Avalonia.Views;
 
@@ -37,6 +40,24 @@ public partial class MobileShellViewModel : ObservableObject, IDisposable
     [ObservableProperty]
     [NotifyCanExecuteChangedFor(nameof(ScanCommand))]
     private bool _isScanning;
+
+    [ObservableProperty]
+    private bool _isConnected;
+
+    [ObservableProperty]
+    private bool _isStreaming;
+
+    // Rolling per-channel buffers the LivePlot renders. Palette is the
+    // desktop channel colors, cycled.
+    public ObservableCollection<ChannelSeries> Series { get; } = [];
+    private readonly Dictionary<IChannel, ChannelSeries> _seriesByChannel = [];
+    private long _totalSamples;
+    public long TotalSamples => System.Threading.Interlocked.Read(ref _totalSamples);
+    private static readonly uint[] Palette =
+    [
+        0xFF4FC3F7, 0xFFFFB74D, 0xFF81C784, 0xFFE57373,
+        0xFFBA68C8, 0xFF4DD0E1, 0xFFFFD54F, 0xFFA1887F,
+    ];
 
     [RelayCommand]
     private void Scan()
@@ -131,9 +152,12 @@ public partial class MobileShellViewModel : ObservableObject, IDisposable
             if (ok)
             {
                 _connected = device;
+                IsConnected = true;
+                var analog = device.DataChannels.Count(
+                    c => c.Type == ChannelType.Analog && !c.IsOutput);
                 Status = $"Connected: {device.Name}  •  SN {device.Metadata.SerialNumber ?? "?"}"
-                       + $"  •  {device.Metadata.IpAddress}:{device.Port}"
-                       + $"  •  FW {device.Metadata.FirmwareVersion ?? "?"}";
+                       + $"  •  FW {device.Metadata.FirmwareVersion ?? "?"}"
+                       + $"  •  {analog} analog ch";
             }
             else
             {
@@ -146,11 +170,106 @@ public partial class MobileShellViewModel : ObservableObject, IDisposable
         }
     }
 
+    [RelayCommand]
+    private void StreamToggle()
+    {
+        var device = _connected;
+        if (device == null) { return; }
+        if (IsStreaming) { StopStream(); return; }
+
+        // Enable every analog INPUT channel on the device (AddChannel sends
+        // the EnableAdcChannels SCPI + marks it active), wire a rolling
+        // series per channel, set the rate, and start streaming.
+        var analog = device.DataChannels
+            .Where(c => c.Type == ChannelType.Analog && !c.IsOutput)
+            .ToList();
+        if (analog.Count == 0)
+        {
+            Status = "No analog input channels to stream.";
+            return;
+        }
+
+        // Power the acquisition subsystem before streaming — the documented
+        // DAQiFi handshake (POWer:STATe 1 + channel enable + STR:START).
+        // Our Core connect uses InitializeDevice=false, which can skip the
+        // TurnDeviceOn step, so a device that associated on WiFi but never
+        // powered its ADC front-end streams NO data (matching the bench
+        // "streaming yields no data" symptom). Idempotent to re-send.
+        try { device.Write("SYSTem:POWer:STATe 1"); }
+        catch { /* best-effort; InitializeStreaming still gates on IsStreaming */ }
+
+        Series.Clear();
+        _seriesByChannel.Clear();
+        System.Threading.Interlocked.Exchange(ref _totalSamples, 0);
+        var i = 0;
+        foreach (var channel in analog)
+        {
+            device.AddChannel(channel);
+            var s = new ChannelSeries(channel.Name, Palette[i % Palette.Length], 600);
+            Series.Add(s);
+            _seriesByChannel[channel] = s;
+            // IChannel doesn't surface INPC, but every concrete channel is an
+            // ObservableObject (AbstractChannel) and raises it on ActiveSample.
+            if (channel is INotifyPropertyChanged inpc)
+            {
+                inpc.PropertyChanged += OnChannelSampled;
+            }
+            i++;
+        }
+
+        try
+        {
+            device.StreamingFrequency = 100;
+            device.InitializeStreaming();
+        }
+        catch (Exception ex)
+        {
+            Status = $"Start streaming failed: {ex.Message}";
+            StopStream();
+            return;
+        }
+        IsStreaming = device.IsStreaming;
+        Status = IsStreaming
+            ? $"Streaming {analog.Count} analog channel(s) @ 100 Hz"
+            : "Device did not enter streaming.";
+    }
+
+    private void OnChannelSampled(object? sender, PropertyChangedEventArgs e)
+    {
+        // Runs on Core's receive thread — append is lock-guarded; the plot
+        // reads the buffer on the UI render timer.
+        if (e.PropertyName != nameof(IChannel.ActiveSample)) { return; }
+        if (sender is IChannel channel
+            && _seriesByChannel.TryGetValue(channel, out var series)
+            && channel.ActiveSample != null)
+        {
+            series.Append(channel.ActiveSample.Value);
+            System.Threading.Interlocked.Increment(ref _totalSamples);
+        }
+    }
+
+    private void StopStream()
+    {
+        foreach (var channel in _seriesByChannel.Keys)
+        {
+            if (channel is INotifyPropertyChanged inpc)
+            {
+                inpc.PropertyChanged -= OnChannelSampled;
+            }
+        }
+        try { _connected?.StopStreaming(); }
+        catch { /* best-effort */ }
+        IsStreaming = false;
+        if (IsConnected) { Status = "Streaming stopped."; }
+    }
+
     public void Dispose()
     {
         if (IsScanning) { StopScan(); }
+        if (IsStreaming) { StopStream(); }
         var connected = _connected;
         _connected = null;
+        IsConnected = false;
         if (connected != null)
         {
             Task.Run(() =>

@@ -1062,15 +1062,23 @@ public abstract partial class AbstractStreamingDevice : ObservableObject, IStrea
     {
         if (IsStreaming) return;
 
-        // Prevent computer sleep when starting streaming
-        var previousState = NativeMethods.SetThreadExecutionState(NativeMethods.EsContinuous | NativeMethods.EsSystemRequired);
-        if (previousState == 0) // Check for failure (returns 0 on failure)
+        // Prevent computer sleep when starting streaming. The P/Invoke
+        // targets kernel32.dll — a DllNotFoundException on mobile — so it
+        // is Windows-guarded, matching NoOpKeepAwakeService's non-Windows
+        // behavior (log-and-skip). Proper wiring is the IKeepAwakeService
+        // abstraction; mobile sleep-prevention (a wake lock) is a future
+        // divergence, not required to stream.
+        if (OperatingSystem.IsWindows())
         {
-            AppLogger.Warning("Failed to set computer from sleeping while streaming.");
-        }
-        else
-        {
-            AppLogger.Information("Preventing computer sleep during streaming.");
+            var previousState = NativeMethods.SetThreadExecutionState(NativeMethods.EsContinuous | NativeMethods.EsSystemRequired);
+            if (previousState == 0) // Check for failure (returns 0 on failure)
+            {
+                AppLogger.Warning("Failed to set computer from sleeping while streaming.");
+            }
+            else
+            {
+                AppLogger.Information("Preventing computer sleep during streaming.");
+            }
         }
 
         if (Mode != DeviceMode.StreamToApp)
@@ -1104,15 +1112,19 @@ public abstract partial class AbstractStreamingDevice : ObservableObject, IStrea
     {
         if (!IsStreaming) return;
 
-        // Allow computer sleep again when stopping streaming
-        var previousState = NativeMethods.SetThreadExecutionState(NativeMethods.EsContinuous);
-        if (previousState == 0) // Check for failure
+        // Allow computer sleep again when stopping streaming (Windows-only
+        // P/Invoke — see InitializeStreaming).
+        if (OperatingSystem.IsWindows())
         {
-            AppLogger.Warning("Failed to reset thread execution state to allow sleep.");
-        }
-        else
-        {
-            AppLogger.Information("Allowing computer sleep after streaming.");
+            var previousState = NativeMethods.SetThreadExecutionState(NativeMethods.EsContinuous);
+            if (previousState == 0) // Check for failure
+            {
+                AppLogger.Warning("Failed to reset thread execution state to allow sleep.");
+            }
+            else
+            {
+                AppLogger.Information("Allowing computer sleep after streaming.");
+            }
         }
 
         var coreStreamingDevice = GetCoreDevice(CoreDeviceForStreaming, STREAMING_UNAVAILABLE_MESSAGE);
