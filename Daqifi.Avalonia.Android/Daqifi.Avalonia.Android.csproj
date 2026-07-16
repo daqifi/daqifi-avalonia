@@ -11,11 +11,6 @@
 		<!-- apk (not aab) while the head is dev-loop only — installable via
 		     plain `adb install`; store packaging flips this to aab. -->
 		<AndroidPackageFormat>apk</AndroidPackageFormat>
-		<!-- The desktop project is WinExe; this head consumes its DLL as a
-		     library (NETSDK1150's documented escape). The proper shared-
-		     project split is the long-term architecture; this keeps the
-		     ported app single-sourced meanwhile. -->
-		<ValidateExecutableReferencesMatchSelfContained>false</ValidateExecutableReferencesMatchSelfContained>
 	</PropertyGroup>
 
 	<ItemGroup>

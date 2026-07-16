@@ -1,18 +1,20 @@
 <Project Sdk="Microsoft.NET.Sdk">
 	<PropertyGroup>
-		<OutputType>WinExe</OutputType>
+		<!-- Platform-neutral shared library. The per-platform heads
+		     (Daqifi.Avalonia.Desktop, Daqifi.Avalonia.Android, iOS later)
+		     each reference this project and own their entry point + windowing
+		     platform. Desktop-only concerns (WinExe output, app.manifest, the
+		     Avalonia.Desktop startup package) live in the Desktop head. -->
 		<TargetFramework>net10.0</TargetFramework>
 		<Nullable>enable</Nullable>
 		<ImplicitUsings>enable</ImplicitUsings>
 		<Version>3.3.0</Version>
-		<BuiltInComInteropSupport>true</BuiltInComInteropSupport>
 		<!-- LibraryImport (keep_awake Windows backend) generates unsafe marshalling stubs -->
 		<AllowUnsafeBlocks>true</AllowUnsafeBlocks>
-		<ApplicationManifest>app.manifest</ApplicationManifest>
 		<AvaloniaUseCompiledBindingsByDefault>false</AvaloniaUseCompiledBindingsByDefault>
 		<!-- Restore-graph breadth only (NETSDK1047): the Android head consumes
 		     this project per-RID, so its RIDs must exist in our assets targets.
-		     Desktop publish targets still pass -r explicitly. -->
+		     The Desktop head's publish targets pass -r explicitly. -->
 		<RuntimeIdentifiers>win-x64;linux-x64;osx-x64;osx-arm64;android-arm64;android-x64</RuntimeIdentifiers>
 	</PropertyGroup>
 
@@ -29,9 +31,10 @@
 	</ItemGroup>
 
 	<ItemGroup>
-		<!-- Avalonia stack (replaces WPF + MahApps.Metro per the UI catalog decision log) -->
+		<!-- Avalonia stack (replaces WPF + MahApps.Metro per the UI catalog decision log).
+		     Avalonia.Desktop (desktop windowing/startup) lives in the Desktop head, not here —
+		     this library is platform-neutral and shared with the Android/iOS heads. -->
 		<PackageReference Include="Avalonia" Version="11.3.*" />
-		<PackageReference Include="Avalonia.Desktop" Version="11.3.*" />
 		<PackageReference Include="Avalonia.Themes.Fluent" Version="11.3.*" />
 		<!-- WPF DataGrid ships in-box; Avalonia's lives in a separate package (DebugWindow) -->
 		<PackageReference Include="Avalonia.Controls.DataGrid" Version="11.3.*" />

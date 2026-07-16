@@ -1,0 +1,31 @@
+<Project Sdk="Microsoft.NET.Sdk">
+	<PropertyGroup>
+		<OutputType>WinExe</OutputType>
+		<TargetFramework>net10.0</TargetFramework>
+		<Nullable>enable</Nullable>
+		<ImplicitUsings>enable</ImplicitUsings>
+		<Version>3.3.0</Version>
+		<!-- COM interop for the desktop windowing backend (upstream WinExe setting). -->
+		<BuiltInComInteropSupport>true</BuiltInComInteropSupport>
+		<ApplicationManifest>app.manifest</ApplicationManifest>
+		<!-- Desktop publish RIDs only. The shared library carries the full
+		     restore-graph breadth (incl. android RIDs) for the Android head;
+		     this head publishes desktop targets, which the #260 publish gate
+		     drives with an explicit `-r`. -->
+		<RuntimeIdentifiers>win-x64;linux-x64;osx-x64;osx-arm64</RuntimeIdentifiers>
+	</PropertyGroup>
+
+	<ItemGroup>
+		<!-- Desktop windowing + startup platform. Program.cs's UsePlatformDetect /
+		     StartWithClassicDesktopLifetime live here; the shared library is
+		     platform-neutral and must NOT carry this desktop-only package (it
+		     would otherwise flow transitively into the Android head). -->
+		<PackageReference Include="Avalonia.Desktop" Version="11.3.*" />
+	</ItemGroup>
+
+	<ItemGroup>
+		<!-- The whole ported app (App.axaml, Views, ViewModels, Services, the
+		     ported Daqifi.Desktop logic) rides in as the shared library. -->
+		<ProjectReference Include="..\Daqifi.Avalonia\Daqifi.Avalonia.csproj" />
+	</ItemGroup>
+</Project>
