@@ -3,7 +3,7 @@ using System.Net;
 using Avalonia.Threading;
 using CommunityToolkit.Mvvm.ComponentModel;
 using CommunityToolkit.Mvvm.Input;
-using Daqifi.Core.Device.Discovery;
+using Daqifi.Avalonia.Services;
 using Daqifi.Desktop.Device.WiFiDevice;
 
 namespace Daqifi.Avalonia.Views;
@@ -16,7 +16,6 @@ namespace Daqifi.Avalonia.Views;
 /// </summary>
 public partial class MobileShellViewModel : ObservableObject, IDisposable
 {
-    private WiFiDeviceFinder? _finder;
     private CancellationTokenSource? _cts;
     private Task? _scanTask;
     private DaqifiStreamingDevice? _connected;
@@ -47,23 +46,24 @@ public partial class MobileShellViewModel : ObservableObject, IDisposable
         Status = "Scanning (UDP 30303)…";
         IsScanning = true;
 
-        _finder = new WiFiDeviceFinder(30303);
-        _finder.DeviceDiscovered += OnDeviceDiscovered;
         _cts = new CancellationTokenSource();
         var token = _cts.Token;
-        var finder = _finder;
         _scanTask = Task.Run(async () =>
         {
+            // Hold the platform discovery scope for the whole sweep — on
+            // Android this is the WifiManager MulticastLock that lets the
+            // UDP replies through the WiFi power-save filter.
+            using var scope = NetworkDiscoveryScope.Enter();
             try
             {
                 while (!token.IsCancellationRequested)
                 {
-                    await finder.DiscoverAsync(token);
-                    await Task.Delay(3000, token);
+                    await NativeWiFiDiscovery.DiscoverAsync(
+                        TimeSpan.FromSeconds(3), OnDeviceFound, token);
+                    await Task.Delay(1500, token);
                 }
             }
             catch (OperationCanceledException) { /* stop requested */ }
-            catch (ObjectDisposedException) { /* finder disposed on stop */ }
             catch (Exception ex)
             {
                 Dispatcher.UIThread.Post(() => Status = $"Scan failed: {ex.Message}");
@@ -75,12 +75,6 @@ public partial class MobileShellViewModel : ObservableObject, IDisposable
     {
         IsScanning = false;
         _cts?.Cancel();
-        if (_finder != null)
-        {
-            _finder.DeviceDiscovered -= OnDeviceDiscovered;
-            _finder.Dispose();
-            _finder = null;
-        }
         _cts?.Dispose();
         _cts = null;
         Status = Devices.Count == 0
@@ -88,16 +82,13 @@ public partial class MobileShellViewModel : ObservableObject, IDisposable
             : $"Scan stopped — {Devices.Count} device(s).";
     }
 
-    private void OnDeviceDiscovered(object? sender, DeviceDiscoveredEventArgs e)
+    private void OnDeviceFound(DiscoveredDevice device)
     {
-        var info = e.DeviceInfo;
         Dispatcher.UIThread.Post(() =>
         {
-            // dedupe by serial (fall back to IP for serial-less announces)
-            var key = string.IsNullOrWhiteSpace(info.SerialNumber)
-                ? info.IPAddress?.ToString() : info.SerialNumber;
+            var key = device.Ip.ToString();
             if (Devices.Any(d => d.Key == key)) { return; }
-            Devices.Add(new MobileDeviceItem(this, info, key ?? info.Name));
+            Devices.Add(new MobileDeviceItem(this, device, key));
             Status = $"{Devices.Count} device(s) found — tap one to connect.";
         });
     }
@@ -123,7 +114,7 @@ public partial class MobileShellViewModel : ObservableObject, IDisposable
     internal Task ConnectAsync(MobileDeviceItem item) =>
         ConnectCoreAsync(
             $"{item.Name} ({item.Ip})",
-            () => new DaqifiStreamingDevice(item.Info));
+            () => new DaqifiStreamingDevice(item.Device.Ip, item.Device.Port, item.Name));
 
     private async Task ConnectCoreAsync(string label, Func<DaqifiStreamingDevice> factory)
     {
@@ -175,20 +166,18 @@ public partial class MobileDeviceItem : ObservableObject
 {
     private readonly MobileShellViewModel _owner;
 
-    public MobileDeviceItem(MobileShellViewModel owner, IDeviceInfo info, string key)
+    public MobileDeviceItem(MobileShellViewModel owner, DiscoveredDevice device, string key)
     {
         _owner = owner;
-        Info = info;
+        Device = device;
         Key = key;
     }
 
-    public IDeviceInfo Info { get; }
+    public DiscoveredDevice Device { get; }
     public string Key { get; }
-    public string Name => string.IsNullOrWhiteSpace(Info.Name) ? "DAQiFi Device" : Info.Name;
-    public string Ip => Info.IPAddress?.ToString() ?? "?";
-    public string Detail =>
-        $"SN {Info.SerialNumber ?? "?"}  •  {Ip}:{Info.Port?.ToString() ?? "?"}"
-        + (Info.IsPowerOn ? "" : "  •  power off");
+    public string Name => Device.Name ?? "DAQiFi Device";
+    public string Ip => Device.Ip.ToString();
+    public string Detail => $"{Ip}:{Device.Port}  •  tap to connect";
 
     [RelayCommand]
     private Task Connect() => _owner.ConnectAsync(this);

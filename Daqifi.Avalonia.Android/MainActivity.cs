@@ -1,7 +1,9 @@
 using Android.App;
 using Android.Content.PM;
+using Android.OS;
 using Avalonia;
 using Avalonia.Android;
+using Daqifi.Avalonia.Services;
 
 namespace Daqifi.Avalonia.Android;
 
@@ -16,6 +18,16 @@ namespace Daqifi.Avalonia.Android;
     ConfigurationChanges = ConfigChanges.Orientation | ConfigChanges.ScreenSize | ConfigChanges.UiMode)]
 public class MainActivity : AvaloniaMainActivity<App>
 {
+    protected override void OnCreate(Bundle? savedInstanceState)
+    {
+        // Register the platform discovery scope BEFORE Avalonia loads any
+        // view, so the mobile shell's WiFi scan holds the MulticastLock —
+        // without it Android power-save-filters the broadcast replies and
+        // discovery silently finds nothing.
+        NetworkDiscoveryScope.Current = new MulticastDiscoveryScope(this);
+        base.OnCreate(savedInstanceState);
+    }
+
     protected override AppBuilder CustomizeAppBuilder(AppBuilder builder)
     {
         return base.CustomizeAppBuilder(builder)

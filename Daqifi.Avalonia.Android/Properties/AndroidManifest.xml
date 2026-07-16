@@ -3,5 +3,9 @@
 	<!-- WiFi/TCP device discovery + streaming (mobile transport per DIV-UI-003) -->
 	<uses-permission android:name="android.permission.INTERNET" />
 	<uses-permission android:name="android.permission.ACCESS_NETWORK_STATE" />
+	<uses-permission android:name="android.permission.ACCESS_WIFI_STATE" />
+	<!-- Required to hold a WifiManager MulticastLock — without it Android
+	     power-save-filters incoming UDP broadcast and discovery finds nothing. -->
+	<uses-permission android:name="android.permission.CHANGE_WIFI_MULTICAST_STATE" />
 	<application android:label="DAQiFi" android:icon="@drawable/icon" />
 </manifest>
