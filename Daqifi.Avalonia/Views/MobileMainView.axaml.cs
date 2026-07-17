@@ -16,15 +16,17 @@ namespace Daqifi.Avalonia.Views;
 /// view, kept ALWAYS attached (IsVisible-toggled, never Content-swapped) so
 /// switching tabs never tears down the device connection or its render timer.
 ///
-/// Secondary panes build lazily and DEFENSIVELY: some shared pane ViewModels
-/// (ChannelsPaneViewModel, ProfilesPaneViewModel) reach LoggingManager.Instance,
-/// which resolves an EF Core DbContext factory from the DESKTOP DI host — a host
-/// the mobile bootstrap doesn't start yet. Constructing them therefore throws on
-/// mobile today; <see cref="BuildPage"/> catches that and shows a placeholder
-/// instead of crashing the app. DeviceLogsViewModel (Storage) only touches the
-/// mobile-safe ConnectionManager singleton, so it works now — and it's the SD-card
-/// offload pane that the phone→DAQiFi USB transport lights up (WiFi shows the
-/// "requires USB" state).
+/// Secondary panes build lazily. Their shared ViewModels (ChannelsPaneViewModel,
+/// ProfilesPaneViewModel) reach LoggingManager.Instance, which resolves an EF Core
+/// DbContext factory from App.ServiceProvider — now stood up on mobile by
+/// App.InitializeMobile() (a minimal SQLite factory at the app-private path). So
+/// they construct on mobile. <see cref="BuildPage"/> still wraps construction
+/// defensively — if the data layer failed to initialize (e.g. an EF/SQLite runtime
+/// issue on an unusual device), the pane shows a placeholder rather than crashing
+/// the whole app; the Stream tab needs no data layer and is unaffected.
+/// DeviceLogsViewModel (Storage) only touches the mobile-safe ConnectionManager and
+/// is the SD-card offload pane the phone→DAQiFi USB transport lights up (WiFi shows
+/// the "requires USB" state).
 /// </summary>
 public partial class MobileMainView : UserControl
 {
@@ -79,9 +81,9 @@ public partial class MobileMainView : UserControl
             NavProfiles);
 
     /// <summary>
-    /// Build a projected pane, or a placeholder if its shared ViewModel can't yet
-    /// construct on the mobile head. Keeps a mobile-unsafe pane from crashing the
-    /// whole app; the pane goes live once the mobile data-layer host lands.
+    /// Build a projected pane, or a placeholder if its shared ViewModel fails to
+    /// construct (e.g. the mobile data layer didn't initialize). A safety net so a
+    /// pane can never crash the whole app.
     /// </summary>
     private static Control BuildPage(string title, Func<Control> factory)
     {
@@ -113,8 +115,8 @@ public partial class MobileMainView : UserControl
         });
         panel.Children.Add(new TextBlock
         {
-            Text = "Coming to mobile — this pane needs the on-device data layer. "
-                 + "Streaming and Device Storage work now.",
+            Text = "This pane is temporarily unavailable — the on-device data layer "
+                 + "didn't initialize. Streaming and Device Storage are unaffected.",
             TextWrapping = TextWrapping.Wrap,
             TextAlignment = TextAlignment.Center,
             HorizontalAlignment = HorizontalAlignment.Center,

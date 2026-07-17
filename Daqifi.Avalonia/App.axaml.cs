@@ -30,11 +30,14 @@ public partial class App : Application
         {
             // Mobile heads (Android/iOS, the five-platform goal) boot the
             // navigation shell — the desktop absorption host is desktop-only
-            // (serial/WMI transports, SQLite app-data paths); mobile is
-            // WiFi/TCP per the recorded DIV-UI-003 divergence and its UI
-            // ports incrementally. MobileMainView hosts the live stream view
-            // plus the mobile panes projected from the desktop views + shared
-            // ViewModels (Storage/Channels/Profiles).
+            // (serial/WMI transports, firmware/HID services); mobile is WiFi/TCP
+            // per the recorded DIV-UI-003 divergence and its UI ports
+            // incrementally. InitializeMobile builds the MINIMAL DI the shared
+            // pane ViewModels need (an IDbContextFactory<LoggingContext> at the
+            // app-private SQLite path) so the projected Channels/Profiles panes
+            // construct instead of throwing; MobileMainView then hosts the live
+            // stream view plus the projected panes (Storage/Channels/Profiles).
+            Daqifi.Desktop.App.InitializeMobile();
             singleView.MainView = new Views.MobileMainView();
         }
 

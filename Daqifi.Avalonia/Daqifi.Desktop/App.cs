@@ -207,6 +207,59 @@ public static class App
         AppLogger.Instance.AddBreadcrumb("app", "App startup complete");
     }
 
+    /// <summary>
+    /// Minimal host init for the MOBILE heads (Android/iOS). The desktop
+    /// <see cref="Initialize"/> pulls in serial/HID/bootloader/WMI services and a
+    /// MainWindow that don't exist on mobile; the shared pane ViewModels only need
+    /// <see cref="ServiceProvider"/> to resolve an
+    /// <c>IDbContextFactory&lt;LoggingContext&gt;</c> — LoggingManager.Instance's one
+    /// constructor dependency — so this builds JUST that (a SQLite factory at the
+    /// app-private data path) and applies the migrations without the desktop
+    /// MigrationStatusWindow. Once it runs, the projected Channels/Profiles panes
+    /// (which touch LoggingManager) construct on mobile instead of throwing.
+    /// Downstream-only: no upstream counterpart (WPF is desktop-only). Idempotent.
+    /// </summary>
+    public static void InitializeMobile()
+    {
+        if (ServiceProvider is not null) { return; }   // already initialized
+
+        // Whole-body guard: this runs from the mobile bootstrap, so a failure to
+        // stand up the DI/SQLite layer must NOT crash the app boot — the Stream
+        // tab needs no data layer, and panes that DO need it fall back to a
+        // placeholder (MobileMainView.BuildPage). Leaving ServiceProvider null on
+        // failure is the correct degraded state.
+        try
+        {
+            try { Directory.CreateDirectory(DaqifiDataDirectory); } catch { /* best-effort */ }
+            AppDomain.CurrentDomain.SetData("DataDirectory", DaqifiDataDirectory);
+
+            var serviceCollection = new ServiceCollection();
+            serviceCollection.AddDbContextFactory<LoggingContext>(options =>
+                options.UseSqlite($"Data source={DatabasePath}")
+                    .ConfigureWarnings(w => w.Ignore(RelationalEventId.PendingModelChangesWarning)));
+            ServiceProvider = serviceCollection.BuildServiceProvider();
+
+            // Apply migrations directly (no MigrationStatusWindow on mobile).
+            // Inner guard: a migration failure still leaves ServiceProvider set, so
+            // the pane ViewModels construct (LoggingManager.Instance needs only the
+            // factory) — only DB-backed features degrade.
+            try
+            {
+                var factory = ServiceProvider.GetRequiredService<IDbContextFactory<LoggingContext>>();
+                using var context = factory.CreateDbContext();
+                context.Database.Migrate();
+            }
+            catch (Exception ex)
+            {
+                AppLogger.Instance.Error(ex, "Mobile database migration failed");
+            }
+        }
+        catch (Exception ex)
+        {
+            AppLogger.Instance.Error(ex, "Mobile host init failed — data-layer panes will show a placeholder");
+        }
+    }
+
     // @port: Daqifi.Desktop.App.OnDispatcherUnhandledException
     private static void OnDispatcherUnhandledException(object sender, DispatcherUnhandledExceptionEventArgs e)
     {
