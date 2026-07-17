@@ -4,6 +4,7 @@ using Avalonia.Threading;
 using CommunityToolkit.Mvvm.ComponentModel;
 using CommunityToolkit.Mvvm.Input;
 using Daqifi.Avalonia.Services;
+using Daqifi.Desktop;
 using Daqifi.Desktop.Channel;
 using Daqifi.Desktop.Device.WiFiDevice;
 using ChannelType = Daqifi.Core.Channel.ChannelType;
@@ -190,6 +191,16 @@ public partial class MobileShellViewModel : ObservableObject, IDisposable
             if (ok)
             {
                 _connected = device;
+                // Publish into the shared connection registry so the projected
+                // mobile panes (Storage / DeviceLogs, and future panes) observe
+                // this device via ConnectionManager.ConnectedDevices. Best-effort:
+                // a registry hiccup must never break the live stream path.
+                try
+                {
+                    if (previous != null) { ConnectionManager.Instance.UnregisterConnectedDevice(previous); }
+                    ConnectionManager.Instance.RegisterConnectedDevice(device);
+                }
+                catch { /* bridge is best-effort */ }
                 // Populate the per-channel selection list (all on by default)
                 // before flipping IsConnected so the selector shows with data.
                 var analog = device.DataChannels
@@ -324,6 +335,8 @@ public partial class MobileShellViewModel : ObservableObject, IDisposable
         IsConnected = false;
         if (connected != null)
         {
+            try { ConnectionManager.Instance.UnregisterConnectedDevice(connected); }
+            catch { /* bridge is best-effort */ }
             Task.Run(() =>
             {
                 try { connected.Disconnect(); }

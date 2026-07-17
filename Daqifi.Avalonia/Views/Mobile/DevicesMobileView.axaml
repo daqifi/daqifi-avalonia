@@ -1,0 +1,420 @@
+<UserControl xmlns="https://github.com/avaloniaui"
+             xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml"
+             xmlns:ia="using:Avalonia.Xaml.Interactivity"
+             xmlns:iac="using:Avalonia.Xaml.Interactions.Core"
+             xmlns:networkDataModel="using:Daqifi.Core.Device.Network"
+             xmlns:sdCard="using:Daqifi.Core.Device.SdCard"
+             x:Class="Daqifi.Avalonia.Views.Mobile.DevicesMobileView">
+  <!-- Mobile projection of Daqifi.Desktop.View.Prototype.DevicesPanePrototype over the shared
+       DevicesPaneViewModel. Authored from the portomatic binding skeleton: every VM binding the
+       skeleton lists is preserved verbatim (same path strings, including `!` negations and dotted
+       Shell.* paths). Desktop→mobile idiom: single-column ScrollViewer, touch targets, design
+       tokens. The desktop 420px settings DRAWER (gated by IsSettingsOpen) becomes an INLINE
+       expandable section in the same scroll flow gated by the same IsSettingsOpen binding.
+       Reflection bindings only (no x:DataType / compiled bindings) so it compiles without the VM. -->
+
+  <UserControl.Styles>
+    <Style Selector="Border.card">
+      <Setter Property="Background" Value="{DynamicResource SurfaceRaised}" />
+      <Setter Property="BorderBrush" Value="{DynamicResource BorderDim}" />
+      <Setter Property="BorderThickness" Value="1" />
+      <Setter Property="CornerRadius" Value="12" />
+      <Setter Property="Padding" Value="16,14" />
+    </Style>
+
+    <Style Selector="TextBlock.sectionLabel">
+      <Setter Property="FontSize" Value="{DynamicResource FontSizeSmall}" />
+      <Setter Property="FontWeight" Value="Bold" />
+      <Setter Property="Foreground" Value="{DynamicResource TextTertiary}" />
+    </Style>
+
+    <Style Selector="TextBlock.fieldLabel">
+      <Setter Property="FontSize" Value="{DynamicResource FontSizeSmall}" />
+      <Setter Property="FontWeight" Value="SemiBold" />
+      <Setter Property="Foreground" Value="{DynamicResource TextTertiary}" />
+    </Style>
+
+    <Style Selector="TextBlock.infoValue">
+      <Setter Property="FontFamily" Value="{DynamicResource MonoFontFamily}" />
+      <Setter Property="FontSize" Value="{DynamicResource FontSizeBody}" />
+      <Setter Property="Foreground" Value="{DynamicResource TextPrimary}" />
+      <Setter Property="TextWrapping" Value="Wrap" />
+    </Style>
+
+    <!-- Touch-sized buttons -->
+    <Style Selector="Button.primary">
+      <Setter Property="Background" Value="{DynamicResource Accent}" />
+      <Setter Property="Foreground" Value="White" />
+      <Setter Property="FontWeight" Value="SemiBold" />
+      <Setter Property="MinHeight" Value="44" />
+      <Setter Property="Padding" Value="16,12" />
+      <Setter Property="CornerRadius" Value="10" />
+      <Setter Property="HorizontalContentAlignment" Value="Center" />
+    </Style>
+    <Style Selector="Button.secondary">
+      <Setter Property="Background" Value="{DynamicResource SurfaceActive}" />
+      <Setter Property="Foreground" Value="{DynamicResource TextPrimary}" />
+      <Setter Property="FontWeight" Value="SemiBold" />
+      <Setter Property="MinHeight" Value="44" />
+      <Setter Property="Padding" Value="16,12" />
+      <Setter Property="CornerRadius" Value="10" />
+      <Setter Property="HorizontalContentAlignment" Value="Center" />
+    </Style>
+    <Style Selector="Button.danger">
+      <Setter Property="Background" Value="Transparent" />
+      <Setter Property="Foreground" Value="{DynamicResource StatusRed}" />
+      <Setter Property="BorderBrush" Value="{DynamicResource StatusRed}" />
+      <Setter Property="BorderThickness" Value="1" />
+      <Setter Property="FontWeight" Value="SemiBold" />
+      <Setter Property="MinHeight" Value="44" />
+      <Setter Property="Padding" Value="16,12" />
+      <Setter Property="CornerRadius" Value="10" />
+      <Setter Property="HorizontalContentAlignment" Value="Center" />
+    </Style>
+
+    <Style Selector="TextBox.field">
+      <Setter Property="MinHeight" Value="44" />
+      <Setter Property="VerticalContentAlignment" Value="Center" />
+      <Setter Property="FontFamily" Value="{DynamicResource MonoFontFamily}" />
+    </Style>
+    <Style Selector="ComboBox.field">
+      <Setter Property="MinHeight" Value="44" />
+      <Setter Property="HorizontalAlignment" Value="Stretch" />
+      <Setter Property="VerticalContentAlignment" Value="Center" />
+    </Style>
+  </UserControl.Styles>
+
+  <ScrollViewer Background="{DynamicResource Surface}">
+    <StackPanel Spacing="12" Margin="16">
+
+      <!-- ============ CONNECTED STATE (desktop: Grid.IsVisible) ============ -->
+      <StackPanel Spacing="12" IsVisible="{Binding HasConnectedDevice}">
+
+        <!-- Header: "<N> CONNECTED" (desktop: Run.Text = Devices.Count) -->
+        <StackPanel Spacing="2">
+          <TextBlock Text="DEVICES" Classes="sectionLabel" />
+          <StackPanel Orientation="Horizontal" Spacing="10">
+            <TextBlock FontSize="{DynamicResource FontSizeTitle}" FontWeight="Light"
+                       Foreground="{DynamicResource TextPrimary}">
+              <Run Text="{Binding Devices.Count, Mode=OneWay}" />
+              <Run Text=" CONNECTED" />
+            </TextBlock>
+            <Ellipse Width="8" Height="8" VerticalAlignment="Center"
+                     Fill="{DynamicResource StatusGreen}" />
+          </StackPanel>
+        </StackPanel>
+
+        <!-- Device tiles (desktop: ItemsControl.ItemsSource = Devices). Item scope is
+             DeviceTileViewModel; template binds the same item members the desktop tile does,
+             and the whole tile reaches back to the VM's OpenSettingsCommand to open the inline
+             settings section (mobile idiom for the desktop gear/tap-to-open). -->
+        <ItemsControl ItemsSource="{Binding Devices}">
+          <ItemsControl.ItemTemplate>
+            <DataTemplate>
+              <Button HorizontalAlignment="Stretch" HorizontalContentAlignment="Stretch"
+                      Padding="0" Margin="0,0,0,10" CornerRadius="12"
+                      Background="{DynamicResource Surface}"
+                      BorderBrush="{DynamicResource BorderDim}" BorderThickness="1"
+                      Command="{Binding $parent[ItemsControl].DataContext.OpenSettingsCommand}"
+                      CommandParameter="{Binding}">
+                <Grid ColumnDefinitions="4,*,Auto">
+                  <Border Grid.Column="0" Background="{Binding StripeBrush}"
+                          CornerRadius="12,0,0,12" />
+                  <StackPanel Grid.Column="1" Margin="14,12" Spacing="4">
+                    <Grid ColumnDefinitions="*,Auto">
+                      <TextBlock Grid.Column="0" Text="{Binding Name}"
+                                 FontFamily="{DynamicResource MonoFontFamily}" FontSize="{DynamicResource FontSizeSubtitle}" FontWeight="Medium"
+                                 Foreground="{DynamicResource TextPrimary}"
+                                 TextTrimming="CharacterEllipsis" VerticalAlignment="Center" />
+                      <Border Grid.Column="1" VerticalAlignment="Center"
+                              Background="{DynamicResource SurfaceActive}"
+                              BorderBrush="{Binding StripeBrush}" BorderThickness="1"
+                              CornerRadius="4" Padding="7,2">
+                        <TextBlock Text="{Binding ConnectionLabel}" FontSize="{DynamicResource FontSizeSmall}"
+                                   FontWeight="SemiBold" Foreground="{Binding StripeBrush}" />
+                      </Border>
+                    </Grid>
+                    <TextBlock Text="{Binding Identifier}" FontFamily="{DynamicResource MonoFontFamily}" FontSize="{DynamicResource FontSizeSmall}"
+                               Foreground="{DynamicResource TextSecondary}" />
+                    <TextBlock Text="{Binding SerialNumber}" FontFamily="{DynamicResource MonoFontFamily}" FontSize="{DynamicResource FontSizeSmall}"
+                               Foreground="{DynamicResource TextTertiary}" />
+                    <StackPanel Orientation="Horizontal" Spacing="6">
+                      <TextBlock Text="FW" FontSize="{DynamicResource FontSizeSmall}" FontWeight="SemiBold"
+                                 Foreground="{DynamicResource TextTertiary}"
+                                 VerticalAlignment="Center" />
+                      <TextBlock Text="{Binding Version}" FontFamily="{DynamicResource MonoFontFamily}" FontSize="{DynamicResource FontSizeSmall}"
+                                 Foreground="{DynamicResource TextSecondary}"
+                                 VerticalAlignment="Center" />
+                      <Border VerticalAlignment="Center" Margin="4,0,0,0"
+                              Background="{DynamicResource SurfaceActive}" BorderBrush="{DynamicResource StatusAmber}"
+                              BorderThickness="1" CornerRadius="4" Padding="7,2"
+                              IsVisible="{Binding IsFirmwareOutdated}">
+                        <TextBlock Text="UPDATE" FontSize="{DynamicResource FontSizeSmall}" FontWeight="SemiBold"
+                                   Foreground="{DynamicResource StatusAmber}" />
+                      </Border>
+                    </StackPanel>
+                  </StackPanel>
+                  <TextBlock Grid.Column="2" Text="&#x203A;" FontSize="{DynamicResource FontSizeTitle}"
+                             Margin="0,0,16,0" VerticalAlignment="Center"
+                             Foreground="{DynamicResource TextTertiary}" />
+                </Grid>
+              </Button>
+            </DataTemplate>
+          </ItemsControl.ItemTemplate>
+        </ItemsControl>
+
+        <!-- Add device (desktop: Button.Command = AddDeviceCommand) -->
+        <Button Classes="primary" HorizontalAlignment="Stretch"
+                Content="+ ADD DEVICE" Command="{Binding AddDeviceCommand}" />
+      </StackPanel>
+
+      <!-- ============ DEVICE SETTINGS (inline; desktop drawer Grid.IsVisible = IsSettingsOpen) ==== -->
+      <Border Classes="card" IsVisible="{Binding IsSettingsOpen}">
+        <StackPanel Spacing="14">
+
+          <!-- Header: stripe + device name + close (desktop: Rectangle.Fill / TextBlock.Text / Button.Command) -->
+          <Grid ColumnDefinitions="Auto,*,Auto">
+            <Border Grid.Column="0" Width="4" Height="34" CornerRadius="2" Margin="0,0,12,0"
+                    Background="{Binding SelectedTile.StripeBrush}" />
+            <StackPanel Grid.Column="1" VerticalAlignment="Center">
+              <TextBlock Text="DEVICE" Classes="sectionLabel" />
+              <TextBlock Text="{Binding SelectedTile.Name}" FontFamily="{DynamicResource MonoFontFamily}" FontSize="{DynamicResource FontSizeSubtitle}"
+                         FontWeight="Medium" Foreground="{DynamicResource TextPrimary}"
+                         TextTrimming="CharacterEllipsis" />
+            </StackPanel>
+            <Button Grid.Column="2" Classes="secondary" Width="44" MinWidth="44" Padding="0"
+                    Content="&#xD7;" FontSize="{DynamicResource FontSizeSubtitle}" VerticalAlignment="Top"
+                    Command="{Binding CloseSettingsCommand}" />
+          </Grid>
+
+          <!-- INFORMATION -->
+          <TextBlock Text="INFORMATION" Classes="sectionLabel" />
+          <Border Background="{DynamicResource Surface}" BorderBrush="{DynamicResource BorderDim}"
+                  BorderThickness="1" CornerRadius="8" Padding="14,12">
+            <StackPanel Spacing="12">
+              <StackPanel Spacing="3">
+                <TextBlock Text="CONNECTION" Classes="fieldLabel" />
+                <TextBlock Text="{Binding SelectedTile.ConnectionLabel}" Classes="infoValue" />
+              </StackPanel>
+              <StackPanel Spacing="3">
+                <TextBlock Text="IDENTIFIER" Classes="fieldLabel" />
+                <TextBlock Text="{Binding SelectedTile.Identifier}" Classes="infoValue" />
+              </StackPanel>
+              <StackPanel Spacing="3">
+                <TextBlock Text="SERIAL" Classes="fieldLabel" />
+                <TextBlock Text="{Binding SelectedTile.SerialNumber}" Classes="infoValue" />
+              </StackPanel>
+              <StackPanel Spacing="3">
+                <TextBlock Text="FIRMWARE" Classes="fieldLabel" />
+                <TextBlock Text="{Binding SelectedTile.Version}" Classes="infoValue" />
+              </StackPanel>
+              <!-- WiFi module version: debug-gated. The desktop BoolAndToVis(ShowWifiVersion,
+                   IsDebugModeEnabled) becomes nested IsVisible containers (nesting = logical AND),
+                   preserving both bindings verbatim. -->
+              <StackPanel Spacing="3" IsVisible="{Binding SelectedTile.ShowWifiVersion}">
+                <StackPanel Spacing="3" IsVisible="{Binding Shell.IsDebugModeEnabled}">
+                  <TextBlock Text="WIFI FW" Classes="fieldLabel" />
+                  <TextBlock Text="{Binding SelectedTile.WifiVersion}" Classes="infoValue" />
+                </StackPanel>
+              </StackPanel>
+            </StackPanel>
+          </Border>
+
+          <!-- DATA ACQUISITION -->
+          <TextBlock Text="DATA ACQUISITION" Classes="sectionLabel" />
+
+          <TextBlock Text="LOGGING MODE" Classes="fieldLabel" />
+          <Grid ColumnDefinitions="*,*" ColumnSpacing="8">
+            <!-- Drive the mode switch off the RadioButton's Checked (desktop rationale) rather
+                 than Command; the Stream-to-app radio owns the single SetLoggingModeCommand. On
+                 mobile (WiFi/TCP) Log-to-device is USB-gated (IsEnabled=IsUsb) and normally
+                 disabled, so Stream-to-app is the active selection. -->
+            <RadioButton Grid.Column="0" GroupName="LoggingMode" MinHeight="44"
+                         Content="Stream to app"
+                         Foreground="{DynamicResource TextPrimary}"
+                         IsChecked="{Binding !Shell.IsLogToDeviceMode, Mode=OneWay}">
+              <ia:Interaction.Behaviors>
+                <iac:EventTriggerBehavior EventName="Checked">
+                  <iac:InvokeCommandAction Command="{Binding SetLoggingModeCommand}"
+                                           CommandParameter="Stream to App" />
+                </iac:EventTriggerBehavior>
+              </ia:Interaction.Behaviors>
+            </RadioButton>
+            <RadioButton Grid.Column="1" GroupName="LoggingMode" MinHeight="44"
+                         Content="Log to device"
+                         Foreground="{DynamicResource TextPrimary}"
+                         IsEnabled="{Binding SelectedTile.IsUsb}"
+                         IsChecked="{Binding Shell.IsLogToDeviceMode, Mode=OneWay}" />
+          </Grid>
+
+          <TextBlock Text="FREQUENCY (Hz)" Classes="fieldLabel" />
+          <Grid ColumnDefinitions="*,Auto" ColumnSpacing="12">
+            <Slider Grid.Column="0" x:Name="FreqSlider" VerticalAlignment="Center"
+                    Minimum="1" Maximum="1000" TickFrequency="1" IsSnapToTickEnabled="True"
+                    Value="{Binding FrequencyHz, Delay=500}" />
+            <TextBlock Grid.Column="1" VerticalAlignment="Center" MinWidth="52"
+                       TextAlignment="Right" FontFamily="{DynamicResource MonoFontFamily}" FontSize="{DynamicResource FontSizeSubtitle}"
+                       Foreground="{DynamicResource TextPrimary}"
+                       Text="{Binding #FreqSlider.Value}" />
+          </Grid>
+
+          <!-- DATA FORMAT: visible only when logging to device -->
+          <StackPanel Spacing="6" IsVisible="{Binding Shell.IsLogToDeviceMode}">
+            <TextBlock Text="DATA FORMAT" Classes="fieldLabel" />
+            <ComboBox Classes="field"
+                      SelectedItem="{Binding Shell.SelectedSdCardLogFormat, Mode=TwoWay}">
+              <sdCard:SdCardLogFormat>Protobuf</sdCard:SdCardLogFormat>
+              <sdCard:SdCardLogFormat>Json</sdCard:SdCardLogFormat>
+              <sdCard:SdCardLogFormat>Csv</sdCard:SdCardLogFormat>
+            </ComboBox>
+          </StackPanel>
+
+          <!-- NETWORK -->
+          <TextBlock Text="NETWORK" Classes="sectionLabel" />
+
+          <StackPanel Spacing="6">
+            <TextBlock Text="MODE" Classes="fieldLabel" />
+            <ComboBox Classes="field"
+                      SelectedItem="{Binding SelectedDevice.NetworkConfiguration.Mode, Mode=TwoWay}">
+              <networkDataModel:WifiMode>ExistingNetwork</networkDataModel:WifiMode>
+              <networkDataModel:WifiMode>SelfHosted</networkDataModel:WifiMode>
+            </ComboBox>
+          </StackPanel>
+
+          <StackPanel Spacing="6">
+            <TextBlock Text="SECURITY" Classes="fieldLabel" />
+            <ComboBox Classes="field"
+                      SelectedItem="{Binding SelectedDevice.NetworkConfiguration.SecurityType, Mode=TwoWay}">
+              <networkDataModel:WifiSecurityType>None</networkDataModel:WifiSecurityType>
+              <networkDataModel:WifiSecurityType>WpaPskPhrase</networkDataModel:WifiSecurityType>
+            </ComboBox>
+          </StackPanel>
+
+          <StackPanel Spacing="6">
+            <TextBlock Text="SSID" Classes="fieldLabel" />
+            <TextBox Classes="field"
+                     Text="{Binding SelectedDevice.NetworkConfiguration.Ssid, Mode=TwoWay}" />
+          </StackPanel>
+
+          <StackPanel Spacing="6">
+            <TextBlock Text="PASSWORD" Classes="fieldLabel" />
+            <TextBox Classes="field" PasswordChar="&#x2022;"
+                     Text="{Binding SelectedDevice.NetworkConfiguration.Password, Mode=TwoWay}" />
+          </StackPanel>
+
+          <Button Classes="primary" HorizontalAlignment="Stretch"
+                  Content="APPLY NETWORK SETTINGS"
+                  Command="{Binding Shell.UpdateNetworkConfigurationCommand}" />
+
+          <StackPanel Orientation="Horizontal" Spacing="6"
+                      IsVisible="{Binding Shell.NetworkSettingsApplied}">
+            <TextBlock Text="&#x2713;" FontSize="{DynamicResource FontSizeLabel}" VerticalAlignment="Center"
+                       Foreground="{DynamicResource StatusGreen}" />
+            <TextBlock Text="Settings applied" FontSize="{DynamicResource FontSizeCaption}" VerticalAlignment="Center"
+                       Foreground="{DynamicResource StatusGreen}" />
+          </StackPanel>
+
+          <StackPanel Orientation="Horizontal" Spacing="6"
+                      IsVisible="{Binding Shell.HasNetworkSettingsError}">
+            <TextBlock Text="&#x26A0;" FontSize="{DynamicResource FontSizeLabel}" VerticalAlignment="Top"
+                       Foreground="{DynamicResource StatusRed}" />
+            <TextBlock Text="{Binding Shell.NetworkSettingsError}" FontSize="{DynamicResource FontSizeCaption}"
+                       TextWrapping="Wrap" Foreground="{DynamicResource StatusRed}" />
+          </StackPanel>
+
+          <!-- FIRMWARE -->
+          <TextBlock Text="FIRMWARE" Classes="sectionLabel" />
+
+          <!-- USB: file picker + upload (visible when the device supports firmware update) -->
+          <StackPanel Spacing="10" IsVisible="{Binding SelectedDeviceSupportsFirmwareUpdate}">
+            <StackPanel Spacing="6">
+              <TextBlock Text="FIRMWARE FILE" Classes="fieldLabel" />
+              <Grid ColumnDefinitions="*,Auto" ColumnSpacing="8">
+                <TextBox Grid.Column="0" Classes="field"
+                         Text="{Binding Shell.FirmwareFilePath, Mode=TwoWay}" />
+                <!-- The file picker is the VM's concern; this just invokes its browse command. -->
+                <Button Grid.Column="1" Classes="secondary" Content="Browse"
+                        Command="{Binding Shell.BrowseForFirmwareCommand}" />
+              </Grid>
+            </StackPanel>
+
+            <StackPanel Spacing="6">
+              <TextBlock Text="PROGRESS" Classes="fieldLabel" />
+              <ProgressBar Height="10" Minimum="0" Maximum="100"
+                           Background="{DynamicResource Surface}"
+                           Foreground="{DynamicResource Accent}"
+                           BorderBrush="{DynamicResource BorderDim}"
+                           Value="{Binding Shell.UploadFirmwareProgress}" />
+            </StackPanel>
+
+            <Button Classes="primary" HorizontalAlignment="Stretch" Content="UPDATE FIRMWARE"
+                    Command="{Binding Shell.UploadFirmwareCommand}" />
+
+            <!-- WiFi module firmware (Nyquist/WINC1500 devices only) -->
+            <StackPanel Spacing="8" IsVisible="{Binding Shell.SelectedDevice.HasWincWifiModule}">
+              <StackPanel Spacing="3">
+                <TextBlock Text="WIFI MODULE VERSION" Classes="fieldLabel" />
+                <TextBlock Text="{Binding Shell.SelectedDevice.WifiFirmwareVersion}"
+                           Classes="infoValue" />
+              </StackPanel>
+              <Border Background="{DynamicResource SurfaceActive}" BorderBrush="{DynamicResource StatusAmber}"
+                      BorderThickness="1" CornerRadius="8" Padding="12,10"
+                      IsVisible="{Binding Shell.SelectedDevice.IsWifiFirmwareOutdated}">
+                <TextBlock FontSize="{DynamicResource FontSizeCaption}" TextWrapping="Wrap"
+                           Foreground="{DynamicResource StatusAmber}"
+                           Text="WiFi module firmware is out of date (or could not be read) and should be updated." />
+              </Border>
+              <ProgressBar Height="10" Minimum="0" Maximum="100"
+                           Background="{DynamicResource Surface}"
+                           Foreground="{DynamicResource Accent}"
+                           BorderBrush="{DynamicResource BorderDim}"
+                           Value="{Binding Shell.UploadWiFiProgress}" />
+              <Button Classes="primary" HorizontalAlignment="Stretch" Content="FLASH WIFI"
+                      Command="{Binding Shell.UpdateWifiFirmwareOnlyCommand}" />
+            </StackPanel>
+          </StackPanel>
+
+          <!-- WiFi connection: firmware update requires USB -->
+          <Border Background="{DynamicResource SurfaceActive}" BorderBrush="{DynamicResource StatusAmber}"
+                  BorderThickness="1" CornerRadius="8" Padding="12,10"
+                  IsVisible="{Binding !SelectedDeviceSupportsFirmwareUpdate}">
+            <TextBlock FontSize="{DynamicResource FontSizeCaption}" TextWrapping="Wrap"
+                       Foreground="{DynamicResource StatusAmber}"
+                       Text="Firmware updates require a USB connection." />
+          </Border>
+
+          <!-- ACTIONS -->
+          <TextBlock Text="ACTIONS" Classes="sectionLabel" />
+          <Grid ColumnDefinitions="*,*" ColumnSpacing="10">
+            <Button Grid.Column="0" Classes="secondary" Content="REBOOT"
+                    Command="{Binding RebootSelectedCommand}" />
+            <Button Grid.Column="1" Classes="danger" Content="DISCONNECT"
+                    Command="{Binding DisconnectSelectedCommand}" />
+          </Grid>
+
+          <!-- Dismiss the inline settings section (mobile equivalent of the desktop scrim tap) -->
+          <Button Classes="secondary" HorizontalAlignment="Stretch" Content="CLOSE"
+                  Command="{Binding CloseSettingsCommand}" />
+        </StackPanel>
+      </Border>
+
+      <!-- ============ EMPTY STATE (desktop: Grid.IsVisible = !HasConnectedDevice) ============ -->
+      <StackPanel IsVisible="{Binding !HasConnectedDevice}" Spacing="14"
+                  HorizontalAlignment="Center" VerticalAlignment="Center"
+                  MaxWidth="420" Margin="0,60,0,0">
+        <Border Width="96" Height="96" CornerRadius="48" HorizontalAlignment="Center"
+                Background="{DynamicResource SurfaceRaised}"
+                BorderBrush="{DynamicResource BorderDim}" BorderThickness="1">
+          <TextBlock Text="&#x25A3;" FontSize="{DynamicResource FontSizeDisplay}" HorizontalAlignment="Center"
+                     VerticalAlignment="Center" Foreground="{DynamicResource TextTertiary}" />
+        </Border>
+        <TextBlock Text="NO DEVICES CONNECTED" Classes="sectionLabel"
+                   HorizontalAlignment="Center" />
+        <TextBlock Text="Connect a DAQiFi device over USB or WiFi to get started."
+                   FontSize="{DynamicResource FontSizeBody}" FontWeight="Light" TextAlignment="Center" TextWrapping="Wrap"
+                   HorizontalAlignment="Center" Foreground="{DynamicResource TextPrimary}" />
+      </StackPanel>
+
+    </StackPanel>
+  </ScrollViewer>
+</UserControl>

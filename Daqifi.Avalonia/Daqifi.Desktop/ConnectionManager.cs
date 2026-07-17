@@ -200,6 +200,27 @@ public partial class ConnectionManager : ObservableObject
         }
     }
 
+    // Downstream-only (mobile support): the mobile shell connects a device
+    // directly over WiFi/TCP (DaqifiStreamingDevice.Connect) rather than through
+    // Connect() above — which also drives serial duplicate-detection and a 1 s
+    // settle that the mobile flow doesn't want. These let the mobile shell publish
+    // the already-connected device into the shared ConnectedDevices list so the
+    // projected pane VMs that observe it (DeviceLogsViewModel and future mobile
+    // panes) see it and are notified. No upstream counterpart — the WPF app always
+    // routes through Connect().
+    public void RegisterConnectedDevice(IStreamingDevice device)
+    {
+        if (device is null || ConnectedDevices.Contains(device)) { return; }
+        ConnectedDevices.Add(device);
+        OnPropertyChanged(nameof(ConnectedDevices));
+    }
+
+    public void UnregisterConnectedDevice(IStreamingDevice device)
+    {
+        if (device is null || !ConnectedDevices.Remove(device)) { return; }
+        OnPropertyChanged(nameof(ConnectedDevices));
+    }
+
     // @port: Daqifi.Desktop.ConnectionManager.Reboot
     public void Reboot(IStreamingDevice device)
     {

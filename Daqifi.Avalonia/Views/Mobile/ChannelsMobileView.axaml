@@ -1,0 +1,622 @@
+<UserControl xmlns="https://github.com/avaloniaui"
+             xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml"
+             x:Class="Daqifi.Avalonia.Views.Mobile.ChannelsMobileView">
+  <!-- Mobile projection of the desktop Channels pane (ChannelsPanePrototype) over
+       the shared ChannelsPaneViewModel. Authored from the portomatic projection
+       skeleton: every VM binding it enumerated is preserved here (same exact path
+       string, including "!" negations), laid out mobile-friendly — single-column
+       scroll, touch targets (44 px), design tokens, reflection bindings.
+
+       Dialect notes:
+       - The desktop 380 px slide-in settings drawer (gated by IsSettingsOpen)
+         becomes an INLINE expandable card in the same scroll flow, gated by the
+         SAME IsSettingsOpen binding. No fixed-width side drawer / scrim.
+       - The scrim tap-to-close (InvokeCommandAction.Command) and the header "x"
+         (Button.Command) both survive as two Buttons wired to CloseSettingsCommand.
+       - Hover-only affordances and ToolTip-only text dropped; the direction /
+         frequency captions that carried explanatory copy are shown as visible
+         captions instead.
+       - Section-visibility bound directly to the count int (desktop used an
+         IntToVisibility converter; here the reflection binding converts int->bool,
+         count>0 => visible). AND-gated visibility (desktop MultiBinding) is
+         expressed by nesting one IsVisible container inside another. -->
+
+  <UserControl.Styles>
+    <Style Selector="TextBlock.sectionLabel">
+      <Setter Property="FontSize" Value="{DynamicResource FontSizeSmall}" />
+      <Setter Property="FontWeight" Value="SemiBold" />
+      <Setter Property="Foreground" Value="{DynamicResource TextSecondary}" />
+      <Setter Property="VerticalAlignment" Value="Center" />
+    </Style>
+    <Style Selector="TextBlock.sectionCount">
+      <Setter Property="FontSize" Value="{DynamicResource FontSizeSmall}" />
+      <Setter Property="Foreground" Value="{DynamicResource TextTertiary}" />
+      <Setter Property="VerticalAlignment" Value="Center" />
+    </Style>
+    <Style Selector="TextBlock.caption">
+      <Setter Property="FontSize" Value="{DynamicResource FontSizeSmall}" />
+      <Setter Property="Foreground" Value="{DynamicResource TextTertiary}" />
+      <Setter Property="TextWrapping" Value="Wrap" />
+    </Style>
+    <!-- Desktop tile DataTrigger: dim + lock the tile while logging is active. -->
+    <Style Selector="Border.loggingLocked">
+      <Setter Property="Opacity" Value="0.55" />
+    </Style>
+  </UserControl.Styles>
+
+  <UserControl.Resources>
+    <!-- Shared channel-tile template, reused by the ANALOG / DIGITAL IN / DIGITAL OUT
+         lists (desktop's ChannelTileTemplate). Item-scoped members (Name, StripeBrush,
+         TileBackground, Value, TypeLabel, IsActive, ...) come from the desktop
+         DataTemplate; the whole tile taps to toggle, the gear opens settings. -->
+    <DataTemplate x:Key="ChannelTileTemplate">
+      <Border Classes.loggingLocked="{Binding $parent[ItemsControl].DataContext.IsLoggingActive}"
+              Background="{Binding TileBackground}"
+              BorderBrush="{Binding TileBorderBrush}"
+              BorderThickness="1"
+              CornerRadius="10"
+              Margin="0,0,0,8"
+              AutomationProperties.AutomationId="{Binding Name}">
+        <Grid ColumnDefinitions="5,*,Auto,Auto">
+          <Border Grid.Column="0"
+                  Background="{Binding StripeBrush}"
+                  CornerRadius="2,0,0,2" />
+
+          <!-- Tap anywhere on the tile body to activate/deactivate the channel. -->
+          <Button Grid.Column="1"
+                  Background="Transparent"
+                  BorderThickness="0"
+                  Padding="14,10"
+                  MinHeight="44"
+                  HorizontalAlignment="Stretch"
+                  HorizontalContentAlignment="Left"
+                  AutomationProperties.AutomationId="ChannelTile"
+                  Command="{Binding $parent[ItemsControl].DataContext.ToggleChannelCommand}"
+                  CommandParameter="{Binding}">
+            <StackPanel Spacing="3">
+              <StackPanel Orientation="Horizontal" Spacing="8">
+                <TextBlock Text="{Binding Name}"
+                           FontFamily="{DynamicResource MonoFontFamily}"
+                           FontSize="{DynamicResource FontSizeSubtitle}"
+                           FontWeight="Medium"
+                           Foreground="{DynamicResource TextPrimary}"
+                           VerticalAlignment="Center" />
+                <Border IsVisible="{Binding IsActive}"
+                        Background="{DynamicResource SurfaceActive}"
+                        CornerRadius="8"
+                        Padding="7,1"
+                        VerticalAlignment="Center">
+                  <TextBlock Text="ACTIVE"
+                             FontSize="{DynamicResource FontSizeSmall}"
+                             FontWeight="SemiBold"
+                             Foreground="{DynamicResource StatusGreen}" />
+                </Border>
+              </StackPanel>
+              <TextBlock Text="{Binding Value}"
+                         IsVisible="{Binding ShowValue}"
+                         FontFamily="{DynamicResource MonoFontFamily}"
+                         FontSize="{DynamicResource FontSizeLabel}"
+                         Foreground="{Binding Channel.ChannelColorBrush}" />
+              <StackPanel Orientation="Horizontal" Spacing="8">
+                <TextBlock Text="{Binding TypeLabel}"
+                           FontSize="{DynamicResource FontSizeSmall}"
+                           FontWeight="SemiBold"
+                           Foreground="{DynamicResource TextTertiary}" />
+                <TextBlock Text="{Binding DeviceName}"
+                           IsVisible="{Binding ShowDeviceLabel}"
+                           FontSize="{DynamicResource FontSizeSmall}"
+                           Opacity="0.7"
+                           Foreground="{DynamicResource TextTertiary}" />
+              </StackPanel>
+            </StackPanel>
+          </Button>
+
+          <!-- Digital-output quick drive toggle (desktop's in-tile DarkToggleSwitch). -->
+          <ToggleButton Grid.Column="2"
+                        IsChecked="{Binding Channel.IsDigitalOn}"
+                        IsVisible="{Binding ShowDriveToggle}"
+                        AutomationProperties.AutomationId="OutputDriveToggle"
+                        VerticalAlignment="Center"
+                        Margin="4,0" />
+
+          <!-- Per-tile settings (desktop's cog button). -->
+          <Button Grid.Column="3"
+                  Content="&#x2699;"
+                  FontSize="{DynamicResource FontSizeSubtitle}"
+                  Background="Transparent"
+                  BorderThickness="0"
+                  Foreground="{DynamicResource TextSecondary}"
+                  MinHeight="44"
+                  MinWidth="44"
+                  VerticalAlignment="Center"
+                  AutomationProperties.AutomationId="ChannelSettingsButton"
+                  Command="{Binding $parent[ItemsControl].DataContext.OpenSettingsCommand}"
+                  CommandParameter="{Binding}" />
+        </Grid>
+      </Border>
+    </DataTemplate>
+  </UserControl.Resources>
+
+  <Grid Background="{DynamicResource Surface}">
+    <ScrollViewer>
+      <StackPanel Spacing="12" Margin="16">
+
+        <!-- ============================================================
+             CONNECTED STATE  (desktop: connected Grid, IsVisible)
+             ============================================================ -->
+        <StackPanel Spacing="12" IsVisible="{Binding HasConnectedDevice}">
+
+          <!-- Header -->
+          <StackPanel Spacing="4">
+            <TextBlock Text="CHANNELS"
+                       FontSize="{DynamicResource FontSizeSmall}"
+                       FontWeight="Bold"
+                       Foreground="{DynamicResource TextTertiary}" />
+
+            <!-- Single-device header -->
+            <StackPanel Orientation="Horizontal"
+                        Spacing="10"
+                        IsVisible="{Binding !HasMultipleDevices}">
+              <TextBlock Text="{Binding DeviceName}"
+                         FontSize="{DynamicResource FontSizeTitle}"
+                         FontWeight="Light"
+                         Foreground="{DynamicResource TextPrimary}"
+                         VerticalAlignment="Center" />
+              <Ellipse Width="7" Height="7"
+                       Fill="{DynamicResource StatusGreen}"
+                       VerticalAlignment="Center" />
+              <TextBlock Text="CONNECTED"
+                         FontSize="{DynamicResource FontSizeSmall}"
+                         FontWeight="SemiBold"
+                         Foreground="{DynamicResource StatusGreen}"
+                         VerticalAlignment="Center" />
+            </StackPanel>
+
+            <!-- Multi-device header -->
+            <StackPanel Spacing="8" IsVisible="{Binding HasMultipleDevices}">
+              <TextBlock FontSize="{DynamicResource FontSizeTitle}"
+                         FontWeight="Light"
+                         Foreground="{DynamicResource TextPrimary}"><Run Text="{Binding ConnectedDeviceNames.Count}" /><Run Text=" DEVICES" /></TextBlock>
+              <ItemsControl ItemsSource="{Binding ConnectedDeviceNames}">
+                <ItemsControl.ItemsPanel>
+                  <ItemsPanelTemplate>
+                    <WrapPanel />
+                  </ItemsPanelTemplate>
+                </ItemsControl.ItemsPanel>
+                <ItemsControl.ItemTemplate>
+                  <DataTemplate>
+                    <Border Background="{DynamicResource SurfaceRaised}"
+                            BorderBrush="{DynamicResource BorderDim}"
+                            BorderThickness="1"
+                            CornerRadius="8"
+                            Padding="10,6"
+                            Margin="0,0,6,6">
+                      <StackPanel Orientation="Horizontal" Spacing="8">
+                        <Ellipse Width="6" Height="6"
+                                 Fill="{DynamicResource StatusGreen}"
+                                 VerticalAlignment="Center" />
+                        <TextBlock Text="{Binding}"
+                                   FontSize="{DynamicResource FontSizeSmall}"
+                                   FontWeight="SemiBold"
+                                   Foreground="{DynamicResource TextSecondary}"
+                                   VerticalAlignment="Center" />
+                      </StackPanel>
+                    </Border>
+                  </DataTemplate>
+                </ItemsControl.ItemTemplate>
+              </ItemsControl>
+            </StackPanel>
+          </StackPanel>
+
+          <!-- ANALOG IN  (section gated by TotalAnalogCount) -->
+          <StackPanel Spacing="8"
+                      IsVisible="{Binding TotalAnalogCount}">
+            <Grid ColumnDefinitions="*,Auto">
+              <StackPanel Grid.Column="0" Orientation="Horizontal" Spacing="8">
+                <TextBlock Text="ANALOG IN" Classes="sectionLabel" />
+                <TextBlock Classes="sectionCount"><Run Text="&#x00B7; " /><Run Text="{Binding ActiveAnalogCount}" /><Run Text=" / " /><Run Text="{Binding TotalAnalogCount}" /><Run Text=" ACTIVE" /></TextBlock>
+              </StackPanel>
+              <Button Grid.Column="1"
+                      Content="Select all"
+                      MinHeight="44"
+                      Padding="16,12"
+                      CornerRadius="10"
+                      Background="{DynamicResource SurfaceActive}"
+                      Foreground="{DynamicResource TextPrimary}"
+                      FontSize="{DynamicResource FontSizeSmall}"
+                      FontWeight="SemiBold"
+                      AutomationProperties.AutomationId="SelectAllAnalogChannels"
+                      Command="{Binding SelectAllCommand}"
+                      CommandParameter="AI" />
+            </Grid>
+            <Rectangle Height="1"
+                       Fill="{DynamicResource BorderDim}"
+                       IsVisible="{Binding TotalAnalogCount}" />
+            <ItemsControl ItemsSource="{Binding AnalogInputs}"
+                          AutomationProperties.AutomationId="ChannelList"
+                          ItemTemplate="{StaticResource ChannelTileTemplate}" />
+          </StackPanel>
+
+          <!-- DIGITAL IN  (section gated by TotalDigitalInCount) -->
+          <StackPanel Spacing="8"
+                      IsVisible="{Binding TotalDigitalInCount}">
+            <StackPanel Orientation="Horizontal" Spacing="8">
+              <TextBlock Text="DIGITAL IN" Classes="sectionLabel" />
+              <TextBlock Classes="sectionCount"><Run Text="&#x00B7; " /><Run Text="{Binding ActiveDigitalInCount}" /><Run Text=" / " /><Run Text="{Binding TotalDigitalInCount}" /><Run Text=" ACTIVE" /></TextBlock>
+            </StackPanel>
+            <Rectangle Height="1"
+                       Fill="{DynamicResource BorderDim}"
+                       IsVisible="{Binding TotalDigitalInCount}" />
+            <ItemsControl ItemsSource="{Binding DigitalInputs}"
+                          ItemTemplate="{StaticResource ChannelTileTemplate}" />
+          </StackPanel>
+
+          <!-- DIGITAL OUT  (section gated by TotalDigitalOutCount) -->
+          <StackPanel Spacing="8"
+                      IsVisible="{Binding TotalDigitalOutCount}">
+            <StackPanel Orientation="Horizontal" Spacing="8">
+              <TextBlock Text="DIGITAL OUT" Classes="sectionLabel" />
+              <TextBlock Classes="sectionCount"><Run Text="&#x00B7; " /><Run Text="{Binding ActiveDigitalOutCount}" /><Run Text=" / " /><Run Text="{Binding TotalDigitalOutCount}" /><Run Text=" ACTIVE" /></TextBlock>
+            </StackPanel>
+            <Rectangle Height="1"
+                       Fill="{DynamicResource BorderDim}"
+                       IsVisible="{Binding TotalDigitalOutCount}" />
+            <ItemsControl ItemsSource="{Binding DigitalOutputs}"
+                          ItemTemplate="{StaticResource ChannelTileTemplate}" />
+          </StackPanel>
+
+          <!-- Status bar (desktop: bottom status Border) -->
+          <Border Background="{DynamicResource SurfaceRaised}"
+                  BorderBrush="{DynamicResource BorderDim}"
+                  BorderThickness="1"
+                  CornerRadius="10"
+                  Padding="14,12">
+            <StackPanel Spacing="10">
+              <StackPanel Orientation="Horizontal" Spacing="10">
+                <Ellipse Width="7" Height="7"
+                         Fill="{DynamicResource StatusGreen}"
+                         VerticalAlignment="Center" />
+                <TextBlock FontSize="{DynamicResource FontSizeSmall}"
+                           FontWeight="SemiBold"
+                           Foreground="{DynamicResource TextSecondary}"
+                           VerticalAlignment="Center"><Run Text="{Binding TotalActive}" /><Run Text=" CHANNELS ACTIVE" /></TextBlock>
+              </StackPanel>
+              <Border Background="{DynamicResource SurfaceActive}"
+                      BorderBrush="{DynamicResource StatusAmber}"
+                      BorderThickness="1"
+                      CornerRadius="6"
+                      Padding="10,5"
+                      HorizontalAlignment="Left"
+                      IsVisible="{Binding IsLoggingActive}">
+                <TextBlock Text="LOGGING &#x00B7; SELECTION LOCKED"
+                           FontSize="{DynamicResource FontSizeSmall}"
+                           FontWeight="SemiBold"
+                           Foreground="{DynamicResource StatusAmber}" />
+              </Border>
+              <Button Content="Clear all"
+                      HorizontalAlignment="Stretch"
+                      HorizontalContentAlignment="Center"
+                      MinHeight="44"
+                      Padding="16,12"
+                      CornerRadius="10"
+                      Background="{DynamicResource SurfaceActive}"
+                      Foreground="{DynamicResource TextPrimary}"
+                      FontWeight="SemiBold"
+                      AutomationProperties.AutomationId="ClearAllChannels"
+                      Command="{Binding ClearAllCommand}" />
+            </StackPanel>
+          </Border>
+        </StackPanel>
+
+        <!-- ============================================================
+             CHANNEL SETTINGS  (desktop: 380 px drawer -> inline card)
+             gated by the same IsSettingsOpen binding
+             ============================================================ -->
+        <Border IsVisible="{Binding IsSettingsOpen}"
+                Background="{DynamicResource SurfaceRaised}"
+                BorderBrush="{DynamicResource BorderDim}"
+                BorderThickness="1"
+                CornerRadius="12"
+                Padding="16">
+          <StackPanel Spacing="14">
+
+            <!-- Back to channel list (desktop scrim tap-to-close). -->
+            <Button Content="&#x2039;  Back to channels"
+                    HorizontalAlignment="Left"
+                    MinHeight="44"
+                    Padding="12,10"
+                    Background="Transparent"
+                    BorderThickness="0"
+                    Foreground="{DynamicResource TextSecondary}"
+                    FontSize="{DynamicResource FontSizeCaption}"
+                    Command="{Binding CloseSettingsCommand}" />
+
+            <!-- Header: color bar + channel name + close x -->
+            <Grid ColumnDefinitions="Auto,*,Auto">
+              <Rectangle Grid.Column="0"
+                         Width="4"
+                         Height="34"
+                         Fill="{Binding SelectedChannel.ChannelColorBrush}"
+                         Margin="0,0,12,0" />
+              <StackPanel Grid.Column="1" Spacing="2" VerticalAlignment="Center">
+                <TextBlock Text="CHANNEL"
+                           FontSize="{DynamicResource FontSizeSmall}"
+                           FontWeight="Bold"
+                           Foreground="{DynamicResource TextTertiary}" />
+                <TextBlock Text="{Binding SelectedChannel.Name}"
+                           AutomationProperties.AutomationId="ChannelSettingsName"
+                           FontFamily="{DynamicResource MonoFontFamily}"
+                           FontSize="{DynamicResource FontSizeSubtitle}"
+                           FontWeight="Medium"
+                           Foreground="{DynamicResource TextPrimary}" />
+              </StackPanel>
+              <Button Grid.Column="2"
+                      Content="&#x00D7;"
+                      FontSize="{DynamicResource FontSizeSubtitle}"
+                      MinHeight="44"
+                      MinWidth="44"
+                      Background="Transparent"
+                      BorderThickness="0"
+                      Foreground="{DynamicResource TextSecondary}"
+                      VerticalAlignment="Center"
+                      AutomationProperties.AutomationId="CloseChannelSettingsButton"
+                      Command="{Binding CloseSettingsCommand}" />
+            </Grid>
+
+            <!-- NAME -->
+            <StackPanel Spacing="8">
+              <TextBlock Text="NAME" Classes="sectionLabel" />
+              <Border Background="{DynamicResource Surface}"
+                      BorderBrush="{DynamicResource BorderDim}"
+                      BorderThickness="1"
+                      CornerRadius="8"
+                      Padding="10,2">
+                <TextBox Text="{Binding SelectedChannel.Name}"
+                         Background="Transparent"
+                         BorderThickness="0"
+                         Foreground="{DynamicResource TextPrimary}"
+                         FontFamily="{DynamicResource MonoFontFamily}"
+                         FontSize="{DynamicResource FontSizeLabel}"
+                         MinHeight="40"
+                         VerticalContentAlignment="Center"
+                         CaretBrush="{DynamicResource TextPrimary}" />
+              </Border>
+            </StackPanel>
+
+            <!-- COLOR -->
+            <StackPanel Spacing="8">
+              <TextBlock Text="COLOR" Classes="sectionLabel" />
+              <ItemsControl ItemsSource="{Binding Palette}">
+                <ItemsControl.ItemsPanel>
+                  <ItemsPanelTemplate>
+                    <WrapPanel />
+                  </ItemsPanelTemplate>
+                </ItemsControl.ItemsPanel>
+                <ItemsControl.ItemTemplate>
+                  <DataTemplate>
+                    <Button Width="44"
+                            Height="44"
+                            Margin="0,0,8,8"
+                            CornerRadius="8"
+                            BorderBrush="{DynamicResource BorderDim}"
+                            BorderThickness="1"
+                            Background="{Binding}"
+                            Command="{Binding $parent[ItemsControl].DataContext.SetColorCommand}"
+                            CommandParameter="{Binding}" />
+                  </DataTemplate>
+                </ItemsControl.ItemTemplate>
+              </ItemsControl>
+            </StackPanel>
+
+            <!-- DIRECTION (bidirectional only; hidden while PWM runs).
+                 Desktop MultiBinding (IsBidirectional AND !IsPwmEnabled) -> nested
+                 IsVisible containers. -->
+            <StackPanel Spacing="8" IsVisible="{Binding SelectedChannel.IsBidirectional}">
+              <StackPanel Spacing="8" IsVisible="{Binding !SelectedChannel.IsPwmEnabled}">
+                <TextBlock Text="DIRECTION" Classes="sectionLabel" />
+                <Border Background="{DynamicResource Surface}"
+                        BorderBrush="{DynamicResource BorderDim}"
+                        BorderThickness="1"
+                        CornerRadius="8"
+                        Padding="4">
+                  <Grid ColumnDefinitions="*,*">
+                    <RadioButton Grid.Column="0"
+                                 GroupName="direction"
+                                 Content="INPUT"
+                                 MinHeight="44"
+                                 HorizontalAlignment="Stretch"
+                                 HorizontalContentAlignment="Center"
+                                 AutomationProperties.AutomationId="DirectionInputRadio"
+                                 IsChecked="{Binding !SelectedChannel.IsOutput}" />
+                    <RadioButton Grid.Column="1"
+                                 GroupName="direction"
+                                 Content="OUTPUT"
+                                 MinHeight="44"
+                                 HorizontalAlignment="Stretch"
+                                 HorizontalContentAlignment="Center"
+                                 AutomationProperties.AutomationId="DirectionOutputRadio"
+                                 IsChecked="{Binding SelectedChannel.IsOutput}" />
+                  </Grid>
+                </Border>
+                <TextBlock Classes="caption"
+                           Text="Pin numbers are firmware DIO indices — the numbering SCPI and streamed data use. Board terminal labels may differ." />
+              </StackPanel>
+            </StackPanel>
+
+            <!-- DIGITAL OUTPUT STATE (digital output; desktop MultiBinding
+                 IsDigital AND IsOutput -> nested IsVisible containers). -->
+            <StackPanel Spacing="8" IsVisible="{Binding SelectedChannel.IsDigital}">
+              <StackPanel Spacing="8" IsVisible="{Binding SelectedChannel.IsOutput}">
+                <TextBlock Text="OUTPUT STATE" Classes="sectionLabel" />
+                <Border Background="{DynamicResource Surface}"
+                        BorderBrush="{DynamicResource BorderDim}"
+                        BorderThickness="1"
+                        CornerRadius="8"
+                        Padding="4">
+                  <Grid ColumnDefinitions="*,*">
+                    <RadioButton Grid.Column="0"
+                                 GroupName="outputstate"
+                                 Content="LOW"
+                                 MinHeight="44"
+                                 HorizontalAlignment="Stretch"
+                                 HorizontalContentAlignment="Center"
+                                 AutomationProperties.AutomationId="OutputStateLowRadio"
+                                 IsChecked="{Binding !SelectedChannel.IsDigitalOn}" />
+                    <RadioButton Grid.Column="1"
+                                 GroupName="outputstate"
+                                 Content="HIGH"
+                                 MinHeight="44"
+                                 HorizontalAlignment="Stretch"
+                                 HorizontalContentAlignment="Center"
+                                 AutomationProperties.AutomationId="OutputStateHighRadio"
+                                 IsChecked="{Binding SelectedChannel.IsDigitalOn}" />
+                  </Grid>
+                </Border>
+              </StackPanel>
+            </StackPanel>
+
+            <!-- PWM OUTPUT (PWM-capable channels only) -->
+            <StackPanel Spacing="8" IsVisible="{Binding SelectedChannel.IsPwmCapable}">
+              <Grid ColumnDefinitions="*,Auto">
+                <TextBlock Grid.Column="0" Text="PWM OUTPUT" Classes="sectionLabel" />
+                <ToggleButton Grid.Column="1"
+                              AutomationProperties.AutomationId="PwmModeToggle"
+                              IsChecked="{Binding SelectedChannel.IsPwmEnabled}"
+                              VerticalAlignment="Center" />
+              </Grid>
+              <Grid ColumnDefinitions="*,Auto">
+                <TextBlock Grid.Column="0"
+                           Text="DUTY CYCLE"
+                           FontSize="{DynamicResource FontSizeSmall}"
+                           Foreground="{DynamicResource TextTertiary}"
+                           VerticalAlignment="Center" />
+                <TextBlock Grid.Column="1"
+                           FontFamily="{DynamicResource MonoFontFamily}"
+                           FontSize="{DynamicResource FontSizeCaption}"
+                           Foreground="{DynamicResource TextPrimary}"><Run Text="{Binding SelectedChannel.PwmDutyCyclePercent}" /><Run Text=" %" /></TextBlock>
+              </Grid>
+              <Slider AutomationProperties.AutomationId="PwmDutyCycleSlider"
+                      Minimum="1"
+                      Maximum="100"
+                      IsSnapToTickEnabled="True"
+                      TickFrequency="1"
+                      Value="{Binding SelectedChannel.PwmDutyCyclePercent}" />
+              <TextBlock Classes="caption"
+                         Text="1–100 %. Applied live while PWM is running." />
+
+              <TextBlock Text="FREQUENCY &#x00B7; DEVICE-WIDE"
+                         FontSize="{DynamicResource FontSizeSmall}"
+                         Foreground="{DynamicResource TextTertiary}"
+                         Margin="0,6,0,0" />
+              <Border Background="{DynamicResource Surface}"
+                      BorderBrush="{DynamicResource BorderDim}"
+                      BorderThickness="1"
+                      CornerRadius="8"
+                      Padding="10,2">
+                <DockPanel>
+                  <TextBlock DockPanel.Dock="Right"
+                             Text="Hz"
+                             FontSize="{DynamicResource FontSizeSmall}"
+                             Foreground="{DynamicResource TextTertiary}"
+                             VerticalAlignment="Center"
+                             Margin="8,0,0,0" />
+                  <TextBox AutomationProperties.AutomationId="PwmFrequencyInput"
+                           Text="{Binding SelectedDevice.PwmFrequencyHz}"
+                           Background="Transparent"
+                           BorderThickness="0"
+                           Foreground="{DynamicResource TextPrimary}"
+                           FontFamily="{DynamicResource MonoFontFamily}"
+                           FontSize="{DynamicResource FontSizeLabel}"
+                           MinHeight="40"
+                           VerticalContentAlignment="Center"
+                           CaretBrush="{DynamicResource TextPrimary}" />
+                </DockPanel>
+              </Border>
+              <TextBlock Classes="caption"
+                         Text="6–50,000 Hz. One hardware timer drives PWM, so this frequency is shared by every PWM channel on this device." />
+            </StackPanel>
+
+            <!-- SCALING (analog only) -->
+            <StackPanel Spacing="8" IsVisible="{Binding SelectedChannel.IsAnalog}">
+              <Grid ColumnDefinitions="*,Auto">
+                <TextBlock Grid.Column="0" Text="SCALING" Classes="sectionLabel" />
+                <ToggleButton Grid.Column="1"
+                              IsChecked="{Binding SelectedChannel.IsScalingActive}"
+                              VerticalAlignment="Center" />
+              </Grid>
+              <Border Background="{DynamicResource Surface}"
+                      BorderBrush="{DynamicResource BorderDim}"
+                      BorderThickness="1"
+                      CornerRadius="8"
+                      Padding="10,2"
+                      IsEnabled="{Binding SelectedChannel.IsScalingActive}">
+                <TextBox Text="{Binding SelectedChannel.ScaleExpression}"
+                         Background="Transparent"
+                         BorderThickness="0"
+                         Foreground="{DynamicResource TextPrimary}"
+                         FontFamily="{DynamicResource MonoFontFamily}"
+                         FontSize="{DynamicResource FontSizeCaption}"
+                         MinHeight="40"
+                         VerticalContentAlignment="Center"
+                         CaretBrush="{DynamicResource TextPrimary}" />
+              </Border>
+              <TextBlock Classes="caption"
+                         Text="e.g. x * 2 + 1   (x = raw value)" />
+              <!-- INVALID EXPRESSION: desktop MultiBinding (IsScalingActive AND
+                   !HasValidExpression) -> nested IsVisible containers. -->
+              <StackPanel IsVisible="{Binding SelectedChannel.IsScalingActive}">
+                <TextBlock Text="INVALID EXPRESSION"
+                           FontSize="{DynamicResource FontSizeSmall}"
+                           FontWeight="SemiBold"
+                           Foreground="{DynamicResource StatusRed}"
+                           IsVisible="{Binding !SelectedChannel.HasValidExpression}" />
+              </StackPanel>
+            </StackPanel>
+
+          </StackPanel>
+        </Border>
+
+        <!-- ============================================================
+             EMPTY STATE  (desktop: empty Grid, IsVisible)
+             ============================================================ -->
+        <StackPanel IsVisible="{Binding !HasConnectedDevice}"
+                    HorizontalAlignment="Center"
+                    VerticalAlignment="Center"
+                    MaxWidth="420"
+                    Margin="0,60,0,0"
+                    Spacing="14">
+          <Border Width="96"
+                  Height="96"
+                  CornerRadius="48"
+                  Background="{DynamicResource SurfaceRaised}"
+                  BorderBrush="{DynamicResource BorderDim}"
+                  BorderThickness="1"
+                  HorizontalAlignment="Center">
+            <TextBlock Text="&#x2317;"
+                       FontSize="{DynamicResource FontSizeDisplay}"
+                       Foreground="{DynamicResource TextTertiary}"
+                       HorizontalAlignment="Center"
+                       VerticalAlignment="Center" />
+          </Border>
+          <TextBlock Text="NO DEVICE CONNECTED"
+                     FontSize="{DynamicResource FontSizeSmall}"
+                     FontWeight="Bold"
+                     Foreground="{DynamicResource TextTertiary}"
+                     HorizontalAlignment="Center" />
+          <TextBlock Text="Connect a DAQiFi device to view and activate channels."
+                     FontSize="{DynamicResource FontSizeBody}"
+                     FontWeight="Light"
+                     Foreground="{DynamicResource TextPrimary}"
+                     TextAlignment="Center"
+                     TextWrapping="Wrap"
+                     HorizontalAlignment="Center" />
+          <TextBlock Text="Open the Devices tab to get started"
+                     FontSize="{DynamicResource FontSizeSmall}"
+                     Foreground="{DynamicResource TextSecondary}"
+                     HorizontalAlignment="Center" />
+        </StackPanel>
+
+      </StackPanel>
+    </ScrollViewer>
+  </Grid>
+</UserControl>

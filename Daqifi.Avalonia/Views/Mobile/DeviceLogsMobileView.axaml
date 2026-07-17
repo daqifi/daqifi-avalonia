@@ -1,0 +1,165 @@
+<UserControl xmlns="https://github.com/avaloniaui"
+             xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml"
+             x:Class="Daqifi.Avalonia.Views.Mobile.DeviceLogsMobileView">
+  <!-- Mobile projection of the desktop Device Logs / SD-card pane over the
+       shared DeviceLogsViewModel. Authored from the portomatic projection
+       skeleton (every VM binding preserved), laid out mobile-friendly:
+       single-column scroll, touch targets, design tokens, no DataGrid.
+
+       SD-card offload is USB-gated on this codebase: DeviceLogsViewModel.
+       CanAccessSdCard is true ONLY for ConnectionType.Usb. Over WiFi the pane
+       shows the "requires USB" callout — the phone→DAQiFi USB transport is the
+       enabling work (see docs). -->
+  <Grid Background="{DynamicResource Surface}">
+    <ScrollViewer>
+      <StackPanel Spacing="14" Margin="16,20">
+
+        <TextBlock Text="Device Storage" FontSize="{DynamicResource FontSizeTitle}" FontWeight="Bold"
+                   Foreground="{DynamicResource TextPrimary}" />
+
+        <!-- Device selector + connection type -->
+        <Border Background="{DynamicResource SurfaceRaised}" CornerRadius="12" Padding="14,12">
+          <StackPanel Spacing="8">
+            <TextBlock Text="Connected device" FontSize="{DynamicResource FontSizeSmall}"
+                       Foreground="{DynamicResource TextTertiary}" />
+            <ComboBox HorizontalAlignment="Stretch"
+                      ItemsSource="{Binding ConnectedDevices}"
+                      SelectedItem="{Binding SelectedDevice}" />
+            <StackPanel Orientation="Horizontal" Spacing="8"
+                        IsVisible="{Binding SelectedDevice}">
+              <TextBlock Text="Link:" FontSize="{DynamicResource FontSizeCaption}"
+                         Foreground="{DynamicResource TextTertiary}" />
+              <TextBlock Text="{Binding SelectedDevice.ConnectionType}" FontSize="{DynamicResource FontSizeCaption}"
+                         FontWeight="SemiBold" Foreground="{DynamicResource TextSecondary}" />
+            </StackPanel>
+            <TextBlock Text="{Binding ConnectionTypeMessage}" TextWrapping="Wrap"
+                       FontSize="{DynamicResource FontSizeCaption}" Foreground="{DynamicResource TextSecondary}" />
+            <TextBlock Text="{Binding SdCardStatusLine}" TextWrapping="Wrap"
+                       Classes.sdError="{Binding HasSdCardError}"
+                       FontSize="{DynamicResource FontSizeCaption}" Foreground="{DynamicResource TextSecondary}">
+              <TextBlock.Styles>
+                <Style Selector="TextBlock.sdError">
+                  <Setter Property="Foreground" Value="{DynamicResource StatusRed}" />
+                </Style>
+              </TextBlock.Styles>
+            </TextBlock>
+          </StackPanel>
+        </Border>
+
+        <!-- Actions -->
+        <StackPanel Orientation="Horizontal" Spacing="10">
+          <Button Content="Refresh" Command="{Binding RefreshFilesCommand}"
+                  IsEnabled="{Binding CanAccessSdCard}"
+                  MinHeight="44" Padding="18,12" CornerRadius="10"
+                  Background="{DynamicResource Accent}" Foreground="White" />
+          <Button Content="Import all" Command="{Binding ImportAllFilesCommand}"
+                  IsEnabled="{Binding CanAccessSdCard}"
+                  MinHeight="44" Padding="18,12" CornerRadius="10"
+                  Background="{DynamicResource SurfaceActive}"
+                  Foreground="{DynamicResource TextPrimary}" />
+        </StackPanel>
+
+        <!-- USB-required callout: SD offload needs a USB (OTG) link. This is the
+             honest WiFi state and the entry point for the phone→DAQiFi USB work. -->
+        <Border IsVisible="{Binding !CanAccessSdCard}"
+                Background="{DynamicResource SurfaceRaised}"
+                BorderBrush="{DynamicResource StatusAmber}" BorderThickness="1"
+                CornerRadius="12" Padding="16,14">
+          <StackPanel Spacing="6">
+            <TextBlock Text="SD-card offload needs a USB connection"
+                       FontWeight="SemiBold" FontSize="{DynamicResource FontSizeBody}"
+                       Foreground="{DynamicResource StatusAmber}" />
+            <TextBlock TextWrapping="Wrap" FontSize="{DynamicResource FontSizeCaption}"
+                       Foreground="{DynamicResource TextSecondary}"
+                       Text="Log files stored on the device SD card are read over a direct USB (OTG) link — connect the phone to the DAQiFi with a USB-C cable. Wi-Fi streams live data but cannot browse on-device storage." />
+          </StackPanel>
+        </Border>
+
+        <!-- SD present but empty -->
+        <Border IsVisible="{Binding HasNoFiles}"
+                Background="{DynamicResource SurfaceRaised}" CornerRadius="12" Padding="16,14">
+          <TextBlock Text="SD card is OK — no log files on it yet."
+                     TextWrapping="Wrap" FontSize="{DynamicResource FontSizeLabel}"
+                     Foreground="{DynamicResource TextSecondary}" />
+        </Border>
+
+        <!-- No SD card installed -->
+        <Border IsVisible="{Binding HasSdCardNotPresent}"
+                Background="{DynamicResource SurfaceRaised}" CornerRadius="12" Padding="16,14">
+          <StackPanel Spacing="8">
+            <TextBlock Text="No SD card installed in the device."
+                       TextWrapping="Wrap" FontSize="{DynamicResource FontSizeLabel}"
+                       Foreground="{DynamicResource TextSecondary}" />
+            <Button Content="Copy diagnostics"
+                    Command="{Binding CopyDiagnosticInfoCommand}"
+                    MinHeight="44" Padding="16,10" CornerRadius="10"
+                    HorizontalAlignment="Left"
+                    Background="{DynamicResource SurfaceActive}"
+                    Foreground="{DynamicResource TextPrimary}" />
+          </StackPanel>
+        </Border>
+
+        <!-- SD card error -->
+        <Border IsVisible="{Binding HasSdCardError}"
+                Background="{DynamicResource SurfaceRaised}"
+                BorderBrush="{DynamicResource StatusRed}" BorderThickness="1"
+                CornerRadius="12" Padding="16,14">
+          <StackPanel Spacing="8">
+            <TextBlock Text="SD card error" FontWeight="SemiBold" FontSize="{DynamicResource FontSizeBody}"
+                       Foreground="{DynamicResource StatusRed}" />
+            <TextBlock Text="{Binding SdCardErrorMessage}" TextWrapping="Wrap"
+                       IsVisible="{Binding SdCardErrorMessage}"
+                       FontSize="{DynamicResource FontSizeCaption}" Foreground="{DynamicResource TextSecondary}" />
+            <Button Content="Copy diagnostics"
+                    Command="{Binding CopyDiagnosticInfoCommand}"
+                    MinHeight="44" Padding="16,10" CornerRadius="10"
+                    HorizontalAlignment="Left"
+                    Background="{DynamicResource SurfaceActive}"
+                    Foreground="{DynamicResource TextPrimary}" />
+          </StackPanel>
+        </Border>
+
+        <!-- File list (DataGrid → touch list). Per-file rows bind the SdCardFile
+             item; the import button reaches back to the VM's ImportFileCommand. -->
+        <ItemsControl ItemsSource="{Binding DeviceFiles}" IsVisible="{Binding HasFiles}">
+          <ItemsControl.ItemTemplate>
+            <DataTemplate>
+              <Border Background="{DynamicResource SurfaceRaised}" CornerRadius="10"
+                      Padding="14,12" Margin="0,0,0,8">
+                <Grid ColumnDefinitions="*,Auto">
+                  <StackPanel Grid.Column="0" Spacing="3">
+                    <TextBlock Text="{Binding FileName}" FontSize="{DynamicResource FontSizeBody}" FontWeight="SemiBold"
+                               Foreground="{DynamicResource TextPrimary}"
+                               TextTrimming="CharacterEllipsis" />
+                    <StackPanel Orientation="Horizontal" Spacing="10">
+                      <TextBlock Text="{Binding CreatedDateDisplay}" FontSize="{DynamicResource FontSizeSmall}"
+                                 Foreground="{DynamicResource TextTertiary}" />
+                      <TextBlock Text="{Binding FormatDisplay}" FontSize="{DynamicResource FontSizeSmall}"
+                                 Foreground="{DynamicResource TextTertiary}" />
+                    </StackPanel>
+                  </StackPanel>
+                  <Button Grid.Column="1" Content="Import"
+                          Command="{Binding $parent[ItemsControl].DataContext.ImportFileCommand}"
+                          CommandParameter="{Binding}"
+                          MinHeight="40" Padding="14,8" CornerRadius="8"
+                          VerticalAlignment="Center"
+                          Background="{DynamicResource Accent}" Foreground="White" />
+                </Grid>
+              </Border>
+            </DataTemplate>
+          </ItemsControl.ItemTemplate>
+        </ItemsControl>
+
+      </StackPanel>
+    </ScrollViewer>
+
+    <!-- Busy overlay -->
+    <Border IsVisible="{Binding IsBusy}" Background="{DynamicResource Scrim}">
+      <StackPanel VerticalAlignment="Center" HorizontalAlignment="Center" Spacing="14">
+        <ProgressBar IsIndeterminate="{Binding IsBusy}" Width="200" />
+        <TextBlock Text="{Binding BusyMessage}" HorizontalAlignment="Center"
+                   FontSize="{DynamicResource FontSizeLabel}" Foreground="{DynamicResource TextPrimary}" />
+      </StackPanel>
+    </Border>
+  </Grid>
+</UserControl>

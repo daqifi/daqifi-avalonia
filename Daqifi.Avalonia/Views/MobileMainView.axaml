@@ -1,0 +1,45 @@
+<UserControl xmlns="https://github.com/avaloniaui"
+             xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml"
+             xmlns:v="clr-namespace:Daqifi.Avalonia.Views"
+             x:Class="Daqifi.Avalonia.Views.MobileMainView">
+  <!-- Mobile navigation shell (#221 five-platform goal): a bottom tab bar over
+       the streaming experience + the mobile panes projected by portomatic from
+       the desktop views/shared ViewModels. The Stream tab stays ALWAYS attached
+       (IsVisible-toggled, never Content-swapped) so switching tabs never tears
+       down the live device connection or its render timer. Secondary panes build
+       lazily and defensively (see code-behind). -->
+  <UserControl.Styles>
+    <Style Selector="Button.nav">
+      <Setter Property="Background" Value="Transparent" />
+      <Setter Property="Foreground" Value="{DynamicResource TextSecondary}" />
+      <Setter Property="HorizontalAlignment" Value="Stretch" />
+      <Setter Property="HorizontalContentAlignment" Value="Center" />
+      <Setter Property="MinHeight" Value="54" />
+      <Setter Property="FontSize" Value="{DynamicResource FontSizeCaption}" />
+      <Setter Property="CornerRadius" Value="0" />
+    </Style>
+    <Style Selector="Button.nav.active">
+      <Setter Property="Foreground" Value="{DynamicResource Accent}" />
+      <Setter Property="FontWeight" Value="SemiBold" />
+    </Style>
+  </UserControl.Styles>
+
+  <Grid RowDefinitions="*,Auto" Background="{DynamicResource Surface}">
+    <Panel Grid.Row="0">
+      <!-- Live streaming/connect experience — the validated view, kept attached -->
+      <v:MobileShellView x:Name="StreamView" />
+      <!-- Projected panes are hosted here (lazy) -->
+      <ContentControl x:Name="SecondaryHost" IsVisible="False" />
+    </Panel>
+
+    <Border Grid.Row="1" Background="{DynamicResource SurfaceRaised}"
+            BorderBrush="{DynamicResource BorderDim}" BorderThickness="0,1,0,0">
+      <UniformGrid Columns="4">
+        <Button x:Name="NavStream"   Classes="nav" Content="Stream"   Click="OnStream" />
+        <Button x:Name="NavStorage"  Classes="nav" Content="Storage"  Click="OnStorage" />
+        <Button x:Name="NavChannels" Classes="nav" Content="Channels" Click="OnChannels" />
+        <Button x:Name="NavProfiles" Classes="nav" Content="Profiles" Click="OnProfiles" />
+      </UniformGrid>
+    </Border>
+  </Grid>
+</UserControl>

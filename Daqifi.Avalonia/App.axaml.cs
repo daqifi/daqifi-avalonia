@@ -29,11 +29,13 @@ public partial class App : Application
         else if (ApplicationLifetime is ISingleViewApplicationLifetime singleView)
         {
             // Mobile heads (Android/iOS, the five-platform goal) boot the
-            // shell view — the desktop absorption host is desktop-only
+            // navigation shell — the desktop absorption host is desktop-only
             // (serial/WMI transports, SQLite app-data paths); mobile is
             // WiFi/TCP per the recorded DIV-UI-003 divergence and its UI
-            // ports incrementally.
-            singleView.MainView = new Views.MobileShellView();
+            // ports incrementally. MobileMainView hosts the live stream view
+            // plus the mobile panes projected from the desktop views + shared
+            // ViewModels (Storage/Channels/Profiles).
+            singleView.MainView = new Views.MobileMainView();
         }
 
         base.OnFrameworkInitializationCompleted();
