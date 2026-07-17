@@ -1,14 +1,25 @@
 # Phone → DAQiFi over USB (OTG): SD offload + lossless streaming
 
-**Status:** feasibility confirmed from source + Android platform facts; **not yet
-validated on device** (needs the phone + a USB-C OTG cable + a device).
+**Status: SD offload VALIDATED ON DEVICE (2026-07-17).** A Samsung A16 connected to
+a Nyquist over a USB-C OTG hub, asserted DTR, and listed + offloaded the SD card
+(`SD:LIST?` / `SD:GET`) through the app's `AndroidUsbStreamTransport`. Observed
+descriptor: 2 interfaces (Comm iface 0 with Interrupt-IN `0x81`; CDC-Data iface 1
+with **Bulk-OUT `0x02` + Bulk-IN `0x82`, maxPacket 512** — so the device is USB 2.0
+**High-Speed**, not Full-Speed as estimated below). DTR `SET_CONTROL_LINE_STATE`
+(wIndex 0) returned 0, and the device reported its initial status over USB within
+~1.9 s of connect. Two real bugs were found + fixed during bring-up: the device
+disposed its injected transport in the pre-connect `CleanupConnection` (every connect
+threw `ObjectDisposedException`), and a diagnostic log hex-formatted a `UsbAddressing`
+enum. **Live USB streaming into the Stream-tab plot is the remaining piece** — it
+needs `MobileShellViewModel._connected` generalized off the WiFi device type (SD
+offload needs only the ConnectionManager registration, which is done).
 
 **Bottom line**
 
 | Capability | Verdict | Notes |
 |---|---|---|
-| **SD-card log offload over USB (Android)** | **Feasible** | The whole SD path already exists in Core and is USB-gated; only a new Android USB transport + device/manifest/UI wiring is needed. No ViewModel changes. |
-| **Lossless USB streaming (Android)** | **Feasible for "lossless"; partial for "higher-speed"** | USB bulk is CRC'd, retransmitted, NAK-flow-controlled → genuinely lossless/back-pressured (unlike the WiFi/UDP path). Throughput is capped by the device's **Full-Speed** USB (~1 MB/s), not the phone. |
+| **SD-card log offload over USB (Android)** | **✅ VALIDATED on device** | The whole SD path already existed in Core; the new `AndroidUsbStreamTransport` + `UsbStreamingDevice` + connector + gated UI light it up. No ViewModel changes. |
+| **Lossless USB streaming (Android)** | **Transport validated; Stream-tab plot pending** | USB bulk is CRC'd, retransmitted, NAK-flow-controlled → genuinely lossless/back-pressured. The device is **High-Speed** (512-byte bulk), so throughput headroom is higher than the ~1 MB/s Full-Speed estimate. Plotting USB data in the Stream tab needs `MobileShellViewModel._connected` generalized to `IStreamingDevice`. |
 | **iOS** | **Not feasible** | No third-party USB host for non-MFi devices → stays WiFi-only (record as a divergence, sibling of `DIV-UI-003`). |
 
 The mobile SD-offload UI already ships: `Views/Mobile/DeviceLogsMobileView.axaml`

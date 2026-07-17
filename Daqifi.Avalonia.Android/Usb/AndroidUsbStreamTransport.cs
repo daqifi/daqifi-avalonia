@@ -120,26 +120,32 @@ public sealed class AndroidUsbStreamTransport : IStreamTransport
             var connection = _manager.OpenDevice(_device)
                 ?? throw new InvalidOperationException("UsbManager.OpenDevice returned null (permission not granted?).");
             _connection = connection;
+            L("OpenDevice OK");
 
             // Claim the data interface (force:true detaches any kernel driver). Best-effort
             // claim of the comms interface too — some stacks require it for the class request.
-            if (!connection.ClaimInterface(_dataInterface, true))
+            var claimedData = connection.ClaimInterface(_dataInterface, true);
+            L($"ClaimInterface(data) => {claimedData}");
+            if (!claimedData)
             {
                 throw new InvalidOperationException("Failed to claim the CDC data interface.");
             }
             if (_commInterface != null)
             {
-                connection.ClaimInterface(_commInterface, true);
+                var claimedComm = connection.ClaimInterface(_commInterface, true);
+                L($"ClaimInterface(comm) => {claimedComm}");
             }
 
             AssertDtr(connection);
 
             _stream = new UsbCdcStream(connection, _bulkIn, _bulkOut);
             _connected = true;
+            L("transport connected");
             OnStatusChanged(true, null);
         }
         catch (Exception ex)
         {
+            L($"CONNECT FAILED: {ex.GetType().Name}: {ex.Message}");
             AppLogger.Instance.Warning(ex, $"Failed to connect Android USB transport ({ConnectionInfo})");
             SafeTeardown();
             OnStatusChanged(false, ex);
@@ -198,11 +204,25 @@ public sealed class AndroidUsbStreamTransport : IStreamTransport
         _disposed = true;
     }
 
+    // Diagnostic log straight to Android logcat (tag "DaqifiUsb"). AppLogger writes
+    // to an NLog file inside the app's private dir, which is unreadable on a Release
+    // (non-debuggable) build — logcat is readable over adb, so the on-device USB
+    // bring-up logs here. `global::` is required: the enclosing Daqifi.Avalonia.Android
+    // namespace shadows the root Android namespace.
+    private static void L(string message) => global::Android.Util.Log.Info("DaqifiUsb", message);
+
     private void ResolveInterfacesAndEndpoints()
     {
+        L($"device={_device.DeviceName} VID=0x{_device.VendorId:X4} PID=0x{_device.ProductId:X4} interfaces={_device.InterfaceCount}");
         for (var i = 0; i < _device.InterfaceCount; i++)
         {
             var iface = _device.GetInterface(i);
+            L($"  iface[{i}] id={iface.Id} class={iface.InterfaceClass}({(int)iface.InterfaceClass}) subclass={iface.InterfaceSubclass} proto={iface.InterfaceProtocol} endpoints={iface.EndpointCount}");
+            for (var e = 0; e < iface.EndpointCount; e++)
+            {
+                var ep0 = iface.GetEndpoint(e);
+                L($"    ep[{e}] addr=0x{(int)ep0.Address:X2} type={ep0.Type} dir={ep0.Direction} maxPkt={ep0.MaxPacketSize}");
+            }
 
             if (iface.InterfaceClass == UsbClass.Comm)
             {
@@ -247,6 +267,10 @@ public sealed class AndroidUsbStreamTransport : IStreamTransport
                 }
             }
         }
+        L($"resolved: dataInterface={(_dataInterface != null ? _dataInterface.Id.ToString() : "NONE")} " +
+          $"bulkIn={(_bulkIn != null ? $"0x{(int)_bulkIn.Address:X2}" : "NONE")} " +
+          $"bulkOut={(_bulkOut != null ? $"0x{(int)_bulkOut.Address:X2}" : "NONE")} " +
+          $"commInterface={(_commInterface != null ? _commInterface.Id.ToString() : "NONE")}");
     }
 
     private void AssertDtr(UsbDeviceConnection connection)
@@ -264,6 +288,7 @@ public sealed class AndroidUsbStreamTransport : IStreamTransport
             0,
             ControlTransferTimeoutMs);
 
+        L($"DTR SET_CONTROL_LINE_STATE wIndex={interfaceIndex} => {result} (>=0 is OK)");
         if (result < 0)
         {
             AppLogger.Instance.Warning(

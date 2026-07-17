@@ -190,8 +190,18 @@ public class UsbStreamingDevice : AbstractStreamingDevice
     }
 
     /// <summary>
-    /// Tears down the Core device (base) then disconnects and disposes the transport.
+    /// Tears down the Core device (base) then DISCONNECTS the transport.
     /// </summary>
+    /// <remarks>
+    /// Must NOT dispose the transport here: <see cref="AbstractStreamingDevice.Connect"/>
+    /// calls <c>CleanupConnection</c> FIRST (defensively) before <see cref="CreateCoreDevice"/>
+    /// connects the transport — and unlike <see cref="SerialDevice.SerialStreamingDevice"/>
+    /// (which re-creates its transport each connect), this transport is INJECTED and reused,
+    /// so disposing it would make the immediately-following <c>_transport.Connect()</c> throw
+    /// <see cref="ObjectDisposedException"/> and every connect fail before it starts. Disconnect
+    /// releases the native USB connection (it is a no-op when not yet connected) and leaves the
+    /// transport re-connectable; the object itself is a small managed wrapper collected normally.
+    /// </remarks>
     protected override void CleanupConnection()
     {
         _initialStatusReceivedSource = null;
@@ -202,7 +212,6 @@ public class UsbStreamingDevice : AbstractStreamingDevice
         try
         {
             _transport.Disconnect();
-            _transport.Dispose();
         }
         catch (Exception ex)
         {

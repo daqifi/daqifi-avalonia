@@ -161,7 +161,9 @@ public static class UsbDeviceConnector
             var usbDevice = new UsbStreamingDevice(transport, name);
 
             // Connect() blocks on Core init; keep it off the UI thread like the WiFi shell does.
+            global::Android.Util.Log.Info("DaqifiUsb", $"UsbStreamingDevice.Connect starting for {name}…");
             var connected = await Task.Run(usbDevice.Connect, cancellationToken).ConfigureAwait(false);
+            global::Android.Util.Log.Info("DaqifiUsb", $"UsbStreamingDevice.Connect => {connected}");
             if (!connected)
             {
                 AppLogger.Instance.Warning($"Failed to connect USB device {name}");
