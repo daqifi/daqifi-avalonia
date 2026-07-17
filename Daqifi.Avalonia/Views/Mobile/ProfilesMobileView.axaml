@@ -87,8 +87,12 @@
             <Run Text=" SAVED"/>
           </TextBlock>
 
-          <!-- desktop: TextBlock.IsVisible + Run.Text (active profile indicator) -->
-          <TextBlock IsVisible="{Binding ActiveProfileName}"
+          <!-- desktop: TextBlock.IsVisible + Run.Text (active profile indicator).
+               ActiveProfileName is a string; binding it straight to the bool
+               IsVisible throws (Convert.ToBoolean(string)) and reverts to
+               always-visible — coerce with the built-in null/empty→bool converter
+               (the desktop used its NotNullToVis converter here). -->
+          <TextBlock IsVisible="{Binding ActiveProfileName, Converter={x:Static StringConverters.IsNotNullOrEmpty}}"
                      FontSize="{DynamicResource FontSizeSmall}" FontWeight="SemiBold"
                      Foreground="{DynamicResource StatusGreen}">
             <Run Text="{Binding ActiveProfileName}"/>

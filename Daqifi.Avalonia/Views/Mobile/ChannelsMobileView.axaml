@@ -210,7 +210,7 @@
 
           <!-- ANALOG IN  (section gated by TotalAnalogCount) -->
           <StackPanel Spacing="8"
-                      IsVisible="{Binding TotalAnalogCount}">
+                      IsVisible="{Binding TotalAnalogCount, Converter={StaticResource IntToVisibility}}">
             <Grid ColumnDefinitions="*,Auto">
               <StackPanel Grid.Column="0" Orientation="Horizontal" Spacing="8">
                 <TextBlock Text="ANALOG IN" Classes="sectionLabel" />
@@ -231,7 +231,7 @@
             </Grid>
             <Rectangle Height="1"
                        Fill="{DynamicResource BorderDim}"
-                       IsVisible="{Binding TotalAnalogCount}" />
+                       IsVisible="{Binding TotalAnalogCount, Converter={StaticResource IntToVisibility}}" />
             <ItemsControl ItemsSource="{Binding AnalogInputs}"
                           AutomationProperties.AutomationId="ChannelList"
                           ItemTemplate="{StaticResource ChannelTileTemplate}" />
@@ -239,28 +239,28 @@
 
           <!-- DIGITAL IN  (section gated by TotalDigitalInCount) -->
           <StackPanel Spacing="8"
-                      IsVisible="{Binding TotalDigitalInCount}">
+                      IsVisible="{Binding TotalDigitalInCount, Converter={StaticResource IntToVisibility}}">
             <StackPanel Orientation="Horizontal" Spacing="8">
               <TextBlock Text="DIGITAL IN" Classes="sectionLabel" />
               <TextBlock Classes="sectionCount"><Run Text="&#x00B7; " /><Run Text="{Binding ActiveDigitalInCount}" /><Run Text=" / " /><Run Text="{Binding TotalDigitalInCount}" /><Run Text=" ACTIVE" /></TextBlock>
             </StackPanel>
             <Rectangle Height="1"
                        Fill="{DynamicResource BorderDim}"
-                       IsVisible="{Binding TotalDigitalInCount}" />
+                       IsVisible="{Binding TotalDigitalInCount, Converter={StaticResource IntToVisibility}}" />
             <ItemsControl ItemsSource="{Binding DigitalInputs}"
                           ItemTemplate="{StaticResource ChannelTileTemplate}" />
           </StackPanel>
 
           <!-- DIGITAL OUT  (section gated by TotalDigitalOutCount) -->
           <StackPanel Spacing="8"
-                      IsVisible="{Binding TotalDigitalOutCount}">
+                      IsVisible="{Binding TotalDigitalOutCount, Converter={StaticResource IntToVisibility}}">
             <StackPanel Orientation="Horizontal" Spacing="8">
               <TextBlock Text="DIGITAL OUT" Classes="sectionLabel" />
               <TextBlock Classes="sectionCount"><Run Text="&#x00B7; " /><Run Text="{Binding ActiveDigitalOutCount}" /><Run Text=" / " /><Run Text="{Binding TotalDigitalOutCount}" /><Run Text=" ACTIVE" /></TextBlock>
             </StackPanel>
             <Rectangle Height="1"
                        Fill="{DynamicResource BorderDim}"
-                       IsVisible="{Binding TotalDigitalOutCount}" />
+                       IsVisible="{Binding TotalDigitalOutCount, Converter={StaticResource IntToVisibility}}" />
             <ItemsControl ItemsSource="{Binding DigitalOutputs}"
                           ItemTemplate="{StaticResource ChannelTileTemplate}" />
           </StackPanel>
