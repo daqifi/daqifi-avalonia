@@ -25,6 +25,9 @@ public class MainActivity : AvaloniaMainActivity<App>
         // without it Android power-save-filters the broadcast replies and
         // discovery silently finds nothing.
         NetworkDiscoveryScope.Current = new MulticastDiscoveryScope(this);
+        // Register the USB (OTG) host connector so the mobile shell can offer a
+        // "Connect via USB" affordance (experimental — see Usb/AndroidUsbStreamTransport).
+        MobileUsbConnector.Current = new Usb.AndroidUsbConnector(this);
         base.OnCreate(savedInstanceState);
     }
 

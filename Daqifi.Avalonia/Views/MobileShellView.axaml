@@ -112,6 +112,19 @@
 					        Foreground="White" Background="#1D6FA5"
 					        Padding="14,8" CornerRadius="8" />
 				</Grid>
+
+				<!-- Experimental USB (OTG) connect — shown only on Android (a
+				     USB-host connector is registered). Connects the attached DAQiFi
+				     over USB-CDC and registers it, lighting up SD offload in the
+				     Storage tab. See docs/mobile-usb-feasibility.md. -->
+				<Button Content="Connect via USB (OTG)"
+				        Command="{Binding ConnectUsbCommand}"
+				        IsVisible="{Binding IsUsbAvailable}"
+				        HorizontalAlignment="Stretch"
+				        HorizontalContentAlignment="Center"
+				        Margin="0,2,0,0" Padding="0,12"
+				        FontSize="15" FontWeight="SemiBold"
+				        Foreground="White" Background="#A05A2C" CornerRadius="8" />
 			</StackPanel>
 
 			<ScrollViewer IsVisible="{Binding ShowDeviceList}">

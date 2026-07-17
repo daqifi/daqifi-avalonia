@@ -171,6 +171,22 @@ public partial class MobileShellViewModel : ObservableObject, IDisposable
             () => new DaqifiStreamingDevice(ip, port, $"DAQiFi @ {ip}"));
     }
 
+    // Experimental USB (OTG) connect. The affordance is shown only on a platform
+    // that registered a USB-host connector (Android). Tapping enumerates the
+    // attached DAQiFi, connects it over USB-CDC, and registers it with
+    // ConnectionManager — which lights up SD offload in the Storage pane. Live
+    // USB streaming in this tab additionally needs _connected generalized off the
+    // WiFi device type; SD offload needs only the registration. See
+    // docs/mobile-usb-feasibility.md.
+    public bool IsUsbAvailable => MobileUsbConnector.IsAvailable;
+
+    [RelayCommand]
+    private async Task ConnectUsb()
+    {
+        Status = "Connecting via USB…";
+        Status = await MobileUsbConnector.ConnectAsync();
+    }
+
     internal Task ConnectAsync(MobileDeviceItem item) =>
         ConnectCoreAsync(
             $"{item.Name} ({item.Ip})",
