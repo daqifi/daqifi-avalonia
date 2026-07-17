@@ -7,5 +7,16 @@
 	<!-- Required to hold a WifiManager MulticastLock — without it Android
 	     power-save-filters incoming UDP broadcast and discovery finds nothing. -->
 	<uses-permission android:name="android.permission.CHANGE_WIFI_MULTICAST_STATE" />
+
+	<!-- EXPERIMENTAL phone->DAQiFi USB (OTG) host path (docs/mobile-usb-feasibility.md).
+	     Additive + isolated: does not affect the WiFi/TCP path. required="false" so the
+	     app still installs on phones without USB-host/OTG. Manual enumeration via
+	     UsbManager.DeviceList + RequestPermission (UsbDeviceConnector) needs only this
+	     capability. The auto-launch USB_DEVICE_ATTACHED intent-filter is deliberately
+	     deferred to the on-device session — it belongs on MainActivity as an
+	     [IntentFilter]/[MetaData] attribute (toolchain-safe) once the USB UI is wired, NOT
+	     hand-declared here by MainActivity's mangled Java name (which drifts on SDK bumps
+	     and would break the launcher). device_filter.xml is kept ready for that step. -->
+	<uses-feature android:name="android.hardware.usb.host" android:required="false" />
 	<application android:label="DAQiFi" android:icon="@drawable/icon" />
 </manifest>

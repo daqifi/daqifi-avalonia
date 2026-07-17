@@ -1,0 +1,6 @@
+<?xml version="1.0" encoding="utf-8"?>
+<!-- Scopes the USB_DEVICE_ATTACHED intent-filter to the DAQiFi CDC device.
+     vendor-id / product-id are DECIMAL: 1240 = 0x04D8 (Microchip), 63380 = 0xF794 (Nyquist). -->
+<resources>
+	<usb-device vendor-id="1240" product-id="63380" />
+</resources>
