@@ -189,7 +189,20 @@ public partial class ChannelsPaneViewModel : ObservableObject, IDisposable
     {
         if (e.PropertyName == nameof(ConnectionManager.ConnectedDevices))
         {
-            Rebuild();
+            // Marshal to the UI thread — ConnectedDevices can change from a background
+            // thread (the mobile USB connector registers off-thread), and Rebuild
+            // mutates Avalonia-bound collections which must be touched on the UI
+            // thread. Matches OnLoggingManagerPropertyChanged and the Devices/DeviceLogs
+            // handlers; on desktop (already UI-thread) CheckAccess short-circuits so
+            // there's no behavior change (adversarial audit hardening).
+            if (Dispatcher.UIThread.CheckAccess())
+            {
+                Rebuild();
+            }
+            else
+            {
+                Dispatcher.UIThread.Post(Rebuild);
+            }
         }
     }
 

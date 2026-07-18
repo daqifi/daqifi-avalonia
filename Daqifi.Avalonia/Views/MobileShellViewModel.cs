@@ -212,13 +212,14 @@ public partial class MobileShellViewModel : ObservableObject, IDisposable
         Status = $"Connecting to {label}…";
         try
         {
-            var previous = _connected;
+            // Do NOT tear down the current connection before the new one succeeds:
+            // a failed attempt (e.g. a wrong manual IP) would otherwise leave the
+            // previous device disconnected-but-still-adopted and IsConnected lying
+            // true (adversarial audit). AdoptConnectedDevice replaces + unregisters
+            // the previous device only on success; on failure the current connection
+            // is left intact.
             var device = factory();
-            var ok = await Task.Run(() =>
-            {
-                previous?.Disconnect();
-                return device.Connect();
-            });
+            var ok = await Task.Run(device.Connect);
             if (ok)
             {
                 AdoptConnectedDevice(device);
@@ -246,7 +247,9 @@ public partial class MobileShellViewModel : ObservableObject, IDisposable
         if (previous != null && !ReferenceEquals(previous, device))
         {
             try { ConnectionManager.Instance.UnregisterConnectedDevice(previous); } catch { /* best-effort */ }
-            try { previous.Disconnect(); } catch { /* best-effort */ }
+            // Disconnect off the UI thread — a wedged transport must not stall the UI
+            // (matches Dispose's teardown).
+            Task.Run(() => { try { previous.Disconnect(); } catch { /* best-effort */ } });
         }
         _connected = device;
         // Publish into the shared registry so the projected panes (Storage / Channels)
@@ -300,7 +303,12 @@ public partial class MobileShellViewModel : ObservableObject, IDisposable
         // TurnDeviceOn step, so a device that associated on WiFi but never
         // powered its ADC front-end streams NO data (matching the bench
         // "streaming yields no data" symptom). Idempotent to re-send.
-        try { device.Write("SYSTem:POWer:STATe 1"); }
+        // NOTE: Write() sends RAW bytes with no terminator (unlike the producer
+        // path, which appends "\r\n"). The firmware SCPI parser is line-based, so
+        // an unterminated command merges with the next write and BOTH are dropped
+        // — include the terminator explicitly. On WiFi this Write is a caught
+        // no-op; on USB it actually transmits (adversarial audit).
+        try { device.Write("SYSTem:POWer:STATe 1\r\n"); }
         catch { /* best-effort; InitializeStreaming still gates on IsStreaming */ }
 
         Series.Clear();

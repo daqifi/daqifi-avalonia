@@ -199,8 +199,11 @@ public class UsbStreamingDevice : AbstractStreamingDevice
     /// (which re-creates its transport each connect), this transport is INJECTED and reused,
     /// so disposing it would make the immediately-following <c>_transport.Connect()</c> throw
     /// <see cref="ObjectDisposedException"/> and every connect fail before it starts. Disconnect
-    /// releases the native USB connection (it is a no-op when not yet connected) and leaves the
-    /// transport re-connectable; the object itself is a small managed wrapper collected normally.
+    /// releases the native USB connection and is a no-op when not yet connected (the pre-connect
+    /// call on the first Connect). The transport is fully disposed via the Core device on the NEXT
+    /// cleanup (<c>base.CleanupConnection</c> disposes CoreDevice, which owns the injected
+    /// transport), so this device is single-use — the connector builds a fresh transport + device
+    /// per connect attempt rather than reusing an instance.
     /// </remarks>
     protected override void CleanupConnection()
     {
