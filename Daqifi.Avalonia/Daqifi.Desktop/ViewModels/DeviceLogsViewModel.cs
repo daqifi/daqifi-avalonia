@@ -324,7 +324,13 @@ public partial class DeviceLogsViewModel : ObservableObject
 
             await Task.Run(() => device.RefreshSdCardFiles());
 
-            if (SelectedDevice != device)
+            // Re-validate after the await: the selection can change AND the device can disconnect
+            // while RefreshSdCardFiles ran. Bail without repopulating in either case so a completing
+            // refresh can't overwrite a disconnect reset (RaiseSdGateChanged) with a stale
+            // "SD card OK · N files" that contradicts the disconnect UX (Qodo "Refresh overwrites
+            // disconnect reset"). Both this continuation and the reset run on the UI thread, so the
+            // check-then-set below is atomic w.r.t. the reset — no lock needed.
+            if (SelectedDevice != device || !device.IsConnected)
             {
                 return;
             }
