@@ -25,7 +25,7 @@
                       ItemsSource="{Binding ConnectedDevices}"
                       SelectedItem="{Binding SelectedDevice}" />
             <StackPanel Orientation="Horizontal" Spacing="6"
-                        IsVisible="{Binding SelectedDevice}">
+                        IsVisible="{Binding SelectedDevice, Converter={x:Static ObjectConverters.IsNotNull}}">
               <Border Classes="chip">
                 <StackPanel Orientation="Horizontal" Spacing="4">
                   <TextBlock Text="LINK" />
@@ -102,7 +102,7 @@
             <TextBlock Text="SD card error" FontWeight="SemiBold" FontSize="{DynamicResource FontSizeBody}"
                        Foreground="{DynamicResource StatusRed}" />
             <TextBlock Text="{Binding SdCardErrorMessage}" TextWrapping="Wrap"
-                       IsVisible="{Binding SdCardErrorMessage}"
+                       IsVisible="{Binding SdCardErrorMessage, Converter={x:Static StringConverters.IsNotNullOrEmpty}}"
                        FontSize="{DynamicResource FontSizeCaption}" Foreground="{DynamicResource TextSecondary}" />
             <Button Content="Copy diagnostics" Theme="{StaticResource PillButton}"
                     Command="{Binding CopyDiagnosticInfoCommand}"
