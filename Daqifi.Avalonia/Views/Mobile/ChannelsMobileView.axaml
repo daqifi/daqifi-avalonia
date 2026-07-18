@@ -43,12 +43,16 @@
          TileBackground, Value, TypeLabel, IsActive, ...) come from the desktop
          DataTemplate; the whole tile taps to toggle, the gear opens settings. -->
     <DataTemplate x:Key="ChannelTileTemplate">
+      <!-- Tile STRETCHES to its UniformGrid column (no fixed width → the internal
+           Grid gets the full column and never clips). The grid's column count is
+           set by orientation in code-behind: 1 (full-width rows) in portrait,
+           multiple in landscape. -->
       <Border Classes.loggingLocked="{Binding $parent[ItemsControl].DataContext.IsLoggingActive}"
               Background="{Binding TileBackground}"
               BorderBrush="{Binding TileBorderBrush}"
               BorderThickness="1"
               CornerRadius="10"
-              Margin="0,0,0,8"
+              Margin="0,0,8,8"
               AutomationProperties.AutomationId="{Binding Name}">
         <Grid ColumnDefinitions="5,*,Auto,Auto">
           <Border Grid.Column="0"
@@ -215,7 +219,13 @@
                        IsVisible="{Binding TotalAnalogCount, Converter={StaticResource IntToVisibility}}" />
             <ItemsControl ItemsSource="{Binding AnalogInputs}"
                           AutomationProperties.AutomationId="ChannelList"
-                          ItemTemplate="{StaticResource ChannelTileTemplate}" />
+                          ItemTemplate="{StaticResource ChannelTileTemplate}">
+              <ItemsControl.ItemsPanel>
+                <ItemsPanelTemplate>
+                  <UniformGrid Tag="tileGrid" Columns="1" />
+                </ItemsPanelTemplate>
+              </ItemsControl.ItemsPanel>
+            </ItemsControl>
           </StackPanel>
 
           <!-- DIGITAL IN  (section gated by TotalDigitalInCount) -->
@@ -229,7 +239,13 @@
                        Fill="{DynamicResource BorderDim}"
                        IsVisible="{Binding TotalDigitalInCount, Converter={StaticResource IntToVisibility}}" />
             <ItemsControl ItemsSource="{Binding DigitalInputs}"
-                          ItemTemplate="{StaticResource ChannelTileTemplate}" />
+                          ItemTemplate="{StaticResource ChannelTileTemplate}">
+              <ItemsControl.ItemsPanel>
+                <ItemsPanelTemplate>
+                  <UniformGrid Tag="tileGrid" Columns="1" />
+                </ItemsPanelTemplate>
+              </ItemsControl.ItemsPanel>
+            </ItemsControl>
           </StackPanel>
 
           <!-- DIGITAL OUT  (section gated by TotalDigitalOutCount) -->
@@ -243,7 +259,13 @@
                        Fill="{DynamicResource BorderDim}"
                        IsVisible="{Binding TotalDigitalOutCount, Converter={StaticResource IntToVisibility}}" />
             <ItemsControl ItemsSource="{Binding DigitalOutputs}"
-                          ItemTemplate="{StaticResource ChannelTileTemplate}" />
+                          ItemTemplate="{StaticResource ChannelTileTemplate}">
+              <ItemsControl.ItemsPanel>
+                <ItemsPanelTemplate>
+                  <UniformGrid Tag="tileGrid" Columns="1" />
+                </ItemsPanelTemplate>
+              </ItemsControl.ItemsPanel>
+            </ItemsControl>
           </StackPanel>
 
           <!-- Status bar (desktop: bottom status Border) -->
@@ -556,7 +578,7 @@
                     Margin="0,60,0,0"
                     Spacing="14">
           <Border Classes="emptyBadge">
-            <i:Icon Value="mdi-hub-outline" FontSize="34"
+            <i:Icon Value="mdi-hub-outline" FontSize="{DynamicResource FontSizeDisplay}"
                     Foreground="{DynamicResource TextTertiary}"
                     HorizontalAlignment="Center"
                     VerticalAlignment="Center" />

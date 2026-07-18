@@ -105,7 +105,7 @@
                     Margin="0,24"
                     HorizontalAlignment="Center">
           <Border Classes="emptyBadge">
-            <i:Icon Value="mdi-tune-variant" FontSize="34"
+            <i:Icon Value="mdi-tune-variant" FontSize="{DynamicResource FontSizeDisplay}"
                     Foreground="{DynamicResource TextTertiary}"
                     HorizontalAlignment="Center" VerticalAlignment="Center"/>
           </Border>

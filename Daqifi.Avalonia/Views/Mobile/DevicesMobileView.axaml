@@ -213,7 +213,10 @@
                          Foreground="{DynamicResource TextPrimary}"
                          IsChecked="{Binding !Shell.IsLogToDeviceMode, Mode=OneWay}">
               <ia:Interaction.Behaviors>
-                <iac:EventTriggerBehavior EventName="Checked">
+                <!-- Avalonia's RadioButton (ToggleButton) has no WPF `Checked` event;
+                     the check-state event is `IsCheckedChanged`. Using the WPF name
+                     throws "Cannot find an event named Checked" at view load (#devices). -->
+                <iac:EventTriggerBehavior EventName="IsCheckedChanged">
                   <iac:InvokeCommandAction Command="{Binding SetLoggingModeCommand}"
                                            CommandParameter="Stream to App" />
                 </iac:EventTriggerBehavior>
@@ -384,7 +387,7 @@
                   HorizontalAlignment="Center" VerticalAlignment="Center"
                   MaxWidth="420" Margin="0,60,0,0">
         <Border Classes="emptyBadge">
-          <i:Icon Value="mdi-chip" FontSize="34" HorizontalAlignment="Center"
+          <i:Icon Value="mdi-chip" FontSize="{DynamicResource FontSizeDisplay}" HorizontalAlignment="Center"
                   VerticalAlignment="Center" Foreground="{DynamicResource TextTertiary}" />
         </Border>
         <TextBlock Text="NO DEVICES CONNECTED" Classes="emptyTitle" />
