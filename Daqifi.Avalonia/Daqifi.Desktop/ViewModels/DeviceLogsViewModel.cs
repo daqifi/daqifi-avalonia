@@ -105,21 +105,26 @@ public partial class DeviceLogsViewModel : ObservableObject
     }
 
     // @port: Daqifi.Desktop.ViewModels.DeviceLogsViewModel.CanAccessSdCard
-    public bool CanAccessSdCard => SelectedDevice?.ConnectionType == ConnectionType.Usb;
+    // SD file access (LIST / download) is transport-agnostic (issue #1): the firmware routes SD
+    // replies to the requesting link (USB or WiFi/TCP — daqifi-nyquist-firmware #598/#599) and
+    // Core's SD path drives its consumer swap against the transport stream regardless of type.
+    // Gate on "a real connected device" (USB or WiFi), not USB-only.
+    public bool CanAccessSdCard =>
+        SelectedDevice?.ConnectionType is ConnectionType.Usb or ConnectionType.Wifi;
 
-    /// <summary>True when the USB device has an OK SD card but no log files on it.</summary>
+    /// <summary>True when the device has an OK SD card but no log files on it.</summary>
     // @port: Daqifi.Desktop.ViewModels.DeviceLogsViewModel.HasNoFiles
     public bool HasNoFiles => (DeviceFiles?.Any() != true) && CanAccessSdCard && SdCardState == SdCardState.Ok;
 
-    /// <summary>True when the USB device has an OK SD card with at least one log file.</summary>
+    /// <summary>True when the device has an OK SD card with at least one log file.</summary>
     // @port: Daqifi.Desktop.ViewModels.DeviceLogsViewModel.HasFiles
     public bool HasFiles => CanAccessSdCard && (DeviceFiles?.Any() == true) && SdCardState == SdCardState.Ok;
 
-    /// <summary>True when the USB device reports that no SD card is installed.</summary>
+    /// <summary>True when the device reports that no SD card is installed.</summary>
     // @port: Daqifi.Desktop.ViewModels.DeviceLogsViewModel.HasSdCardNotPresent
     public bool HasSdCardNotPresent => CanAccessSdCard && SdCardState == SdCardState.NotPresent;
 
-    /// <summary>True when the USB device reports an SD card error.</summary>
+    /// <summary>True when the device reports an SD card error.</summary>
     // @port: Daqifi.Desktop.ViewModels.DeviceLogsViewModel.HasSdCardError
     public bool HasSdCardError => CanAccessSdCard && SdCardState == SdCardState.Error;
 
@@ -127,7 +132,7 @@ public partial class DeviceLogsViewModel : ObservableObject
     public string ConnectionTypeMessage => SelectedDevice == null ? string.Empty :
         SelectedDevice.ConnectionType == ConnectionType.Usb ?
             "USB Connected - SD Card Access Available" :
-            "WiFi Connected - SD Card Access Requires USB Connection";
+            "WiFi Connected - SD Card Access Available";
 
     /// <summary>
     /// Short status string appended to the connection status bar.
@@ -254,7 +259,8 @@ public partial class DeviceLogsViewModel : ObservableObject
     internal async Task RefreshFilesAsync()
     {
         var device = SelectedDevice;
-        if (device == null || device.ConnectionType != ConnectionType.Usb)
+        if (device == null ||
+            device.ConnectionType is not (ConnectionType.Usb or ConnectionType.Wifi))
         {
             return;
         }

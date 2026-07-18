@@ -1140,17 +1140,18 @@ public abstract partial class AbstractStreamingDevice : ObservableObject, IStrea
     }
 
     /// <summary>
-    /// Refreshes the list of SD card log files from the connected USB device.
+    /// Refreshes the list of SD card log files from the connected device.
     /// </summary>
-    /// <exception cref="InvalidOperationException">Thrown when the device is not connected via USB or SD operations cannot be performed.</exception>
+    /// <remarks>
+    /// Transport-agnostic (issue #1): SD file access works over USB and WiFi/TCP alike — the
+    /// firmware serves the SD reply on whichever link issued the request. Availability is gated
+    /// by <see cref="CoreDeviceForSd"/> (null on devices without SD support → SD_UNAVAILABLE),
+    /// not by connection type.
+    /// </remarks>
+    /// <exception cref="InvalidOperationException">Thrown when SD operations cannot be performed on this device.</exception>
     // @port: Daqifi.Desktop.Device.AbstractStreamingDevice.RefreshSdCardFiles
     public void RefreshSdCardFiles()
     {
-        if (ConnectionType != ConnectionType.Usb)
-        {
-            throw new InvalidOperationException("SD Card access is only available when connected via USB");
-        }
-
         EnsureSdOperationsQuiesced();
 
         var coreDevice = GetCoreDevice(CoreDeviceForSd, SD_UNAVAILABLE_MESSAGE);
