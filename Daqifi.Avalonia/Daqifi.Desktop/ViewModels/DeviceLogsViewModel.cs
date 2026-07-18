@@ -152,7 +152,7 @@ public partial class DeviceLogsViewModel : ObservableObject
     /// Returns an empty string when the SD card state is unknown.
     /// </summary>
     // @port: Daqifi.Desktop.ViewModels.DeviceLogsViewModel.SdCardStatusLine
-    public string SdCardStatusLine => SdCardState switch
+    public string SdCardStatusLine => !CanAccessSdCard ? string.Empty : SdCardState switch
     {
         SdCardState.Ok =>
             $" · SD card OK · {DeviceFiles?.Count ?? 0} {(DeviceFiles?.Count == 1 ? "file" : "files")}",
@@ -289,6 +289,10 @@ public partial class DeviceLogsViewModel : ObservableObject
         OnPropertyChanged(nameof(HasSdCardError));
         OnPropertyChanged(nameof(HasFiles));
         OnPropertyChanged(nameof(ConnectionTypeMessage));
+        // SdCardStatusLine is now gated on CanAccessSdCard too, so re-raise it when the gate
+        // flips (on close via the state reset below it also re-raises through SdCardState;
+        // this covers the gate OPENING on reconnect, where no state change occurs).
+        OnPropertyChanged(nameof(SdCardStatusLine));
         RefreshFilesCommand.NotifyCanExecuteChanged();
 
         // When SD is no longer accessible (e.g. the selected device disconnected), drop the now-stale
