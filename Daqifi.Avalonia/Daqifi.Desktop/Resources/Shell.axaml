@@ -1,0 +1,112 @@
+<ResourceDictionary xmlns="https://github.com/avaloniaui"
+                    xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml">
+    <!--
+        Shared shell chrome — the desktop's navigation rail + segmented toggle,
+        promoted out of MainWindow.axaml so BOTH the desktop MainWindow AND the
+        mobile LANDSCAPE shell render the identical, token-driven chrome (the
+        "shared design language" goal). Mobile portrait uses its own bottom-nav;
+        landscape reuses NavTabControl/NavTabItem so it reads ~1:1 with desktop.
+        Keyed control themes — opt-in, safe to merge app-wide.
+    -->
+
+    <!-- Left navigation rail item: 3px accent stripe on select, raised bg. -->
+    <ControlTheme x:Key="NavTabItem" TargetType="TabItem">
+        <Setter Property="Background" Value="Transparent"/>
+        <Setter Property="Foreground" Value="{DynamicResource TextSecondary}"/>
+        <Setter Property="Padding" Value="0"/>
+        <Setter Property="Margin" Value="0"/>
+        <Setter Property="Template">
+            <ControlTemplate>
+                <Grid Background="{TemplateBinding Background}" ColumnDefinitions="3,*">
+                    <Rectangle x:Name="AccentStripe"
+                               Grid.Column="0"
+                               Fill="{DynamicResource Accent}"
+                               Opacity="0">
+                        <Rectangle.Transitions>
+                            <Transitions>
+                                <DoubleTransition Property="Opacity" Duration="0:0:0.12"/>
+                            </Transitions>
+                        </Rectangle.Transitions>
+                    </Rectangle>
+                    <ContentPresenter Grid.Column="1"
+                                      VerticalAlignment="Center"
+                                      HorizontalAlignment="Center"
+                                      Content="{TemplateBinding Header}"
+                                      ContentTemplate="{TemplateBinding HeaderTemplate}"/>
+                </Grid>
+            </ControlTemplate>
+        </Setter>
+        <Style Selector="^:selected">
+            <Setter Property="Background" Value="{DynamicResource SurfaceRaised}"/>
+            <Setter Property="Foreground" Value="{DynamicResource TextPrimary}"/>
+        </Style>
+        <Style Selector="^:selected /template/ Rectangle#AccentStripe">
+            <Setter Property="Opacity" Value="1"/>
+        </Style>
+        <Style Selector="^:pointerover:not(:selected)">
+            <Setter Property="Background" Value="{DynamicResource SurfaceHover}"/>
+            <Setter Property="Foreground" Value="{DynamicResource TextPrimary}"/>
+            <Setter Property="Cursor" Value="Hand"/>
+        </Style>
+    </ControlTheme>
+
+    <!-- Left navigation rail: vertical item stack + a divider border. -->
+    <ControlTheme x:Key="NavTabControl" TargetType="TabControl">
+        <Setter Property="Background" Value="Transparent"/>
+        <Setter Property="Padding" Value="0"/>
+        <Setter Property="ItemsPanel">
+            <ItemsPanelTemplate>
+                <StackPanel/>
+            </ItemsPanelTemplate>
+        </Setter>
+        <Setter Property="Template">
+            <ControlTemplate>
+                <Grid ColumnDefinitions="Auto,*">
+                    <Border Grid.Column="0"
+                            Background="{DynamicResource Surface}"
+                            BorderBrush="{DynamicResource BorderDim}"
+                            BorderThickness="0,0,1,0">
+                        <ItemsPresenter x:Name="PART_ItemsPresenter"
+                                        ItemsPanel="{TemplateBinding ItemsPanel}"/>
+                    </Border>
+                    <ContentPresenter x:Name="PART_SelectedContentHost"
+                                      Grid.Column="1"
+                                      Content="{TemplateBinding SelectedContent}"
+                                      ContentTemplate="{TemplateBinding SelectedContentTemplate}"/>
+                </Grid>
+            </ControlTemplate>
+        </Setter>
+    </ControlTheme>
+
+    <!-- Segmented toggle (e.g. APP LOGS / DEVICE LOGS). -->
+    <ControlTheme x:Key="SegmentedToggle" TargetType="RadioButton">
+        <Setter Property="Foreground" Value="{DynamicResource TextSecondary}"/>
+        <Setter Property="FontSize" Value="10"/>
+        <Setter Property="FontWeight" Value="SemiBold"/>
+        <Setter Property="Cursor" Value="Hand"/>
+        <Setter Property="Template">
+            <ControlTemplate>
+                <Border x:Name="Bg" Background="Transparent" CornerRadius="2" Padding="12,7">
+                    <ContentPresenter HorizontalAlignment="Center" VerticalAlignment="Center"
+                                      Content="{TemplateBinding Content}"/>
+                </Border>
+            </ControlTemplate>
+        </Setter>
+        <Style Selector="^:checked /template/ Border#Bg">
+            <Setter Property="Background" Value="{DynamicResource SurfaceActive}"/>
+        </Style>
+        <Style Selector="^:checked">
+            <Setter Property="Foreground" Value="{DynamicResource TextPrimary}"/>
+        </Style>
+        <Style Selector="^:pointerover">
+            <Setter Property="Foreground" Value="{DynamicResource TextPrimary}"/>
+        </Style>
+    </ControlTheme>
+
+    <!-- Navigation rail label (icon + this caption). -->
+    <ControlTheme x:Key="NavRailLabel" TargetType="TextBlock">
+        <Setter Property="TextAlignment" Value="Center"/>
+        <Setter Property="FontSize" Value="11"/>
+        <Setter Property="Margin" Value="0,6,0,0"/>
+    </ControlTheme>
+</ResourceDictionary>

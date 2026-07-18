@@ -1,14 +1,15 @@
 <UserControl xmlns="https://github.com/avaloniaui"
              xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml"
+             xmlns:i="https://github.com/projektanker/icons.avalonia"
              xmlns:v="clr-namespace:Daqifi.Avalonia.Views"
              x:Class="Daqifi.Avalonia.Views.MobileMainView">
-  <!-- Mobile navigation shell (#221 five-platform goal): a bottom tab bar over
-       the streaming experience + the mobile panes projected by portomatic from
-       the desktop views/shared ViewModels. The Stream tab stays ALWAYS attached
-       (IsVisible-toggled, never Content-swapped) so switching tabs never tears
-       down the live device connection or its render timer. Secondary panes build
-       lazily and defensively (see code-behind). -->
+  <!-- Orientation-adaptive shell (#221): LANDSCAPE renders the desktop's left
+       nav rail + content (~1:1 with the desktop app); PORTRAIT falls back to the
+       bottom-nav single-column. The content area is SHARED (col 1, row 0) between
+       both — only the nav chrome swaps by orientation (code-behind toggles the
+       rail vs the bottom bar). Rail styling mirrors the shared NavTabItem theme. -->
   <UserControl.Styles>
+    <!-- Portrait bottom-nav button -->
     <Style Selector="Button.nav">
       <Setter Property="Background" Value="Transparent" />
       <Setter Property="Foreground" Value="{DynamicResource TextSecondary}" />
@@ -22,17 +23,86 @@
       <Setter Property="Foreground" Value="{DynamicResource Accent}" />
       <Setter Property="FontWeight" Value="SemiBold" />
     </Style>
+
+    <!-- Landscape left-rail item — matches the desktop NavTabItem (3px accent
+         stripe on select, SurfaceRaised bg, icon + caption). -->
+    <Style Selector="Button.rail">
+      <Setter Property="Background" Value="Transparent" />
+      <Setter Property="Foreground" Value="{DynamicResource TextSecondary}" />
+      <Setter Property="Width" Value="88" />
+      <Setter Property="CornerRadius" Value="0" />
+      <Setter Property="Template">
+        <ControlTemplate>
+          <Grid ColumnDefinitions="3,*" Background="{TemplateBinding Background}">
+            <Rectangle x:Name="Stripe" Grid.Column="0" Fill="{DynamicResource Accent}" Opacity="0" />
+            <ContentPresenter Grid.Column="1" Content="{TemplateBinding Content}"
+                              HorizontalAlignment="Center" VerticalAlignment="Center"
+                              Margin="0,16" />
+          </Grid>
+        </ControlTemplate>
+      </Setter>
+    </Style>
+    <Style Selector="Button.rail:pointerover">
+      <Setter Property="Background" Value="{DynamicResource SurfaceHover}" />
+      <Setter Property="Foreground" Value="{DynamicResource TextPrimary}" />
+    </Style>
+    <Style Selector="Button.rail.active">
+      <Setter Property="Background" Value="{DynamicResource SurfaceRaised}" />
+      <Setter Property="Foreground" Value="{DynamicResource TextPrimary}" />
+    </Style>
+    <Style Selector="Button.rail.active /template/ Rectangle#Stripe">
+      <Setter Property="Opacity" Value="1" />
+    </Style>
+    <Style Selector="Button.rail TextBlock.railLabel">
+      <Setter Property="TextAlignment" Value="Center" />
+      <Setter Property="FontSize" Value="{DynamicResource FontSizeSmall}" />
+      <Setter Property="Margin" Value="0,6,0,0" />
+    </Style>
   </UserControl.Styles>
 
-  <Grid RowDefinitions="*,Auto" Background="{DynamicResource Surface}">
-    <Panel Grid.Row="0">
-      <!-- Live streaming/connect experience — the validated view, kept attached -->
+  <Grid ColumnDefinitions="Auto,*" RowDefinitions="*,Auto" Background="{DynamicResource Surface}">
+
+    <!-- Left nav rail — LANDSCAPE only -->
+    <Border x:Name="SideNav" Grid.Column="0" Grid.RowSpan="2" IsVisible="False"
+            Background="{DynamicResource Surface}"
+            BorderBrush="{DynamicResource BorderDim}" BorderThickness="0,0,1,0">
+      <StackPanel>
+        <Button x:Name="RailStream" Classes="rail" Click="OnStream">
+          <StackPanel>
+            <i:Icon Value="mdi-chart-timeline-variant" FontSize="24" HorizontalAlignment="Center" />
+            <TextBlock Classes="railLabel" Text="Stream" />
+          </StackPanel>
+        </Button>
+        <Button x:Name="RailStorage" Classes="rail" Click="OnStorage">
+          <StackPanel>
+            <i:Icon Value="mdi-database-outline" FontSize="24" HorizontalAlignment="Center" />
+            <TextBlock Classes="railLabel" Text="Storage" />
+          </StackPanel>
+        </Button>
+        <Button x:Name="RailChannels" Classes="rail" Click="OnChannels">
+          <StackPanel>
+            <i:Icon Value="mdi-hub-outline" FontSize="24" HorizontalAlignment="Center" />
+            <TextBlock Classes="railLabel" Text="Channels" />
+          </StackPanel>
+        </Button>
+        <Button x:Name="RailProfiles" Classes="rail" Click="OnProfiles">
+          <StackPanel>
+            <i:Icon Value="mdi-tune-variant" FontSize="24" HorizontalAlignment="Center" />
+            <TextBlock Classes="railLabel" Text="Profiles" />
+          </StackPanel>
+        </Button>
+      </StackPanel>
+    </Border>
+
+    <!-- Shared content area -->
+    <Panel Grid.Column="1" Grid.Row="0">
       <v:MobileShellView x:Name="StreamView" />
-      <!-- Projected panes are hosted here (lazy) -->
       <ContentControl x:Name="SecondaryHost" IsVisible="False" />
     </Panel>
 
-    <Border Grid.Row="1" Background="{DynamicResource SurfaceRaised}"
+    <!-- Bottom nav — PORTRAIT only -->
+    <Border x:Name="BottomNav" Grid.Column="1" Grid.Row="1"
+            Background="{DynamicResource SurfaceRaised}"
             BorderBrush="{DynamicResource BorderDim}" BorderThickness="0,1,0,0">
       <UniformGrid Columns="4">
         <Button x:Name="NavStream"   Classes="nav" Content="Stream"   Click="OnStream" />

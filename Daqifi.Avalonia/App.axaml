@@ -24,6 +24,9 @@
                      everything here is keyed/opt-in, so an app-level merge is safe and
                      avoids repeating the include in every dialog). -->
                 <ResourceInclude Source="avares://Daqifi.Avalonia/Daqifi.Desktop/Resources/DarkDialog.axaml"/>
+                <!-- Shared shell chrome (nav rail + segmented toggle) — the desktop
+                     MainWindow and the mobile landscape shell render the same rail. -->
+                <ResourceInclude Source="avares://Daqifi.Avalonia/Daqifi.Desktop/Resources/Shell.axaml"/>
             </ResourceDictionary.MergedDictionaries>
 
             <!-- Upstream App.xaml converter registrations, same keys. The WPF-framework

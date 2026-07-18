@@ -10,23 +10,17 @@ using Daqifi.Desktop.ViewModels;
 namespace Daqifi.Avalonia.Views;
 
 /// <summary>
-/// Mobile navigation shell: a bottom tab bar over the live streaming experience
-/// plus the mobile panes portomatic projected from the desktop views + shared
-/// ViewModels (Storage/Channels/Profiles). The Stream tab is the validated live
-/// view, kept ALWAYS attached (IsVisible-toggled, never Content-swapped) so
-/// switching tabs never tears down the device connection or its render timer.
+/// Orientation-adaptive mobile shell. LANDSCAPE renders the desktop's left nav
+/// rail + content (~1:1 with the desktop app); PORTRAIT falls back to a bottom
+/// tab bar. The content area is SHARED between both layouts (Grid col 1, row 0) —
+/// only the nav chrome swaps, so the live Stream view and the lazily-built panes
+/// are never re-parented or torn down on rotation.
 ///
-/// Secondary panes build lazily. Their shared ViewModels (ChannelsPaneViewModel,
-/// ProfilesPaneViewModel) reach LoggingManager.Instance, which resolves an EF Core
-/// DbContext factory from App.ServiceProvider — now stood up on mobile by
-/// App.InitializeMobile() (a minimal SQLite factory at the app-private path). So
-/// they construct on mobile. <see cref="BuildPage"/> still wraps construction
-/// defensively — if the data layer failed to initialize (e.g. an EF/SQLite runtime
-/// issue on an unusual device), the pane shows a placeholder rather than crashing
-/// the whole app; the Stream tab needs no data layer and is unaffected.
-/// DeviceLogsViewModel (Storage) only touches the mobile-safe ConnectionManager and
-/// is the SD-card offload pane the phone→DAQiFi USB transport lights up (WiFi shows
-/// the "requires USB" state).
+/// The Stream tab stays ALWAYS attached (IsVisible-toggled) so switching panes
+/// never disposes its ViewModel / drops the connection. Secondary panes build
+/// lazily + defensively: some shared pane ViewModels need the mobile data-layer
+/// host (App.InitializeMobile); if one fails to construct, a placeholder shows
+/// instead of crashing (only the Stream tab needs no data layer).
 /// </summary>
 public partial class MobileMainView : UserControl
 {
@@ -34,27 +28,41 @@ public partial class MobileMainView : UserControl
     private Control? _channelsPage;
     private Control? _profilesPage;
     private Button[] _navButtons = Array.Empty<Button>();
+    private Button[] _railButtons = Array.Empty<Button>();
 
     public MobileMainView()
     {
         InitializeComponent();
         _navButtons = [NavStream, NavStorage, NavChannels, NavProfiles];
+        _railButtons = [RailStream, RailStorage, RailChannels, RailProfiles];
         ShowStream();
+        SizeChanged += (_, _) => UpdateOrientation();
+        UpdateOrientation();
+    }
+
+    /// <summary>Landscape → desktop-style left rail; portrait → bottom nav.</summary>
+    private void UpdateOrientation()
+    {
+        var b = Bounds;
+        if (b.Width <= 0 || b.Height <= 0) { return; }
+        var landscape = b.Width > b.Height;
+        SideNav.IsVisible = landscape;
+        BottomNav.IsVisible = !landscape;
     }
 
     private void ShowStream()
     {
         StreamView.IsVisible = true;
         SecondaryHost.IsVisible = false;
-        SetActive(NavStream);
+        SetActive(0);
     }
 
-    private void ShowSecondary(Control page, Button nav)
+    private void ShowSecondary(Control page, int index)
     {
         SecondaryHost.Content = page;
         StreamView.IsVisible = false;
         SecondaryHost.IsVisible = true;
-        SetActive(nav);
+        SetActive(index);
     }
 
     private void OnStream(object? sender, RoutedEventArgs e) => ShowStream();
@@ -64,21 +72,21 @@ public partial class MobileMainView : UserControl
             _storagePage ??= BuildPage(
                 "Device Storage",
                 static () => new DeviceLogsMobileView { DataContext = new DeviceLogsViewModel() }),
-            NavStorage);
+            1);
 
     private void OnChannels(object? sender, RoutedEventArgs e) =>
         ShowSecondary(
             _channelsPage ??= BuildPage(
                 "Channels",
                 static () => new ChannelsMobileView { DataContext = new ChannelsPaneViewModel() }),
-            NavChannels);
+            2);
 
     private void OnProfiles(object? sender, RoutedEventArgs e) =>
         ShowSecondary(
             _profilesPage ??= BuildPage(
                 "Profiles",
                 static () => new ProfilesMobileView { DataContext = new ProfilesPaneViewModel() }),
-            NavProfiles);
+            3);
 
     /// <summary>
     /// Build a projected pane, or a placeholder if its shared ViewModel fails to
@@ -125,11 +133,16 @@ public partial class MobileMainView : UserControl
         return panel;
     }
 
-    private void SetActive(Button active)
+    /// <summary>Highlight the active pane in BOTH nav chromes (bottom bar + rail).</summary>
+    private void SetActive(int index)
     {
-        foreach (var b in _navButtons)
+        for (var i = 0; i < _navButtons.Length; i++)
         {
-            b.Classes.Set("active", ReferenceEquals(b, active));
+            _navButtons[i].Classes.Set("active", i == index);
+        }
+        for (var i = 0; i < _railButtons.Length; i++)
+        {
+            _railButtons[i].Classes.Set("active", i == index);
         }
     }
 }
