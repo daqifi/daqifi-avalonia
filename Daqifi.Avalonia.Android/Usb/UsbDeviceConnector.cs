@@ -19,6 +19,7 @@
 using Android.App;
 using Android.Content;
 using Android.Hardware.Usb;
+using Avalonia.Threading;
 using Daqifi.Desktop;
 using Daqifi.Desktop.Common.Loggers;
 using Daqifi.Desktop.Device.UsbDevice;
@@ -143,6 +144,7 @@ public static class UsbDeviceConnector
         ArgumentNullException.ThrowIfNull(manager);
         ArgumentNullException.ThrowIfNull(device);
 
+        UsbStreamingDevice? usbDevice = null;
         try
         {
             var granted = await RequestPermissionAsync(context, manager, device, cancellationToken)
@@ -158,7 +160,7 @@ public static class UsbDeviceConnector
                 : (device.ProductName ?? "DAQiFi USB");
 
             var transport = new AndroidUsbStreamTransport(manager, device);
-            var usbDevice = new UsbStreamingDevice(transport, name);
+            usbDevice = new UsbStreamingDevice(transport, name);
 
             // Connect() blocks on Core init; keep it off the UI thread like the WiFi shell does.
             global::Android.Util.Log.Info("DaqifiUsb", $"UsbStreamingDevice.Connect starting for {name}…");
@@ -168,16 +170,38 @@ public static class UsbDeviceConnector
             {
                 AppLogger.Instance.Warning($"Failed to connect USB device {name}");
                 usbDevice.Disconnect();
+                usbDevice = null;
                 return null;
             }
 
-            ConnectionManager.Instance.RegisterConnectedDevice(usbDevice);
+            // Register on the UI THREAD. RegisterConnectedDevice raises a SYNCHRONOUS
+            // ConnectedDevices PropertyChanged whose subscribers (e.g. a live
+            // ChannelsPaneViewModel) mutate Avalonia-bound collections — which must
+            // happen on the UI thread. We are off it here (the connect ran under
+            // Task.Run / ConfigureAwait(false)), so marshal — otherwise Avalonia
+            // throws an invalid-thread exception that unwinds into the catch below and
+            // misreports a successful connect as a failure (audit #ec1ca58). The desktop
+            // path already registers from the UI thread; this restores that invariant.
+            await Dispatcher.UIThread.InvokeAsync(
+                () => ConnectionManager.Instance.RegisterConnectedDevice(usbDevice));
             AppLogger.Instance.Information($"Registered USB device {name} (SN {usbDevice.DeviceSerialNo})");
             return usbDevice;
         }
         catch (Exception ex)
         {
             AppLogger.Instance.Error(ex, "Failed to build connected USB device");
+            // Don't leak a connected-but-orphaned device on a late failure: tear down
+            // the transport, and unregister (on the UI thread) if it was published.
+            if (usbDevice != null)
+            {
+                try { usbDevice.Disconnect(); } catch { /* best-effort teardown */ }
+                try
+                {
+                    await Dispatcher.UIThread.InvokeAsync(
+                        () => ConnectionManager.Instance.UnregisterConnectedDevice(usbDevice));
+                }
+                catch { /* best-effort */ }
+            }
             return null;
         }
     }
