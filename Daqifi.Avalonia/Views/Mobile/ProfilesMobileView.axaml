@@ -1,5 +1,6 @@
 <UserControl xmlns="https://github.com/avaloniaui"
              xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml"
+             xmlns:i="https://github.com/projektanker/icons.avalonia"
              x:Class="Daqifi.Avalonia.Views.Mobile.ProfilesMobileView">
   <!-- Mobile projection of Daqifi.Desktop.View.ProfilesPane over the shared
        Daqifi.Desktop.ViewModels.ProfilesPaneViewModel. The desktop 380px side
@@ -103,7 +104,11 @@
                     Spacing="16"
                     Margin="0,24"
                     HorizontalAlignment="Center">
-          <Border Classes="emptyBadge"/>
+          <Border Classes="emptyBadge">
+            <i:Icon Value="mdi-tune-variant" FontSize="34"
+                    Foreground="{DynamicResource TextTertiary}"
+                    HorizontalAlignment="Center" VerticalAlignment="Center"/>
+          </Border>
           <TextBlock Classes="emptyTitle" Text="NO PROFILES SAVED"/>
           <TextBlock Classes="emptyBody"
                      Text="Profiles capture your device and channel configuration so you can restore it later."/>

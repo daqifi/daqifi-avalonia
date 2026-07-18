@@ -1,5 +1,6 @@
 <UserControl xmlns="https://github.com/avaloniaui"
              xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml"
+             xmlns:i="https://github.com/projektanker/icons.avalonia"
              xmlns:ia="using:Avalonia.Xaml.Interactivity"
              xmlns:iac="using:Avalonia.Xaml.Interactions.Core"
              xmlns:networkDataModel="using:Daqifi.Core.Device.Network"
@@ -382,10 +383,9 @@
       <StackPanel IsVisible="{Binding !HasConnectedDevice}" Spacing="14"
                   HorizontalAlignment="Center" VerticalAlignment="Center"
                   MaxWidth="420" Margin="0,60,0,0">
-        <Border Classes="emptyBadge"
-                BorderBrush="{DynamicResource BorderDim}" BorderThickness="1">
-          <TextBlock Text="&#x25A3;" FontSize="{DynamicResource FontSizeDisplay}" HorizontalAlignment="Center"
-                     VerticalAlignment="Center" Foreground="{DynamicResource TextTertiary}" />
+        <Border Classes="emptyBadge">
+          <i:Icon Value="mdi-chip" FontSize="34" HorizontalAlignment="Center"
+                  VerticalAlignment="Center" Foreground="{DynamicResource TextTertiary}" />
         </Border>
         <TextBlock Text="NO DEVICES CONNECTED" Classes="emptyTitle" />
         <TextBlock Text="Connect a DAQiFi device over USB or WiFi to get started."

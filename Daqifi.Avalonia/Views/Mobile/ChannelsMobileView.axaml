@@ -1,5 +1,6 @@
 <UserControl xmlns="https://github.com/avaloniaui"
              xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml"
+             xmlns:i="https://github.com/projektanker/icons.avalonia"
              x:Class="Daqifi.Avalonia.Views.Mobile.ChannelsMobileView">
   <!-- Mobile projection of the desktop Channels pane (ChannelsPanePrototype) over
        the shared ChannelsPaneViewModel. Authored from the portomatic projection
@@ -555,11 +556,10 @@
                     Margin="0,60,0,0"
                     Spacing="14">
           <Border Classes="emptyBadge">
-            <TextBlock Text="&#x2317;"
-                       FontSize="{DynamicResource FontSizeDisplay}"
-                       Foreground="{DynamicResource TextTertiary}"
-                       HorizontalAlignment="Center"
-                       VerticalAlignment="Center" />
+            <i:Icon Value="mdi-hub-outline" FontSize="34"
+                    Foreground="{DynamicResource TextTertiary}"
+                    HorizontalAlignment="Center"
+                    VerticalAlignment="Center" />
           </Border>
           <TextBlock Text="NO DEVICE CONNECTED" Classes="emptyTitle" />
           <TextBlock Text="Connect a DAQiFi device to view and activate channels."
