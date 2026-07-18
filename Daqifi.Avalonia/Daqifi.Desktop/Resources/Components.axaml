@@ -1,0 +1,96 @@
+<Styles xmlns="https://github.com/avaloniaui"
+        xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml">
+    <!--
+        Shared component styles (class-based) matching the desktop's design
+        language, so the mobile panes read the same: chips, section headers,
+        monospace data names, list rows, and the centered empty-state pattern.
+        Merged into App.Styles; keyed pill ControlThemes live in Shell.axaml.
+    -->
+
+    <!-- Chip: SAMPLES 81 / 1 Hz — small rounded rect, muted, label + value. -->
+    <Style Selector="Border.chip">
+        <Setter Property="Background" Value="{DynamicResource SurfaceActive}"/>
+        <Setter Property="CornerRadius" Value="4"/>
+        <Setter Property="Padding" Value="8,3"/>
+        <Setter Property="Margin" Value="0,0,6,0"/>
+        <Setter Property="VerticalAlignment" Value="Center"/>
+    </Style>
+    <Style Selector="Border.chip > TextBlock">
+        <Setter Property="FontSize" Value="{DynamicResource FontSizeSmall}"/>
+        <Setter Property="Foreground" Value="{DynamicResource TextSecondary}"/>
+        <Setter Property="VerticalAlignment" Value="Center"/>
+    </Style>
+    <!-- The value half of a chip: brighter, mono. -->
+    <Style Selector="Border.chip TextBlock.chipValue">
+        <Setter Property="Foreground" Value="{DynamicResource TextPrimary}"/>
+        <Setter Property="FontFamily" Value="{DynamicResource MonoFontFamily}"/>
+        <Setter Property="FontWeight" Value="SemiBold"/>
+    </Style>
+
+    <!-- Section header + count (Channels sections, etc.). -->
+    <Style Selector="TextBlock.sectionLabel">
+        <Setter Property="FontSize" Value="{DynamicResource FontSizeSmall}"/>
+        <Setter Property="FontWeight" Value="SemiBold"/>
+        <Setter Property="Foreground" Value="{DynamicResource TextSecondary}"/>
+        <Setter Property="VerticalAlignment" Value="Center"/>
+    </Style>
+    <Style Selector="TextBlock.sectionCount">
+        <Setter Property="FontSize" Value="{DynamicResource FontSizeSmall}"/>
+        <Setter Property="Foreground" Value="{DynamicResource TextTertiary}"/>
+        <Setter Property="VerticalAlignment" Value="Center"/>
+        <Setter Property="Margin" Value="8,0,0,0"/>
+    </Style>
+
+    <!-- Monospace data / session / serial names (desktop uses mono for these). -->
+    <Style Selector="TextBlock.mono">
+        <Setter Property="FontFamily" Value="{DynamicResource MonoFontFamily}"/>
+    </Style>
+
+    <!-- List row with a bottom separator (Logged Data session rows, file rows). -->
+    <Style Selector="Border.listRow">
+        <Setter Property="Background" Value="Transparent"/>
+        <Setter Property="BorderBrush" Value="{DynamicResource BorderDim}"/>
+        <Setter Property="BorderThickness" Value="0,0,0,1"/>
+        <Setter Property="Padding" Value="4,14"/>
+    </Style>
+    <Style Selector="Border.listRow:pointerover">
+        <Setter Property="Background" Value="{DynamicResource SurfaceHover}"/>
+    </Style>
+
+    <!-- Small round line-icon action button (row gear/info/trash). -->
+    <Style Selector="Button.rowAction">
+        <Setter Property="Background" Value="Transparent"/>
+        <Setter Property="BorderThickness" Value="0"/>
+        <Setter Property="Padding" Value="8"/>
+        <Setter Property="CornerRadius" Value="14"/>
+        <Setter Property="Foreground" Value="{DynamicResource TextTertiary}"/>
+        <Setter Property="Cursor" Value="Hand"/>
+    </Style>
+    <Style Selector="Button.rowAction:pointerover">
+        <Setter Property="Background" Value="{DynamicResource SurfaceActive}"/>
+        <Setter Property="Foreground" Value="{DynamicResource TextPrimary}"/>
+    </Style>
+
+    <!-- Empty-state: centered circular badge + CAPS label + sentence + pill. -->
+    <Style Selector="Border.emptyBadge">
+        <Setter Property="Width" Value="96"/>
+        <Setter Property="Height" Value="96"/>
+        <Setter Property="CornerRadius" Value="48"/>
+        <Setter Property="Background" Value="{DynamicResource SurfaceRaised}"/>
+        <Setter Property="HorizontalAlignment" Value="Center"/>
+    </Style>
+    <Style Selector="TextBlock.emptyTitle">
+        <Setter Property="FontSize" Value="{DynamicResource FontSizeSmall}"/>
+        <Setter Property="FontWeight" Value="SemiBold"/>
+        <Setter Property="Foreground" Value="{DynamicResource TextTertiary}"/>
+        <Setter Property="HorizontalAlignment" Value="Center"/>
+    </Style>
+    <Style Selector="TextBlock.emptyBody">
+        <Setter Property="FontSize" Value="{DynamicResource FontSizeBody}"/>
+        <Setter Property="Foreground" Value="{DynamicResource TextSecondary}"/>
+        <Setter Property="TextAlignment" Value="Center"/>
+        <Setter Property="TextWrapping" Value="Wrap"/>
+        <Setter Property="HorizontalAlignment" Value="Center"/>
+        <Setter Property="MaxWidth" Value="360"/>
+    </Style>
+</Styles>

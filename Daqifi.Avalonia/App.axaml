@@ -13,6 +13,9 @@
              produces a fully blank (not crashed) plot. First streaming QA 2026-07-13:
              data decoded + persisted + InvalidatePlot ticking, zero pixels drawn. -->
         <StyleInclude Source="avares://OxyPlot.Avalonia/Themes/Default.axaml"/>
+        <!-- Shared component styles (chips, section headers, list rows, empty-state,
+             mono) so the mobile panes match the desktop design language. -->
+        <StyleInclude Source="avares://Daqifi.Avalonia/Daqifi.Desktop/Resources/Components.axaml"/>
     </Application.Styles>
     <Application.Resources>
         <ResourceDictionary>

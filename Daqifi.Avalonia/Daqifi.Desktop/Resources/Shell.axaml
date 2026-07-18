@@ -109,4 +109,56 @@
         <Setter Property="FontSize" Value="11"/>
         <Setter Property="Margin" Value="0,6,0,0"/>
     </ControlTheme>
+
+    <!-- Pill buttons — promoted from the prototype views so desktop + mobile share
+         one definition. Ghost (outline) / Accent (filled) / Danger (red). -->
+    <ControlTheme x:Key="PillButton" TargetType="Button">
+        <Setter Property="Background" Value="Transparent"/>
+        <Setter Property="BorderBrush" Value="{DynamicResource BorderDim}"/>
+        <Setter Property="BorderThickness" Value="1"/>
+        <Setter Property="Foreground" Value="{DynamicResource TextSecondary}"/>
+        <Setter Property="Padding" Value="14,7"/>
+        <Setter Property="FontSize" Value="11"/>
+        <Setter Property="FontWeight" Value="SemiBold"/>
+        <Setter Property="Cursor" Value="Hand"/>
+        <Setter Property="Template">
+            <ControlTemplate>
+                <Border Background="{TemplateBinding Background}"
+                        BorderBrush="{TemplateBinding BorderBrush}"
+                        BorderThickness="{TemplateBinding BorderThickness}"
+                        CornerRadius="16"
+                        Padding="{TemplateBinding Padding}">
+                    <ContentPresenter HorizontalAlignment="Center" VerticalAlignment="Center"
+                                      Content="{TemplateBinding Content}"/>
+                </Border>
+            </ControlTemplate>
+        </Setter>
+        <Style Selector="^:pointerover">
+            <Setter Property="BorderBrush" Value="{DynamicResource BorderBright}"/>
+            <Setter Property="Background" Value="{DynamicResource SurfaceHover}"/>
+            <Setter Property="Foreground" Value="{DynamicResource TextPrimary}"/>
+        </Style>
+    </ControlTheme>
+
+    <ControlTheme x:Key="AccentPillButton" TargetType="Button" BasedOn="{StaticResource PillButton}">
+        <Setter Property="Background" Value="{DynamicResource Accent}"/>
+        <Setter Property="BorderBrush" Value="{DynamicResource Accent}"/>
+        <Setter Property="Foreground" Value="White"/>
+        <Style Selector="^:pointerover">
+            <Setter Property="Background" Value="{DynamicResource Accent}"/>
+            <Setter Property="BorderBrush" Value="{DynamicResource Accent}"/>
+            <Setter Property="Foreground" Value="White"/>
+            <Setter Property="Opacity" Value="0.9"/>
+        </Style>
+    </ControlTheme>
+
+    <ControlTheme x:Key="DangerPillButton" TargetType="Button" BasedOn="{StaticResource PillButton}">
+        <Setter Property="Foreground" Value="{DynamicResource StatusRed}"/>
+        <Setter Property="BorderBrush" Value="{DynamicResource StatusRed}"/>
+        <Style Selector="^:pointerover">
+            <Setter Property="Foreground" Value="{DynamicResource StatusRed}"/>
+            <Setter Property="BorderBrush" Value="{DynamicResource StatusRed}"/>
+            <Setter Property="Background" Value="{DynamicResource SurfaceHover}"/>
+        </Style>
+    </ControlTheme>
 </ResourceDictionary>
