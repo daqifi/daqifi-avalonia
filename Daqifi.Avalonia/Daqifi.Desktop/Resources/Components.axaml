@@ -7,6 +7,15 @@
         Merged into App.Styles; keyed pill ControlThemes live in Shell.axaml.
     -->
 
+    <!-- Pane content column: caps width + centers so a wide landscape / tablet
+         window shows a readable centered column (like the desktop content area)
+         instead of edge-to-edge-stretched fields and full-width buttons. In
+         portrait the cap exceeds the screen width, so it fills as before. -->
+    <Style Selector="StackPanel.paneContent">
+        <Setter Property="MaxWidth" Value="880"/>
+        <Setter Property="HorizontalAlignment" Value="Center"/>
+    </Style>
+
     <!-- Chip: SAMPLES 81 / 1 Hz — small rounded rect, muted, label + value. -->
     <Style Selector="Border.chip">
         <Setter Property="Background" Value="{DynamicResource SurfaceActive}"/>

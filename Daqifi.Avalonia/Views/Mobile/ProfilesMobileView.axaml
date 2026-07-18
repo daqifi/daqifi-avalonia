@@ -43,7 +43,7 @@
   <Grid Background="{DynamicResource Surface}">
 
     <ScrollViewer>
-      <StackPanel Spacing="12" Margin="16">
+      <StackPanel Classes="paneContent" Spacing="12" Margin="16">
 
         <!-- ========== HEADER ========== -->
         <StackPanel Spacing="8">

@@ -57,7 +57,7 @@
   </UserControl.Styles>
 
   <ScrollViewer Background="{DynamicResource Surface}">
-    <StackPanel Spacing="12" Margin="16">
+    <StackPanel Classes="paneContent" Spacing="12" Margin="16">
 
       <!-- ============ CONNECTED STATE (desktop: Grid.IsVisible) ============ -->
       <StackPanel Spacing="12" IsVisible="{Binding HasConnectedDevice}">
