@@ -112,9 +112,12 @@ public partial class DeviceLogsViewModel : ObservableObject
     // alone: IsConnected must be checked because a device can drop mid-session (silently over
     // WiFi) while still selected — a non-null-but-disconnected Core would otherwise pass the
     // GetCoreDevice null-guard and run SD ops against a dead transport.
+    // Capture SelectedDevice into the pattern local `device` so it is read exactly once — the
+    // observable property is nullable and could flip to null between two reads under
+    // selection/disconnect reentrancy (Qodo "SelectedDevice double-read race").
     public bool CanAccessSdCard =>
-        SelectedDevice is { IsConnected: true } &&
-        SelectedDevice.ConnectionType is ConnectionType.Usb or ConnectionType.Wifi;
+        SelectedDevice is { IsConnected: true } device &&
+        device.ConnectionType is ConnectionType.Usb or ConnectionType.Wifi;
 
     /// <summary>True when the device has an OK SD card but no log files on it.</summary>
     // @port: Daqifi.Desktop.ViewModels.DeviceLogsViewModel.HasNoFiles
@@ -133,10 +136,16 @@ public partial class DeviceLogsViewModel : ObservableObject
     public bool HasSdCardError => CanAccessSdCard && SdCardState == SdCardState.Error;
 
     // @port: Daqifi.Desktop.ViewModels.DeviceLogsViewModel.ConnectionTypeMessage
-    public string ConnectionTypeMessage => SelectedDevice == null ? string.Empty :
-        SelectedDevice.ConnectionType == ConnectionType.Usb ?
-            "USB Connected - SD Card Access Available" :
-            "WiFi Connected - SD Card Access Available";
+    // Kept consistent with CanAccessSdCard: a selected-but-disconnected device reports the drop
+    // rather than a misleading "SD Card Access Available" (Qodo "Report disconnected devices
+    // accurately"). The switch reads SelectedDevice exactly once (no double-read race).
+    public string ConnectionTypeMessage => SelectedDevice switch
+    {
+        null => string.Empty,
+        { IsConnected: false } => "Device disconnected - reconnect to access the SD card",
+        { ConnectionType: ConnectionType.Usb } => "USB Connected - SD Card Access Available",
+        _ => "WiFi Connected - SD Card Access Available",
+    };
 
     /// <summary>
     /// Short status string appended to the connection status bar.
@@ -216,6 +225,13 @@ public partial class DeviceLogsViewModel : ObservableObject
             {
                 SelectedDevice = ConnectedDevices.First();
             }
+
+            // Recompute the SD gate on every connected-set change. CanAccessSdCard now depends on
+            // the selected device's IsConnected (issue #1), and an explicit Disconnect() or a USB
+            // removal fires ConnectionManager's "ConnectedDevices" even when the SelectedDevice
+            // *reference* is unchanged — so the gate must recompute here, not only on selection
+            // change (Qodo "SD access state stale").
+            RaiseSdGateChanged();
         }
 
         if (!Dispatcher.UIThread.CheckAccess())
@@ -250,6 +266,23 @@ public partial class DeviceLogsViewModel : ObservableObject
             DeviceFiles.Clear();
         }
 
+        RaiseSdGateChanged();
+    }
+
+    /// <summary>
+    /// Re-raises the SD-access gate — <see cref="CanAccessSdCard"/>, its dependent visibility
+    /// flags, the connection message, and the refresh command's CanExecute. Invoked on selection
+    /// change and on any connected-set change (issue #1 / Qodo "SD access state stale").
+    /// </summary>
+    /// <remarks>
+    /// A fully-silent WiFi transport drop raises no notification anywhere — <c>IsConnected</c> is a
+    /// computed property the device layer never signals — so the gate can still read stale until
+    /// the next reachable signal. The <see cref="RefreshFilesAsync"/> / import guards re-check
+    /// <c>IsConnected</c> at operation time, so no SD op runs against a dead transport regardless;
+    /// full reactive disconnect UX needs a device-layer IsConnected notification (separate ticket).
+    /// </remarks>
+    private void RaiseSdGateChanged()
+    {
         OnPropertyChanged(nameof(CanAccessSdCard));
         OnPropertyChanged(nameof(HasNoFiles));
         OnPropertyChanged(nameof(HasSdCardNotPresent));
