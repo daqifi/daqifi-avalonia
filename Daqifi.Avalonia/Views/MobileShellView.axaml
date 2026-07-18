@@ -4,15 +4,18 @@
              x:Class="Daqifi.Avalonia.Views.MobileShellView"
              x:DataType="views:MobileShellViewModel">
 	<!-- Mobile shell (#221 five-platform goal): WiFi discovery + connect on
-	     the SAME ported stack the desktop uses. WiFi/TCP only (DIV-UI-003). -->
-	<Border Background="#0B3C5D" Padding="20,48,20,24">
+	     the SAME ported stack the desktop uses. WiFi/TCP only (DIV-UI-003).
+	     Styled with the shared DesignTokens + FluentTheme (App.axaml) so it
+	     matches the desktop app and the projected panes — no bespoke palette. -->
+	<Border Background="{DynamicResource Surface}" Padding="20,48,20,24">
 		<DockPanel>
 			<StackPanel DockPanel.Dock="Top" Spacing="6">
 				<TextBlock Text="DAQiFi"
-				           FontSize="34" FontWeight="Bold"
-				           Foreground="White" HorizontalAlignment="Center" />
+				           FontSize="{DynamicResource FontSizeDisplay}" FontWeight="Bold"
+				           Foreground="{DynamicResource TextPrimary}" HorizontalAlignment="Center" />
 				<TextBlock x:Name="VersionText"
-				           FontSize="13" Foreground="#9FB8CC"
+				           FontSize="{DynamicResource FontSizeCaption}"
+				           Foreground="{DynamicResource TextTertiary}"
 				           HorizontalAlignment="Center" />
 			</StackPanel>
 
@@ -22,8 +25,8 @@
 			        HorizontalAlignment="Stretch"
 			        HorizontalContentAlignment="Center"
 			        Margin="0,20,0,10" Padding="0,14"
-			        FontSize="17" FontWeight="SemiBold"
-			        Foreground="White" Background="#1D6FA5"
+			        FontSize="{DynamicResource FontSizeSubtitle}" FontWeight="SemiBold"
+			        Foreground="White" Background="{DynamicResource Accent}"
 			        CornerRadius="10">
 				<Panel>
 					<TextBlock Text="Scan for devices" IsVisible="{Binding !IsScanning}" />
@@ -38,8 +41,8 @@
 			        HorizontalAlignment="Stretch"
 			        HorizontalContentAlignment="Center"
 			        Margin="0,0,0,10" Padding="0,14"
-			        FontSize="17" FontWeight="SemiBold"
-			        Foreground="White" Background="#2E8B57"
+			        FontSize="{DynamicResource FontSizeSubtitle}" FontWeight="SemiBold"
+			        Foreground="White" Background="{DynamicResource Accent}"
 			        CornerRadius="10">
 				<Panel>
 					<TextBlock Text="Start streaming" IsVisible="{Binding !IsStreaming}" />
@@ -49,26 +52,29 @@
 
 			<!-- Channel + sample-rate picker: shown once connected, before streaming -->
 			<Border DockPanel.Dock="Top" IsVisible="{Binding ShowChannelSelector}"
-			        Background="#12507B" CornerRadius="12"
-			        Padding="14,12" Margin="0,0,0,10">
+			        Background="{DynamicResource SurfaceRaised}"
+			        BorderBrush="{DynamicResource BorderDim}" BorderThickness="1"
+			        CornerRadius="12" Padding="14,12" Margin="0,0,0,10">
 				<StackPanel Spacing="10">
 					<Grid ColumnDefinitions="Auto,*,Auto,Auto" VerticalAlignment="Center">
 						<TextBlock Grid.Column="0" Text="Rate (Hz):"
-						           VerticalAlignment="Center" FontSize="15"
-						           Foreground="#C9DAE8" Margin="0,0,10,0" />
+						           VerticalAlignment="Center" FontSize="{DynamicResource FontSizeBody}"
+						           Foreground="{DynamicResource TextSecondary}" Margin="0,0,10,0" />
 						<ComboBox Grid.Column="1" MinWidth="90" HorizontalAlignment="Left"
 						          ItemsSource="{Binding AvailableRates}"
 						          SelectedItem="{Binding SampleRate}" />
 						<Button Grid.Column="2" Content="All"
 						        Command="{Binding SelectAllChannelsCommand}"
-						        Foreground="White" Background="#1D6FA5"
+						        Foreground="White" Background="{DynamicResource Accent}"
 						        Padding="14,6" CornerRadius="8" Margin="0,0,6,0" />
 						<Button Grid.Column="3" Content="None"
 						        Command="{Binding SelectNoChannelsCommand}"
-						        Foreground="White" Background="#0E4468"
+						        Foreground="{DynamicResource TextPrimary}"
+						        Background="{DynamicResource SurfaceActive}"
 						        Padding="14,6" CornerRadius="8" />
 					</Grid>
-					<TextBlock Text="Channels to stream:" FontSize="13" Foreground="#7F9BB0" />
+					<TextBlock Text="Channels to stream:" FontSize="{DynamicResource FontSizeCaption}"
+					           Foreground="{DynamicResource TextTertiary}" />
 					<ScrollViewer MaxHeight="360">
 						<ItemsControl ItemsSource="{Binding Channels}">
 							<ItemsControl.ItemsPanel>
@@ -80,7 +86,8 @@
 								<DataTemplate x:DataType="views:ChannelToggle">
 									<CheckBox IsChecked="{Binding IsSelected}"
 									          Content="{Binding Name}"
-									          Foreground="White" FontSize="15"
+									          Foreground="{DynamicResource TextPrimary}"
+									          FontSize="{DynamicResource FontSizeBody}"
 									          Margin="0,2" />
 								</DataTemplate>
 							</ItemsControl.ItemTemplate>
@@ -97,34 +104,38 @@
 			<StackPanel DockPanel.Dock="Bottom" Spacing="8" Margin="0,12,0,0">
 				<TextBlock Text="{Binding Status}"
 				           TextWrapping="Wrap"
-				           FontSize="14" Foreground="#C9DAE8" />
+				           FontSize="{DynamicResource FontSizeLabel}"
+				           Foreground="{DynamicResource TextSecondary}" />
 				<!-- Manual IP: AP client-isolation drops broadcast discovery
 				     on many networks; connect directly like the desktop app. -->
 				<TextBlock Text="Or connect by IP (data port 9760):"
-				           FontSize="12" Foreground="#7F9BB0" />
+				           FontSize="{DynamicResource FontSizeSmall}"
+				           Foreground="{DynamicResource TextTertiary}" />
 				<Grid ColumnDefinitions="*,90,Auto" ColumnSpacing="8">
 					<TextBox Grid.Column="0" Text="{Binding ManualIp}"
-					         Watermark="192.168.1.234" FontSize="15" />
+					         Watermark="192.168.1.234" FontSize="{DynamicResource FontSizeBody}" />
 					<TextBox Grid.Column="1" Text="{Binding ManualPort}"
-					         FontSize="15" />
+					         FontSize="{DynamicResource FontSizeBody}" />
 					<Button Grid.Column="2" Content="Connect"
 					        Command="{Binding ManualConnectCommand}"
-					        Foreground="White" Background="#1D6FA5"
+					        Foreground="White" Background="{DynamicResource Accent}"
 					        Padding="14,8" CornerRadius="8" />
 				</Grid>
 
 				<!-- Experimental USB (OTG) connect — shown only on Android (a
 				     USB-host connector is registered). Connects the attached DAQiFi
 				     over USB-CDC and registers it, lighting up SD offload in the
-				     Storage tab. See docs/mobile-usb-feasibility.md. -->
+				     Storage tab. StatusAmber signals the experimental path.
+				     See docs/mobile-usb-feasibility.md. -->
 				<Button Content="Connect via USB (OTG)"
 				        Command="{Binding ConnectUsbCommand}"
 				        IsVisible="{Binding IsUsbAvailable}"
 				        HorizontalAlignment="Stretch"
 				        HorizontalContentAlignment="Center"
 				        Margin="0,2,0,0" Padding="0,12"
-				        FontSize="15" FontWeight="SemiBold"
-				        Foreground="White" Background="#A05A2C" CornerRadius="8" />
+				        FontSize="{DynamicResource FontSizeBody}" FontWeight="SemiBold"
+				        Foreground="{DynamicResource Surface}"
+				        Background="{DynamicResource StatusAmber}" CornerRadius="8" />
 			</StackPanel>
 
 			<ScrollViewer IsVisible="{Binding ShowDeviceList}">
@@ -135,13 +146,16 @@
 							        HorizontalAlignment="Stretch"
 							        HorizontalContentAlignment="Stretch"
 							        Margin="0,6" Padding="16,12"
-							        Background="#12507B" CornerRadius="12">
+							        Background="{DynamicResource SurfaceRaised}"
+							        BorderBrush="{DynamicResource BorderDim}" BorderThickness="1"
+							        CornerRadius="12">
 								<StackPanel Spacing="4">
 									<TextBlock Text="{Binding Name}"
-									           FontSize="17" FontWeight="SemiBold"
-									           Foreground="White" />
+									           FontSize="{DynamicResource FontSizeSubtitle}" FontWeight="SemiBold"
+									           Foreground="{DynamicResource TextPrimary}" />
 									<TextBlock Text="{Binding Detail}"
-									           FontSize="13" Foreground="#9FB8CC" />
+									           FontSize="{DynamicResource FontSizeCaption}"
+									           Foreground="{DynamicResource TextTertiary}" />
 								</StackPanel>
 							</Button>
 						</DataTemplate>
