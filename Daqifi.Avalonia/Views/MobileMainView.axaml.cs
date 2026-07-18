@@ -65,6 +65,25 @@ public partial class MobileMainView : UserControl
         SetActive(index);
     }
 
+    /// <summary>Opens the DAQiFi support page via the platform launcher (the
+    /// desktop top bar's help button; Process.Start on desktop → LaunchUriAsync
+    /// cross-platform).</summary>
+    private async void OnHelp(object? sender, RoutedEventArgs e)
+    {
+        try
+        {
+            var top = TopLevel.GetTopLevel(this);
+            if (top?.Launcher is { } launcher)
+            {
+                await launcher.LaunchUriAsync(new Uri("https://www.daqifi.com/support"));
+            }
+        }
+        catch
+        {
+            // best-effort: a missing browser / launcher must not crash the shell
+        }
+    }
+
     private void OnStream(object? sender, RoutedEventArgs e) => ShowStream();
 
     private void OnStorage(object? sender, RoutedEventArgs e) =>

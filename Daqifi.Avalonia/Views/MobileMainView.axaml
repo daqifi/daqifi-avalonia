@@ -58,12 +58,43 @@
       <Setter Property="FontSize" Value="{DynamicResource FontSizeSmall}" />
       <Setter Property="Margin" Value="0,6,0,0" />
     </Style>
+
+    <!-- Top command-bar button (flat, matches the desktop windowCommand) -->
+    <Style Selector="Button.topCommand">
+      <Setter Property="Background" Value="Transparent" />
+      <Setter Property="BorderThickness" Value="0" />
+      <Setter Property="Foreground" Value="{DynamicResource TextSecondary}" />
+      <Setter Property="Padding" Value="12,6" />
+      <Setter Property="FontSize" Value="{DynamicResource FontSizeCaption}" />
+      <Setter Property="Cursor" Value="Hand" />
+    </Style>
+    <Style Selector="Button.topCommand:pointerover">
+      <Setter Property="Foreground" Value="{DynamicResource TextPrimary}" />
+      <Setter Property="Background" Value="{DynamicResource SurfaceHover}" />
+    </Style>
   </UserControl.Styles>
 
-  <Grid ColumnDefinitions="Auto,*" RowDefinitions="*,Auto" Background="{DynamicResource Surface}">
+  <Grid ColumnDefinitions="Auto,*" RowDefinitions="Auto,*,Auto" Background="{DynamicResource Surface}">
+
+    <!-- Top command bar (desktop chrome parity) — thin bar with a right-aligned
+         help link. Settings/debug/notifications are desktop-only (they need the
+         DaqifiViewModel host the mobile shell doesn't run), so only the functional
+         help affordance is surfaced here. -->
+    <Border Grid.Row="0" Grid.ColumnSpan="2"
+            Background="{DynamicResource Surface}"
+            BorderBrush="{DynamicResource BorderDim}" BorderThickness="0,0,0,1">
+      <StackPanel Orientation="Horizontal" HorizontalAlignment="Right" Margin="0,4">
+        <Button Classes="topCommand" Click="OnHelp">
+          <StackPanel Orientation="Horizontal" Spacing="4">
+            <i:Icon Value="mdi-help-circle-outline" FontSize="18" VerticalAlignment="Center" />
+            <TextBlock Text="help" VerticalAlignment="Center" />
+          </StackPanel>
+        </Button>
+      </StackPanel>
+    </Border>
 
     <!-- Left nav rail — LANDSCAPE only -->
-    <Border x:Name="SideNav" Grid.Column="0" Grid.RowSpan="2" IsVisible="False"
+    <Border x:Name="SideNav" Grid.Column="0" Grid.Row="1" Grid.RowSpan="2" IsVisible="False"
             Background="{DynamicResource Surface}"
             BorderBrush="{DynamicResource BorderDim}" BorderThickness="0,0,1,0">
       <StackPanel>
@@ -95,13 +126,13 @@
     </Border>
 
     <!-- Shared content area -->
-    <Panel Grid.Column="1" Grid.Row="0">
+    <Panel Grid.Column="1" Grid.Row="1">
       <v:MobileShellView x:Name="StreamView" />
       <ContentControl x:Name="SecondaryHost" IsVisible="False" />
     </Panel>
 
     <!-- Bottom nav — PORTRAIT only -->
-    <Border x:Name="BottomNav" Grid.Column="1" Grid.Row="1"
+    <Border x:Name="BottomNav" Grid.Column="1" Grid.Row="2"
             Background="{DynamicResource SurfaceRaised}"
             BorderBrush="{DynamicResource BorderDim}" BorderThickness="0,1,0,0">
       <UniformGrid Columns="4">
