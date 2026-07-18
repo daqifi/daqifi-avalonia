@@ -63,15 +63,10 @@
 						<ComboBox Grid.Column="1" MinWidth="90" HorizontalAlignment="Left"
 						          ItemsSource="{Binding AvailableRates}"
 						          SelectedItem="{Binding SampleRate}" />
-						<Button Grid.Column="2" Content="All"
-						        Command="{Binding SelectAllChannelsCommand}"
-						        Foreground="White" Background="{DynamicResource Accent}"
-						        Padding="14,6" CornerRadius="8" Margin="0,0,6,0" />
-						<Button Grid.Column="3" Content="None"
-						        Command="{Binding SelectNoChannelsCommand}"
-						        Foreground="{DynamicResource TextPrimary}"
-						        Background="{DynamicResource SurfaceActive}"
-						        Padding="14,6" CornerRadius="8" />
+						<Button Grid.Column="2" Content="All" Theme="{StaticResource AccentPillButton}"
+						        Command="{Binding SelectAllChannelsCommand}" Margin="0,0,6,0" />
+						<Button Grid.Column="3" Content="None" Theme="{StaticResource PillButton}"
+						        Command="{Binding SelectNoChannelsCommand}" />
 					</Grid>
 					<TextBlock Text="Channels to stream:" FontSize="{DynamicResource FontSizeCaption}"
 					           Foreground="{DynamicResource TextTertiary}" />
@@ -116,10 +111,8 @@
 					         Watermark="192.168.1.234" FontSize="{DynamicResource FontSizeBody}" />
 					<TextBox Grid.Column="1" Text="{Binding ManualPort}"
 					         FontSize="{DynamicResource FontSizeBody}" />
-					<Button Grid.Column="2" Content="Connect"
-					        Command="{Binding ManualConnectCommand}"
-					        Foreground="White" Background="{DynamicResource Accent}"
-					        Padding="14,8" CornerRadius="8" />
+					<Button Grid.Column="2" Content="Connect" Theme="{StaticResource AccentPillButton}"
+					        Command="{Binding ManualConnectCommand}" />
 				</Grid>
 
 				<!-- Experimental USB (OTG) connect — shown only on Android (a

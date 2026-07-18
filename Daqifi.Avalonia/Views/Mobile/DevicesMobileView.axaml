@@ -11,7 +11,14 @@
        Shell.* paths). Desktop→mobile idiom: single-column ScrollViewer, touch targets, design
        tokens. The desktop 420px settings DRAWER (gated by IsSettingsOpen) becomes an INLINE
        expandable section in the same scroll flow gated by the same IsSettingsOpen binding.
-       Reflection bindings only (no x:DataType / compiled bindings) so it compiles without the VM. -->
+       Reflection bindings only (no x:DataType / compiled bindings) so it compiles without the VM.
+
+       Visuals use the app-wide shared design language (Components.axaml + Shell.axaml, merged in
+       App.axaml): pill ControlThemes (AccentPillButton / PillButton / DangerPillButton) for all
+       actions, `chip`/`chipValue` metadata pills, `mono` for device names, `sectionLabel` for
+       sub-headers, and the `emptyBadge`/`emptyTitle`/`emptyBody` empty-state pattern. Only the
+       finer, view-local pieces (card container, field label/value, touch-sized text/combo fields)
+       stay local — all reference design tokens, no literal colors/fonts. -->
 
   <UserControl.Styles>
     <Style Selector="Border.card">
@@ -20,12 +27,6 @@
       <Setter Property="BorderThickness" Value="1" />
       <Setter Property="CornerRadius" Value="12" />
       <Setter Property="Padding" Value="16,14" />
-    </Style>
-
-    <Style Selector="TextBlock.sectionLabel">
-      <Setter Property="FontSize" Value="{DynamicResource FontSizeSmall}" />
-      <Setter Property="FontWeight" Value="Bold" />
-      <Setter Property="Foreground" Value="{DynamicResource TextTertiary}" />
     </Style>
 
     <Style Selector="TextBlock.fieldLabel">
@@ -41,37 +42,7 @@
       <Setter Property="TextWrapping" Value="Wrap" />
     </Style>
 
-    <!-- Touch-sized buttons -->
-    <Style Selector="Button.primary">
-      <Setter Property="Background" Value="{DynamicResource Accent}" />
-      <Setter Property="Foreground" Value="White" />
-      <Setter Property="FontWeight" Value="SemiBold" />
-      <Setter Property="MinHeight" Value="44" />
-      <Setter Property="Padding" Value="16,12" />
-      <Setter Property="CornerRadius" Value="10" />
-      <Setter Property="HorizontalContentAlignment" Value="Center" />
-    </Style>
-    <Style Selector="Button.secondary">
-      <Setter Property="Background" Value="{DynamicResource SurfaceActive}" />
-      <Setter Property="Foreground" Value="{DynamicResource TextPrimary}" />
-      <Setter Property="FontWeight" Value="SemiBold" />
-      <Setter Property="MinHeight" Value="44" />
-      <Setter Property="Padding" Value="16,12" />
-      <Setter Property="CornerRadius" Value="10" />
-      <Setter Property="HorizontalContentAlignment" Value="Center" />
-    </Style>
-    <Style Selector="Button.danger">
-      <Setter Property="Background" Value="Transparent" />
-      <Setter Property="Foreground" Value="{DynamicResource StatusRed}" />
-      <Setter Property="BorderBrush" Value="{DynamicResource StatusRed}" />
-      <Setter Property="BorderThickness" Value="1" />
-      <Setter Property="FontWeight" Value="SemiBold" />
-      <Setter Property="MinHeight" Value="44" />
-      <Setter Property="Padding" Value="16,12" />
-      <Setter Property="CornerRadius" Value="10" />
-      <Setter Property="HorizontalContentAlignment" Value="Center" />
-    </Style>
-
+    <!-- Touch-sized entry fields (no colors/fonts hardcoded — Fluent Dark + tokens). -->
     <Style Selector="TextBox.field">
       <Setter Property="MinHeight" Value="44" />
       <Setter Property="VerticalContentAlignment" Value="Center" />
@@ -107,23 +78,25 @@
         <!-- Device tiles (desktop: ItemsControl.ItemsSource = Devices). Item scope is
              DeviceTileViewModel; template binds the same item members the desktop tile does,
              and the whole tile reaches back to the VM's OpenSettingsCommand to open the inline
-             settings section (mobile idiom for the desktop gear/tap-to-open). -->
+             settings section (mobile idiom for the desktop gear/tap-to-open). Name uses the
+             shared `mono` class; serial/identifier/firmware metadata are shared `chip` pills. -->
         <ItemsControl ItemsSource="{Binding Devices}">
           <ItemsControl.ItemTemplate>
             <DataTemplate>
               <Button HorizontalAlignment="Stretch" HorizontalContentAlignment="Stretch"
                       Padding="0" Margin="0,0,0,10" CornerRadius="12"
-                      Background="{DynamicResource Surface}"
+                      Background="{DynamicResource SurfaceRaised}"
                       BorderBrush="{DynamicResource BorderDim}" BorderThickness="1"
                       Command="{Binding $parent[ItemsControl].DataContext.OpenSettingsCommand}"
                       CommandParameter="{Binding}">
                 <Grid ColumnDefinitions="4,*,Auto">
                   <Border Grid.Column="0" Background="{Binding StripeBrush}"
                           CornerRadius="12,0,0,12" />
-                  <StackPanel Grid.Column="1" Margin="14,12" Spacing="4">
+                  <StackPanel Grid.Column="1" Margin="14,12" Spacing="8">
+                    <!-- Name (mono) + connection status badge (stripe-colored) -->
                     <Grid ColumnDefinitions="*,Auto">
-                      <TextBlock Grid.Column="0" Text="{Binding Name}"
-                                 FontFamily="{DynamicResource MonoFontFamily}" FontSize="{DynamicResource FontSizeSubtitle}" FontWeight="Medium"
+                      <TextBlock Grid.Column="0" Text="{Binding Name}" Classes="mono"
+                                 FontSize="{DynamicResource FontSizeSubtitle}" FontWeight="Medium"
                                  Foreground="{DynamicResource TextPrimary}"
                                  TextTrimming="CharacterEllipsis" VerticalAlignment="Center" />
                       <Border Grid.Column="1" VerticalAlignment="Center"
@@ -134,25 +107,29 @@
                                    FontWeight="SemiBold" Foreground="{Binding StripeBrush}" />
                       </Border>
                     </Grid>
-                    <TextBlock Text="{Binding Identifier}" FontFamily="{DynamicResource MonoFontFamily}" FontSize="{DynamicResource FontSizeSmall}"
-                               Foreground="{DynamicResource TextSecondary}" />
-                    <TextBlock Text="{Binding SerialNumber}" FontFamily="{DynamicResource MonoFontFamily}" FontSize="{DynamicResource FontSizeSmall}"
-                               Foreground="{DynamicResource TextTertiary}" />
-                    <StackPanel Orientation="Horizontal" Spacing="6">
-                      <TextBlock Text="FW" FontSize="{DynamicResource FontSizeSmall}" FontWeight="SemiBold"
-                                 Foreground="{DynamicResource TextTertiary}"
-                                 VerticalAlignment="Center" />
-                      <TextBlock Text="{Binding Version}" FontFamily="{DynamicResource MonoFontFamily}" FontSize="{DynamicResource FontSizeSmall}"
-                                 Foreground="{DynamicResource TextSecondary}"
-                                 VerticalAlignment="Center" />
-                      <Border VerticalAlignment="Center" Margin="4,0,0,0"
-                              Background="{DynamicResource SurfaceActive}" BorderBrush="{DynamicResource StatusAmber}"
-                              BorderThickness="1" CornerRadius="4" Padding="7,2"
+                    <!-- Metadata chips: identifier / serial / firmware (+ amber update flag) -->
+                    <WrapPanel>
+                      <Border Classes="chip" Margin="0,0,6,6">
+                        <TextBlock Classes="chipValue" Text="{Binding Identifier}" />
+                      </Border>
+                      <Border Classes="chip" Margin="0,0,6,6">
+                        <TextBlock Classes="chipValue" Text="{Binding SerialNumber}" />
+                      </Border>
+                      <Border Classes="chip" Margin="0,0,6,6">
+                        <TextBlock>
+                          <Run Text="FW " />
+                          <Run Text="{Binding Version}"
+                               FontFamily="{DynamicResource MonoFontFamily}"
+                               Foreground="{DynamicResource TextPrimary}" />
+                        </TextBlock>
+                      </Border>
+                      <Border Classes="chip" Margin="0,0,6,6"
+                              BorderBrush="{DynamicResource StatusAmber}" BorderThickness="1"
                               IsVisible="{Binding IsFirmwareOutdated}">
-                        <TextBlock Text="UPDATE" FontSize="{DynamicResource FontSizeSmall}" FontWeight="SemiBold"
+                        <TextBlock Text="UPDATE" FontWeight="SemiBold"
                                    Foreground="{DynamicResource StatusAmber}" />
                       </Border>
-                    </StackPanel>
+                    </WrapPanel>
                   </StackPanel>
                   <TextBlock Grid.Column="2" Text="&#x203A;" FontSize="{DynamicResource FontSizeTitle}"
                              Margin="0,0,16,0" VerticalAlignment="Center"
@@ -164,7 +141,7 @@
         </ItemsControl>
 
         <!-- Add device (desktop: Button.Command = AddDeviceCommand) -->
-        <Button Classes="primary" HorizontalAlignment="Stretch"
+        <Button Theme="{StaticResource AccentPillButton}" HorizontalAlignment="Stretch" MinHeight="44"
                 Content="+ ADD DEVICE" Command="{Binding AddDeviceCommand}" />
       </StackPanel>
 
@@ -178,11 +155,12 @@
                     Background="{Binding SelectedTile.StripeBrush}" />
             <StackPanel Grid.Column="1" VerticalAlignment="Center">
               <TextBlock Text="DEVICE" Classes="sectionLabel" />
-              <TextBlock Text="{Binding SelectedTile.Name}" FontFamily="{DynamicResource MonoFontFamily}" FontSize="{DynamicResource FontSizeSubtitle}"
+              <TextBlock Text="{Binding SelectedTile.Name}" Classes="mono" FontSize="{DynamicResource FontSizeSubtitle}"
                          FontWeight="Medium" Foreground="{DynamicResource TextPrimary}"
                          TextTrimming="CharacterEllipsis" />
             </StackPanel>
-            <Button Grid.Column="2" Classes="secondary" Width="44" MinWidth="44" Padding="0"
+            <Button Grid.Column="2" Theme="{StaticResource PillButton}" Width="44" MinWidth="44"
+                    MinHeight="44" Padding="0"
                     Content="&#xD7;" FontSize="{DynamicResource FontSizeSubtitle}" VerticalAlignment="Top"
                     Command="{Binding CloseSettingsCommand}" />
           </Grid>
@@ -302,7 +280,7 @@
                      Text="{Binding SelectedDevice.NetworkConfiguration.Password, Mode=TwoWay}" />
           </StackPanel>
 
-          <Button Classes="primary" HorizontalAlignment="Stretch"
+          <Button Theme="{StaticResource AccentPillButton}" HorizontalAlignment="Stretch" MinHeight="44"
                   Content="APPLY NETWORK SETTINGS"
                   Command="{Binding Shell.UpdateNetworkConfigurationCommand}" />
 
@@ -333,7 +311,7 @@
                 <TextBox Grid.Column="0" Classes="field"
                          Text="{Binding Shell.FirmwareFilePath, Mode=TwoWay}" />
                 <!-- The file picker is the VM's concern; this just invokes its browse command. -->
-                <Button Grid.Column="1" Classes="secondary" Content="Browse"
+                <Button Grid.Column="1" Theme="{StaticResource PillButton}" MinHeight="44" Content="Browse"
                         Command="{Binding Shell.BrowseForFirmwareCommand}" />
               </Grid>
             </StackPanel>
@@ -347,7 +325,8 @@
                            Value="{Binding Shell.UploadFirmwareProgress}" />
             </StackPanel>
 
-            <Button Classes="primary" HorizontalAlignment="Stretch" Content="UPDATE FIRMWARE"
+            <Button Theme="{StaticResource AccentPillButton}" HorizontalAlignment="Stretch" MinHeight="44"
+                    Content="UPDATE FIRMWARE"
                     Command="{Binding Shell.UploadFirmwareCommand}" />
 
             <!-- WiFi module firmware (Nyquist/WINC1500 devices only) -->
@@ -369,7 +348,8 @@
                            Foreground="{DynamicResource Accent}"
                            BorderBrush="{DynamicResource BorderDim}"
                            Value="{Binding Shell.UploadWiFiProgress}" />
-              <Button Classes="primary" HorizontalAlignment="Stretch" Content="FLASH WIFI"
+              <Button Theme="{StaticResource AccentPillButton}" HorizontalAlignment="Stretch" MinHeight="44"
+                      Content="FLASH WIFI"
                       Command="{Binding Shell.UpdateWifiFirmwareOnlyCommand}" />
             </StackPanel>
           </StackPanel>
@@ -386,14 +366,14 @@
           <!-- ACTIONS -->
           <TextBlock Text="ACTIONS" Classes="sectionLabel" />
           <Grid ColumnDefinitions="*,*" ColumnSpacing="10">
-            <Button Grid.Column="0" Classes="secondary" Content="REBOOT"
+            <Button Grid.Column="0" Theme="{StaticResource PillButton}" MinHeight="44" Content="REBOOT"
                     Command="{Binding RebootSelectedCommand}" />
-            <Button Grid.Column="1" Classes="danger" Content="DISCONNECT"
+            <Button Grid.Column="1" Theme="{StaticResource DangerPillButton}" MinHeight="44" Content="DISCONNECT"
                     Command="{Binding DisconnectSelectedCommand}" />
           </Grid>
 
           <!-- Dismiss the inline settings section (mobile equivalent of the desktop scrim tap) -->
-          <Button Classes="secondary" HorizontalAlignment="Stretch" Content="CLOSE"
+          <Button Theme="{StaticResource PillButton}" HorizontalAlignment="Stretch" MinHeight="44" Content="CLOSE"
                   Command="{Binding CloseSettingsCommand}" />
         </StackPanel>
       </Border>
@@ -402,17 +382,14 @@
       <StackPanel IsVisible="{Binding !HasConnectedDevice}" Spacing="14"
                   HorizontalAlignment="Center" VerticalAlignment="Center"
                   MaxWidth="420" Margin="0,60,0,0">
-        <Border Width="96" Height="96" CornerRadius="48" HorizontalAlignment="Center"
-                Background="{DynamicResource SurfaceRaised}"
+        <Border Classes="emptyBadge"
                 BorderBrush="{DynamicResource BorderDim}" BorderThickness="1">
           <TextBlock Text="&#x25A3;" FontSize="{DynamicResource FontSizeDisplay}" HorizontalAlignment="Center"
                      VerticalAlignment="Center" Foreground="{DynamicResource TextTertiary}" />
         </Border>
-        <TextBlock Text="NO DEVICES CONNECTED" Classes="sectionLabel"
-                   HorizontalAlignment="Center" />
+        <TextBlock Text="NO DEVICES CONNECTED" Classes="emptyTitle" />
         <TextBlock Text="Connect a DAQiFi device over USB or WiFi to get started."
-                   FontSize="{DynamicResource FontSizeBody}" FontWeight="Light" TextAlignment="Center" TextWrapping="Wrap"
-                   HorizontalAlignment="Center" Foreground="{DynamicResource TextPrimary}" />
+                   Classes="emptyBody" />
       </StackPanel>
 
     </StackPanel>

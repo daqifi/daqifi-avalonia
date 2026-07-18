@@ -22,17 +22,9 @@
          expressed by nesting one IsVisible container inside another. -->
 
   <UserControl.Styles>
-    <Style Selector="TextBlock.sectionLabel">
-      <Setter Property="FontSize" Value="{DynamicResource FontSizeSmall}" />
-      <Setter Property="FontWeight" Value="SemiBold" />
-      <Setter Property="Foreground" Value="{DynamicResource TextSecondary}" />
-      <Setter Property="VerticalAlignment" Value="Center" />
-    </Style>
-    <Style Selector="TextBlock.sectionCount">
-      <Setter Property="FontSize" Value="{DynamicResource FontSizeSmall}" />
-      <Setter Property="Foreground" Value="{DynamicResource TextTertiary}" />
-      <Setter Property="VerticalAlignment" Value="Center" />
-    </Style>
+    <!-- sectionLabel / sectionCount / chip / mono / rowAction / emptyBadge / emptyTitle
+         / emptyBody are shared app-wide styles (Components.axaml, merged in App.axaml).
+         Only the pane-local styles the shared set does not define live here. -->
     <Style Selector="TextBlock.caption">
       <Setter Property="FontSize" Value="{DynamicResource FontSizeSmall}" />
       <Setter Property="Foreground" Value="{DynamicResource TextTertiary}" />
@@ -76,7 +68,7 @@
             <StackPanel Spacing="3">
               <StackPanel Orientation="Horizontal" Spacing="8">
                 <TextBlock Text="{Binding Name}"
-                           FontFamily="{DynamicResource MonoFontFamily}"
+                           Classes="mono"
                            FontSize="{DynamicResource FontSizeSubtitle}"
                            FontWeight="Medium"
                            Foreground="{DynamicResource TextPrimary}"
@@ -94,7 +86,7 @@
               </StackPanel>
               <TextBlock Text="{Binding Value}"
                          IsVisible="{Binding ShowValue}"
-                         FontFamily="{DynamicResource MonoFontFamily}"
+                         Classes="mono"
                          FontSize="{DynamicResource FontSizeLabel}"
                          Foreground="{Binding Channel.ChannelColorBrush}" />
               <StackPanel Orientation="Horizontal" Spacing="8">
@@ -119,13 +111,11 @@
                         VerticalAlignment="Center"
                         Margin="4,0" />
 
-          <!-- Per-tile settings (desktop's cog button). -->
+          <!-- Per-tile settings (desktop's cog button; shared round rowAction style). -->
           <Button Grid.Column="3"
+                  Classes="rowAction"
                   Content="&#x2699;"
                   FontSize="{DynamicResource FontSizeSubtitle}"
-                  Background="Transparent"
-                  BorderThickness="0"
-                  Foreground="{DynamicResource TextSecondary}"
                   MinHeight="44"
                   MinWidth="44"
                   VerticalAlignment="Center"
@@ -185,12 +175,7 @@
                 </ItemsControl.ItemsPanel>
                 <ItemsControl.ItemTemplate>
                   <DataTemplate>
-                    <Border Background="{DynamicResource SurfaceRaised}"
-                            BorderBrush="{DynamicResource BorderDim}"
-                            BorderThickness="1"
-                            CornerRadius="8"
-                            Padding="10,6"
-                            Margin="0,0,6,6">
+                    <Border Classes="chip" Margin="0,0,6,6">
                       <StackPanel Orientation="Horizontal" Spacing="8">
                         <Ellipse Width="6" Height="6"
                                  Fill="{DynamicResource StatusGreen}"
@@ -217,14 +202,9 @@
                 <TextBlock Classes="sectionCount"><Run Text="&#x00B7; " /><Run Text="{Binding ActiveAnalogCount}" /><Run Text=" / " /><Run Text="{Binding TotalAnalogCount}" /><Run Text=" ACTIVE" /></TextBlock>
               </StackPanel>
               <Button Grid.Column="1"
+                      Theme="{StaticResource PillButton}"
                       Content="Select all"
                       MinHeight="44"
-                      Padding="16,12"
-                      CornerRadius="10"
-                      Background="{DynamicResource SurfaceActive}"
-                      Foreground="{DynamicResource TextPrimary}"
-                      FontSize="{DynamicResource FontSizeSmall}"
-                      FontWeight="SemiBold"
                       AutomationProperties.AutomationId="SelectAllAnalogChannels"
                       Command="{Binding SelectAllCommand}"
                       CommandParameter="AI" />
@@ -293,15 +273,10 @@
                            FontWeight="SemiBold"
                            Foreground="{DynamicResource StatusAmber}" />
               </Border>
-              <Button Content="Clear all"
+              <Button Theme="{StaticResource DangerPillButton}"
+                      Content="Clear all"
                       HorizontalAlignment="Stretch"
-                      HorizontalContentAlignment="Center"
                       MinHeight="44"
-                      Padding="16,12"
-                      CornerRadius="10"
-                      Background="{DynamicResource SurfaceActive}"
-                      Foreground="{DynamicResource TextPrimary}"
-                      FontWeight="SemiBold"
                       AutomationProperties.AutomationId="ClearAllChannels"
                       Command="{Binding ClearAllCommand}" />
             </StackPanel>
@@ -321,14 +296,10 @@
           <StackPanel Spacing="14">
 
             <!-- Back to channel list (desktop scrim tap-to-close). -->
-            <Button Content="&#x2039;  Back to channels"
+            <Button Theme="{StaticResource PillButton}"
+                    Content="&#x2039;  Back to channels"
                     HorizontalAlignment="Left"
                     MinHeight="44"
-                    Padding="12,10"
-                    Background="Transparent"
-                    BorderThickness="0"
-                    Foreground="{DynamicResource TextSecondary}"
-                    FontSize="{DynamicResource FontSizeCaption}"
                     Command="{Binding CloseSettingsCommand}" />
 
             <!-- Header: color bar + channel name + close x -->
@@ -345,19 +316,17 @@
                            Foreground="{DynamicResource TextTertiary}" />
                 <TextBlock Text="{Binding SelectedChannel.Name}"
                            AutomationProperties.AutomationId="ChannelSettingsName"
-                           FontFamily="{DynamicResource MonoFontFamily}"
+                           Classes="mono"
                            FontSize="{DynamicResource FontSizeSubtitle}"
                            FontWeight="Medium"
                            Foreground="{DynamicResource TextPrimary}" />
               </StackPanel>
               <Button Grid.Column="2"
+                      Classes="rowAction"
                       Content="&#x00D7;"
                       FontSize="{DynamicResource FontSizeSubtitle}"
                       MinHeight="44"
                       MinWidth="44"
-                      Background="Transparent"
-                      BorderThickness="0"
-                      Foreground="{DynamicResource TextSecondary}"
                       VerticalAlignment="Center"
                       AutomationProperties.AutomationId="CloseChannelSettingsButton"
                       Command="{Binding CloseSettingsCommand}" />
@@ -491,7 +460,7 @@
                            Foreground="{DynamicResource TextTertiary}"
                            VerticalAlignment="Center" />
                 <TextBlock Grid.Column="1"
-                           FontFamily="{DynamicResource MonoFontFamily}"
+                           Classes="mono"
                            FontSize="{DynamicResource FontSizeCaption}"
                            Foreground="{DynamicResource TextPrimary}"><Run Text="{Binding SelectedChannel.PwmDutyCyclePercent}" /><Run Text=" %" /></TextBlock>
               </Grid>
@@ -585,34 +554,19 @@
                     MaxWidth="420"
                     Margin="0,60,0,0"
                     Spacing="14">
-          <Border Width="96"
-                  Height="96"
-                  CornerRadius="48"
-                  Background="{DynamicResource SurfaceRaised}"
-                  BorderBrush="{DynamicResource BorderDim}"
-                  BorderThickness="1"
-                  HorizontalAlignment="Center">
+          <Border Classes="emptyBadge">
             <TextBlock Text="&#x2317;"
                        FontSize="{DynamicResource FontSizeDisplay}"
                        Foreground="{DynamicResource TextTertiary}"
                        HorizontalAlignment="Center"
                        VerticalAlignment="Center" />
           </Border>
-          <TextBlock Text="NO DEVICE CONNECTED"
-                     FontSize="{DynamicResource FontSizeSmall}"
-                     FontWeight="Bold"
-                     Foreground="{DynamicResource TextTertiary}"
-                     HorizontalAlignment="Center" />
+          <TextBlock Text="NO DEVICE CONNECTED" Classes="emptyTitle" />
           <TextBlock Text="Connect a DAQiFi device to view and activate channels."
-                     FontSize="{DynamicResource FontSizeBody}"
-                     FontWeight="Light"
-                     Foreground="{DynamicResource TextPrimary}"
-                     TextAlignment="Center"
-                     TextWrapping="Wrap"
-                     HorizontalAlignment="Center" />
+                     Classes="emptyBody" />
           <TextBlock Text="Open the Devices tab to get started"
                      FontSize="{DynamicResource FontSizeSmall}"
-                     Foreground="{DynamicResource TextSecondary}"
+                     Foreground="{DynamicResource TextTertiary}"
                      HorizontalAlignment="Center" />
         </StackPanel>
 

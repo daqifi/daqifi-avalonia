@@ -7,52 +7,20 @@
        gate) in a single-column scroll flow; the desktop confirmation overlay
        is projected to a full-bleed modal Scrim + centered card layered over
        the content Grid. Reflection bindings (no compiled-binding datatype) so
-       this compiles without resolving the VM type. Every binding kept. -->
+       this compiles without resolving the VM type. Every binding kept.
+
+       Restyled to the shared desktop design language: buttons use the keyed
+       pill ControlThemes (AccentPillButton / PillButton / DangerPillButton),
+       the empty state uses the shared emptyBadge/emptyTitle/emptyBody classes,
+       profile rows use the shared listRow + mono + rowAction classes, and the
+       section labels use the shared sectionLabel class. Colors/fonts are
+       design tokens only; portrait single-column touch layout is preserved. -->
 
   <UserControl.Styles>
 
-    <Style Selector="TextBlock.label">
-      <Setter Property="FontSize"   Value="{DynamicResource FontSizeSmall}"/>
-      <Setter Property="FontWeight" Value="SemiBold"/>
-      <Setter Property="Foreground" Value="{DynamicResource TextSecondary}"/>
-    </Style>
-
-    <!-- Touch button: 44px min target + generous padding (mobile dialect). -->
-    <Style Selector="Button.touch">
-      <Setter Property="MinHeight"                   Value="44"/>
-      <Setter Property="Padding"                     Value="16,12"/>
-      <Setter Property="HorizontalAlignment"         Value="Stretch"/>
-      <Setter Property="HorizontalContentAlignment"  Value="Center"/>
-      <Setter Property="Background"                  Value="{DynamicResource SurfaceRaised}"/>
-      <Setter Property="Foreground"                  Value="{DynamicResource TextPrimary}"/>
-      <Setter Property="BorderBrush"                 Value="{DynamicResource BorderDim}"/>
-      <Setter Property="BorderThickness"             Value="1"/>
-      <Setter Property="CornerRadius"                Value="6"/>
-      <Setter Property="FontSize"                    Value="{DynamicResource FontSizeLabel}"/>
-      <Setter Property="FontWeight"                  Value="SemiBold"/>
-    </Style>
-    <Style Selector="Button.accent">
-      <Setter Property="Background"  Value="{DynamicResource Accent}"/>
-      <Setter Property="BorderBrush" Value="{DynamicResource Accent}"/>
-      <Setter Property="Foreground"  Value="White"/>
-    </Style>
-    <Style Selector="Button.danger">
-      <Setter Property="BorderBrush" Value="{DynamicResource StatusRed}"/>
-      <Setter Property="Foreground"  Value="{DynamicResource StatusRed}"/>
-    </Style>
-
-    <!-- Whole-tile touch target (desktop wrapped the tile Border in a Button). -->
-    <Style Selector="Button.tile">
-      <Setter Property="MinHeight"                  Value="44"/>
-      <Setter Property="Padding"                    Value="14"/>
-      <Setter Property="HorizontalAlignment"        Value="Stretch"/>
-      <Setter Property="HorizontalContentAlignment" Value="Stretch"/>
-      <Setter Property="Background"                 Value="{DynamicResource SurfaceRaised}"/>
-      <Setter Property="BorderBrush"                Value="{DynamicResource BorderDim}"/>
-      <Setter Property="BorderThickness"            Value="1"/>
-      <Setter Property="CornerRadius"               Value="8"/>
-    </Style>
-
+    <!-- Touch text field: 44px min target + generous padding (mobile dialect).
+         No shared textbox class exists yet, so the local touch field is kept
+         (token-driven). Buttons and labels now use the shared themes/classes. -->
     <Style Selector="TextBox.touch">
       <Setter Property="MinHeight"        Value="44"/>
       <Setter Property="Padding"          Value="12,10"/>
@@ -67,7 +35,10 @@
 
   </UserControl.Styles>
 
-  <!-- Root Grid so the confirm overlay can layer over the scrolling content. -->
+  <!-- Root Grid so the confirm overlay can layer over the scrolling content.
+       (The projektanker icon namespace is intentionally NOT used here: Avalonia
+       forbids xmlns on non-root elements, and the root UserControl is left
+       untouched — so the empty-state badge and the per-row action use text.) -->
   <Grid Background="{DynamicResource Surface}">
 
     <ScrollViewer>
@@ -112,34 +83,31 @@
                        Foreground="{DynamicResource StatusAmber}"/>
           </Border>
 
-          <!-- desktop: Button.IsEnabled (!IsLoggingActive) + Button.Command -->
-          <Button Classes="touch accent"
+          <!-- desktop: Button.IsEnabled (!IsLoggingActive) + Button.Command.
+               Primary action → shared AccentPillButton (rounded pill). -->
+          <Button Theme="{StaticResource AccentPillButton}"
                   Content="+ ADD PROFILE"
+                  MinHeight="44"
                   IsEnabled="{Binding !IsLoggingActive}"
                   Command="{Binding OpenNewDrawerCommand}"/>
 
         </StackPanel>
 
         <!-- ========== EMPTY STATE ========== -->
-        <!-- desktop: Grid.IsVisible (!HasProfiles) -->
-        <Border IsVisible="{Binding !HasProfiles}"
-                Background="{DynamicResource SurfaceRaised}"
-                BorderBrush="{DynamicResource BorderDim}"
-                BorderThickness="1"
-                CornerRadius="8"
-                Padding="20,28">
-          <StackPanel Spacing="12" HorizontalAlignment="Center">
-            <TextBlock Text="NO PROFILES SAVED"
-                       FontSize="{DynamicResource FontSizeSmall}" FontWeight="Bold"
-                       Foreground="{DynamicResource TextTertiary}"
-                       HorizontalAlignment="Center"/>
-            <TextBlock Text="Profiles capture your device and channel configuration so you can restore it later."
-                       FontSize="{DynamicResource FontSizeLabel}" FontWeight="Light"
-                       Foreground="{DynamicResource TextPrimary}"
-                       TextAlignment="Center"
-                       TextWrapping="Wrap"/>
-          </StackPanel>
-        </Border>
+        <!-- desktop: centered circular badge + CAPS title + sentence — projected
+             to the shared emptyBadge/emptyTitle/emptyBody classes. (Desktop
+             centers an mdi-tune-variant icon in the badge; the icon namespace
+             can't be declared here without touching the root UserControl, so the
+             badge is the shared token-styled circle.) -->
+        <StackPanel IsVisible="{Binding !HasProfiles}"
+                    Spacing="16"
+                    Margin="0,24"
+                    HorizontalAlignment="Center">
+          <Border Classes="emptyBadge"/>
+          <TextBlock Classes="emptyTitle" Text="NO PROFILES SAVED"/>
+          <TextBlock Classes="emptyBody"
+                     Text="Profiles capture your device and channel configuration so you can restore it later."/>
+        </StackPanel>
 
         <!-- ========== PROFILE LIST ========== -->
         <!-- desktop: Grid.IsVisible (HasProfiles) -->
@@ -150,13 +118,12 @@
                         AutomationProperties.AutomationId="ProfileList">
             <ItemsControl.ItemTemplate>
               <DataTemplate>
-                <!-- Whole tile taps through to the edit drawer (desktop gear).
+                <!-- Shared listRow (bottom separator) + mono profile name; the
+                     per-row edit action is a shared rowAction button that carries
+                     the desktop OpenEditDrawerCommand.
                      $parent[UserControl] reaches the root DataContext because
                      ElementName does not cross Avalonia DataTemplate scopes. -->
-                <Button Classes="tile"
-                        Margin="0,0,0,2"
-                        Command="{Binding $parent[UserControl].DataContext.OpenEditDrawerCommand}"
-                        CommandParameter="{Binding}">
+                <Border Classes="listRow">
                   <Grid ColumnDefinitions="*,Auto">
                     <StackPanel Grid.Column="0" Spacing="4">
                       <StackPanel Orientation="Horizontal" Spacing="8">
@@ -165,7 +132,8 @@
                                  Fill="{DynamicResource StatusGreen}"
                                  VerticalAlignment="Center"
                                  IsVisible="{Binding IsProfileActive}"/>
-                        <TextBlock Text="{Binding Name}"
+                        <TextBlock Classes="mono"
+                                   Text="{Binding Name}"
                                    Foreground="{DynamicResource TextPrimary}"
                                    FontSize="{DynamicResource FontSizeBody}" FontWeight="Medium"
                                    VerticalAlignment="Center"/>
@@ -179,13 +147,22 @@
                         <Run Text=" DEVICE(S)"/>
                       </TextBlock>
                     </StackPanel>
-                    <TextBlock Grid.Column="1"
-                               Text="EDIT ›"
-                               Foreground="{DynamicResource TextSecondary}"
-                               FontSize="{DynamicResource FontSizeSmall}" FontWeight="SemiBold"
-                               VerticalAlignment="Center"/>
+                    <!-- desktop: gear button → OpenEditDrawerCommand (edit drawer);
+                         shared rowAction button (text affordance, no icon font). -->
+                    <Button Grid.Column="1"
+                            Classes="rowAction"
+                            MinHeight="44" MinWidth="44"
+                            VerticalAlignment="Center"
+                            FontSize="{DynamicResource FontSizeSmall}"
+                            FontWeight="SemiBold"
+                            Content="EDIT ›"
+                            ToolTip.Tip="Profile settings"
+                            AutomationProperties.AutomationId="ProfileSettingsButton"
+                            Command="{Binding $parent[UserControl].DataContext.OpenEditDrawerCommand}"
+                            CommandParameter="{Binding}">
+                    </Button>
                   </Grid>
-                </Button>
+                </Border>
               </DataTemplate>
             </ItemsControl.ItemTemplate>
           </ItemsControl>
@@ -215,23 +192,23 @@
               <StackPanel Grid.Column="1" Spacing="2" VerticalAlignment="Center">
                 <Panel>
                   <!-- desktop: TextBlock.IsVisible (!IsNewProfile) -->
-                  <TextBlock Classes="label" Text="EDIT PROFILE"
+                  <TextBlock Classes="sectionLabel" Text="EDIT PROFILE"
                              IsVisible="{Binding !IsNewProfile}"/>
                   <!-- desktop: TextBlock.IsVisible (IsNewProfile) -->
-                  <TextBlock Classes="label" Text="NEW PROFILE"
+                  <TextBlock Classes="sectionLabel" Text="NEW PROFILE"
                              IsVisible="{Binding IsNewProfile}"/>
                 </Panel>
-                <!-- desktop: TextBlock.Text (SelectedProfile.Name) -->
-                <TextBlock Text="{Binding SelectedProfile.Name}"
+                <!-- desktop: TextBlock.Text (SelectedProfile.Name) — mono like desktop -->
+                <TextBlock Classes="mono"
+                           Text="{Binding SelectedProfile.Name}"
                            FontSize="{DynamicResource FontSizeSubtitle}" FontWeight="Medium"
                            Foreground="{DynamicResource TextPrimary}"/>
               </StackPanel>
-              <!-- desktop: Button.Command (CloseDrawerCommand) -->
+              <!-- desktop: Button.Command (CloseDrawerCommand) — ghost pill -->
               <Button Grid.Column="2"
-                      Classes="touch"
+                      Theme="{StaticResource PillButton}"
                       HorizontalAlignment="Right"
-                      MinWidth="44"
-                      Padding="12"
+                      MinWidth="44" MinHeight="44"
                       Content="✕"
                       Command="{Binding CloseDrawerCommand}"/>
             </Grid>
@@ -254,11 +231,11 @@
             <!-- desktop: StackPanel.IsVisible (!IsNewProfile) -->
             <StackPanel IsVisible="{Binding !IsNewProfile}" Spacing="10">
 
-              <TextBlock Classes="label" Text="NAME"/>
+              <TextBlock Classes="sectionLabel" Text="NAME"/>
               <!-- desktop: TextBox.Text (SelectedProfile.Name) -->
               <TextBox Classes="touch" Text="{Binding SelectedProfile.Name}"/>
 
-              <TextBlock Classes="label" Text="DEVICES" Margin="0,6,0,0"/>
+              <TextBlock Classes="sectionLabel" Text="DEVICES" Margin="0,6,0,0"/>
               <!-- desktop: ItemsControl.ItemsSource (SelectedProfile.Devices) -->
               <ItemsControl ItemsSource="{Binding SelectedProfile.Devices}">
                 <ItemsControl.ItemTemplate>
@@ -286,7 +263,7 @@
                                      VerticalAlignment="Center"/>
                         </StackPanel>
                         <Grid ColumnDefinitions="Auto,*,Auto">
-                          <TextBlock Grid.Column="0" Classes="label" Text="FREQ"
+                          <TextBlock Grid.Column="0" Classes="sectionLabel" Text="FREQ"
                                      FontSize="{DynamicResource FontSizeSmall}" VerticalAlignment="Center"
                                      Margin="0,0,10,0"/>
                           <Slider Grid.Column="1"
@@ -332,8 +309,9 @@
 
               <!-- desktop: Button.Command (ActivateProfileCommand) +
                    Button.CommandParameter (SelectedProfile); label toggled by
-                   the two IsVisible bindings below. -->
-              <Button Classes="touch accent"
+                   the two IsVisible bindings below. Primary → AccentPillButton. -->
+              <Button Theme="{StaticResource AccentPillButton}"
+                      MinHeight="44"
                       AutomationProperties.AutomationId="ActivateProfileButton"
                       Command="{Binding ActivateProfileCommand}"
                       CommandParameter="{Binding SelectedProfile}">
@@ -347,8 +325,9 @@
                 </Panel>
               </Button>
 
-              <!-- desktop: Button.Command (DeleteProfileCommand) -->
-              <Button Classes="touch danger"
+              <!-- desktop: Button.Command (DeleteProfileCommand) — destructive → DangerPillButton -->
+              <Button Theme="{StaticResource DangerPillButton}"
+                      MinHeight="44"
                       Content="DELETE PROFILE"
                       AutomationProperties.AutomationId="DeleteProfileButton"
                       Command="{Binding DeleteProfileCommand}"
@@ -360,19 +339,21 @@
             <!-- desktop: StackPanel.IsVisible (IsNewProfile) -->
             <StackPanel IsVisible="{Binding IsNewProfile}" Spacing="10">
 
-              <TextBlock Classes="label" Text="NAME"/>
+              <TextBlock Classes="sectionLabel" Text="NAME"/>
               <!-- desktop: TextBox.Text (NewProfileName) -->
               <TextBox Classes="touch"
                        AutomationProperties.AutomationId="NewProfileNameInput"
                        Text="{Binding NewProfileName}"/>
 
-              <!-- desktop: Button.Command (SaveCurrentSettingsCommand) -->
-              <Button Classes="touch"
+              <!-- desktop: Button.Command (SaveCurrentSettingsCommand) — secondary → PillButton -->
+              <Button Theme="{StaticResource PillButton}"
+                      MinHeight="44"
+                      HorizontalAlignment="Left"
                       Content="CAPTURE FROM CURRENT SETTINGS"
                       AutomationProperties.AutomationId="SaveCurrentSettingsButton"
                       Command="{Binding SaveCurrentSettingsCommand}"/>
 
-              <TextBlock Classes="label" Text="DEVICES" Margin="0,6,0,0"/>
+              <TextBlock Classes="sectionLabel" Text="DEVICES" Margin="0,6,0,0"/>
               <TextBlock Text="Select devices to include in this profile."
                          FontSize="{DynamicResource FontSizeSmall}"
                          Foreground="{DynamicResource TextTertiary}"
@@ -438,7 +419,7 @@
                 </ItemsControl.ItemTemplate>
               </ItemsControl>
 
-              <TextBlock Classes="label" Text="SAMPLING FREQUENCY" Margin="0,6,0,0"/>
+              <TextBlock Classes="sectionLabel" Text="SAMPLING FREQUENCY" Margin="0,6,0,0"/>
               <Grid ColumnDefinitions="*,Auto">
                 <!-- desktop: Slider.Value (NewProfileFrequency) — sampling freq in Hz -->
                 <Slider Grid.Column="0"
@@ -457,8 +438,9 @@
                 </TextBlock>
               </Grid>
 
-              <!-- desktop: Button.Command (SaveNewProfileCommand) -->
-              <Button Classes="touch accent"
+              <!-- desktop: Button.Command (SaveNewProfileCommand) — primary → AccentPillButton -->
+              <Button Theme="{StaticResource AccentPillButton}"
+                      MinHeight="44"
                       Content="SAVE PROFILE"
                       AutomationProperties.AutomationId="SaveNewProfileButton"
                       Command="{Binding SaveNewProfileCommand}"/>
@@ -499,13 +481,15 @@
                       HorizontalAlignment="Right"
                       Spacing="10"
                       Margin="0,8,0,0">
-            <!-- desktop: Button.Command (ConfirmOverlay.NegativeCommand) -->
-            <Button Classes="touch"
+            <!-- desktop: Button.Command (ConfirmOverlay.NegativeCommand) — negative → PillButton -->
+            <Button Theme="{StaticResource PillButton}"
+                    MinHeight="44"
                     Content="CANCEL"
                     Command="{Binding ConfirmOverlay.NegativeCommand}"/>
             <!-- desktop: Button.Content (ConfirmOverlay.AffirmativeLabel) +
-                 Button.Command (ConfirmOverlay.AffirmativeCommand) -->
-            <Button Classes="touch accent"
+                 Button.Command (ConfirmOverlay.AffirmativeCommand) — affirmative → AccentPillButton -->
+            <Button Theme="{StaticResource AccentPillButton}"
+                    MinHeight="44"
                     Content="{Binding ConfirmOverlay.AffirmativeLabel}"
                     Command="{Binding ConfirmOverlay.AffirmativeCommand}"/>
           </StackPanel>
