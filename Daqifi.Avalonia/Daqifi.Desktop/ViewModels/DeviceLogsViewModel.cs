@@ -108,9 +108,13 @@ public partial class DeviceLogsViewModel : ObservableObject
     // SD file access (LIST / download) is transport-agnostic (issue #1): the firmware routes SD
     // replies to the requesting link (USB or WiFi/TCP — daqifi-nyquist-firmware #598/#599) and
     // Core's SD path drives its consumer swap against the transport stream regardless of type.
-    // Gate on "a real connected device" (USB or WiFi), not USB-only.
+    // Gate on "device supports SD + connected" (issue #1's own prescription), NOT connection type
+    // alone: IsConnected must be checked because a device can drop mid-session (silently over
+    // WiFi) while still selected — a non-null-but-disconnected Core would otherwise pass the
+    // GetCoreDevice null-guard and run SD ops against a dead transport.
     public bool CanAccessSdCard =>
-        SelectedDevice?.ConnectionType is ConnectionType.Usb or ConnectionType.Wifi;
+        SelectedDevice is { IsConnected: true } &&
+        SelectedDevice.ConnectionType is ConnectionType.Usb or ConnectionType.Wifi;
 
     /// <summary>True when the device has an OK SD card but no log files on it.</summary>
     // @port: Daqifi.Desktop.ViewModels.DeviceLogsViewModel.HasNoFiles
@@ -259,7 +263,7 @@ public partial class DeviceLogsViewModel : ObservableObject
     internal async Task RefreshFilesAsync()
     {
         var device = SelectedDevice;
-        if (device == null ||
+        if (device is not { IsConnected: true } ||
             device.ConnectionType is not (ConnectionType.Usb or ConnectionType.Wifi))
         {
             return;
