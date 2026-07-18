@@ -290,6 +290,17 @@ public partial class DeviceLogsViewModel : ObservableObject
         OnPropertyChanged(nameof(HasFiles));
         OnPropertyChanged(nameof(ConnectionTypeMessage));
         RefreshFilesCommand.NotifyCanExecuteChanged();
+
+        // When SD is no longer accessible (e.g. the selected device disconnected), drop the now-stale
+        // SD state + file list so SdCardStatusLine doesn't keep showing a phantom "SD card OK · N
+        // files" next to a "Device disconnected" message (Qodo "Stale SD status line"). Setting
+        // SdCardState and clearing DeviceFiles each re-raise SdCardStatusLine / Has* on their own.
+        if (!CanAccessSdCard)
+        {
+            SdCardState = SdCardState.Unknown;
+            SdCardErrorMessage = string.Empty;
+            DeviceFiles.Clear();
+        }
     }
 
     // @port: Daqifi.Desktop.ViewModels.DeviceLogsViewModel.RefreshFilesAsync
