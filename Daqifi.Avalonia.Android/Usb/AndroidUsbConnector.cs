@@ -28,17 +28,18 @@ public sealed class AndroidUsbConnector : IMobileUsbConnector
     public bool IsDeviceAttached =>
         _usbManager is not null && UsbDeviceConnector.FindDaqifiDevice(_usbManager) is not null;
 
-    public async Task<string> ConnectAsync()
+    public async Task<UsbConnectResult> ConnectAsync()
     {
         if (_usbManager is null)
         {
-            return "USB host service is unavailable on this device.";
+            return new UsbConnectResult(null, "USB host service is unavailable on this device.");
         }
 
         var device = UsbDeviceConnector.FindDaqifiDevice(_usbManager);
         if (device is null)
         {
-            return "No DAQiFi USB device found — attach it via a USB-C OTG cable and grant permission.";
+            return new UsbConnectResult(null,
+                "No DAQiFi USB device found — attach it via a USB-C OTG cable and grant permission.");
         }
 
         var connected = await UsbDeviceConnector
@@ -46,7 +47,9 @@ public sealed class AndroidUsbConnector : IMobileUsbConnector
             .ConfigureAwait(false);
 
         return connected is not null
-            ? $"USB connected: {connected.Name} (SN {connected.DeviceSerialNo}). Open the Storage tab for SD files."
-            : "USB connect failed — permission denied or transport error (see device log).";
+            ? new UsbConnectResult(connected,
+                $"USB connected: {connected.Name} (SN {connected.DeviceSerialNo}).")
+            : new UsbConnectResult(null,
+                "USB connect failed — permission denied or transport error (see device log).");
     }
 }

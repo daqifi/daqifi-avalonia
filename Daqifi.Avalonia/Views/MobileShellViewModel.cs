@@ -6,6 +6,7 @@ using CommunityToolkit.Mvvm.Input;
 using Daqifi.Avalonia.Services;
 using Daqifi.Desktop;
 using Daqifi.Desktop.Channel;
+using Daqifi.Desktop.Device;
 using Daqifi.Desktop.Device.WiFiDevice;
 using ChannelType = Daqifi.Core.Channel.ChannelType;
 
@@ -21,7 +22,10 @@ public partial class MobileShellViewModel : ObservableObject, IDisposable
 {
     private CancellationTokenSource? _cts;
     private Task? _scanTask;
-    private DaqifiStreamingDevice? _connected;
+    // Base type, not the concrete WiFi device: the Stream tab drives whichever
+    // transport connected — a WiFi DaqifiStreamingDevice OR a USB UsbStreamingDevice
+    // (both extend AbstractStreamingDevice, which carries the whole streaming API).
+    private AbstractStreamingDevice? _connected;
 
     public ObservableCollection<MobileDeviceItem> Devices { get; } = [];
 
@@ -184,7 +188,18 @@ public partial class MobileShellViewModel : ObservableObject, IDisposable
     private async Task ConnectUsb()
     {
         Status = "Connecting via USB…";
-        Status = await MobileUsbConnector.ConnectAsync();
+        var result = await MobileUsbConnector.ConnectAsync();
+        if (result.Device != null)
+        {
+            // The connector already connected + registered the USB device; adopt it
+            // as the shell's active device so the Stream tab drives it (pick channels,
+            // stream, plot) exactly like a WiFi device.
+            AdoptConnectedDevice(result.Device);
+        }
+        else
+        {
+            Status = result.Message;
+        }
     }
 
     internal Task ConnectAsync(MobileDeviceItem item) =>
@@ -206,32 +221,7 @@ public partial class MobileShellViewModel : ObservableObject, IDisposable
             });
             if (ok)
             {
-                _connected = device;
-                // Publish into the shared connection registry so the projected
-                // mobile panes (Storage / DeviceLogs, and future panes) observe
-                // this device via ConnectionManager.ConnectedDevices. Best-effort:
-                // a registry hiccup must never break the live stream path.
-                try
-                {
-                    if (previous != null) { ConnectionManager.Instance.UnregisterConnectedDevice(previous); }
-                    ConnectionManager.Instance.RegisterConnectedDevice(device);
-                }
-                catch { /* bridge is best-effort */ }
-                // Populate the per-channel selection list (all on by default)
-                // before flipping IsConnected so the selector shows with data.
-                var analog = device.DataChannels
-                    .Where(c => c.Type == ChannelType.Analog && !c.IsOutput)
-                    .OrderBy(c => c.Index)
-                    .ToList();
-                Channels.Clear();
-                foreach (var ch in analog)
-                {
-                    Channels.Add(new ChannelToggle(ch.Name, ch.Index));
-                }
-                IsConnected = true;
-                Status = $"Connected: {device.Name}  •  SN {device.Metadata.SerialNumber ?? "?"}"
-                       + $"  •  FW {device.Metadata.FirmwareVersion ?? "?"}"
-                       + $"  •  {analog.Count} analog ch — pick channels + rate, then stream";
+                AdoptConnectedDevice(device);
             }
             else
             {
@@ -242,6 +232,44 @@ public partial class MobileShellViewModel : ObservableObject, IDisposable
         {
             Status = $"Connect failed: {ex.Message}";
         }
+    }
+
+    /// <summary>
+    /// Adopt an ALREADY-CONNECTED device (WiFi or USB) as the shell's active device:
+    /// replace any prior connection, publish it to ConnectionManager so the projected
+    /// panes observe it, populate the per-channel picker, and flip to the connected
+    /// state. Transport-agnostic — the caller ensures the device is connected.
+    /// </summary>
+    private void AdoptConnectedDevice(AbstractStreamingDevice device)
+    {
+        var previous = _connected;
+        if (previous != null && !ReferenceEquals(previous, device))
+        {
+            try { ConnectionManager.Instance.UnregisterConnectedDevice(previous); } catch { /* best-effort */ }
+            try { previous.Disconnect(); } catch { /* best-effort */ }
+        }
+        _connected = device;
+        // Publish into the shared registry so the projected panes (Storage / Channels)
+        // observe this device. Best-effort + idempotent (a USB device the connector
+        // already registered is a no-op here).
+        try { ConnectionManager.Instance.RegisterConnectedDevice(device); } catch { /* best-effort */ }
+
+        // Populate the per-channel selection list (all on by default) before flipping
+        // IsConnected so the selector shows with data.
+        var analog = device.DataChannels
+            .Where(c => c.Type == ChannelType.Analog && !c.IsOutput)
+            .OrderBy(c => c.Index)
+            .ToList();
+        Channels.Clear();
+        foreach (var ch in analog)
+        {
+            Channels.Add(new ChannelToggle(ch.Name, ch.Index));
+        }
+        IsStreaming = false;
+        IsConnected = true;
+        Status = $"Connected: {device.Name}  •  SN {device.Metadata.SerialNumber ?? "?"}"
+               + $"  •  FW {device.Metadata.FirmwareVersion ?? "?"}"
+               + $"  •  {analog.Count} analog ch — pick channels + rate, then stream";
     }
 
     [RelayCommand]

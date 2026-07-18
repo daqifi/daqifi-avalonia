@@ -1,6 +1,12 @@
 using System.Threading.Tasks;
+using Daqifi.Desktop.Device;
 
 namespace Daqifi.Avalonia.Services;
+
+/// <summary>Outcome of a USB connect attempt: the connected device (null on
+/// failure) plus a human-readable status message. The device, when non-null, is
+/// already connected and registered with ConnectionManager by the connector.</summary>
+public sealed record UsbConnectResult(AbstractStreamingDevice? Device, string Message);
 
 /// <summary>
 /// Platform hook for connecting to a DAQiFi over a USB (OTG) host link. The
@@ -22,10 +28,10 @@ public interface IMobileUsbConnector
 
     /// <summary>
     /// Request permission, connect the USB device, and register it with
-    /// ConnectionManager. Returns a short human-readable status (success detail, or
-    /// the reason it failed) for the caller to surface — never throws.
+    /// ConnectionManager. Returns the connected device (null on failure) plus a
+    /// status message for the caller to surface — never throws.
     /// </summary>
-    Task<string> ConnectAsync();
+    Task<UsbConnectResult> ConnectAsync();
 }
 
 /// <summary>
@@ -42,6 +48,7 @@ public static class MobileUsbConnector
     /// <summary>True when a connector is registered AND a device is attached.</summary>
     public static bool IsDeviceAttached => Current?.IsDeviceAttached == true;
 
-    public static Task<string> ConnectAsync() =>
-        Current?.ConnectAsync() ?? Task.FromResult("USB is not available on this platform.");
+    public static Task<UsbConnectResult> ConnectAsync() =>
+        Current?.ConnectAsync()
+        ?? Task.FromResult(new UsbConnectResult(null, "USB is not available on this platform."));
 }
