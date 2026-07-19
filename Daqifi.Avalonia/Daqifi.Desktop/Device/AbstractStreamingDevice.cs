@@ -391,6 +391,7 @@ public abstract partial class AbstractStreamingDevice : ObservableObject, IStrea
 
             coreDevice.ChannelsPopulated += OnCoreChannelsPopulated;
             coreDevice.MessageReceived += OnCoreMessageReceived;
+            coreDevice.StatusChanged += OnCoreStatusChanged;
 
             InitializeDeviceState();
 
@@ -399,6 +400,11 @@ public abstract partial class AbstractStreamingDevice : ObservableObject, IStrea
             coreDevice.InitializeAsync().GetAwaiter().GetResult();
 
             OnCoreDeviceInitialized();
+
+            // Notify IsConnected on connect. Core sets Status=Connected inside CreateCoreDevice/
+            // InitializeAsync — the first (and possibly only) transition can fire before the
+            // StatusChanged handler is attached above, so raise it explicitly here too (issue #3).
+            OnPropertyChanged(nameof(IsConnected));
             return true;
         }
         catch (Exception ex)
@@ -541,6 +547,10 @@ public abstract partial class AbstractStreamingDevice : ObservableObject, IStrea
         }
 
         CoreDevice = null;
+
+        // CoreDevice is now null, so IsConnected reads false. The explicit-disconnect path
+        // unsubscribes StatusChanged before cleanup, so notify here to cover teardown (issue #3).
+        OnPropertyChanged(nameof(IsConnected));
     }
 
     // @port: Daqifi.Desktop.Device.AbstractStreamingDevice.UnsubscribeCoreDeviceEvents
@@ -548,6 +558,7 @@ public abstract partial class AbstractStreamingDevice : ObservableObject, IStrea
     {
         coreDevice.ChannelsPopulated -= OnCoreChannelsPopulated;
         coreDevice.MessageReceived -= OnCoreMessageReceived;
+        coreDevice.StatusChanged -= OnCoreStatusChanged;
     }
 
     /// <summary>
@@ -559,6 +570,20 @@ public abstract partial class AbstractStreamingDevice : ObservableObject, IStrea
     private void OnCoreMessageReceived(object? sender, MessageReceivedEventArgs e)
     {
         HandleInboundMessage(e);
+    }
+
+    /// <summary>
+    /// Bridges Core's device <c>StatusChanged</c> into an <see cref="IsConnected"/> change
+    /// notification. Core maps its transport's status (connect, disconnect, and a transport-detected
+    /// drop such as a silent WiFi/TCP link death) onto its <c>Status</c>; <see cref="IsConnected"/>
+    /// is a computed property that raises no change on its own, so without this bridge an
+    /// IsConnected-derived binding or command would read stale until an unrelated signal (issue #3).
+    /// Raises <see cref="ObservableObject.OnPropertyChanged"/> directly — the same pattern the other
+    /// Core-event handlers use; Avalonia marshals binding updates to the UI thread.
+    /// </summary>
+    private void OnCoreStatusChanged(object? sender, DeviceStatusEventArgs e)
+    {
+        OnPropertyChanged(nameof(IsConnected));
     }
     #endregion
 
