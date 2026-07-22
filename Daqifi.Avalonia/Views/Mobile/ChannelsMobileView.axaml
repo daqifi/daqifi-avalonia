@@ -586,8 +586,8 @@
           <TextBlock Text="NO DEVICE CONNECTED" Classes="emptyTitle" />
           <TextBlock Text="Connect a DAQiFi device to view and activate channels."
                      Classes="emptyBody" />
-          <!-- Mobile has no Devices tab; scan/connect lives on the Stream tab (#8). -->
-          <TextBlock Text="Scan for a device on the Stream tab to get started"
+          <!-- Mobile has no Devices tab; scan/connect lives on the Live Graph tab (#8/#9). -->
+          <TextBlock Text="Scan for a device on the Live Graph tab to get started"
                      FontSize="{DynamicResource FontSizeSmall}"
                      Foreground="{DynamicResource TextTertiary}"
                      HorizontalAlignment="Center" />

@@ -101,13 +101,13 @@
         <Button x:Name="RailStream" Classes="rail" Click="OnStream">
           <StackPanel>
             <i:Icon Value="mdi-chart-timeline-variant" FontSize="24" HorizontalAlignment="Center" />
-            <TextBlock Classes="railLabel" Text="Stream" />
+            <TextBlock Classes="railLabel" Text="Live Graph" />
           </StackPanel>
         </Button>
         <Button x:Name="RailStorage" Classes="rail" Click="OnStorage">
           <StackPanel>
             <i:Icon Value="mdi-database-outline" FontSize="24" HorizontalAlignment="Center" />
-            <TextBlock Classes="railLabel" Text="Storage" />
+            <TextBlock Classes="railLabel" Text="Logged Data" />
           </StackPanel>
         </Button>
         <Button x:Name="RailChannels" Classes="rail" Click="OnChannels">
@@ -136,8 +136,8 @@
             Background="{DynamicResource SurfaceRaised}"
             BorderBrush="{DynamicResource BorderDim}" BorderThickness="0,1,0,0">
       <UniformGrid Columns="4">
-        <Button x:Name="NavStream"   Classes="nav" Content="Stream"   Click="OnStream" />
-        <Button x:Name="NavStorage"  Classes="nav" Content="Storage"  Click="OnStorage" />
+        <Button x:Name="NavStream"   Classes="nav" Content="Live Graph"  Click="OnStream" />
+        <Button x:Name="NavStorage"  Classes="nav" Content="Logged Data" Click="OnStorage" />
         <Button x:Name="NavChannels" Classes="nav" Content="Channels" Click="OnChannels" />
         <Button x:Name="NavProfiles" Classes="nav" Content="Profiles" Click="OnProfiles" />
       </UniformGrid>
