@@ -104,8 +104,13 @@ internal static class AvaloniaCapture
         var host = new Window { SizeToContent = SizeToContent.Manual, SystemDecorations = SystemDecorations.None };
         host.Content = mobile;
 
-        // Portrait phone (≈ Samsung A16 logical px)
-        Resize(host, 412, 892);
+        // Sizes are the Samsung Galaxy A16's real *logical* content area (physical
+        // 1080x2340 @ density 450 -> 2.8125x -> 384x832 logical, minus the status bar
+        // and gesture/nav bar). Rendering at the true device size is what makes
+        // "below the fold / clipped" issues (e.g. #15) reproduce headless instead of
+        // silently fitting in an oversized viewport.
+        // Portrait phone
+        Resize(host, 384, 800);
         Capture("mobile-portrait-1-stream", host);
         NavClick(mobile, "NavChannels"); Capture("mobile-portrait-2-channels", host);
         NavClick(mobile, "NavStorage");  Capture("mobile-portrait-3-storage", host);
@@ -113,7 +118,7 @@ internal static class AvaloniaCapture
         NavClick(mobile, "NavStream");
 
         // Landscape phone (desktop-style left rail per design intent)
-        Resize(host, 1000, 560);
+        Resize(host, 820, 360);
         Capture("mobile-landscape-1-stream", host);
         NavClick(mobile, "RailChannels"); Capture("mobile-landscape-2-channels", host);
         NavClick(mobile, "RailStorage");  Capture("mobile-landscape-3-storage", host);
