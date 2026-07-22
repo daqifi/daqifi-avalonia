@@ -1,0 +1,5 @@
+# Build + capture output
+bin/
+obj/
+out/
+*.user

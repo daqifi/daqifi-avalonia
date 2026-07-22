@@ -1,0 +1,18 @@
+<Project Sdk="Microsoft.NET.Sdk">
+  <PropertyGroup>
+    <OutputType>WinExe</OutputType>
+    <TargetFramework>net10.0-windows</TargetFramework>
+    <UseWPF>true</UseWPF>
+    <Nullable>disable</Nullable>
+    <ImplicitUsings>enable</ImplicitUsings>
+    <StartupObject>WpfCapture.Program</StartupObject>
+    <RuntimeIdentifier>win-x64</RuntimeIdentifier>
+  </PropertyGroup>
+
+  <ItemGroup>
+    <!-- The REAL original app (sibling repo); we run its App class and drive its
+         MainWindow. Assumes the standard sibling layout: GitHub/daqifi-desktop
+         next to GitHub/daqifi-avalonia. -->
+    <ProjectReference Include="../../../../daqifi-desktop/Daqifi.Desktop/Daqifi.Desktop.csproj" />
+  </ItemGroup>
+</Project>
