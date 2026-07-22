@@ -263,10 +263,15 @@
 
         <!-- ONE SplitView flyout host (hal: flyout_host) — pane hosts all three
              former MahApps flyouts; VM booleans stay the source of truth. -->
+        <!-- Fixed narrow drawer width to match the original MahApps flyouts, which
+             rendered as a ~260-320px right-side drawer over the still-visible content.
+             (The ported VM FlyoutWidth = Width - SidePanelWidth is near-full-width; a
+             SplitView consumes OpenPaneLength literally, unlike a MahApps Flyout, so
+             binding it produced a full-bleed panel that hid the pane — see #5.) -->
         <SplitView Grid.Row="1"
                    PanePlacement="Right"
                    DisplayMode="Overlay"
-                   OpenPaneLength="{Binding FlyoutWidth}"
+                   OpenPaneLength="380"
                    PaneBackground="{DynamicResource SurfaceRaised}">
             <SplitView.IsPaneOpen>
                 <MultiBinding Converter="{StaticResource BoolOr}" Mode="OneWay">

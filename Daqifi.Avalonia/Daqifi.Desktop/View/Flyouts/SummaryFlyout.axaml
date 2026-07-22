@@ -20,10 +20,16 @@
                             CornerRadius="3"
                             Margin="8">
                         <Grid RowDefinitions="Auto,*">
-                            <ContentPresenter Grid.Row="0"
-                                              Content="{TemplateBinding Header}"
-                                              TextElement.FontWeight="Bold"
-                                              Margin="10,6,10,0"/>
+                            <!-- Filled accent header bar, matching the original MahApps
+                                 GroupBox blue uppercase section headers (#6). -->
+                            <Border Grid.Row="0"
+                                    Background="{DynamicResource Accent}"
+                                    CornerRadius="2,2,0,0"
+                                    Padding="10,5">
+                                <ContentPresenter Content="{TemplateBinding Header}"
+                                                  TextElement.FontWeight="Bold"
+                                                  TextElement.Foreground="White"/>
+                            </Border>
                             <ContentPresenter Grid.Row="1"
                                               Content="{TemplateBinding Content}"/>
                         </Grid>
@@ -62,7 +68,7 @@
                           IsChecked="{Binding IsLogSummaryOpen, Mode=TwoWay}"/>
         </Grid>
 
-        <HeaderedContentControl Grid.Row="1" Header="Settings" Theme="{StaticResource GroupBoxTheme}">
+        <HeaderedContentControl Grid.Row="1" Header="SETTINGS" Theme="{StaticResource GroupBoxTheme}">
             <Grid Margin="15" ColumnDefinitions="150,*,75" RowDefinitions="Auto,Auto,Auto">
                 <TextBlock Grid.Row="0" Grid.Column="0" Classes="cellHeader" Text="Log Session"/>
                 <TextBlock Grid.Row="0" Grid.Column="1" Classes="cell"
@@ -85,7 +91,7 @@
         <ScrollViewer Grid.Row="2" HorizontalAlignment="Stretch" VerticalAlignment="Stretch">
             <Grid RowDefinitions="Auto,*">
 
-                <HeaderedContentControl Grid.Row="0" Header="Device" Theme="{StaticResource GroupBoxTheme}">
+                <HeaderedContentControl Grid.Row="0" Header="DEVICE" Theme="{StaticResource GroupBoxTheme}">
                     <Grid Margin="5" ColumnDefinitions="150,*,*,*"
                           RowDefinitions="Auto,Auto,Auto,Auto,Auto,Auto,Auto">
                         <TextBlock Grid.Row="0" Grid.Column="0" Classes="cellHeader" Text="Updated"/>
@@ -126,7 +132,7 @@
                     </Grid>
                 </HeaderedContentControl>
 
-                <HeaderedContentControl Grid.Row="1" Header="Channels" Theme="{StaticResource GroupBoxTheme}">
+                <HeaderedContentControl Grid.Row="1" Header="CHANNELS" Theme="{StaticResource GroupBoxTheme}">
                     <ListBox ItemsSource="{Binding SummaryLogger.Channels}">
                         <ListBox.ItemTemplate>
                             <DataTemplate>
