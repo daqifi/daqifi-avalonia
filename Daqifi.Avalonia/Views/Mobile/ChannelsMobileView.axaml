@@ -577,8 +577,10 @@
                     MaxWidth="420"
                     Margin="0,60,0,0"
                     Spacing="14">
+          <!-- Match the desktop Channels empty-state badge (mdi-chip = "connect a
+               device"); the hub glyph is the nav-tab icon, not the empty badge (#13). -->
           <Border Classes="emptyBadge">
-            <i:Icon Value="mdi-hub-outline" FontSize="{DynamicResource FontSizeDisplay}"
+            <i:Icon Value="mdi-chip" FontSize="{DynamicResource FontSizeDisplay}"
                     Foreground="{DynamicResource TextTertiary}"
                     HorizontalAlignment="Center"
                     VerticalAlignment="Center" />
