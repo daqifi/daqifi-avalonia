@@ -84,6 +84,18 @@ public partial class MobileMainView : UserControl
         }
     }
 
+    /// <summary>Opens the settings overlay (#11) — the mobile analog of the desktop
+    /// settings drawer. Binds a standalone <see cref="SettingsViewModel"/> (backed by
+    /// DaqifiSettings.Instance, no DaqifiViewModel host needed).</summary>
+    private void OnSettings(object? sender, RoutedEventArgs e)
+    {
+        SettingsOverlay.DataContext ??= new SettingsViewModel();
+        SettingsOverlay.IsVisible = true;
+    }
+
+    private void OnCloseSettings(object? sender, RoutedEventArgs e) =>
+        SettingsOverlay.IsVisible = false;
+
     private void OnStream(object? sender, RoutedEventArgs e) => ShowStream();
 
     private void OnStorage(object? sender, RoutedEventArgs e) =>
