@@ -88,9 +88,12 @@ public partial class MobileMainView : UserControl
 
     private void OnStorage(object? sender, RoutedEventArgs e) =>
         ShowSecondary(
+            // Storage tab = the desktop Logged Data pane's APP LOGS / DEVICE LOGS
+            // pivot (#7); StorageMobileView hosts both halves. It builds its own
+            // DataContexts, so no factory DataContext is set here.
             _storagePage ??= BuildPage(
-                "Device Storage",
-                static () => new DeviceLogsMobileView { DataContext = new DeviceLogsViewModel() }),
+                "Logged Data",
+                static () => new Mobile.StorageMobileView()),
             1);
 
     private void OnChannels(object? sender, RoutedEventArgs e) =>

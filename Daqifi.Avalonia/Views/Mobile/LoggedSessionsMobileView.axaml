@@ -1,0 +1,96 @@
+<UserControl xmlns="https://github.com/avaloniaui"
+             xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml"
+             xmlns:i="https://github.com/projektanker/icons.avalonia"
+             x:Class="Daqifi.Avalonia.Views.Mobile.LoggedSessionsMobileView">
+  <!-- Mobile "APP LOGS" half of the Storage tab: the locally-logged session list,
+       the phone projection of the desktop Logged Data pane (#7). Read-only list +
+       non-destructive export; the inline plot viewer and delete are deferred (they
+       need mobile plot/dialog infra — see #7). Styled with the shared component
+       language so it matches the desktop pane. -->
+  <Grid Background="{DynamicResource Surface}">
+    <ScrollViewer>
+      <StackPanel Classes="paneContent" Spacing="14" Margin="16,20">
+
+        <!-- Header + Export All / Refresh -->
+        <Grid ColumnDefinitions="*,Auto">
+          <TextBlock Grid.Column="0" Text="Logged Data"
+                     FontSize="{DynamicResource FontSizeTitle}" FontWeight="Bold"
+                     Foreground="{DynamicResource TextPrimary}" VerticalAlignment="Center" />
+          <StackPanel Grid.Column="1" Orientation="Horizontal" Spacing="8">
+            <Button Content="Refresh" Theme="{StaticResource PillButton}"
+                    Command="{Binding ReloadCommand}" MinHeight="36" />
+            <Button Content="Export all" Theme="{StaticResource AccentPillButton}"
+                    Command="{Binding ExportAllCommand}"
+                    IsEnabled="{Binding HasSessions}" MinHeight="36" />
+          </StackPanel>
+        </Grid>
+
+        <!-- Empty state (matches the desktop "select a session" empty pane) -->
+        <StackPanel IsVisible="{Binding HasNoSessions}" Spacing="10"
+                    HorizontalAlignment="Center" Margin="0,48,0,0">
+          <Border Classes="emptyBadge">
+            <i:Icon Value="mdi-database-outline" FontSize="34"
+                    HorizontalAlignment="Center" VerticalAlignment="Center" />
+          </Border>
+          <TextBlock Text="NO LOGGED SESSIONS" Classes="emptyTitle" />
+          <TextBlock Text="Streamed sessions you log on this device appear here."
+                     Classes="emptyBody" />
+        </StackPanel>
+
+        <!-- Session list (desktop DataGrid row → touch list row with SAMPLES + Hz chips) -->
+        <ItemsControl ItemsSource="{Binding Sessions}" IsVisible="{Binding HasSessions}">
+          <ItemsControl.ItemTemplate>
+            <DataTemplate>
+              <Border Classes="listRow">
+                <Grid ColumnDefinitions="*,Auto" ClipToBounds="True">
+                  <StackPanel Grid.Column="0" Spacing="6" Margin="0,0,10,0">
+                    <TextBlock Text="{Binding Name}"
+                               FontSize="{DynamicResource FontSizeBody}" FontWeight="SemiBold"
+                               Foreground="{DynamicResource TextPrimary}"
+                               TextTrimming="CharacterEllipsis" />
+                    <!-- WrapPanel so a narrow phone flows the chips to a second line
+                         instead of overrunning the Export button. -->
+                    <WrapPanel>
+                      <Border Classes="chip">
+                        <TextBlock Text="{Binding SessionStart}" />
+                      </Border>
+                      <Border Classes="chip">
+                        <StackPanel Orientation="Horizontal" Spacing="4">
+                          <TextBlock Text="SAMPLES" />
+                          <TextBlock Text="{Binding SampleCountDisplay}" Classes="chipValue" />
+                        </StackPanel>
+                      </Border>
+                      <Border Classes="chip" IsVisible="{Binding HasFrequencyDisplay}">
+                        <TextBlock Text="{Binding FrequencyDisplay}" />
+                      </Border>
+                    </WrapPanel>
+                  </StackPanel>
+                  <Button Grid.Column="1" Content="Export" Theme="{StaticResource AccentPillButton}"
+                          Command="{Binding $parent[ItemsControl].DataContext.ExportSessionCommand}"
+                          CommandParameter="{Binding}"
+                          VerticalAlignment="Center" MinHeight="36" />
+                </Grid>
+              </Border>
+            </DataTemplate>
+          </ItemsControl.ItemTemplate>
+        </ItemsControl>
+
+        <!-- Status line (export result) -->
+        <TextBlock Text="{Binding StatusMessage}" TextWrapping="Wrap"
+                   IsVisible="{Binding StatusMessage, Converter={x:Static StringConverters.IsNotNullOrEmpty}}"
+                   FontSize="{DynamicResource FontSizeCaption}"
+                   Foreground="{DynamicResource TextSecondary}" />
+
+      </StackPanel>
+    </ScrollViewer>
+
+    <!-- Busy overlay -->
+    <Border IsVisible="{Binding IsBusy}" Background="{DynamicResource Scrim}">
+      <StackPanel VerticalAlignment="Center" HorizontalAlignment="Center" Spacing="14">
+        <ProgressBar IsIndeterminate="{Binding IsBusy}" Width="200" />
+        <TextBlock Text="{Binding StatusMessage}" HorizontalAlignment="Center"
+                   FontSize="{DynamicResource FontSizeLabel}" Foreground="{DynamicResource TextPrimary}" />
+      </StackPanel>
+    </Border>
+  </Grid>
+</UserControl>

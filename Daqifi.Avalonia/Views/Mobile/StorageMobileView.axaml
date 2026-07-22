@@ -1,0 +1,37 @@
+<UserControl xmlns="https://github.com/avaloniaui"
+             xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml"
+             xmlns:mobile="clr-namespace:Daqifi.Avalonia.Views.Mobile"
+             x:Class="Daqifi.Avalonia.Views.Mobile.StorageMobileView">
+  <!-- Mobile Storage tab = the desktop Logged Data pane's APP LOGS / DEVICE LOGS
+       pivot (#7). APP LOGS = locally-logged sessions (LoggedSessionsMobileView);
+       DEVICE LOGS = the SD-card offload pane (DeviceLogsMobileView). Uses the same
+       shared SegmentedToggle the desktop pivot uses. -->
+  <Grid Background="{DynamicResource Surface}" RowDefinitions="Auto,*">
+
+    <!-- Pivot strip -->
+    <Border Grid.Row="0" Background="{DynamicResource Surface}"
+            BorderBrush="{DynamicResource BorderDim}" BorderThickness="0,0,0,1"
+            Padding="16,10">
+      <Border Background="{DynamicResource SurfaceRaised}"
+              BorderBrush="{DynamicResource BorderDim}" BorderThickness="1"
+              CornerRadius="3" Padding="3" HorizontalAlignment="Left">
+        <StackPanel Orientation="Horizontal">
+          <RadioButton x:Name="AppLogsTab" GroupName="StoragePivot"
+                       Content="APP LOGS" IsChecked="True"
+                       Theme="{StaticResource SegmentedToggle}"
+                       Click="OnAppLogs" />
+          <RadioButton x:Name="DeviceLogsTab" GroupName="StoragePivot"
+                       Content="DEVICE LOGS"
+                       Theme="{StaticResource SegmentedToggle}"
+                       Click="OnDeviceLogs" />
+        </StackPanel>
+      </Border>
+    </Border>
+
+    <!-- Content: both hosts kept attached, toggled by the pivot -->
+    <Panel Grid.Row="1">
+      <mobile:LoggedSessionsMobileView x:Name="AppLogsHost" />
+      <ContentControl x:Name="DeviceLogsHost" IsVisible="False" />
+    </Panel>
+  </Grid>
+</UserControl>
