@@ -55,6 +55,12 @@ internal static class Program
         var vm = main.DataContext;
         if (vm is null) { Console.WriteLine("[FAIL] DataContext null"); return; }
 
+        // FlyoutWidth = Width - SidePanelWidth, and Width defaults to 800 until the
+        // window-size binding propagates. Setting it directly ensures the flyout width
+        // matches the real window (avoids a stale narrow flyout capture).
+        Set(vm, "Width", 1440);
+        Set(vm, "Height", 900);
+
         var tabs = new[] { "livegraph", "loggeddata", "channels", "devices", "profiles" };
         for (var i = 0; i < tabs.Length; i++)
         {
