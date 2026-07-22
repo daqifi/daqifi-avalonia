@@ -8,6 +8,10 @@
 	     Styled with the shared DesignTokens + FluentTheme (App.axaml) so it
 	     matches the desktop app and the projected panes — no bespoke palette. -->
 	<Border Background="{DynamicResource Surface}" Padding="20,48,20,24">
+		<!-- Scroll so the bottom-docked connect actions (IP row + USB-OTG button) stay
+		     reachable when the viewport is short — e.g. phone landscape, where an
+		     un-scrolled DockPanel clipped them below the fold (#15). -->
+		<ScrollViewer VerticalScrollBarVisibility="Auto" HorizontalScrollBarVisibility="Disabled">
 		<!-- Cap the content column so a wide landscape/tablet window shows a centered
 		     column (like the desktop) instead of edge-to-edge-stretched buttons; more
 		     generous than the form panes' 880 so the live plot still gets good width. -->
@@ -159,5 +163,6 @@
 				</ItemsControl>
 			</ScrollViewer>
 		</DockPanel>
+		</ScrollViewer>
 	</Border>
 </UserControl>
