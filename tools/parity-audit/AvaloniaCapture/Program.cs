@@ -113,8 +113,10 @@ internal static class AvaloniaCapture
         Daqifi.Desktop.App.InitializeMobile();   // idempotent; DI already up from desktop boot
 
         MobileMainView mobile;
+        // Log the full exception (type + message + stack): a MobileMainView ctor
+        // failure aborts the entire mobile capture, so the stack is the diagnostic.
         try { mobile = new MobileMainView(); }
-        catch (Exception ex) { _failed = true; Console.WriteLine($"[FAIL] MobileMainView ctor: {ex.Message}"); return; }
+        catch (Exception ex) { _failed = true; Console.WriteLine($"[FAIL] MobileMainView ctor: {ex}"); return; }
 
         var host = new Window { SizeToContent = SizeToContent.Manual, SystemDecorations = SystemDecorations.None };
         host.Content = mobile;

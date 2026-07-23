@@ -14,10 +14,17 @@ set -euo pipefail
 
 HERE="$(cd "$(dirname "$0")" && pwd)"
 OUT="${1:-$HERE/out}"
+mkdir -p "$OUT"
+# Canonicalize to an absolute real path and refuse a root/empty target BEFORE the
+# cleanup rm -rf below — so a stray `./run.sh /` (or an empty arg) can never delete
+# outside the intended output dir.
+OUT="$(cd "$OUT" && pwd)"
+case "$OUT" in
+  ""|"/") echo "Refusing to use unsafe output dir '$OUT'" >&2; exit 1 ;;
+esac
 # Start from clean output dirs so stale PNGs from a prior run can't be mistaken for
 # this run's captures (a failed/partial capture would otherwise be masked by old images).
 rm -rf "$OUT/avalonia" "$OUT/wpf" "$OUT/montage"
-mkdir -p "$OUT"
 OUT_WIN="$(wslpath -w "$OUT")"
 DOTNET="/mnt/c/Program Files/dotnet/dotnet.exe"
 
