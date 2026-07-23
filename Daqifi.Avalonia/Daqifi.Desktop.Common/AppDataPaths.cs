@@ -87,7 +87,10 @@ public static class AppDataPaths
                 // this DAQIFI_DATA_DIR-specific diagnostic — the whole point of failing closed here.
                 var probe = Path.Combine(resolved, ".daqifi-write-probe-" + Guid.NewGuid().ToString("N"));
                 File.WriteAllText(probe, string.Empty);
-                File.Delete(probe);
+                // The successful write already proved the directory is writable; deleting the probe
+                // is best-effort cleanup. A transient delete failure must NOT abort startup (nor is a
+                // leftover dotfile in a throwaway/override dir worth crashing over), so swallow it.
+                try { File.Delete(probe); } catch { /* best-effort cleanup */ }
                 return resolved;
             }
             catch (Exception ex)
