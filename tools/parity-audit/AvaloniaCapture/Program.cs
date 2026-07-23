@@ -36,7 +36,11 @@ internal static class AvaloniaCapture
         // on every host the harness runs on — notably WSL, where Path.GetTempPath() returns a Windows
         // path the Linux runtime can't resolve. Must be set before the app bootstrap first touches
         // AppDataPaths below.
-        Environment.SetEnvironmentVariable("DAQIFI_DATA_DIR", Path.Combine(_outDir, ".appdata"));
+        // GetFullPath so the override is always absolute — the app resolves a relative override
+        // against the cwd, so passing an absolute value keeps the isolated DB unambiguous and
+        // co-located with the (same-cwd) PNG output regardless of how _outDir was passed.
+        Environment.SetEnvironmentVariable(
+            "DAQIFI_DATA_DIR", Path.GetFullPath(Path.Combine(_outDir, ".appdata")));
         IconProvider.Current.Register<MaterialDesignIconProvider>();
 
         var desktop = new ClassicDesktopStyleApplicationLifetime

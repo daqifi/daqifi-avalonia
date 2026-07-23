@@ -68,19 +68,20 @@ public static class AppDataPaths
         var overrideDir = Environment.GetEnvironmentVariable("DAQIFI_DATA_DIR");
         if (!string.IsNullOrWhiteSpace(overrideDir))
         {
-            // An explicit override fails CLOSED with a DIAGNOSTIC error. Absolute-ise it against the
-            // app base directory (so a relative value resolves deterministically there, NOT against
-            // the GUI process's incidental working directory — single-arg GetFullPath would use the
-            // cwd) and eagerly create it, so any bad value — invalid path syntax, a
-            // missing drive, an inaccessible root, or a path that is actually a file — surfaces as
-            // a clear exception naming the env var and value. The whole point of the override is to
-            // NOT touch the developer's real DAQiFiDatabase.db, so a bad override must fail loudly:
+            // An explicit override fails CLOSED with a DIAGNOSTIC error. Absolute-ise it (a relative
+            // value resolves against the current working directory — the conventional CLI behavior;
+            // callers such as the capture harness pass an absolute path, and a relative one stays
+            // co-located with the harness's own cwd-relative output since the harness IS this
+            // process) and eagerly create it, so any bad value — invalid path syntax, a missing
+            // drive, an inaccessible root, or a path that is actually a file — surfaces as a clear
+            // exception naming the env var and value. The whole point of the override is to NOT
+            // touch the developer's real DAQiFiDatabase.db, so a bad override must fail loudly:
             // neither a silent fallback to the real store (a headless test would then read/migrate
             // it) nor an opaque type-init/CreateDirectory crash deep in startup is acceptable. The
             // default path below is unchanged — App.Initialize/InitializeMobile create it as before.
             try
             {
-                var resolved = Path.GetFullPath(overrideDir.Trim(), AppContext.BaseDirectory);
+                var resolved = Path.GetFullPath(overrideDir.Trim());
                 Directory.CreateDirectory(resolved);
                 // CreateDirectory also succeeds on a pre-existing but read-only directory, so probe
                 // actual writability with a create-and-delete temp file. Without this, an ACL/
