@@ -19,8 +19,9 @@ Both harnesses render **without a device connected** (empty states), driving the
 UI by reflection — desktop tabs via `SelectedIndex` (0–4) and flyouts via the
 VM booleans (`IsAppSettingsOpen`, `IsNotificationsOpen`,
 `IsLiveGraphSettingsOpen`, `IsLogSummaryOpen`); the mobile shell is hosted in a
-headless window at phone portrait (412×892) and landscape (1000×560) sizes and
-navigated by raising `Click` on the named nav buttons (`NavChannels`/`RailChannels`…).
+headless window at the Galaxy A16's true logical content size — portrait
+(384×800) and landscape (820×360) — and navigated by raising `Click` on the named
+nav buttons (`NavChannels`/`RailChannels`…).
 `DAQIFI_TEST_MODE=1` is set so no modal dialogs / firewall prompts appear and the
 per-user data dir is used.
 
