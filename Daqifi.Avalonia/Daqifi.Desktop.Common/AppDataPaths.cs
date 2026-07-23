@@ -50,7 +50,7 @@ public static class AppDataPaths
 
     /// <summary>
     /// Root DAQiFi data directory for the current elevation/test context. Honors an explicit
-    /// <c>DAQIFI_DATA_DIR</c> override (used verbatim) when set; otherwise per-user when the
+    /// <c>DAQIFI_DATA_DIR</c> override (absolute-ised) when set; otherwise per-user when the
     /// process is un-elevated or in test mode, and machine-wide otherwise. The override lets a
     /// test/tooling boot (e.g. the parity-audit capture harness) point the database and logs at
     /// an isolated throwaway directory so it never reads or migrates the developer's real
@@ -62,24 +62,19 @@ public static class AppDataPaths
     public static string DataDirectory { get; } = ResolveDataDirectory();
 
     // Downstream addition (no upstream counterpart): resolves the data root, preferring the
-    // DAQIFI_DATA_DIR override before falling back to the elevation/test-mode default. Kept as a
-    // method (not an inline initializer) so the override branch can absolute-ise and fail safe.
+    // DAQIFI_DATA_DIR override before falling back to the elevation/test-mode default.
     private static string ResolveDataDirectory()
     {
         var overrideDir = Environment.GetEnvironmentVariable("DAQIFI_DATA_DIR");
         if (!string.IsNullOrWhiteSpace(overrideDir))
         {
-            try
-            {
-                // Absolute-ise so a relative override resolves deterministically rather than
-                // against the GUI process's incidental working directory.
-                return Path.GetFullPath(overrideDir.Trim());
-            }
-            catch
-            {
-                // A malformed override (e.g. invalid path characters) must not crash startup
-                // before logging is even up — fall through to the default location.
-            }
+            // An explicit override fails CLOSED: absolute-ise it (so a relative value resolves
+            // deterministically, not against the GUI process's incidental working directory) and
+            // let a malformed value throw at startup rather than silently falling back to the real
+            // data dir. The whole point of the override is to NOT touch the developer's real
+            // DAQiFiDatabase.db, so a bad override must fail loudly — degrading to the real store
+            // (which a headless test would then read/migrate) is the one outcome we must avoid.
+            return Path.GetFullPath(overrideDir.Trim());
         }
 
         return Path.Combine(
