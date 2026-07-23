@@ -1,0 +1,11 @@
+<ResourceDictionary xmlns="http://schemas.microsoft.com/winfx/2006/xaml/presentation"
+                    xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml">
+    <!-- Shim. The original App.xaml merges the entry-relative "/Resources/DesignTokens.xaml".
+         When the original app is HOSTED from this harness, the entry assembly is the harness,
+         so this file is what resolves for that URI — it re-merges the REAL tokens from the
+         original app assembly by explicit assembly URI. NOTE: the original assembly's name is
+         "DAQiFi" (the AssemblyName), not "Daqifi.Desktop" (the C# namespace). -->
+    <ResourceDictionary.MergedDictionaries>
+        <ResourceDictionary Source="pack://application:,,,/DAQiFi;component/Resources/DesignTokens.xaml" />
+    </ResourceDictionary.MergedDictionaries>
+</ResourceDictionary>

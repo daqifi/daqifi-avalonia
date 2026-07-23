@@ -1,0 +1,33 @@
+<Project Sdk="Microsoft.NET.Sdk">
+  <PropertyGroup>
+    <OutputType>WinExe</OutputType>
+    <TargetFramework>net10.0-windows</TargetFramework>
+    <UseWPF>true</UseWPF>
+    <Nullable>disable</Nullable>
+    <ImplicitUsings>enable</ImplicitUsings>
+    <StartupObject>WpfCapture.Program</StartupObject>
+    <RuntimeIdentifier>win-x64</RuntimeIdentifier>
+  </PropertyGroup>
+
+  <ItemGroup>
+    <!-- The REAL original app (sibling repo); we run its App class and drive its
+         MainWindow. Assumes the standard sibling layout: GitHub/daqifi-desktop
+         next to GitHub/daqifi-avalonia. -->
+    <ProjectReference Include="../../../../daqifi-desktop/Daqifi.Desktop/Daqifi.Desktop.csproj" />
+  </ItemGroup>
+
+  <ItemGroup>
+    <!-- This harness IS the WPF entry assembly, so any leading-slash pack URI in a
+         window the real app shows during STARTUP resolves against WpfCapture, not
+         DAQiFi.dll (the same reason App.xaml's /Resources/DesignTokens.xaml needs the
+         shim in Resources/). MigrationStatusWindow (shown whenever the DB has pending
+         migrations — deterministic on a fresh %LocalAppData%\DAQiFi DB, or when the
+         port's applied migrations lag the sibling's) uses a SECOND such URI,
+         /Images/DAQiFi.png. Link the real image in at that logical path so the fresh-DB
+         WPF run doesn't crash with "Cannot locate resource images/daqifi.png" before
+         any capture. Linked (not copied) so it never drifts from the real asset. -->
+    <Resource Include="../../../../daqifi-desktop/Daqifi.Desktop/Images/DAQiFi.png">
+      <Link>Images/DAQiFi.png</Link>
+    </Resource>
+  </ItemGroup>
+</Project>
