@@ -68,9 +68,10 @@ public static class AppDataPaths
         var overrideDir = Environment.GetEnvironmentVariable("DAQIFI_DATA_DIR");
         if (!string.IsNullOrWhiteSpace(overrideDir))
         {
-            // An explicit override fails CLOSED with a DIAGNOSTIC error. Absolute-ise it (so a
-            // relative value resolves deterministically, not against the GUI process's incidental
-            // working directory) and eagerly create it, so any bad value — invalid path syntax, a
+            // An explicit override fails CLOSED with a DIAGNOSTIC error. Absolute-ise it against the
+            // app base directory (so a relative value resolves deterministically there, NOT against
+            // the GUI process's incidental working directory — single-arg GetFullPath would use the
+            // cwd) and eagerly create it, so any bad value — invalid path syntax, a
             // missing drive, an inaccessible root, or a path that is actually a file — surfaces as
             // a clear exception naming the env var and value. The whole point of the override is to
             // NOT touch the developer's real DAQiFiDatabase.db, so a bad override must fail loudly:
@@ -79,7 +80,7 @@ public static class AppDataPaths
             // default path below is unchanged — App.Initialize/InitializeMobile create it as before.
             try
             {
-                var resolved = Path.GetFullPath(overrideDir.Trim());
+                var resolved = Path.GetFullPath(overrideDir.Trim(), AppContext.BaseDirectory);
                 Directory.CreateDirectory(resolved);
                 // CreateDirectory also succeeds on a pre-existing but read-only directory, so probe
                 // actual writability with a create-and-delete temp file. Without this, an ACL/
