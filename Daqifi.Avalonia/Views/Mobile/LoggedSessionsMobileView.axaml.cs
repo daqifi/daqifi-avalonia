@@ -13,13 +13,16 @@ public partial class LoggedSessionsMobileView : UserControl
     }
 
     // The VM owns the export logic but not the platform picker; the view (which has
-    // the TopLevel) supplies the save-path resolver via StorageProvider — the same
-    // cross-platform picker the desktop loggers use.
+    // the TopLevel) supplies the resolvers via StorageProvider — the same
+    // cross-platform pickers the desktop loggers use. A single session exports to a
+    // picked FILE; "Export all" exports one CSV per session into a picked FOLDER
+    // (mirrors the desktop, which writes {session}.csv per session into a directory).
     private void WireResolver()
     {
         if (DataContext is LoggedSessionsMobileViewModel vm)
         {
             vm.SavePathResolver = SavePathAsync;
+            vm.SaveFolderResolver = SaveFolderAsync;
         }
     }
 
@@ -45,5 +48,23 @@ public partial class LoggedSessionsMobileView : UserControl
         // than a bogus Path.LocalPath that would fault mid-export. (Stream-based export
         // to arbitrary content URIs is #7 phase 2.)
         return file?.TryGetLocalPath();
+    }
+
+    private async Task<string?> SaveFolderAsync()
+    {
+        var top = TopLevel.GetTopLevel(this);
+        if (top is null) { return null; }
+
+        var folders = await top.StorageProvider.OpenFolderPickerAsync(new FolderPickerOpenOptions
+        {
+            Title = "Export all sessions to folder",
+            AllowMultiple = false,
+        });
+
+        // Same local-path constraint as SavePathAsync: the exporter writes each
+        // {session}.csv via a StreamWriter on a real path, so a content-URI-only
+        // folder pick (TryGetLocalPath == null) is treated as unavailable.
+        var folder = folders.Count > 0 ? folders[0] : null;
+        return folder?.TryGetLocalPath();
     }
 }

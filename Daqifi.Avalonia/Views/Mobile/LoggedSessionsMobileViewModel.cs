@@ -1,7 +1,10 @@
 using System;
 using System.Collections.ObjectModel;
+using System.IO;
+using System.Linq;
 using System.Threading;
 using System.Threading.Tasks;
+using Avalonia.Threading;
 using CommunityToolkit.Mvvm.ComponentModel;
 using CommunityToolkit.Mvvm.Input;
 using Daqifi.Desktop.Common.Loggers;
@@ -28,9 +31,13 @@ public partial class LoggedSessionsMobileViewModel : ObservableObject
 {
     private readonly IAppLogger _appLogger = AppLogger.Instance;
 
-    /// <summary>Set by the view (which owns the TopLevel): resolves a save path for
-    /// a suggested filename, or null if the user cancels.</summary>
+    /// <summary>Set by the view (which owns the TopLevel): resolves a save FILE path
+    /// for a single-session export given a suggested filename, or null if cancelled.</summary>
     public Func<string, Task<string?>>? SavePathResolver { get; set; }
+
+    /// <summary>Set by the view: resolves a destination FOLDER for a multi-session
+    /// "Export all" (one CSV per session), or null if cancelled.</summary>
+    public Func<Task<string?>>? SaveFolderResolver { get; set; }
 
     public ObservableCollection<LoggingSession> Sessions { get; } = new();
 
@@ -70,11 +77,18 @@ public partial class LoggedSessionsMobileViewModel : ObservableObject
             // (it does not touch the shared singleton collection), and its EF Core
             // queries run on a background thread so opening Storage never blocks.
             var loaded = await Task.Run(() => LoggingManager.Instance.LoadPersistedLoggingSessions());
-            Sessions.Clear();
-            foreach (var session in loaded)
+            // Marshal the ObservableCollection mutation onto the UI thread explicitly:
+            // the await above does not guarantee resuming on the UI thread (e.g. the
+            // fire-and-forget ctor path may have no captured context), and Sessions is
+            // bound to the UI.
+            await Dispatcher.UIThread.InvokeAsync(() =>
             {
-                Sessions.Add(session);
-            }
+                Sessions.Clear();
+                foreach (var session in loaded)
+                {
+                    Sessions.Add(session);
+                }
+            });
         }
         catch (Exception ex)
         {
@@ -95,55 +109,70 @@ public partial class LoggedSessionsMobileViewModel : ObservableObject
     [RelayCommand]
     private Task ExportAll() => ExportSessionsAsync(null);
 
-    /// <summary>Exports one session (when <paramref name="single"/> is non-null) or every
-    /// session (when null) to a user-picked CSV file. Non-destructive; failures are logged
-    /// and surfaced on the status line, never thrown.</summary>
+    /// <summary>Exports a single session to a user-picked CSV file, or every session to a
+    /// user-picked folder (one <c>{session}.csv</c> per session). Non-destructive; failures
+    /// are logged and surfaced on the status line, never thrown.</summary>
     private async Task ExportSessionsAsync(LoggingSession? single)
     {
-        // Guard re-entrancy: no overlapping export/reload, and no second picker while
-        // one is already open. IsBusy is held for the WHOLE operation (picker + write).
-        if (SavePathResolver is null || IsBusy) { return; }
+        // Guard re-entrancy: no overlapping export/reload, and no second picker while one
+        // is open. IsBusy is held for the WHOLE operation (picker + write).
+        if (IsBusy) { return; }
+        if (single is not null ? SavePathResolver is null : SaveFolderResolver is null) { return; }
 
-        var toExport = single is not null
-            ? new[] { single }
-            : System.Linq.Enumerable.ToArray(Sessions);
+        var toExport = single is not null ? new[] { single } : Sessions.ToArray();
         if (toExport.Length == 0) { return; }
 
         IsBusy = true;
         try
         {
-            var suggested = single is not null ? $"{single.Name}.csv" : "daqifi-sessions.csv";
-            string? path;
-            try
-            {
-                path = await SavePathResolver(suggested);
-            }
-            catch (Exception ex)
-            {
-                _appLogger.Error(ex, "Mobile: export save-picker failed");
-                StatusMessage = "Unable to open the export picker.";
-                return;
-            }
-            if (string.IsNullOrEmpty(path)) { return; }   // user cancelled / no local path
-
             StatusMessage = "Exporting…";
-            await Task.Run(() =>
+            if (single is not null)
             {
-                var exporter = new OptimizedLoggingSessionExporter();
-                var progress = new Progress<int>();
-                for (var i = 0; i < toExport.Length; i++)
+                // Single session → one picked file.
+                string? path;
+                try
                 {
-                    // Export All to a single picked file writes each session sequentially,
-                    // mirroring the desktop "Export All" (one file, all sessions).
-                    exporter.ExportLoggingSession(
-                        toExport[i], path!, exportRelativeTime: false,
-                        progress, CancellationToken.None,
-                        sessionIndex: i, totalSessions: toExport.Length);
+                    path = await SavePathResolver!($"{SafeName(single)}.csv");
                 }
-            });
-            StatusMessage = toExport.Length == 1
-                ? "Exported 1 session."
-                : $"Exported {toExport.Length} sessions.";
+                catch (Exception ex)
+                {
+                    _appLogger.Error(ex, "Mobile: export save-picker failed");
+                    StatusMessage = "Unable to open the export picker.";
+                    return;
+                }
+                if (string.IsNullOrEmpty(path)) { StatusMessage = string.Empty; return; }
+
+                await Task.Run(() => ExportOne(single, path!, sessionIndex: 0, totalSessions: 1));
+                StatusMessage = "Exported 1 session.";
+            }
+            else
+            {
+                // Export all → one CSV per session into a picked folder. Each session must
+                // get its OWN file: the exporter opens its StreamWriter with append=false,
+                // so writing every session to a single path would leave only the last one.
+                string? folder;
+                try
+                {
+                    folder = await SaveFolderResolver!();
+                }
+                catch (Exception ex)
+                {
+                    _appLogger.Error(ex, "Mobile: export folder-picker failed");
+                    StatusMessage = "Unable to open the folder picker.";
+                    return;
+                }
+                if (string.IsNullOrEmpty(folder)) { StatusMessage = string.Empty; return; }
+
+                await Task.Run(() =>
+                {
+                    for (var i = 0; i < toExport.Length; i++)
+                    {
+                        var filepath = Path.Combine(folder!, $"{SafeName(toExport[i])}.csv");
+                        ExportOne(toExport[i], filepath, sessionIndex: i, totalSessions: toExport.Length);
+                    }
+                });
+                StatusMessage = $"Exported {toExport.Length} sessions.";
+            }
         }
         catch (Exception ex)
         {
@@ -154,5 +183,27 @@ public partial class LoggedSessionsMobileViewModel : ObservableObject
         {
             IsBusy = false;
         }
+    }
+
+    private static void ExportOne(LoggingSession session, string filepath, int sessionIndex, int totalSessions)
+    {
+        var exporter = new OptimizedLoggingSessionExporter();
+        exporter.ExportLoggingSession(
+            session, filepath, exportRelativeTime: false,
+            new Progress<int>(), CancellationToken.None,
+            sessionIndex, totalSessions);
+    }
+
+    /// <summary>A session's display name reduced to a valid file name (a session can be
+    /// renamed to arbitrary text), falling back to <c>Session_{id}</c> — mirrors the
+    /// desktop ExportDialog's MakeSafeFileName so a bad name never faults the export path.</summary>
+    private static string SafeName(LoggingSession session)
+    {
+        var name = string.IsNullOrWhiteSpace(session.Name) ? $"Session_{session.ID}" : session.Name;
+        foreach (var invalid in Path.GetInvalidFileNameChars())
+        {
+            name = name.Replace(invalid, '_');
+        }
+        return name;
     }
 }
