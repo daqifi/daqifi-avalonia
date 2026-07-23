@@ -104,7 +104,10 @@ public partial class LoggedSessionsMobileViewModel : ObservableObject
                 }
             });
             LoadFailedFlag = false;
-            if (Sessions.Count > 0) { StatusMessage = string.Empty; }
+            // Clear any prior error unconditionally on success — otherwise a successful
+            // retry against an EMPTY db would show the definitive "NO LOGGED SESSIONS"
+            // empty state AND the stale "Couldn't load…" error at the same time.
+            StatusMessage = string.Empty;
         }
         catch (Exception ex)
         {
@@ -216,32 +219,31 @@ public partial class LoggedSessionsMobileViewModel : ObservableObject
         }
     }
 
-    /// <summary>Exports one session; returns true only if a non-empty CSV was actually
-    /// written by THIS call — so the caller reports a truthful count and never claims
-    /// "Exported…" for a session that produced no file.</summary>
+    /// <summary>Exports one session; returns true only if the export actually completed and
+    /// the destination now holds this run's CSV — so the caller reports a truthful count and
+    /// never claims "Exported…" for a failed/partial export or clobbers a good prior file.</summary>
     private static bool ExportOne(LoggingSession session, string filepath, int sessionIndex, int totalSessions)
     {
-        // Export to a TEMP file, then move it over the destination only on success. The
-        // exporter swallows failures and returns void, so success is judged solely by
-        // whether THIS run produced a non-empty temp file — never by the destination's
-        // state. This avoids two hazards of writing straight to the destination: (a) a
-        // stale pre-existing file (e.g. a prior "Export all" into the same folder) being
-        // counted as this run's success when the export silently fails, and (b) destroying
-        // a good prior file when the new export fails. A session in the list always has
-        // samples, so a real export writes header+rows (non-empty).
+        // Export to a TEMP file and move it over the destination ONLY when the export
+        // actually completed. TryExportLoggingSession returns a real success signal (unlike
+        // the void overload, which swallows a mid-write failure and would leave a non-empty
+        // PARTIAL temp). So a failure — whether before the first write or after rows have
+        // flushed — cleans up the temp and leaves the destination (a good prior export)
+        // untouched, and is never counted as success. The non-empty check is a backstop.
         var tmp = filepath + ".exporting";
         try { if (File.Exists(tmp)) { File.Delete(tmp); } } catch { /* best effort */ }
 
         var exporter = new OptimizedLoggingSessionExporter();
-        exporter.ExportLoggingSession(
+        var exported = exporter.TryExportLoggingSession(
             session, tmp, exportRelativeTime: false,
             new Progress<int>(), CancellationToken.None,
             sessionIndex, totalSessions);
 
-        if (!File.Exists(tmp) || new FileInfo(tmp).Length == 0)
+        if (!exported || !File.Exists(tmp) || new FileInfo(tmp).Length == 0)
         {
-            // Export failed / wrote nothing — leave the destination (which may hold a good
-            // prior export) untouched, and clean up any empty temp.
+            // Export failed (incl. a mid-write error → partial temp) or wrote nothing —
+            // leave the destination (which may hold a good prior export) untouched, and
+            // clean up any partial/empty temp.
             try { if (File.Exists(tmp)) { File.Delete(tmp); } } catch { /* best effort */ }
             return false;
         }
