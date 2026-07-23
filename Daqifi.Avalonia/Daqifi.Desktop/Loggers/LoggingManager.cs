@@ -662,6 +662,28 @@ public partial class LoggingManager : ObservableObject
     }
 
     /// <summary>
+    /// PURE read of the persisted sessions-with-samples list — no purge, no orphan sweep,
+    /// no backfill (unlike <see cref="LoadPersistedLoggingSessions"/>). Safe to call
+    /// repeatedly and concurrently with a live writer: an in-flight SD-card import commits
+    /// its <c>Sessions</c> row with zero samples first, so the empty-session purge in
+    /// <see cref="LoadPersistedLoggingSessions"/> would DELETE that in-flight row and corrupt
+    /// the import. This variant only SELECTs (the 0-sample import row is naturally excluded
+    /// by the <c>Samples.Any</c> filter until it has data), so a refresh can never destroy it.
+    /// Used by the mobile Storage pane, which re-reads on every visit.
+    /// </summary>
+    public ObservableCollection<LoggingSession> GetLoggingSessionsSnapshot()
+    {
+        using var context = _loggingContext.CreateDbContext();
+        return new ObservableCollection<LoggingSession>(
+            context.Sessions
+                .AsNoTracking()
+                .Include(session => session.DeviceMetadata)
+                .Where(session => context.Samples.Any(sample => sample.LoggingSessionID == session.ID))
+                .OrderBy(session => session.ID)
+                .ToList());
+    }
+
+    /// <summary>
     /// Persists <see cref="LoggingSession.SampleCount"/> for the given session
     /// by running a single COUNT against the Samples table. Called when a
     /// session ends so the list view can surface the count without a query.

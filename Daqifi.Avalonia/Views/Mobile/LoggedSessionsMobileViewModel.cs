@@ -70,14 +70,15 @@ public partial class LoggedSessionsMobileViewModel : ObservableObject
         IsBusy = true;
         try
         {
-            // Always hydrate straight from the DB, OFF the UI thread. The desktop
-            // hydrates once at app-init (when the collection is empty); the mobile
-            // shell has no such step, so this VM is the only hydration point — a
-            // Count==0 guard would let a session logged this run mask the older
-            // persisted history. LoadPersistedLoggingSessions returns a fresh list
-            // (it does not touch the shared singleton collection), and its EF Core
-            // queries run on a background thread so opening Storage never blocks.
-            var loaded = await Task.Run(() => LoggingManager.Instance.LoadPersistedLoggingSessions());
+            // Hydrate straight from the DB, OFF the UI thread. Use the PURE-READ snapshot
+            // (not LoadPersistedLoggingSessions): this pane re-reads on every Storage visit,
+            // and LoadPersistedLoggingSessions PURGES empty-session rows as a side effect —
+            // which would race the SD-card importer and delete its in-flight (0-sample)
+            // session. GetLoggingSessionsSnapshot only SELECTs (the in-flight row is excluded
+            // by the Samples.Any filter until it has data), so a refresh can't destroy it.
+            // It returns a fresh list without touching the shared singleton collection, and
+            // the EF Core query runs on a background thread so opening Storage never blocks.
+            var loaded = await Task.Run(() => LoggingManager.Instance.GetLoggingSessionsSnapshot());
             // Marshal the ObservableCollection mutation onto the UI thread explicitly:
             // the await above does not guarantee resuming on the UI thread (e.g. the
             // fire-and-forget ctor path may have no captured context), and Sessions is
@@ -197,10 +198,17 @@ public partial class LoggedSessionsMobileViewModel : ObservableObject
     }
 
     /// <summary>Exports one session; returns true only if a non-empty CSV was actually
-    /// written — so the caller reports a truthful count and never claims "Exported…" for a
-    /// session that produced no file.</summary>
+    /// written by THIS call — so the caller reports a truthful count and never claims
+    /// "Exported…" for a session that produced no file.</summary>
     private static bool ExportOne(LoggingSession session, string filepath, int sessionIndex, int totalSessions)
     {
+        // Delete any file already at the target BEFORE exporting, so File.Exists afterward
+        // reflects whether THIS call wrote it. The exporter swallows failures and returns
+        // void, so a pre-existing file — a prior "Export all" into the same folder, or the
+        // picked file being overwritten — must not be counted as this run's success. A
+        // session in the list always has samples, so a genuine export writes header+rows
+        // (non-empty); a failure before the writer opens leaves no file (correctly false).
+        try { if (File.Exists(filepath)) { File.Delete(filepath); } } catch { /* best effort */ }
         var exporter = new OptimizedLoggingSessionExporter();
         exporter.ExportLoggingSession(
             session, filepath, exportRelativeTime: false,
