@@ -11,8 +11,6 @@ namespace Daqifi.Avalonia.Views.Mobile;
 /// </summary>
 public partial class StorageMobileView : UserControl
 {
-    private Control? _deviceLogs;
-
     public StorageMobileView()
     {
         InitializeComponent();
@@ -28,7 +26,7 @@ public partial class StorageMobileView : UserControl
     private void OnDeviceLogs(object? sender, RoutedEventArgs e)
     {
         // Lazily build the SD pane (its DeviceLogsViewModel touches the device layer).
-        DeviceLogsHost.Content ??= _deviceLogs =
+        DeviceLogsHost.Content ??=
             new DeviceLogsMobileView { DataContext = new DeviceLogsViewModel() };
         AppLogsHost.IsVisible = false;
         DeviceLogsHost.IsVisible = true;
