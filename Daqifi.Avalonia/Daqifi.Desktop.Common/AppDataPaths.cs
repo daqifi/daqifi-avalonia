@@ -68,13 +68,27 @@ public static class AppDataPaths
         var overrideDir = Environment.GetEnvironmentVariable("DAQIFI_DATA_DIR");
         if (!string.IsNullOrWhiteSpace(overrideDir))
         {
-            // An explicit override fails CLOSED: absolute-ise it (so a relative value resolves
-            // deterministically, not against the GUI process's incidental working directory) and
-            // let a malformed value throw at startup rather than silently falling back to the real
-            // data dir. The whole point of the override is to NOT touch the developer's real
-            // DAQiFiDatabase.db, so a bad override must fail loudly — degrading to the real store
-            // (which a headless test would then read/migrate) is the one outcome we must avoid.
-            return Path.GetFullPath(overrideDir.Trim());
+            // An explicit override fails CLOSED with a DIAGNOSTIC error. Absolute-ise it (so a
+            // relative value resolves deterministically, not against the GUI process's incidental
+            // working directory) and eagerly create it, so any bad value — invalid path syntax, a
+            // missing drive, an inaccessible root, or a path that is actually a file — surfaces as
+            // a clear exception naming the env var and value. The whole point of the override is to
+            // NOT touch the developer's real DAQiFiDatabase.db, so a bad override must fail loudly:
+            // neither a silent fallback to the real store (a headless test would then read/migrate
+            // it) nor an opaque type-init/CreateDirectory crash deep in startup is acceptable. The
+            // default path below is unchanged — App.Initialize/InitializeMobile create it as before.
+            try
+            {
+                var resolved = Path.GetFullPath(overrideDir.Trim());
+                Directory.CreateDirectory(resolved);
+                return resolved;
+            }
+            catch (Exception ex)
+            {
+                throw new InvalidOperationException(
+                    $"DAQIFI_DATA_DIR is set to '{overrideDir}', which could not be used as the " +
+                    "application data directory. Set it to a writable directory path, or unset it.", ex);
+            }
         }
 
         return Path.Combine(
