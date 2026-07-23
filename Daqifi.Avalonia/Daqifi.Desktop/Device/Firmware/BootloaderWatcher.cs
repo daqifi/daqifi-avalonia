@@ -192,7 +192,13 @@ public sealed class BootloaderWatcher : IBootloaderWatcher, IDisposable
     // @port: Daqifi.Desktop.Device.Firmware.BootloaderWatcher.ResumeDiscoveryIfIdle
     private void ResumeDiscoveryIfIdle()
     {
-        if (!_disposed && _flashingPath == null && !_grabSuppressed)
+        // Only (re)start discovery if the watcher was ever started. In test/tooling mode
+        // App.Initialize skips Start() (#18), yet the firmware-flash and auto-update flows have no
+        // test-mode gate of their own and still route here on lease disposal — without this guard
+        // that would start HID discovery the gate exists to prevent, and half-initialized at that
+        // (BootloaderDiscovered is subscribed only inside Start(), so devices would be probed every
+        // pass but never held). Harmless upstream/in production, where Start() always runs first.
+        if (_started && !_disposed && _flashingPath == null && !_grabSuppressed)
         {
             _discovery.Start();
         }
