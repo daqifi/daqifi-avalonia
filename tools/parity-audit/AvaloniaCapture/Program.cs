@@ -21,6 +21,7 @@ using Projektanker.Icons.Avalonia.MaterialDesign;
 internal static class AvaloniaCapture
 {
     private static string _outDir = "";
+    private static bool _failed;   // any [FAIL] → non-zero exit so run.sh aborts the pipeline
 
     [STAThread]
     public static void Main(string[] args)
@@ -44,6 +45,7 @@ internal static class AvaloniaCapture
         catch (Exception ex)
         {
             Console.WriteLine($"[FAIL] App boot: {ex.GetType().Name}: {ex.Message}");
+            Environment.ExitCode = 1;
             return;
         }
 
@@ -62,6 +64,7 @@ internal static class AvaloniaCapture
             catch (Exception ex) { Console.WriteLine($"[WARN] shutdown: {ex.Message}"); }
         }
 
+        Environment.ExitCode = _failed ? 1 : 0;
         Console.WriteLine($"done -> {_outDir}");
     }
 
@@ -74,9 +77,9 @@ internal static class AvaloniaCapture
     // ---- Desktop: the one MainWindow, swept across tabs + drawers via VM props ----
     private static void CaptureDesktop(Window? main)
     {
-        if (main is null) { Console.WriteLine("[FAIL] MainWindow null"); return; }
+        if (main is null) { _failed = true; Console.WriteLine("[FAIL] MainWindow null"); return; }
         var vm = main.DataContext;
-        if (vm is null) { Console.WriteLine("[FAIL] MainWindow.DataContext null"); return; }
+        if (vm is null) { _failed = true; Console.WriteLine("[FAIL] MainWindow.DataContext null"); return; }
 
         main.SizeToContent = SizeToContent.Manual;
         main.Width = 1440;
@@ -111,7 +114,7 @@ internal static class AvaloniaCapture
 
         MobileMainView mobile;
         try { mobile = new MobileMainView(); }
-        catch (Exception ex) { Console.WriteLine($"[FAIL] MobileMainView ctor: {ex.Message}"); return; }
+        catch (Exception ex) { _failed = true; Console.WriteLine($"[FAIL] MobileMainView ctor: {ex.Message}"); return; }
 
         var host = new Window { SizeToContent = SizeToContent.Manual, SystemDecorations = SystemDecorations.None };
         host.Content = mobile;
@@ -179,13 +182,14 @@ internal static class AvaloniaCapture
         {
             Pump();
             var frame = w.CaptureRenderedFrame();
-            if (frame is null) { Console.WriteLine($"[FAIL] {name}: null frame"); return; }
+            if (frame is null) { _failed = true; Console.WriteLine($"[FAIL] {name}: null frame"); return; }
             var path = Path.Combine(_outDir, name + ".png");
             frame.Save(path);
             Console.WriteLine($"[OK]   {name}: {frame.PixelSize.Width}x{frame.PixelSize.Height}");
         }
         catch (Exception ex)
         {
+            _failed = true;
             Console.WriteLine($"[FAIL] {name}: {ex.GetType().Name}: {ex.Message}");
         }
     }

@@ -14,6 +14,9 @@ set -euo pipefail
 
 HERE="$(cd "$(dirname "$0")" && pwd)"
 OUT="${1:-$HERE/out}"
+# Start from clean output dirs so stale PNGs from a prior run can't be mistaken for
+# this run's captures (a failed/partial capture would otherwise be masked by old images).
+rm -rf "$OUT/avalonia" "$OUT/wpf" "$OUT/montage"
 mkdir -p "$OUT"
 OUT_WIN="$(wslpath -w "$OUT")"
 DOTNET="/mnt/c/Program Files/dotnet/dotnet.exe"

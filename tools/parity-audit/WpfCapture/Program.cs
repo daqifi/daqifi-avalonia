@@ -18,6 +18,7 @@ namespace WpfCapture;
 internal static class Program
 {
     private static string _outDir = "";
+    private static bool _failed;   // any [FAIL] → non-zero exit so run.sh aborts the pipeline
 
     [STAThread]
     public static void Main(string[] args)
@@ -33,18 +34,19 @@ internal static class Program
             app.Dispatcher.BeginInvoke(new Action(() =>
             {
                 try { CaptureAll(app); }
-                catch (Exception ex) { Console.WriteLine("[FAIL] capture: " + ex.Message); }
+                catch (Exception ex) { _failed = true; Console.WriteLine("[FAIL] capture: " + ex.Message); }
                 finally { app.Shutdown(); }
             }), DispatcherPriority.ApplicationIdle);
 
         app.Run();
+        Environment.ExitCode = _failed ? 1 : 0;
         Console.WriteLine($"done -> {_outDir}");
     }
 
     private static void CaptureAll(Application app)
     {
         var main = app.MainWindow;
-        if (main is null) { Console.WriteLine("[FAIL] MainWindow null"); return; }
+        if (main is null) { _failed = true; Console.WriteLine("[FAIL] MainWindow null"); return; }
 
         main.WindowStartupLocation = WindowStartupLocation.Manual;
         main.Left = -4000; main.Top = 0;
@@ -53,7 +55,7 @@ internal static class Program
         Settle(main);
 
         var vm = main.DataContext;
-        if (vm is null) { Console.WriteLine("[FAIL] DataContext null"); return; }
+        if (vm is null) { _failed = true; Console.WriteLine("[FAIL] DataContext null"); return; }
 
         // FlyoutWidth = Width - SidePanelWidth, and Width defaults to 800 until the
         // window-size binding propagates. Setting it directly ensures the flyout width
@@ -111,7 +113,7 @@ internal static class Program
         {
             var width = (int)Math.Ceiling(w.ActualWidth);
             var height = (int)Math.Ceiling(w.ActualHeight);
-            if (width <= 0 || height <= 0) { Console.WriteLine($"[FAIL] {name}: size 0"); return; }
+            if (width <= 0 || height <= 0) { _failed = true; Console.WriteLine($"[FAIL] {name}: size 0"); return; }
 
             var rtb = new RenderTargetBitmap(width, height, 96, 96, PixelFormats.Pbgra32);
             rtb.Render(w);
@@ -124,6 +126,7 @@ internal static class Program
         }
         catch (Exception ex)
         {
+            _failed = true;
             Console.WriteLine($"[FAIL] {name}: {ex.GetType().Name}: {ex.Message}");
         }
     }
