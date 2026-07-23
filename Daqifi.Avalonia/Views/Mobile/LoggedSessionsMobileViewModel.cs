@@ -1,4 +1,5 @@
 using System;
+using System.Collections.Generic;
 using System.Collections.ObjectModel;
 using System.IO;
 using System.Linq;
@@ -142,8 +143,8 @@ public partial class LoggedSessionsMobileViewModel : ObservableObject
                 }
                 if (string.IsNullOrEmpty(path)) { StatusMessage = string.Empty; return; }
 
-                await Task.Run(() => ExportOne(single, path!, sessionIndex: 0, totalSessions: 1));
-                StatusMessage = "Exported 1 session.";
+                var wrote = await Task.Run(() => ExportOne(single, path!, sessionIndex: 0, totalSessions: 1));
+                StatusMessage = wrote ? "Exported 1 session." : "Nothing to export for that session.";
             }
             else
             {
@@ -163,15 +164,25 @@ public partial class LoggedSessionsMobileViewModel : ObservableObject
                 }
                 if (string.IsNullOrEmpty(folder)) { StatusMessage = string.Empty; return; }
 
-                await Task.Run(() =>
+                var written = await Task.Run(() =>
                 {
+                    var usedNames = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
+                    var count = 0;
                     for (var i = 0; i < toExport.Length; i++)
                     {
-                        var filepath = Path.Combine(folder!, $"{SafeName(toExport[i])}.csv");
-                        ExportOne(toExport[i], filepath, sessionIndex: i, totalSessions: toExport.Length);
+                        // Disambiguate duplicate / sanitization-colliding names so two sessions
+                        // never target the same file (the exporter truncates, losing the earlier).
+                        var name = UniqueFileName(SafeName(toExport[i]), usedNames);
+                        var filepath = Path.Combine(folder!, $"{name}.csv");
+                        if (ExportOne(toExport[i], filepath, sessionIndex: i, totalSessions: toExport.Length)) { count++; }
                     }
+                    return count;
                 });
-                StatusMessage = $"Exported {toExport.Length} sessions.";
+                StatusMessage = written == 0
+                    ? "Nothing was exported."
+                    : written == toExport.Length
+                        ? $"Exported {written} sessions."
+                        : $"Exported {written} of {toExport.Length} sessions.";
             }
         }
         catch (Exception ex)
@@ -185,13 +196,31 @@ public partial class LoggedSessionsMobileViewModel : ObservableObject
         }
     }
 
-    private static void ExportOne(LoggingSession session, string filepath, int sessionIndex, int totalSessions)
+    /// <summary>Exports one session; returns true only if a non-empty CSV was actually
+    /// written — so the caller reports a truthful count and never claims "Exported…" for a
+    /// session that produced no file.</summary>
+    private static bool ExportOne(LoggingSession session, string filepath, int sessionIndex, int totalSessions)
     {
         var exporter = new OptimizedLoggingSessionExporter();
         exporter.ExportLoggingSession(
             session, filepath, exportRelativeTime: false,
             new Progress<int>(), CancellationToken.None,
             sessionIndex, totalSessions);
+        return File.Exists(filepath) && new FileInfo(filepath).Length > 0;
+    }
+
+    /// <summary>Ensure a unique base file name within a single "export all" by appending
+    /// " (2)", " (3)"… on collision, so duplicate or sanitization-colliding session names
+    /// don't overwrite one another.</summary>
+    private static string UniqueFileName(string baseName, HashSet<string> used)
+    {
+        var name = baseName;
+        var n = 2;
+        while (!used.Add(name))
+        {
+            name = $"{baseName} ({n++})";
+        }
+        return name;
     }
 
     /// <summary>A session's display name reduced to a valid file name (a session can be
