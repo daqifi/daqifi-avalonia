@@ -39,6 +39,11 @@ public partial class LoggedSessionsMobileView : UserControl
             },
         });
 
-        return file?.TryGetLocalPath() ?? file?.Path?.LocalPath;
+        // Only a real local filesystem path is usable: OptimizedLoggingSessionExporter
+        // opens a StreamWriter on it. A content-URI-only pick (TryGetLocalPath == null,
+        // e.g. a cloud/SAF location on Android) has no such path, so return null rather
+        // than a bogus Path.LocalPath that would fault mid-export. (Stream-based export
+        // to arbitrary content URIs is #7 phase 2.)
+        return file?.TryGetLocalPath();
     }
 }

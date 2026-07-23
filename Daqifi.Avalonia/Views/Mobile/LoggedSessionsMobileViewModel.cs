@@ -50,22 +50,28 @@ public partial class LoggedSessionsMobileViewModel : ObservableObject
 
     public LoggedSessionsMobileViewModel()
     {
-        Reload();
+        // Fire-and-forget: Reload hydrates off the UI thread and handles its own
+        // errors, so there is nothing to await at construction.
+        _ = Reload();
     }
 
     [RelayCommand]
-    private void Reload()
+    private async Task Reload()
     {
-        Sessions.Clear();
+        if (IsBusy) { return; }
+        IsBusy = true;
         try
         {
-            var manager = LoggingManager.Instance;
-            if (manager.LoggingSessions.Count == 0)
-            {
-                // Hydrate from the DB the same way the desktop pane does on first show.
-                manager.ReloadPersistedLoggingSessions();
-            }
-            foreach (var session in manager.LoggingSessions)
+            // Always hydrate straight from the DB, OFF the UI thread. The desktop
+            // hydrates once at app-init (when the collection is empty); the mobile
+            // shell has no such step, so this VM is the only hydration point — a
+            // Count==0 guard would let a session logged this run mask the older
+            // persisted history. LoadPersistedLoggingSessions returns a fresh list
+            // (it does not touch the shared singleton collection), and its EF Core
+            // queries run on a background thread so opening Storage never blocks.
+            var loaded = await Task.Run(() => LoggingManager.Instance.LoadPersistedLoggingSessions());
+            Sessions.Clear();
+            foreach (var session in loaded)
             {
                 Sessions.Add(session);
             }
@@ -77,6 +83,7 @@ public partial class LoggedSessionsMobileViewModel : ObservableObject
         finally
         {
             Loaded = true;
+            IsBusy = false;
             OnPropertyChanged(nameof(HasSessions));
             OnPropertyChanged(nameof(HasNoSessions));
         }
