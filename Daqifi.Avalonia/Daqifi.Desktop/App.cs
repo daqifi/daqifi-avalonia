@@ -177,9 +177,10 @@ public static class App
         // while it waits. The watcher runs for the app's lifetime.
         //
         // Skipped in test/tooling mode (like the message-box service above): a headless/automation
-        // boot has no reason to start hardware discovery, and Start() takes an *exclusive* HID handle
-        // on any device sitting in bootloader mode. Gating the resolve too means the watcher (and its
-        // HID discovery) is never even constructed under DAQIFI_TEST_MODE. (#18)
+        // boot has no reason to start hardware discovery. Start() is what enumerates HID bootloaders
+        // and takes an *exclusive* HID handle on each — the actual side effect we want to avoid. (The
+        // watcher singleton may still be lazily constructed later by the connection/firmware dialogs,
+        // but construction is inert: no discovery runs and no handle is taken until Start().) (#18)
         if (!IsTestMode)
         {
             ServiceProvider.GetRequiredService<IBootloaderWatcher>().Start();
