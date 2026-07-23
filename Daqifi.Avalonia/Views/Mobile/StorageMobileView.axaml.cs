@@ -1,5 +1,10 @@
+using System;
+using Avalonia;
 using Avalonia.Controls;
 using Avalonia.Interactivity;
+using Avalonia.Layout;
+using Avalonia.Media;
+using Daqifi.Desktop.Common.Loggers;
 using Daqifi.Desktop.ViewModels;
 
 namespace Daqifi.Avalonia.Views.Mobile;
@@ -25,9 +30,30 @@ public partial class StorageMobileView : UserControl
 
     private void OnDeviceLogs(object? sender, RoutedEventArgs e)
     {
-        // Lazily build the SD pane (its DeviceLogsViewModel touches the device layer).
-        DeviceLogsHost.Content ??=
-            new DeviceLogsMobileView { DataContext = new DeviceLogsViewModel() };
+        // Lazily build the SD pane. Its DeviceLogsViewModel touches the device layer,
+        // which can throw if that layer isn't ready — so fall back to a placeholder
+        // rather than letting this click handler crash the app (mirrors the shell's
+        // defensive BuildPage pattern).
+        if (DeviceLogsHost.Content is null)
+        {
+            try
+            {
+                DeviceLogsHost.Content = new DeviceLogsMobileView { DataContext = new DeviceLogsViewModel() };
+            }
+            catch (Exception ex)
+            {
+                AppLogger.Instance.Error(ex, "Mobile: failed to build the Device Logs pane");
+                DeviceLogsHost.Content = new TextBlock
+                {
+                    Text = "Device logs are unavailable right now.",
+                    Margin = new Thickness(24),
+                    TextWrapping = TextWrapping.Wrap,
+                    TextAlignment = TextAlignment.Center,
+                    HorizontalAlignment = HorizontalAlignment.Center,
+                    VerticalAlignment = VerticalAlignment.Center,
+                };
+            }
+        }
         AppLogsHost.IsVisible = false;
         DeviceLogsHost.IsVisible = true;
     }
