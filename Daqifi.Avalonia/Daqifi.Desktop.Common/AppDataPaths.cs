@@ -81,13 +81,20 @@ public static class AppDataPaths
             {
                 var resolved = Path.GetFullPath(overrideDir.Trim());
                 Directory.CreateDirectory(resolved);
+                // CreateDirectory also succeeds on a pre-existing but read-only directory, so probe
+                // actual writability with a create-and-delete temp file. Without this, an ACL/
+                // permission problem would defer the failure downstream to SQLite/logging and lose
+                // this DAQIFI_DATA_DIR-specific diagnostic — the whole point of failing closed here.
+                var probe = Path.Combine(resolved, ".daqifi-write-probe-" + Guid.NewGuid().ToString("N"));
+                File.WriteAllText(probe, string.Empty);
+                File.Delete(probe);
                 return resolved;
             }
             catch (Exception ex)
             {
                 throw new InvalidOperationException(
-                    $"DAQIFI_DATA_DIR is set to '{overrideDir}', which could not be used as the " +
-                    "application data directory. Set it to a writable directory path, or unset it.", ex);
+                    $"DAQIFI_DATA_DIR is set to '{overrideDir}', which could not be used as a " +
+                    "writable application data directory. Set it to a writable directory path, or unset it.", ex);
             }
         }
 
