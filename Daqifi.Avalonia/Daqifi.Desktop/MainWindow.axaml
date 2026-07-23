@@ -10,6 +10,8 @@
         service:DialogService.IsRegisteredView="True"
         Height="{Binding Height, Mode=TwoWay}"
         Width="{Binding Width, Mode=TwoWay}"
+        MinWidth="720"
+        MinHeight="480"
         WindowState="{Binding ViewWindowState, Mode=OneWayToSource}"
         Background="{DynamicResource Surface}">
 
@@ -179,6 +181,16 @@
         <Style Selector="Button.windowCommand:pointerover, ToggleButton.windowCommand:pointerover">
             <Setter Property="Foreground" Value="{DynamicResource TextPrimary}"/>
         </Style>
+        <!-- Neutralize the Fluent ToggleButton default accent-fill on :checked so the
+             settings/debug toggles don't light up blue when their drawer is open —
+             the original MahApps RightWindowCommands stayed flat (#12). -->
+        <Style Selector="ToggleButton.windowCommand:checked /template/ ContentPresenter">
+            <Setter Property="Background" Value="Transparent"/>
+        </Style>
+        <Style Selector="ToggleButton.windowCommand:checked">
+            <Setter Property="Background" Value="Transparent"/>
+            <Setter Property="Foreground" Value="{DynamicResource TextSecondary}"/>
+        </Style>
 
         <Style Selector="TextBlock.appSettingsSectionLabel">
             <Setter Property="FontSize" Value="11"/>
@@ -263,10 +275,15 @@
 
         <!-- ONE SplitView flyout host (hal: flyout_host) — pane hosts all three
              former MahApps flyouts; VM booleans stay the source of truth. -->
+        <!-- Fixed narrow drawer width to match the original MahApps flyouts, which
+             rendered as a ~260-320px right-side drawer over the still-visible content.
+             (The ported VM FlyoutWidth = Width - SidePanelWidth is near-full-width; a
+             SplitView consumes OpenPaneLength literally, unlike a MahApps Flyout, so
+             binding it produced a full-bleed panel that hid the pane — see #5.) -->
         <SplitView Grid.Row="1"
                    PanePlacement="Right"
                    DisplayMode="Overlay"
-                   OpenPaneLength="{Binding FlyoutWidth}"
+                   OpenPaneLength="380"
                    PaneBackground="{DynamicResource SurfaceRaised}">
             <SplitView.IsPaneOpen>
                 <MultiBinding Converter="{StaticResource BoolOr}" Mode="OneWay">

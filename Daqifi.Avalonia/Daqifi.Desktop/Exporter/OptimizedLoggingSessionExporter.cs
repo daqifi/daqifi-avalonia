@@ -108,6 +108,47 @@ public class OptimizedLoggingSessionExporter
     }
 
     /// <summary>
+    /// As <see cref="ExportLoggingSession"/>, but RETURNS whether the export completed
+    /// successfully. Downstream addition (not in the upstream @port): the void overload
+    /// swallows every failure, so it cannot signal a mid-write error (disk full, a
+    /// transient DB/IO error after rows have already flushed) — which leaves a
+    /// partially-written, non-empty file. The mobile export needs a truthful signal so it
+    /// never promotes a truncated temp over a good prior CSV. Returns false on any failure
+    /// (logged); <see cref="OperationCanceledException"/> still propagates.
+    /// </summary>
+    public bool TryExportLoggingSession(LoggingSession loggingSession, string filepath, bool exportRelativeTime,
+        IProgress<int> progress, CancellationToken cancellationToken, int sessionIndex, int totalSessions)
+    {
+        try
+        {
+            var source = TryBuildSource(loggingSession);
+            if (source == null)
+            {
+                return false;
+            }
+
+            var options = new CsvExportOptions
+            {
+                Delimiter = _delimiter,
+                UseRelativeTime = exportRelativeTime,
+            };
+
+            RunExport(source, filepath, options, progress, cancellationToken, sessionIndex, totalSessions);
+            return true;
+        }
+        catch (OperationCanceledException)
+        {
+            throw;
+        }
+        catch (Exception ex)
+        {
+            _appLogger.Error(ex,
+                $"Exception in TryExportLoggingSession (sessionId={loggingSession?.ID}, filepath={filepath}, relativeTime={exportRelativeTime})");
+            return false;
+        }
+    }
+
+    /// <summary>
     /// Exports samples grouped into rolling windows of <paramref name="averageQuantity"/> samples,
     /// writing one averaged row per window. Trailing partial windows are flushed (a behavior change
     /// vs the legacy implementation, which silently dropped them).

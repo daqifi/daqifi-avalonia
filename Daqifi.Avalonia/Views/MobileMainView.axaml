@@ -76,14 +76,21 @@
 
   <Grid ColumnDefinitions="Auto,*" RowDefinitions="Auto,*,Auto" Background="{DynamicResource Surface}">
 
-    <!-- Top command bar (desktop chrome parity) — thin bar with a right-aligned
-         help link. Settings/debug/notifications are desktop-only (they need the
-         DaqifiViewModel host the mobile shell doesn't run), so only the functional
-         help affordance is surfaced here. -->
+    <!-- Top command bar (desktop chrome parity) — thin bar with right-aligned
+         settings + help. Settings mirrors the desktop settings drawer (CSV
+         delimiter). debug/notifications stay desktop-only: debug is a desktop
+         concern, and notifications need the desktop DaqifiViewModel's device
+         notification source the mobile shell doesn't run (#11). -->
     <Border Grid.Row="0" Grid.ColumnSpan="2"
             Background="{DynamicResource Surface}"
             BorderBrush="{DynamicResource BorderDim}" BorderThickness="0,0,0,1">
       <StackPanel Orientation="Horizontal" HorizontalAlignment="Right" Margin="0,4">
+        <Button Classes="topCommand" Click="OnSettings">
+          <StackPanel Orientation="Horizontal" Spacing="4">
+            <i:Icon Value="mdi-cog" FontSize="18" VerticalAlignment="Center" />
+            <TextBlock Text="settings" VerticalAlignment="Center" />
+          </StackPanel>
+        </Button>
         <Button Classes="topCommand" Click="OnHelp">
           <StackPanel Orientation="Horizontal" Spacing="4">
             <i:Icon Value="mdi-help-circle-outline" FontSize="18" VerticalAlignment="Center" />
@@ -101,13 +108,13 @@
         <Button x:Name="RailStream" Classes="rail" Click="OnStream">
           <StackPanel>
             <i:Icon Value="mdi-chart-timeline-variant" FontSize="24" HorizontalAlignment="Center" />
-            <TextBlock Classes="railLabel" Text="Stream" />
+            <TextBlock Classes="railLabel" Text="Live Graph" />
           </StackPanel>
         </Button>
         <Button x:Name="RailStorage" Classes="rail" Click="OnStorage">
           <StackPanel>
             <i:Icon Value="mdi-database-outline" FontSize="24" HorizontalAlignment="Center" />
-            <TextBlock Classes="railLabel" Text="Storage" />
+            <TextBlock Classes="railLabel" Text="Logged Data" />
           </StackPanel>
         </Button>
         <Button x:Name="RailChannels" Classes="rail" Click="OnChannels">
@@ -136,11 +143,58 @@
             Background="{DynamicResource SurfaceRaised}"
             BorderBrush="{DynamicResource BorderDim}" BorderThickness="0,1,0,0">
       <UniformGrid Columns="4">
-        <Button x:Name="NavStream"   Classes="nav" Content="Stream"   Click="OnStream" />
-        <Button x:Name="NavStorage"  Classes="nav" Content="Storage"  Click="OnStorage" />
+        <Button x:Name="NavStream"   Classes="nav" Content="Live Graph"  Click="OnStream" />
+        <Button x:Name="NavStorage"  Classes="nav" Content="Logged Data" Click="OnStorage" />
         <Button x:Name="NavChannels" Classes="nav" Content="Channels" Click="OnChannels" />
         <Button x:Name="NavProfiles" Classes="nav" Content="Profiles" Click="OnProfiles" />
       </UniformGrid>
     </Border>
+
+    <!-- Settings overlay (#11) — mirrors the desktop settings drawer's EXPORT /
+         CSV DELIMITER preference. Right-anchored drawer over a scrim; hidden
+         until the top-bar gear opens it. -->
+    <Grid x:Name="SettingsOverlay" Grid.ColumnSpan="2" Grid.RowSpan="3"
+          IsVisible="False" ZIndex="30">
+      <Button Background="{DynamicResource Scrim}" HorizontalAlignment="Stretch"
+              VerticalAlignment="Stretch" BorderThickness="0" Click="OnCloseSettings" />
+      <Border HorizontalAlignment="Right" VerticalAlignment="Stretch" Width="320"
+              Background="{DynamicResource SurfaceRaised}"
+              BorderBrush="{DynamicResource BorderDim}" BorderThickness="1,0,0,0">
+        <StackPanel Margin="24,28,24,24" Spacing="0">
+          <Grid ColumnDefinitions="*,Auto">
+            <StackPanel Grid.Column="0">
+              <TextBlock Text="PREFERENCES" FontSize="9" FontWeight="Bold"
+                         Foreground="{DynamicResource TextTertiary}" />
+              <TextBlock Text="Settings" FontSize="22" FontWeight="Light"
+                         Foreground="{DynamicResource TextPrimary}" Margin="0,2,0,0" />
+            </StackPanel>
+            <Button Grid.Column="1" Content="&#xD7;" FontSize="18"
+                    Background="Transparent" BorderThickness="0" Cursor="Hand"
+                    Foreground="{DynamicResource TextSecondary}" Click="OnCloseSettings" />
+          </Grid>
+
+          <TextBlock Text="EXPORT" Classes="sectionLabel" Margin="0,22,0,10" />
+          <Rectangle Height="1" Fill="{DynamicResource BorderDim}" Margin="0,0,0,16" />
+
+          <TextBlock Text="CSV DELIMITER" FontSize="11" FontWeight="SemiBold"
+                     Foreground="{DynamicResource TextSecondary}" />
+          <TextBlock Text="Separates columns when exporting logged sessions to CSV."
+                     FontSize="11" Foreground="{DynamicResource TextTertiary}"
+                     TextWrapping="Wrap" Margin="0,4,0,10" />
+          <Border Background="{DynamicResource Surface}"
+                  BorderBrush="{DynamicResource BorderDim}" BorderThickness="1"
+                  CornerRadius="3" Padding="3" HorizontalAlignment="Left">
+            <StackPanel Orientation="Horizontal">
+              <RadioButton GroupName="MobileCsvDelimiter" Content="COMMA  ,"
+                           IsChecked="{Binding IsCommaDelimiter, Mode=TwoWay}"
+                           Theme="{StaticResource SegmentedToggle}" />
+              <RadioButton GroupName="MobileCsvDelimiter" Content="SEMICOLON  ;"
+                           IsChecked="{Binding IsSemicolonDelimiter, Mode=TwoWay}"
+                           Theme="{StaticResource SegmentedToggle}" />
+            </StackPanel>
+          </Border>
+        </StackPanel>
+      </Border>
+    </Grid>
   </Grid>
 </UserControl>

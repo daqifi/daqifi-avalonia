@@ -84,14 +84,31 @@ public partial class MobileMainView : UserControl
         }
     }
 
+    /// <summary>Opens the settings overlay (#11) — the mobile analog of the desktop
+    /// settings drawer. Binds a standalone <see cref="SettingsViewModel"/> (backed by
+    /// DaqifiSettings.Instance, no DaqifiViewModel host needed).</summary>
+    private void OnSettings(object? sender, RoutedEventArgs e)
+    {
+        SettingsOverlay.DataContext ??= new SettingsViewModel();
+        SettingsOverlay.IsVisible = true;
+    }
+
+    private void OnCloseSettings(object? sender, RoutedEventArgs e) =>
+        SettingsOverlay.IsVisible = false;
+
     private void OnStream(object? sender, RoutedEventArgs e) => ShowStream();
 
-    private void OnStorage(object? sender, RoutedEventArgs e) =>
-        ShowSecondary(
-            _storagePage ??= BuildPage(
-                "Device Storage",
-                static () => new DeviceLogsMobileView { DataContext = new DeviceLogsViewModel() }),
-            1);
+    private void OnStorage(object? sender, RoutedEventArgs e)
+    {
+        // Storage tab = the desktop Logged Data pane's APP LOGS / DEVICE LOGS pivot (#7);
+        // StorageMobileView hosts both halves and builds its own DataContexts.
+        _storagePage ??= BuildPage("Logged Data", static () => new Mobile.StorageMobileView());
+        // Refresh the logged-session list on every visit: the pane is cached (built once),
+        // so its ctor reload runs only once — a session logged since the last visit would
+        // otherwise stay hidden until a manual Refresh.
+        if (_storagePage is Mobile.StorageMobileView storage) { storage.Refresh(); }
+        ShowSecondary(_storagePage, 1);
+    }
 
     private void OnChannels(object? sender, RoutedEventArgs e) =>
         ShowSecondary(

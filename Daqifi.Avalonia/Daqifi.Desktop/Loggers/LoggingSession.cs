@@ -138,6 +138,14 @@ public class LoggingSession : ObservableObject
         ? FormatAbbreviated(SampleCount.Value)
         : string.Empty;
 
+    /// <summary>True when <see cref="SampleCountDisplay"/> has content to show. Downstream
+    /// addition (mirrors <see cref="HasFrequencyDisplay"/>): the mobile session-list chip
+    /// hides on false, so a legacy/crash-orphaned row with a null SampleCount doesn't show a
+    /// blank "SAMPLES" chip (the desktop DataGrid renders a blank cell there, which is fine;
+    /// a labelled chip is not). Mobile never runs the desktop's count-backfill.</summary>
+    [NotMapped]
+    public bool HasSampleCountDisplay => !string.IsNullOrEmpty(SampleCountDisplay);
+
     /// <summary>
     /// Full sample count formatted with thousands separators, intended for
     /// tooltips so the abbreviated display can be expanded on demand.

@@ -134,6 +134,16 @@ internal static class AvaloniaCapture
         NavClick(mobile, "NavProfiles"); Capture("mobile-portrait-4-profiles", host);
         NavClick(mobile, "NavStream");
 
+        // Settings overlay (#11): toggle the named overlay visible + give it its VM.
+        var overlay = mobile.FindControl<Control>("SettingsOverlay");
+        if (overlay is not null)
+        {
+            overlay.DataContext ??= new Daqifi.Desktop.ViewModels.SettingsViewModel();
+            overlay.IsVisible = true;
+            Capture("mobile-portrait-5-settings", host);
+            overlay.IsVisible = false;
+        }
+
         // Landscape phone (desktop-style left rail per design intent)
         Resize(host, 820, 360);
         Capture("mobile-landscape-1-stream", host);

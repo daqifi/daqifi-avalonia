@@ -577,8 +577,10 @@
                     MaxWidth="420"
                     Margin="0,60,0,0"
                     Spacing="14">
+          <!-- Match the desktop Channels empty-state badge (mdi-chip = "connect a
+               device"); the hub glyph is the nav-tab icon, not the empty badge (#13). -->
           <Border Classes="emptyBadge">
-            <i:Icon Value="mdi-hub-outline" FontSize="{DynamicResource FontSizeDisplay}"
+            <i:Icon Value="mdi-chip" FontSize="{DynamicResource FontSizeDisplay}"
                     Foreground="{DynamicResource TextTertiary}"
                     HorizontalAlignment="Center"
                     VerticalAlignment="Center" />
@@ -586,7 +588,8 @@
           <TextBlock Text="NO DEVICE CONNECTED" Classes="emptyTitle" />
           <TextBlock Text="Connect a DAQiFi device to view and activate channels."
                      Classes="emptyBody" />
-          <TextBlock Text="Open the Devices tab to get started"
+          <!-- Mobile has no Devices tab; scan/connect lives on the Live Graph tab (#8/#9). -->
+          <TextBlock Text="Scan for a device on the Live Graph tab to get started"
                      FontSize="{DynamicResource FontSizeSmall}"
                      Foreground="{DynamicResource TextTertiary}"
                      HorizontalAlignment="Center" />
