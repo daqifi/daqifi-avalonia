@@ -18,13 +18,23 @@ mkdir -p "$OUT"
 OUT_WIN="$(wslpath -w "$OUT")"
 DOTNET="/mnt/c/Program Files/dotnet/dotnet.exe"
 
-echo "== Avalonia port capture =="
-"$DOTNET" run --project "$(wslpath -w "$HERE/AvaloniaCapture/AvaloniaCapture.csproj")" -c Release -- "$OUT_WIN\\avalonia" \
-  | grep -E '\[OK\]|\[FAIL\]|\[SKIP\]|done' || true
+# Run a capture harness, showing only its status lines, but FAIL the pipeline if
+# `dotnet run` itself failed (build error / crash). Piping straight into `grep`
+# would hide the dotnet exit code — even a `grep ... || true` swallows it — so the
+# script would march on to montage with missing/partial captures.
+run_capture() {
+  local label="$1" csproj="$2" arg="$3" log="$OUT/.capture-$1.log"
+  echo "== $label =="
+  if ! "$DOTNET" run --project "$(wslpath -w "$csproj")" -c Release -- "$arg" >"$log" 2>&1; then
+    grep -E '\[OK\]|\[FAIL\]|\[SKIP\]|done' "$log" || true
+    echo "!! $label failed (see $log)" >&2
+    return 1
+  fi
+  grep -E '\[OK\]|\[FAIL\]|\[SKIP\]|done' "$log" || true
+}
 
-echo "== Original WPF capture =="
-"$DOTNET" run --project "$(wslpath -w "$HERE/WpfCapture/WpfCapture.csproj")" -c Release -- "$OUT_WIN\\wpf" \
-  | grep -E '\[OK\]|\[FAIL\]|\[SKIP\]|done' || true
+run_capture "avalonia" "$HERE/AvaloniaCapture/AvaloniaCapture.csproj" "$OUT_WIN\\avalonia"
+run_capture "wpf"      "$HERE/WpfCapture/WpfCapture.csproj"           "$OUT_WIN\\wpf"
 
 echo "== Montages =="
 python3 "$HERE/montage.py" "$OUT"

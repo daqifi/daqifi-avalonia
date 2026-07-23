@@ -47,8 +47,20 @@ internal static class AvaloniaCapture
             return;
         }
 
-        CaptureDesktop(desktop.MainWindow);
-        CaptureMobile();
+        try
+        {
+            CaptureDesktop(desktop.MainWindow);
+            CaptureMobile();
+        }
+        finally
+        {
+            // Deterministic teardown: fire desktop.Exit so the app's Exit-wired
+            // cleanup (e.g. AppLogger shutdown) runs, instead of leaving it to
+            // process exit. We drive the lifetime on this thread (never Start), so
+            // Shutdown can be called directly; pump once to let Exit handlers run.
+            try { desktop.Shutdown(); Pump(); }
+            catch (Exception ex) { Console.WriteLine($"[WARN] shutdown: {ex.Message}"); }
+        }
 
         Console.WriteLine($"done -> {_outDir}");
     }
