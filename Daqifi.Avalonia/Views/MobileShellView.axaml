@@ -1,6 +1,7 @@
 <UserControl xmlns="https://github.com/avaloniaui"
              xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml"
              xmlns:views="clr-namespace:Daqifi.Avalonia.Views"
+             xmlns:i="https://github.com/projektanker/icons.avalonia"
              x:Class="Daqifi.Avalonia.Views.MobileShellView"
              x:DataType="views:MobileShellViewModel">
 	<!-- Mobile shell (#221 five-platform goal): WiFi discovery + connect on
@@ -98,10 +99,33 @@
 				</StackPanel>
 			</Border>
 
-			<!-- Live plot fills the middle while streaming -->
-			<views:LivePlot x:Name="Plot" DockPanel.Dock="Top"
-			                IsVisible="{Binding IsStreaming}"
-			                Height="360" Margin="0,0,0,10" />
+			<!-- Plot area is ALWAYS present (not just while streaming) so the Live Graph
+			     chrome shows in every state — disconnected, connected, streaming — mirroring
+			     the desktop, instead of the pane collapsing to a bare launcher when not
+			     streaming (#10). The live plot shows while streaming; otherwise an empty-state
+			     skeleton (like the desktop "No channels streaming" card). The connect actions
+			     below coexist with it — connect never replaces the plot, and the plot never
+			     hides connect. -->
+			<Panel DockPanel.Dock="Top" MinHeight="300" Height="360" Margin="0,0,0,10">
+				<views:LivePlot x:Name="Plot" IsVisible="{Binding IsStreaming}" />
+				<Border IsVisible="{Binding !IsStreaming}"
+				        Background="{DynamicResource SurfaceRaised}"
+				        BorderBrush="{DynamicResource BorderDim}" BorderThickness="1"
+				        CornerRadius="12">
+					<StackPanel HorizontalAlignment="Center" VerticalAlignment="Center" Spacing="8">
+						<i:Icon Value="mdi-chart-line-variant" FontSize="34"
+						        Foreground="{DynamicResource TextTertiary}" HorizontalAlignment="Center" />
+						<TextBlock Text="No channels streaming"
+						           FontSize="{DynamicResource FontSizeBody}" FontWeight="SemiBold"
+						           Foreground="{DynamicResource TextSecondary}" HorizontalAlignment="Center" />
+						<TextBlock Text="Connect a device and start streaming to see live data."
+						           FontSize="{DynamicResource FontSizeCaption}"
+						           Foreground="{DynamicResource TextTertiary}"
+						           HorizontalAlignment="Center" TextAlignment="Center"
+						           TextWrapping="Wrap" MaxWidth="280" />
+					</StackPanel>
+				</Border>
+			</Panel>
 
 			<StackPanel DockPanel.Dock="Bottom" Spacing="8" Margin="0,12,0,0">
 				<TextBlock Text="{Binding Status}"
