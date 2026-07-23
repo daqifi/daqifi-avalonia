@@ -54,7 +54,7 @@
                       <Border Classes="chip">
                         <TextBlock Text="{Binding SessionStart}" />
                       </Border>
-                      <Border Classes="chip">
+                      <Border Classes="chip" IsVisible="{Binding HasSampleCountDisplay}">
                         <StackPanel Orientation="Horizontal" Spacing="4">
                           <TextBlock Text="SAMPLES" />
                           <TextBlock Text="{Binding SampleCountDisplay}" Classes="chipValue" />

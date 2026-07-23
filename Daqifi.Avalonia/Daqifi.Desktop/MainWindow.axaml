@@ -10,6 +10,8 @@
         service:DialogService.IsRegisteredView="True"
         Height="{Binding Height, Mode=TwoWay}"
         Width="{Binding Width, Mode=TwoWay}"
+        MinWidth="720"
+        MinHeight="480"
         WindowState="{Binding ViewWindowState, Mode=OneWayToSource}"
         Background="{DynamicResource Surface}">
 

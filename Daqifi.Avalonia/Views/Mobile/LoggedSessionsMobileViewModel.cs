@@ -47,8 +47,20 @@ public partial class LoggedSessionsMobileViewModel : ObservableObject
     [NotifyPropertyChangedFor(nameof(HasNoSessions))]
     private bool _loaded;
 
+    [ObservableProperty]
+    [NotifyPropertyChangedFor(nameof(HasNoSessions))]
+    [NotifyPropertyChangedFor(nameof(LoadFailed))]
+    private bool _loadFailedFlag;
+
     public bool HasSessions => Sessions.Count > 0;
-    public bool HasNoSessions => Loaded && Sessions.Count == 0;
+
+    // Only the definitive "no sessions" empty state — NOT a failed load, which would
+    // otherwise render as "NO LOGGED SESSIONS" and hide that the list couldn't load.
+    public bool HasNoSessions => Loaded && !LoadFailedFlag && Sessions.Count == 0;
+
+    /// <summary>True when the last load threw — the view shows an error + Retry instead
+    /// of the definitive empty state.</summary>
+    public bool LoadFailed => LoadFailedFlag;
 
     [ObservableProperty]
     private bool _isBusy;
@@ -91,10 +103,17 @@ public partial class LoggedSessionsMobileViewModel : ObservableObject
                     Sessions.Add(session);
                 }
             });
+            LoadFailedFlag = false;
+            if (Sessions.Count > 0) { StatusMessage = string.Empty; }
         }
         catch (Exception ex)
         {
+            // Surface the failure: an empty Sessions list here means the load FAILED, not
+            // that there are genuinely no sessions — so flag it and show an error + Retry
+            // instead of the definitive "NO LOGGED SESSIONS" empty state.
             _appLogger.Error(ex, "Mobile: failed to load logged sessions");
+            LoadFailedFlag = true;
+            StatusMessage = "Couldn't load logged sessions. Tap Refresh to retry.";
         }
         finally
         {
@@ -202,19 +221,43 @@ public partial class LoggedSessionsMobileViewModel : ObservableObject
     /// "Exported…" for a session that produced no file.</summary>
     private static bool ExportOne(LoggingSession session, string filepath, int sessionIndex, int totalSessions)
     {
-        // Delete any file already at the target BEFORE exporting, so File.Exists afterward
-        // reflects whether THIS call wrote it. The exporter swallows failures and returns
-        // void, so a pre-existing file — a prior "Export all" into the same folder, or the
-        // picked file being overwritten — must not be counted as this run's success. A
-        // session in the list always has samples, so a genuine export writes header+rows
-        // (non-empty); a failure before the writer opens leaves no file (correctly false).
-        try { if (File.Exists(filepath)) { File.Delete(filepath); } } catch { /* best effort */ }
+        // Export to a TEMP file, then move it over the destination only on success. The
+        // exporter swallows failures and returns void, so success is judged solely by
+        // whether THIS run produced a non-empty temp file — never by the destination's
+        // state. This avoids two hazards of writing straight to the destination: (a) a
+        // stale pre-existing file (e.g. a prior "Export all" into the same folder) being
+        // counted as this run's success when the export silently fails, and (b) destroying
+        // a good prior file when the new export fails. A session in the list always has
+        // samples, so a real export writes header+rows (non-empty).
+        var tmp = filepath + ".exporting";
+        try { if (File.Exists(tmp)) { File.Delete(tmp); } } catch { /* best effort */ }
+
         var exporter = new OptimizedLoggingSessionExporter();
         exporter.ExportLoggingSession(
-            session, filepath, exportRelativeTime: false,
+            session, tmp, exportRelativeTime: false,
             new Progress<int>(), CancellationToken.None,
             sessionIndex, totalSessions);
-        return File.Exists(filepath) && new FileInfo(filepath).Length > 0;
+
+        if (!File.Exists(tmp) || new FileInfo(tmp).Length == 0)
+        {
+            // Export failed / wrote nothing — leave the destination (which may hold a good
+            // prior export) untouched, and clean up any empty temp.
+            try { if (File.Exists(tmp)) { File.Delete(tmp); } } catch { /* best effort */ }
+            return false;
+        }
+
+        try
+        {
+            File.Move(tmp, filepath, overwrite: true);
+            return true;
+        }
+        catch (Exception)
+        {
+            // Couldn't place the file (destination locked / permission-denied). Report
+            // failure — the destination keeps its prior contents; drop the orphan temp.
+            try { if (File.Exists(tmp)) { File.Delete(tmp); } } catch { /* best effort */ }
+            return false;
+        }
     }
 
     /// <summary>Ensure a unique base file name within a single "export all" by appending
