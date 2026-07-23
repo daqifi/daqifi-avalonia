@@ -98,15 +98,17 @@ public partial class MobileMainView : UserControl
 
     private void OnStream(object? sender, RoutedEventArgs e) => ShowStream();
 
-    private void OnStorage(object? sender, RoutedEventArgs e) =>
-        ShowSecondary(
-            // Storage tab = the desktop Logged Data pane's APP LOGS / DEVICE LOGS
-            // pivot (#7); StorageMobileView hosts both halves. It builds its own
-            // DataContexts, so no factory DataContext is set here.
-            _storagePage ??= BuildPage(
-                "Logged Data",
-                static () => new Mobile.StorageMobileView()),
-            1);
+    private void OnStorage(object? sender, RoutedEventArgs e)
+    {
+        // Storage tab = the desktop Logged Data pane's APP LOGS / DEVICE LOGS pivot (#7);
+        // StorageMobileView hosts both halves and builds its own DataContexts.
+        _storagePage ??= BuildPage("Logged Data", static () => new Mobile.StorageMobileView());
+        // Refresh the logged-session list on every visit: the pane is cached (built once),
+        // so its ctor reload runs only once — a session logged since the last visit would
+        // otherwise stay hidden until a manual Refresh.
+        if (_storagePage is Mobile.StorageMobileView storage) { storage.Refresh(); }
+        ShowSecondary(_storagePage, 1);
+    }
 
     private void OnChannels(object? sender, RoutedEventArgs e) =>
         ShowSecondary(
