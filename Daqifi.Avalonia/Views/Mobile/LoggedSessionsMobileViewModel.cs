@@ -100,30 +100,33 @@ public partial class LoggedSessionsMobileViewModel : ObservableObject
     /// and surfaced on the status line, never thrown.</summary>
     private async Task ExportSessionsAsync(LoggingSession? single)
     {
-        if (SavePathResolver is null) { return; }
+        // Guard re-entrancy: no overlapping export/reload, and no second picker while
+        // one is already open. IsBusy is held for the WHOLE operation (picker + write).
+        if (SavePathResolver is null || IsBusy) { return; }
 
         var toExport = single is not null
             ? new[] { single }
             : System.Linq.Enumerable.ToArray(Sessions);
         if (toExport.Length == 0) { return; }
 
-        var suggested = single is not null ? $"{single.Name}.csv" : "daqifi-sessions.csv";
-        string? path;
-        try
-        {
-            path = await SavePathResolver(suggested);
-        }
-        catch (Exception ex)
-        {
-            _appLogger.Error(ex, "Mobile: export save-picker failed");
-            return;
-        }
-        if (string.IsNullOrEmpty(path)) { return; }   // user cancelled
-
         IsBusy = true;
-        StatusMessage = "Exporting…";
         try
         {
+            var suggested = single is not null ? $"{single.Name}.csv" : "daqifi-sessions.csv";
+            string? path;
+            try
+            {
+                path = await SavePathResolver(suggested);
+            }
+            catch (Exception ex)
+            {
+                _appLogger.Error(ex, "Mobile: export save-picker failed");
+                StatusMessage = "Unable to open the export picker.";
+                return;
+            }
+            if (string.IsNullOrEmpty(path)) { return; }   // user cancelled / no local path
+
+            StatusMessage = "Exporting…";
             await Task.Run(() =>
             {
                 var exporter = new OptimizedLoggingSessionExporter();
