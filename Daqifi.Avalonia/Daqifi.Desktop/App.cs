@@ -175,7 +175,15 @@ public static class App
         // Start holding any sitting HID bootloaders app-wide, right away — before the user opens the
         // connection dialog — so a device left in bootloader mode can't selective-suspend/wedge (#568)
         // while it waits. The watcher runs for the app's lifetime.
-        ServiceProvider.GetRequiredService<IBootloaderWatcher>().Start();
+        //
+        // Skipped in test/tooling mode (like the message-box service above): a headless/automation
+        // boot has no reason to start hardware discovery, and Start() takes an *exclusive* HID handle
+        // on any device sitting in bootloader mode. Gating the resolve too means the watcher (and its
+        // HID discovery) is never even constructed under DAQIFI_TEST_MODE. (#18)
+        if (!IsTestMode)
+        {
+            ServiceProvider.GetRequiredService<IBootloaderWatcher>().Start();
+        }
 
         // Apply database migrations before any DB access.
         // Temporarily switch to OnExplicitShutdown so closing the migration

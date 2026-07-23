@@ -49,15 +49,45 @@ public static class AppDataPaths
     public static bool IsElevated { get; } = ComputeIsElevated();
 
     /// <summary>
-    /// Root DAQiFi data directory for the current elevation/test context. Per-user when the
-    /// process is un-elevated or in test mode; machine-wide otherwise.
+    /// Root DAQiFi data directory for the current elevation/test context. Honors an explicit
+    /// <c>DAQIFI_DATA_DIR</c> override (used verbatim) when set; otherwise per-user when the
+    /// process is un-elevated or in test mode, and machine-wide otherwise. The override lets a
+    /// test/tooling boot (e.g. the parity-audit capture harness) point the database and logs at
+    /// an isolated throwaway directory so it never reads or migrates the developer's real
+    /// <c>DAQiFiDatabase.db</c>. Mirrors <see cref="TestExportPath"/>: a one-liner the harness
+    /// sets on the child process, impossible to trigger accidentally in production (the variable
+    /// is never set there).
     /// </summary>
     // @port: Daqifi.Desktop.Common.AppDataPaths.DataDirectory
-    public static string DataDirectory { get; } = Path.Combine(
-        Environment.GetFolderPath(IsTestMode || !IsElevated
-            ? Environment.SpecialFolder.LocalApplicationData
-            : Environment.SpecialFolder.CommonApplicationData),
-        "DAQiFi");
+    public static string DataDirectory { get; } = ResolveDataDirectory();
+
+    // Downstream addition (no upstream counterpart): resolves the data root, preferring the
+    // DAQIFI_DATA_DIR override before falling back to the elevation/test-mode default. Kept as a
+    // method (not an inline initializer) so the override branch can absolute-ise and fail safe.
+    private static string ResolveDataDirectory()
+    {
+        var overrideDir = Environment.GetEnvironmentVariable("DAQIFI_DATA_DIR");
+        if (!string.IsNullOrWhiteSpace(overrideDir))
+        {
+            try
+            {
+                // Absolute-ise so a relative override resolves deterministically rather than
+                // against the GUI process's incidental working directory.
+                return Path.GetFullPath(overrideDir.Trim());
+            }
+            catch
+            {
+                // A malformed override (e.g. invalid path characters) must not crash startup
+                // before logging is even up — fall through to the default location.
+            }
+        }
+
+        return Path.Combine(
+            Environment.GetFolderPath(IsTestMode || !IsElevated
+                ? Environment.SpecialFolder.LocalApplicationData
+                : Environment.SpecialFolder.CommonApplicationData),
+            "DAQiFi");
+    }
 
     /// <summary>Directory where application logs are written.</summary>
     // @port: Daqifi.Desktop.Common.AppDataPaths.LogDirectory
