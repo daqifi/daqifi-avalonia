@@ -166,8 +166,14 @@ public partial class LoggedSessionsMobileViewModel : ObservableObject
                 }
                 if (string.IsNullOrEmpty(path)) { StatusMessage = string.Empty; return; }
 
-                var wrote = await Task.Run(() => ExportOne(single, path!, sessionIndex: 0, totalSessions: 1));
-                StatusMessage = wrote ? "Exported 1 session." : "Nothing to export for that session.";
+                // One exporter for the operation captures the CSV delimiter ONCE (its ctor
+                // reads DaqifiSettings.CsvDelimiter), so toggling the delimiter in Settings
+                // mid-export can't change it under us.
+                var exporter = new OptimizedLoggingSessionExporter();
+                var wrote = await Task.Run(() => ExportOne(exporter, single, path!, sessionIndex: 0, totalSessions: 1));
+                // A listed session always has samples, so a false result here means the export
+                // FAILED (locked/unwritable destination, disk full) — not that it was "empty".
+                StatusMessage = wrote ? "Exported 1 session." : "Couldn't export that session — see logs.";
             }
             else
             {
@@ -187,6 +193,10 @@ public partial class LoggedSessionsMobileViewModel : ObservableObject
                 }
                 if (string.IsNullOrEmpty(folder)) { StatusMessage = string.Empty; return; }
 
+                // One exporter for the WHOLE batch captures the CSV delimiter once (its ctor
+                // reads DaqifiSettings.CsvDelimiter), so toggling the delimiter in Settings
+                // mid-"Export all" can't produce a folder of mixed-delimiter CSVs.
+                var exporter = new OptimizedLoggingSessionExporter();
                 var written = await Task.Run(() =>
                 {
                     var usedNames = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
@@ -197,7 +207,7 @@ public partial class LoggedSessionsMobileViewModel : ObservableObject
                         // never target the same file (the exporter truncates, losing the earlier).
                         var name = UniqueFileName(SafeName(toExport[i]), usedNames);
                         var filepath = Path.Combine(folder!, $"{name}.csv");
-                        if (ExportOne(toExport[i], filepath, sessionIndex: i, totalSessions: toExport.Length)) { count++; }
+                        if (ExportOne(exporter, toExport[i], filepath, sessionIndex: i, totalSessions: toExport.Length)) { count++; }
                     }
                     return count;
                 });
@@ -222,7 +232,7 @@ public partial class LoggedSessionsMobileViewModel : ObservableObject
     /// <summary>Exports one session; returns true only if the export actually completed and
     /// the destination now holds this run's CSV — so the caller reports a truthful count and
     /// never claims "Exported…" for a failed/partial export or clobbers a good prior file.</summary>
-    private static bool ExportOne(LoggingSession session, string filepath, int sessionIndex, int totalSessions)
+    private static bool ExportOne(OptimizedLoggingSessionExporter exporter, LoggingSession session, string filepath, int sessionIndex, int totalSessions)
     {
         // Export to a TEMP file and move it over the destination ONLY when the export
         // actually completed. TryExportLoggingSession returns a real success signal (unlike
@@ -230,10 +240,11 @@ public partial class LoggedSessionsMobileViewModel : ObservableObject
         // PARTIAL temp). So a failure — whether before the first write or after rows have
         // flushed — cleans up the temp and leaves the destination (a good prior export)
         // untouched, and is never counted as success. The non-empty check is a backstop.
+        // The exporter is passed in (one per batch) so the CSV delimiter it captured at
+        // construction stays fixed across a whole "Export all" even if Settings is toggled.
         var tmp = filepath + ".exporting";
         try { if (File.Exists(tmp)) { File.Delete(tmp); } } catch { /* best effort */ }
 
-        var exporter = new OptimizedLoggingSessionExporter();
         var exported = exporter.TryExportLoggingSession(
             session, tmp, exportRelativeTime: false,
             new Progress<int>(), CancellationToken.None,
@@ -253,10 +264,11 @@ public partial class LoggedSessionsMobileViewModel : ObservableObject
             File.Move(tmp, filepath, overwrite: true);
             return true;
         }
-        catch (Exception)
+        catch (Exception ex)
         {
-            // Couldn't place the file (destination locked / permission-denied). Report
-            // failure — the destination keeps its prior contents; drop the orphan temp.
+            // Couldn't place the file (destination locked / permission-denied). Log it (the
+            // caller reports failure), keep the destination's prior contents, drop the temp.
+            AppLogger.Instance.Error(ex, $"Mobile: export move failed (dest={filepath})");
             try { if (File.Exists(tmp)) { File.Delete(tmp); } } catch { /* best effort */ }
             return false;
         }
