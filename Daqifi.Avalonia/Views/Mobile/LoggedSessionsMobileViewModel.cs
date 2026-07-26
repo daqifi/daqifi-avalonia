@@ -292,7 +292,12 @@ public partial class LoggedSessionsMobileViewModel : ObservableObject
     // silently dropped by a re-entry guard the old in-flight load hadn't released yet.
     private int _viewToken;
 
-    [RelayCommand]
+    // AllowConcurrentExecutions: without it, the generated AsyncRelayCommand reports CanExecute=false
+    // while a load's ExecutionTask is in flight, disabling EVERY row's View button — so a
+    // close-then-tap-new-session tap during a slow (>100k-sample) load was still silently dropped
+    // until the stale load finished. The _viewToken makes concurrent loads safe (newest wins, stale
+    // result dropped), so allow them and keep the buttons responsive.
+    [RelayCommand(AllowConcurrentExecutions = true)]
     private async Task ViewSession(LoggingSession? session)
     {
         if (session is null) { return; }
