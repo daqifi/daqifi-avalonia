@@ -292,6 +292,10 @@ public partial class LoggedSessionsMobileViewModel : ObservableObject
     // silently dropped by a re-entry guard the old in-flight load hadn't released yet.
     private int _viewToken;
 
+    // Cancels the previous viewer load when a newer ViewSession/CloseViewer supersedes it, so
+    // AllowConcurrentExecutions can't let rapid tapping pile up unbounded concurrent loads.
+    private CancellationTokenSource? _viewCts;
+
     // AllowConcurrentExecutions: without it, the generated AsyncRelayCommand reports CanExecute=false
     // while a load's ExecutionTask is in flight, disabling EVERY row's View button — so a
     // close-then-tap-new-session tap during a slow (>100k-sample) load was still silently dropped
@@ -302,6 +306,12 @@ public partial class LoggedSessionsMobileViewModel : ObservableObject
     {
         if (session is null) { return; }
         var token = ++_viewToken;   // newest wins; supersedes any in-flight load
+
+        // Bound concurrency: cancel the previous (superseded) load so rapid tapping can't pile up
+        // unbounded concurrent DB reads + plot builds, then adopt a fresh source for this load
+        // (disposed by this invocation's finally).
+        _viewCts?.Cancel();
+        var cts = _viewCts = new CancellationTokenSource();
 
         // Open immediately with a loading state; the DB read + plot build run off-thread below.
         ViewerTitle = session.Name;
@@ -319,7 +329,7 @@ public partial class LoggedSessionsMobileViewModel : ObservableObject
                 return;
             }
 
-            var built = await Task.Run(() => BuildSessionPlot(repo, session.ID));
+            var built = await Task.Run(() => BuildSessionPlot(repo, session.ID, cts.Token), cts.Token);
             // Marshal the plot-model + legend assignment onto the UI thread: SessionPlotModel is
             // bound to the PlotView and ViewerChannels to the legend, and the await may not resume
             // on the UI thread.
@@ -340,6 +350,10 @@ public partial class LoggedSessionsMobileViewModel : ObservableObject
                 ViewerStatus = string.Empty;
             });
         }
+        catch (OperationCanceledException)
+        {
+            // Superseded by a newer view/close (its cancellation) — the newer load owns the UI now.
+        }
         catch (Exception ex)
         {
             _appLogger.Error(ex, "Mobile: failed to load session plot");
@@ -348,9 +362,12 @@ public partial class LoggedSessionsMobileViewModel : ObservableObject
         }
         finally
         {
-            // Only the current load owns the spinner — a superseded load must not clear it (that would
-            // let a stale finally hide a newer load's "Loading…"). Marshalled for the same reason as
-            // the catch: the finally may resume off the UI thread and IsViewerLoading is UI-bound.
+            // We own `cts`: clear the shared field if it's still current, then dispose it (the Task.Run
+            // has finished by the finally, so nothing is still reading its token).
+            if (ReferenceEquals(_viewCts, cts)) { _viewCts = null; }
+            cts.Dispose();
+            // Only the current load owns the spinner — a superseded load must not clear it. Marshalled
+            // because the finally may resume off the UI thread and IsViewerLoading is UI-bound.
             OnUi(() => { if (token == _viewToken) { IsViewerLoading = false; } });
         }
     }
@@ -370,6 +387,7 @@ public partial class LoggedSessionsMobileViewModel : ObservableObject
     private void CloseViewer()
     {
         _viewToken++;             // supersede any in-flight load so its result is dropped
+        _viewCts?.Cancel();       // and cancel it so it stops early instead of running to completion
         IsViewerOpen = false;
         IsViewerLoading = false;  // release the re-entry spinner so the next View tap isn't dropped
         SessionPlotModel = null;
@@ -381,9 +399,10 @@ public partial class LoggedSessionsMobileViewModel : ObservableObject
     /// series per channel from a session's samples, plus the matching legend chips. Runs entirely on
     /// a background thread — the OxyPlot objects are unattached POCOs until assigned to the bound
     /// property. Returns null for a session that yields no plottable channel. </summary>
-    private (PlotModel model, List<ViewerChannel> channels)? BuildSessionPlot(SessionDataRepository repo, int sessionId)
+    private (PlotModel model, List<ViewerChannel> channels)? BuildSessionPlot(SessionDataRepository repo, int sessionId, CancellationToken ct)
     {
         var initial = repo.LoadInitialSession(sessionId);
+        ct.ThrowIfCancellationRequested();
         if (initial.IsEmpty) { return null; }
 
         var points = initial.Points;
@@ -392,6 +411,8 @@ public partial class LoggedSessionsMobileViewModel : ObservableObject
         // strategy the desktop uses). Keep the initial batch if the full-range load found nothing.
         if (initial.TotalSampleCount > SessionDataRepository.INITIAL_LOAD_POINTS)
         {
+            // Skip the expensive multi-query full-range load if a newer view/close already superseded us.
+            ct.ThrowIfCancellationRequested();
             var seeded = new Dictionary<(string deviceSerial, string channelName), List<DataPoint>>();
             foreach (var channel in initial.Channels)
             {
@@ -417,6 +438,7 @@ public partial class LoggedSessionsMobileViewModel : ObservableObject
             }
         }
 
+        ct.ThrowIfCancellationRequested();
         var factory = new PlotModelFactory();
         var model = factory.CreateMainPlotModel();
         var legend = new List<ViewerChannel>();
