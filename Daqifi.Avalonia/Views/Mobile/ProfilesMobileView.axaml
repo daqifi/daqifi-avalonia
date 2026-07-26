@@ -452,7 +452,10 @@
          drawer (which opens while HasProfiles is still false); nested !HasProfiles gates the
          empty case. Nesting ANDs the two conditions without a multi-value converter, and
          mirrors the desktop where the drawer scrim covers the empty state. -->
-    <Panel Grid.Row="0" IsVisible="{Binding !IsDrawerOpen}">
+    <!-- IsHitTestVisible=False: the Panel stays visible (its child only collapses on HasProfiles),
+         so make the whole overlay click-through — it has no interactive elements, and this keeps it
+         from intercepting scroll/taps on the profile list beneath when populated. -->
+    <Panel Grid.Row="0" IsVisible="{Binding !IsDrawerOpen}" IsHitTestVisible="False">
       <StackPanel IsVisible="{Binding !HasProfiles}"
                   HorizontalAlignment="Center" VerticalAlignment="Center"
                   MaxWidth="420" Margin="24" Spacing="16">

@@ -6,12 +6,13 @@
 using System.ComponentModel;
 using Avalonia.Controls;
 using Avalonia.Markup.Xaml;
+using Daqifi.Desktop.ViewModels;
 
 namespace Daqifi.Avalonia.Views.Mobile;
 
 public partial class ProfilesMobileView : UserControl
 {
-    private INotifyPropertyChanged? _vm;
+    private ProfilesPaneViewModel? _vm;
 
     public ProfilesMobileView()
     {
@@ -32,7 +33,7 @@ public partial class ProfilesMobileView : UserControl
     private void HookViewModel()
     {
         if (_vm is not null) { _vm.PropertyChanged -= OnViewModelChanged; }
-        _vm = DataContext as INotifyPropertyChanged;
+        _vm = DataContext as ProfilesPaneViewModel;
         if (_vm is not null) { _vm.PropertyChanged += OnViewModelChanged; }
         ApplyLayout();
     }
@@ -50,7 +51,7 @@ public partial class ProfilesMobileView : UserControl
         var b = Bounds;
         if (b.Width <= 0 || b.Height <= 0) { return; }
         var landscape = b.Width > b.Height;
-        var hasProfiles = _vm?.GetType().GetProperty("HasProfiles")?.GetValue(_vm) is true;
+        var hasProfiles = _vm?.HasProfiles == true;
 
         BottomBar.IsVisible = landscape;
         HeaderAddButton.IsVisible = !landscape;
