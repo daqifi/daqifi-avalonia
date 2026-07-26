@@ -429,6 +429,14 @@ public partial class LoggedSessionsMobileViewModel : ObservableObject
             affirmativeLabel: "DELETE", isDestructive: true);
         if (!confirmed) { return; }
 
+        // Re-verify no logging is active before touching storage — it may have started while the
+        // confirm was open, and a delete must not race an in-flight logging session's writes.
+        if (LoggingManager.Instance.Active)
+        {
+            StatusMessage = "Stop logging before deleting a session.";
+            return;
+        }
+
         var repo = Repo();
         if (repo is null) { StatusMessage = "Delete isn't available on this device."; return; }
 
@@ -468,12 +476,22 @@ public partial class LoggedSessionsMobileViewModel : ObservableObject
             return;
         }
 
-        var total = Sessions.Count;
+        // Snapshot the session set BEFORE prompting so the confirmed count matches exactly what gets
+        // deleted (the collection could change while the confirm is open).
+        var toDelete = Sessions.ToArray();
+        var total = toDelete.Length;
         var confirmed = await ConfirmOverlay.ShowAsync(
             "Delete all sessions?",
             $"Delete all {total} logged session{(total == 1 ? "" : "s")}? This permanently removes their data and can't be undone.",
             affirmativeLabel: "DELETE ALL", isDestructive: true);
         if (!confirmed) { return; }
+
+        // Re-verify logging didn't start while the confirm was open.
+        if (LoggingManager.Instance.Active)
+        {
+            StatusMessage = "Stop logging before deleting all sessions.";
+            return;
+        }
 
         var repo = Repo();
         if (repo is null) { StatusMessage = "Delete isn't available on this device."; return; }
@@ -481,7 +499,6 @@ public partial class LoggedSessionsMobileViewModel : ObservableObject
         IsBusy = true;
         try
         {
-            var toDelete = Sessions.ToArray();
             var deleted = await Task.Run(() =>
             {
                 var succeeded = new List<LoggingSession>(toDelete.Length);
