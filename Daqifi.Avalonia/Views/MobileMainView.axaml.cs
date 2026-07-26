@@ -126,11 +126,16 @@ public partial class MobileMainView : UserControl
     {
         if (sender is not Button { Tag: string url } || string.IsNullOrWhiteSpace(url)) { return; }
 
-        // Restrict to web links — a notification's Link is data, so refuse any non-http(s) scheme.
-        if (!Uri.TryCreate(url, UriKind.Absolute, out var uri)
-            || (uri.Scheme != Uri.UriSchemeHttp && uri.Scheme != Uri.UriSchemeHttps))
+        // Restrict to web links — a notification's Link is data, so refuse a malformed URI or any
+        // non-http(s) scheme. Distinct messages so a bad link is diagnosable.
+        if (!Uri.TryCreate(url, UriKind.Absolute, out var uri))
         {
-            AppLogger.Instance.Warning($"Ignored notification link with unsupported scheme: {url}");
+            AppLogger.Instance.Warning($"Ignored malformed notification link: {url}");
+            return;
+        }
+        if (uri.Scheme != Uri.UriSchemeHttp && uri.Scheme != Uri.UriSchemeHttps)
+        {
+            AppLogger.Instance.Warning($"Ignored notification link with unsupported scheme '{uri.Scheme}': {url}");
             return;
         }
 
