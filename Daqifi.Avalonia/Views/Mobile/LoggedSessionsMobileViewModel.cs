@@ -338,14 +338,25 @@ public partial class LoggedSessionsMobileViewModel : ObservableObject
         catch (Exception ex)
         {
             _appLogger.Error(ex, "Mobile: failed to load session plot");
-            if (token == _viewToken) { ViewerStatus = "Couldn't load this session's data. See logs."; }
+            // Marshalled: the post-await catch may run off the UI thread, and ViewerStatus is UI-bound.
+            OnUi(() => { if (token == _viewToken) { ViewerStatus = "Couldn't load this session's data. See logs."; } });
         }
         finally
         {
             // Only the current load owns the spinner — a superseded load must not clear it (that would
-            // let a stale finally hide a newer load's "Loading…").
-            if (token == _viewToken) { IsViewerLoading = false; }
+            // let a stale finally hide a newer load's "Loading…"). Marshalled for the same reason as
+            // the catch: the finally may resume off the UI thread and IsViewerLoading is UI-bound.
+            OnUi(() => { if (token == _viewToken) { IsViewerLoading = false; } });
         }
+    }
+
+    /// <summary>Runs a UI-bound state mutation on the UI thread — inline if already there, else
+    /// marshalled. Used by the post-await catch/finally, whose continuation isn't guaranteed to
+    /// resume on the UI thread (the success path already marshals via Dispatcher.InvokeAsync).</summary>
+    private static void OnUi(Action action)
+    {
+        if (Dispatcher.UIThread.CheckAccess()) { action(); }
+        else { Dispatcher.UIThread.Post(action); }
     }
 
     /// <summary>Closes the viewer overlay and releases the plot model + legend so a large session's
