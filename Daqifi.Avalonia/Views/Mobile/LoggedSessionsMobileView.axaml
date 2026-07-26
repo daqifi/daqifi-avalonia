@@ -1,6 +1,7 @@
 <UserControl xmlns="https://github.com/avaloniaui"
              xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml"
              xmlns:i="https://github.com/projektanker/icons.avalonia"
+             xmlns:oxy="http://oxyplot.org/avalonia"
              x:Class="Daqifi.Avalonia.Views.Mobile.LoggedSessionsMobileView">
   <!-- Mobile "APP LOGS" half of the Storage tab: the locally-logged session list,
        the phone projection of the desktop Logged Data pane (#7). Read-only list +
@@ -11,19 +12,23 @@
     <ScrollViewer>
       <StackPanel Classes="paneContent" Spacing="14" Margin="16,20">
 
-        <!-- Header + Export All / Refresh -->
-        <Grid ColumnDefinitions="*,Auto">
-          <TextBlock Grid.Column="0" Text="Logged Data"
+        <!-- Header + Refresh / Export all / Delete all. A WrapPanel flows the actions to a second
+             line on a narrow phone instead of overrunning (title sits on its own line above). -->
+        <StackPanel Spacing="10">
+          <TextBlock Text="Logged Data"
                      FontSize="{DynamicResource FontSizeTitle}" FontWeight="Bold"
-                     Foreground="{DynamicResource TextPrimary}" VerticalAlignment="Center" />
-          <StackPanel Grid.Column="1" Orientation="Horizontal" Spacing="8">
+                     Foreground="{DynamicResource TextPrimary}" />
+          <WrapPanel>
             <Button Content="Refresh" Theme="{StaticResource PillButton}"
-                    Command="{Binding ReloadCommand}" MinHeight="36" />
+                    Command="{Binding ReloadCommand}" MinHeight="36" Margin="0,0,8,8" />
             <Button Content="Export all" Theme="{StaticResource AccentPillButton}"
                     Command="{Binding ExportAllCommand}"
-                    IsEnabled="{Binding HasSessions}" MinHeight="36" />
-          </StackPanel>
-        </Grid>
+                    IsEnabled="{Binding HasSessions}" MinHeight="36" Margin="0,0,8,8" />
+            <Button Content="Delete all" Theme="{StaticResource DangerPillButton}"
+                    Command="{Binding DeleteAllCommand}"
+                    IsEnabled="{Binding HasSessions}" MinHeight="36" Margin="0,0,0,8" />
+          </WrapPanel>
+        </StackPanel>
 
         <!-- Empty state (matches the desktop "select a session" empty pane) -->
         <StackPanel IsVisible="{Binding HasNoSessions}" Spacing="10"
@@ -43,32 +48,50 @@
             <DataTemplate>
               <Border Classes="listRow">
                 <Grid ColumnDefinitions="*,Auto" ClipToBounds="True">
-                  <StackPanel Grid.Column="0" Spacing="6" Margin="0,0,10,0">
-                    <TextBlock Text="{Binding Name}"
-                               FontSize="{DynamicResource FontSizeBody}" FontWeight="SemiBold"
-                               Foreground="{DynamicResource TextPrimary}"
-                               TextTrimming="CharacterEllipsis" />
-                    <!-- WrapPanel so a narrow phone flows the chips to a second line
-                         instead of overrunning the Export button. -->
-                    <WrapPanel>
-                      <Border Classes="chip">
-                        <TextBlock Text="{Binding SessionStart}" />
-                      </Border>
-                      <Border Classes="chip" IsVisible="{Binding HasSampleCountDisplay}">
-                        <StackPanel Orientation="Horizontal" Spacing="4">
-                          <TextBlock Text="SAMPLES" />
-                          <TextBlock Text="{Binding SampleCountDisplay}" Classes="chipValue" />
-                        </StackPanel>
-                      </Border>
-                      <Border Classes="chip" IsVisible="{Binding HasFrequencyDisplay}">
-                        <TextBlock Text="{Binding FrequencyDisplay}" />
-                      </Border>
-                    </WrapPanel>
-                  </StackPanel>
-                  <Button Grid.Column="1" Content="Export" Theme="{StaticResource AccentPillButton}"
-                          Command="{Binding $parent[ItemsControl].DataContext.ExportSessionCommand}"
+                  <!-- Tap the session info to open the plot viewer. A flat transparent Button reads
+                       as a row (no chrome) while giving a full-width, touch-friendly hit target;
+                       Export/Delete live in their own column so they don't trigger the viewer. -->
+                  <Button Grid.Column="0"
+                          Command="{Binding $parent[ItemsControl].DataContext.ViewSessionCommand}"
                           CommandParameter="{Binding}"
-                          VerticalAlignment="Center" MinHeight="36" />
+                          Background="Transparent" BorderThickness="0" Padding="0"
+                          HorizontalAlignment="Stretch" HorizontalContentAlignment="Stretch"
+                          Cursor="Hand" ToolTip.Tip="View logged data">
+                    <StackPanel Spacing="6" Margin="0,0,10,0">
+                      <TextBlock Text="{Binding Name}"
+                                 FontSize="{DynamicResource FontSizeBody}" FontWeight="SemiBold"
+                                 Foreground="{DynamicResource TextPrimary}"
+                                 TextTrimming="CharacterEllipsis" />
+                      <!-- WrapPanel so a narrow phone flows the chips to a second line
+                           instead of overrunning the action buttons. -->
+                      <WrapPanel>
+                        <Border Classes="chip">
+                          <TextBlock Text="{Binding SessionStart}" />
+                        </Border>
+                        <Border Classes="chip" IsVisible="{Binding HasSampleCountDisplay}">
+                          <StackPanel Orientation="Horizontal" Spacing="4">
+                            <TextBlock Text="SAMPLES" />
+                            <TextBlock Text="{Binding SampleCountDisplay}" Classes="chipValue" />
+                          </StackPanel>
+                        </Border>
+                        <Border Classes="chip" IsVisible="{Binding HasFrequencyDisplay}">
+                          <TextBlock Text="{Binding FrequencyDisplay}" />
+                        </Border>
+                      </WrapPanel>
+                    </StackPanel>
+                  </Button>
+                  <StackPanel Grid.Column="1" Orientation="Horizontal" Spacing="6"
+                              VerticalAlignment="Center">
+                    <Button Content="Export" Theme="{StaticResource AccentPillButton}"
+                            Command="{Binding $parent[ItemsControl].DataContext.ExportSessionCommand}"
+                            CommandParameter="{Binding}" MinHeight="36" />
+                    <Button Theme="{StaticResource DangerPillButton}"
+                            Command="{Binding $parent[ItemsControl].DataContext.DeleteSessionCommand}"
+                            CommandParameter="{Binding}" MinHeight="36" MinWidth="44"
+                            ToolTip.Tip="Delete session">
+                      <i:Icon Value="mdi-trash-can-outline" FontSize="16" />
+                    </Button>
+                  </StackPanel>
                 </Grid>
               </Border>
             </DataTemplate>
@@ -92,5 +115,88 @@
                    FontSize="{DynamicResource FontSizeLabel}" Foreground="{DynamicResource TextPrimary}" />
       </StackPanel>
     </Border>
+
+    <!-- Session plot viewer (#7 phase-2): full-screen OxyPlot of a tapped session's logged data.
+         The OxyPlot theme StyleInclude is wired app-wide in App.axaml, so PlotView renders on
+         mobile too; pan/zoom work by touch. -->
+    <Grid IsVisible="{Binding IsViewerOpen}" ZIndex="30" Background="{DynamicResource Surface}">
+      <Grid RowDefinitions="Auto,Auto,*" Margin="16,20">
+        <!-- Header: session name + Close -->
+        <Grid Grid.Row="0" ColumnDefinitions="*,Auto">
+          <TextBlock Grid.Column="0" Text="{Binding ViewerTitle}"
+                     FontSize="{DynamicResource FontSizeTitle}" FontWeight="Bold"
+                     Foreground="{DynamicResource TextPrimary}" VerticalAlignment="Center"
+                     TextTrimming="CharacterEllipsis" />
+          <Button Grid.Column="1" Content="Close" Theme="{StaticResource PillButton}"
+                  Command="{Binding CloseViewerCommand}" MinHeight="36" />
+        </Grid>
+
+        <!-- Legend chips (name + colour swatch matching each plotted line) -->
+        <ItemsControl Grid.Row="1" ItemsSource="{Binding ViewerChannels}" Margin="0,12,0,8"
+                      IsVisible="{Binding !ViewerHasStatus}">
+          <ItemsControl.ItemsPanel>
+            <ItemsPanelTemplate><WrapPanel /></ItemsPanelTemplate>
+          </ItemsControl.ItemsPanel>
+          <ItemsControl.ItemTemplate>
+            <DataTemplate>
+              <Border Classes="chip" Margin="0,0,6,6">
+                <StackPanel Orientation="Horizontal" Spacing="6">
+                  <Border Width="12" Height="12" CornerRadius="3"
+                          Background="{Binding Swatch}" VerticalAlignment="Center" />
+                  <TextBlock Text="{Binding Name}" VerticalAlignment="Center" />
+                </StackPanel>
+              </Border>
+            </DataTemplate>
+          </ItemsControl.ItemTemplate>
+        </ItemsControl>
+
+        <!-- Plot, with a centered status/loading overlay for the loading / empty / error states -->
+        <Panel Grid.Row="2">
+          <oxy:PlotView Model="{Binding SessionPlotModel}" Background="Transparent"
+                        IsVisible="{Binding !ViewerHasStatus}" />
+          <StackPanel IsVisible="{Binding ViewerHasStatus}" Spacing="12"
+                      VerticalAlignment="Center" HorizontalAlignment="Center">
+            <ProgressBar IsIndeterminate="{Binding IsViewerLoading}"
+                         IsVisible="{Binding IsViewerLoading}" Width="180" />
+            <TextBlock Text="{Binding ViewerStatus}" TextWrapping="Wrap" MaxWidth="280"
+                       TextAlignment="Center" Foreground="{DynamicResource TextSecondary}"
+                       FontSize="{DynamicResource FontSizeBody}" />
+          </StackPanel>
+        </Panel>
+      </Grid>
+    </Grid>
+
+    <!-- Destructive-action confirm overlay (delete / delete-all), topmost. Bound to the reusable
+         ConfirmOverlayViewModel; the scrim and CANCEL both fire NegativeCommand. -->
+    <Grid IsVisible="{Binding ConfirmOverlay.IsOpen}" ZIndex="40" Background="{DynamicResource Scrim}">
+      <Button Command="{Binding ConfirmOverlay.NegativeCommand}"
+              Background="Transparent" BorderThickness="0"
+              HorizontalAlignment="Stretch" VerticalAlignment="Stretch" />
+      <Border Background="{DynamicResource SurfaceRaised}"
+              BorderBrush="{DynamicResource BorderDim}" BorderThickness="1"
+              CornerRadius="14" Padding="20" MaxWidth="340" Margin="24"
+              VerticalAlignment="Center" HorizontalAlignment="Center">
+        <StackPanel Spacing="14">
+          <TextBlock Text="{Binding ConfirmOverlay.Title}"
+                     FontSize="{DynamicResource FontSizeTitle}" FontWeight="Bold"
+                     Foreground="{DynamicResource TextPrimary}" />
+          <TextBlock Text="{Binding ConfirmOverlay.Message}" TextWrapping="Wrap"
+                     Foreground="{DynamicResource TextSecondary}"
+                     FontSize="{DynamicResource FontSizeBody}" />
+          <StackPanel Orientation="Horizontal" HorizontalAlignment="Right" Spacing="8">
+            <Button Content="CANCEL" Theme="{StaticResource PillButton}"
+                    Command="{Binding ConfirmOverlay.NegativeCommand}" MinHeight="36" />
+            <Button Content="{Binding ConfirmOverlay.AffirmativeLabel}"
+                    Theme="{StaticResource DangerPillButton}"
+                    Command="{Binding ConfirmOverlay.AffirmativeCommand}"
+                    IsVisible="{Binding ConfirmOverlay.AffirmativeIsDestructive}" MinHeight="36" />
+            <Button Content="{Binding ConfirmOverlay.AffirmativeLabel}"
+                    Theme="{StaticResource AccentPillButton}"
+                    Command="{Binding ConfirmOverlay.AffirmativeCommand}"
+                    IsVisible="{Binding !ConfirmOverlay.AffirmativeIsDestructive}" MinHeight="36" />
+          </StackPanel>
+        </StackPanel>
+      </Border>
+    </Grid>
   </Grid>
 </UserControl>

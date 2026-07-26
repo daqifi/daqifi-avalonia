@@ -10,6 +10,19 @@ public partial class LoggedSessionsMobileView : UserControl
     {
         InitializeComponent();
         DataContextChanged += (_, _) => WireResolver();
+
+        // Detach fires only when the shell reassigns the content host (Storage → Channels/Profiles);
+        // release the viewer + pending confirm immediately on that path. The IsVisible-only exit paths
+        // (the Stream/home tab and the APP LOGS↔DEVICE LOGS pivot don't detach) are instead covered by
+        // Reload()'s on-re-entry reset, so returning to Storage always shows the fresh list.
+        DetachedFromVisualTree += (_, _) =>
+        {
+            if (DataContext is LoggedSessionsMobileViewModel vm)
+            {
+                vm.ConfirmOverlay.Cancel();
+                vm.CloseViewerCommand.Execute(null);
+            }
+        };
     }
 
     // The VM owns the export logic but not the platform picker; the view (which has
