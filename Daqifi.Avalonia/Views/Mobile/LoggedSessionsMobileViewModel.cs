@@ -286,10 +286,17 @@ public partial class LoggedSessionsMobileViewModel : ObservableObject
     /// <see cref="PlotModelFactory"/>). Small sessions plot their full initial batch; large ones use
     /// the full-range downsampled load (~3000 pts/channel) so the phone never materializes millions
     /// of rows. Failures and empty sessions surface on the viewer status line, never thrown.</summary>
+    // Monotonic token: each ViewSession/CloseViewer bumps it so an off-thread load can tell whether
+    // it is still the current one. Supersedes a stale load (so it can't clobber a newer viewer) AND,
+    // with CloseViewer resetting IsViewerLoading, prevents a close-then-tap-new-session from being
+    // silently dropped by a re-entry guard the old in-flight load hadn't released yet.
+    private int _viewToken;
+
     [RelayCommand]
     private async Task ViewSession(LoggingSession? session)
     {
-        if (session is null || IsViewerLoading) { return; }
+        if (session is null) { return; }
+        var token = ++_viewToken;   // newest wins; supersedes any in-flight load
 
         // Open immediately with a loading state; the DB read + plot build run off-thread below.
         ViewerTitle = session.Name;
@@ -313,9 +320,9 @@ public partial class LoggedSessionsMobileViewModel : ObservableObject
             // on the UI thread.
             await Dispatcher.UIThread.InvokeAsync(() =>
             {
-                // The user may have closed the viewer (or opened a different session) while this load
-                // ran off-thread — don't clobber that newer state with this stale result.
-                if (!IsViewerOpen) { return; }
+                // A newer ViewSession or a CloseViewer ran while this load was off-thread — its token
+                // bump means this result is stale, so drop it rather than clobber the newer state.
+                if (token != _viewToken) { return; }
 
                 if (built is null)
                 {
@@ -331,11 +338,13 @@ public partial class LoggedSessionsMobileViewModel : ObservableObject
         catch (Exception ex)
         {
             _appLogger.Error(ex, "Mobile: failed to load session plot");
-            ViewerStatus = "Couldn't load this session's data. See logs.";
+            if (token == _viewToken) { ViewerStatus = "Couldn't load this session's data. See logs."; }
         }
         finally
         {
-            IsViewerLoading = false;
+            // Only the current load owns the spinner — a superseded load must not clear it (that would
+            // let a stale finally hide a newer load's "Loading…").
+            if (token == _viewToken) { IsViewerLoading = false; }
         }
     }
 
@@ -344,7 +353,9 @@ public partial class LoggedSessionsMobileViewModel : ObservableObject
     [RelayCommand]
     private void CloseViewer()
     {
+        _viewToken++;             // supersede any in-flight load so its result is dropped
         IsViewerOpen = false;
+        IsViewerLoading = false;  // release the re-entry spinner so the next View tap isn't dropped
         SessionPlotModel = null;
         ViewerChannels.Clear();
         ViewerStatus = string.Empty;
@@ -421,7 +432,9 @@ public partial class LoggedSessionsMobileViewModel : ObservableObject
     [RelayCommand]
     private async Task DeleteSession(LoggingSession? session)
     {
-        if (session is null || IsBusy) { return; }
+        // Also bail if a confirm is already open, so a second destructive prompt can't be stacked
+        // (e.g. via keyboard/switch-access reaching a delete button behind the scrim).
+        if (session is null || IsBusy || ConfirmOverlay.IsOpen) { return; }
 
         var confirmed = await ConfirmOverlay.ShowAsync(
             "Delete session?",
@@ -467,7 +480,8 @@ public partial class LoggedSessionsMobileViewModel : ObservableObject
     [RelayCommand]
     private async Task DeleteAll()
     {
-        if (IsBusy || Sessions.Count == 0) { return; }
+        // Also bail if a confirm is already open, so overlapping destructive prompts can't stack.
+        if (IsBusy || Sessions.Count == 0 || ConfirmOverlay.IsOpen) { return; }
 
         // Refuse while a logging session is writing — a bulk delete must not race active writes.
         if (LoggingManager.Instance.Active)
