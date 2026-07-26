@@ -40,9 +40,14 @@ public partial class ProfilesMobileView : UserControl
 
     private void OnViewModelChanged(object? sender, PropertyChangedEventArgs e)
     {
-        // null name = "everything changed"; HasProfiles flips the empty↔populated layout;
-        // IsDrawerOpen gates the bottom bar so its ADD can't re-fire over the open form.
-        if (e.PropertyName is null or "HasProfiles" or "Profiles" or "IsDrawerOpen") { ApplyLayout(); }
+        // Null OR empty PropertyName = "everything changed" (the INotifyPropertyChanged
+        // convention); HasProfiles flips the empty↔populated layout; IsDrawerOpen gates the
+        // bottom bar and header so their ADD can't re-fire over the open form.
+        if (string.IsNullOrEmpty(e.PropertyName)
+            || e.PropertyName is "HasProfiles" or "Profiles" or "IsDrawerOpen")
+        {
+            ApplyLayout();
+        }
     }
 
     /// <summary>Landscape → desktop-style bottom status bar + ADD in the bar,
