@@ -80,20 +80,20 @@ These cost real time to discover — leaving them here:
 ## Side effects (both harnesses boot the REAL app)
 
 Faithful captures require booting the real app's DI + services, so a capture run has the
-same side effects as launching the app once. Two to be aware of:
+same side effects as launching the app once. The Avalonia harness is isolated from your
+real state (both gaps below were closed in issue #18):
 
-- **Shared per-user data dir / DB.** `DAQIFI_TEST_MODE=1` is set, but the app's data dir
-  resolves to `%LocalAppData%\DAQiFi` for any un-elevated run (test or not), so the harness
-  reads/migrates the **same** `DAQiFiDatabase.db` a normal dev run uses. Running a capture
-  before you first launch the app can apply a pending EF migration to your real DB, and
-  running it while your own debug instance holds the DB open can surface as "database is
-  locked". Nothing is destroyed, but it is not isolated. (A proper `DAQIFI_DATA_DIR`-style
-  override belongs in the app — see the follow-up issue.)
-- **Bootloader HID hold (low).** The app starts `BootloaderWatcher`, which takes an
-  *exclusive* HID handle on any device sitting in HID-bootloader mode. It's released on
-  the harness's `desktop.Shutdown()` (a couple of seconds), but **don't run a capture at
-  the exact moment another tool is flashing a device over the HID bootloader** — the two
-  would contend for the handle.
+- **Isolated data dir / DB.** The harness sets `DAQIFI_DATA_DIR` to a throwaway `.appdata`
+  subdirectory of the run's output dir, which the app honors before migrating, so a capture run
+  reads/migrates an isolated DB and never touches the `%LocalAppData%\DAQiFi\DAQiFiDatabase.db`
+  a normal dev run uses. (It's cleaned with the rest of the output dir; delete it to reset.)
+- **No hardware discovery.** Under `DAQIFI_TEST_MODE=1` the app skips starting
+  `BootloaderWatcher`, so a capture no longer takes an *exclusive* HID handle on a device
+  sitting in bootloader mode — it's safe to run alongside a HID-bootloader flash.
+
+> Note: the **WPF** harness boots the sibling `daqifi-desktop` app, which does not have these
+> overrides, so it still shares the real per-user DB. Prefer running it before your first
+> normal launch of the day, or against a throwaway `%LocalAppData%\DAQiFi`.
 
 ## Limitations
 

@@ -12,8 +12,8 @@ using Projektanker.Icons.Avalonia.MaterialDesign;
 // Parity-audit screenshot harness for the Avalonia port. Boots the REAL
 // Daqifi.Avalonia app headless (Skia backend, no display) via the app's own DI
 // bootstrap, then captures faithful PNGs of every desktop pane/drawer and the
-// mobile shell in both orientations. DAQIFI_TEST_MODE=1 suppresses modal dialogs
-// and uses the per-user data dir.
+// mobile shell in both orientations. DAQIFI_TEST_MODE=1 suppresses modal dialogs and
+// skips hardware discovery; DAQIFI_DATA_DIR isolates the DB/logs to a throwaway dir.
 //
 // Usage:  AvaloniaCapture <output-dir>
 // The output dir receives desktop-*.png and mobile-*.png. See ../README.md.
@@ -27,10 +27,6 @@ internal static class AvaloniaCapture
     public static void Main(string[] args)
     {
         _outDir = args.Length > 0 ? args[0] : Path.Combine(AppContext.BaseDirectory, "out");
-        Directory.CreateDirectory(_outDir);
-
-        Environment.SetEnvironmentVariable("DAQIFI_TEST_MODE", "1");
-        IconProvider.Current.Register<MaterialDesignIconProvider>();
 
         var desktop = new ClassicDesktopStyleApplicationLifetime
         {
@@ -39,12 +35,36 @@ internal static class AvaloniaCapture
         };
         try
         {
+            // Setup lives inside the try so any path error (a bad output-dir arg, GetFullPath on a
+            // malformed value) reports the same "[FAIL]" + exit-1 controlled failure as a boot crash,
+            // instead of an uncaught throw that bypasses the harness's diagnostic in a CI/tooling run.
+            Directory.CreateDirectory(_outDir);
+
+            Environment.SetEnvironmentVariable("DAQIFI_TEST_MODE", "1");
+            // Isolate all app data (DB + logs) into a throwaway dir under the run's own output dir, so
+            // a capture never reads or migrates the developer's real DAQiFiDatabase.db (#18:
+            // DAQIFI_DATA_DIR override). Kept under _outDir (rather than the system temp) because it's
+            // always a valid path on every host the harness runs on — notably WSL, where
+            // Path.GetTempPath() returns a Windows path the Linux runtime can't resolve. Must be set
+            // before the app bootstrap first touches AppDataPaths below. GetFullPath so the override is
+            // always absolute — the app resolves a relative override against the cwd, so an absolute
+            // value keeps the isolated DB unambiguous and co-located with the (same-cwd) PNG output.
+            Environment.SetEnvironmentVariable(
+                "DAQIFI_DATA_DIR", Path.GetFullPath(Path.Combine(_outDir, ".appdata")));
+            IconProvider.Current.Register<MaterialDesignIconProvider>();
+
             BuildAvaloniaApp().SetupWithLifetime(desktop);
             Console.WriteLine("[OK]   App boot completed");
         }
         catch (Exception ex)
         {
-            Console.WriteLine($"[FAIL] App boot: {ex.GetType().Name}: {ex.Message}");
+            // Print the FULL exception chain (ToString), not just Message. A bad DAQIFI_DATA_DIR
+            // surfaces here as a doubly-wrapped TypeInitializationException (AppDataPaths' static
+            // initializer throws inside App's, since the diagnostic is built during type-init) whose
+            // own Message is generic ("The type initializer for ... threw"); the actionable message —
+            // the env var name and offending value — is on the innermost InvalidOperationException.
+            // ToString() unwraps the whole chain so that diagnostic is actually visible.
+            Console.WriteLine($"[FAIL] App boot: {ex}");
             Environment.ExitCode = 1;
             return;
         }

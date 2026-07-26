@@ -49,15 +49,66 @@ public static class AppDataPaths
     public static bool IsElevated { get; } = ComputeIsElevated();
 
     /// <summary>
-    /// Root DAQiFi data directory for the current elevation/test context. Per-user when the
-    /// process is un-elevated or in test mode; machine-wide otherwise.
+    /// Root DAQiFi data directory for the current elevation/test context. Honors an explicit
+    /// <c>DAQIFI_DATA_DIR</c> override (absolute-ised) when set; otherwise per-user when the
+    /// process is un-elevated or in test mode, and machine-wide otherwise. The override lets a
+    /// test/tooling boot (e.g. the parity-audit capture harness) point the database and logs at
+    /// an isolated throwaway directory so it never reads or migrates the developer's real
+    /// <c>DAQiFiDatabase.db</c>. Mirrors <see cref="TestExportPath"/>: a one-liner the harness
+    /// sets on the child process, impossible to trigger accidentally in production (the variable
+    /// is never set there).
     /// </summary>
     // @port: Daqifi.Desktop.Common.AppDataPaths.DataDirectory
-    public static string DataDirectory { get; } = Path.Combine(
-        Environment.GetFolderPath(IsTestMode || !IsElevated
-            ? Environment.SpecialFolder.LocalApplicationData
-            : Environment.SpecialFolder.CommonApplicationData),
-        "DAQiFi");
+    public static string DataDirectory { get; } = ResolveDataDirectory();
+
+    // Downstream addition (no upstream counterpart): resolves the data root, preferring the
+    // DAQIFI_DATA_DIR override before falling back to the elevation/test-mode default.
+    private static string ResolveDataDirectory()
+    {
+        var overrideDir = Environment.GetEnvironmentVariable("DAQIFI_DATA_DIR");
+        if (!string.IsNullOrWhiteSpace(overrideDir))
+        {
+            // An explicit override fails CLOSED with a DIAGNOSTIC error. Absolute-ise it (a relative
+            // value resolves against the current working directory — the conventional CLI behavior;
+            // callers such as the capture harness pass an absolute path, and a relative one stays
+            // co-located with the harness's own cwd-relative output since the harness IS this
+            // process) and eagerly create it, so any bad value — invalid path syntax, a missing
+            // drive, an inaccessible root, or a path that is actually a file — surfaces as a clear
+            // exception naming the env var and value. The whole point of the override is to NOT
+            // touch the developer's real DAQiFiDatabase.db, so a bad override must fail loudly:
+            // neither a silent fallback to the real store (a headless test would then read/migrate
+            // it) nor an opaque type-init/CreateDirectory crash deep in startup is acceptable. The
+            // default path below is unchanged — App.Initialize/InitializeMobile create it as before.
+            try
+            {
+                var resolved = Path.GetFullPath(overrideDir.Trim());
+                Directory.CreateDirectory(resolved);
+                // CreateDirectory also succeeds on a pre-existing but read-only directory, so probe
+                // actual writability with a create-and-delete temp file. Without this, an ACL/
+                // permission problem would defer the failure downstream to SQLite/logging and lose
+                // this DAQIFI_DATA_DIR-specific diagnostic — the whole point of failing closed here.
+                var probe = Path.Combine(resolved, ".daqifi-write-probe-" + Guid.NewGuid().ToString("N"));
+                File.WriteAllText(probe, string.Empty);
+                // The successful write already proved the directory is writable; deleting the probe
+                // is best-effort cleanup. A transient delete failure must NOT abort startup (nor is a
+                // leftover dotfile in a throwaway/override dir worth crashing over), so swallow it.
+                try { File.Delete(probe); } catch { /* best-effort cleanup */ }
+                return resolved;
+            }
+            catch (Exception ex)
+            {
+                throw new InvalidOperationException(
+                    $"DAQIFI_DATA_DIR is set to '{overrideDir}', which could not be used as a " +
+                    "writable application data directory. Set it to a writable directory path, or unset it.", ex);
+            }
+        }
+
+        return Path.Combine(
+            Environment.GetFolderPath(IsTestMode || !IsElevated
+                ? Environment.SpecialFolder.LocalApplicationData
+                : Environment.SpecialFolder.CommonApplicationData),
+            "DAQiFi");
+    }
 
     /// <summary>Directory where application logs are written.</summary>
     // @port: Daqifi.Desktop.Common.AppDataPaths.LogDirectory
