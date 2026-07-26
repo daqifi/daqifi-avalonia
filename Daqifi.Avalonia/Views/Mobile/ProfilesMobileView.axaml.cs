@@ -55,14 +55,19 @@ public partial class ProfilesMobileView : UserControl
         var hasProfiles = _vm?.HasProfiles == true;
         var drawerOpen = _vm?.IsDrawerOpen == true;
 
-        // Bottom bar mirrors the desktop pane's bar in landscape — but hide it while the inline
-        // drawer is open: otherwise its "+ ADD PROFILE" stays tappable and re-firing OpenNewDrawer
-        // would silently discard the in-progress form (on desktop the drawer is a full-pane overlay
-        // that covers its own bar, so re-firing is physically unreachable).
+        // Both the landscape bottom bar and the portrait header carry a "+ ADD PROFILE" that
+        // re-fires OpenNewDrawer — which silently discards the in-progress form (or abandons a
+        // pending EDIT without persisting it). On desktop the drawer is a full-pane overlay that
+        // covers the whole pane, so re-firing is physically unreachable. Reproduce that here by
+        // hiding BOTH the bottom bar and the header whenever the drawer is open: the fixed Row-0
+        // header would otherwise stay pinned on-screen the entire time the drawer is open, and a
+        // landscape→portrait rotation mid-EDIT would re-expose the header ADD. HeaderAddButton's
+        // own !landscape gate still applies (inside the header) for the drawer-closed case.
         BottomBar.IsVisible = landscape && !drawerOpen;
         HeaderAddButton.IsVisible = !landscape;
         // Header shows in portrait always, and in landscape only when populated (the desktop
-        // empty-state has no top header — dropping it lets the centered empty-state own the space).
-        HeaderPanel.IsVisible = !landscape || hasProfiles;
+        // empty-state has no top header — dropping it lets the centered empty-state own the space);
+        // hidden while the drawer is open (see above) so its ADD can't re-fire over the form.
+        HeaderPanel.IsVisible = (!landscape || hasProfiles) && !drawerOpen;
     }
 }
