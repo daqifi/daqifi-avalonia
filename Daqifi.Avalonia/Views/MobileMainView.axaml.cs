@@ -5,6 +5,7 @@ using Avalonia.Interactivity;
 using Avalonia.Layout;
 using Avalonia.Media;
 using Daqifi.Avalonia.Views.Mobile;
+using Daqifi.Desktop.Common.Loggers;
 using Daqifi.Desktop.ViewModels;
 
 namespace Daqifi.Avalonia.Views;
@@ -30,9 +31,16 @@ public partial class MobileMainView : UserControl
     private Button[] _navButtons = Array.Empty<Button>();
     private Button[] _railButtons = Array.Empty<Button>();
 
+    // Standalone, WPF-free notifications VM (like the mobile SettingsViewModel). Shared between the
+    // top-bar bell badge and the Notifications overlay list; starts empty (no mobile producer yet, #11).
+    private readonly MobileNotificationsViewModel _notifications = new();
+
     public MobileMainView()
     {
         InitializeComponent();
+        // Both the bell badge (in TopCommandBar) and the overlay list bind to the one VM instance.
+        TopCommandBar.DataContext = _notifications;
+        NotificationsOverlay.DataContext = _notifications;
         _navButtons = [NavStream, NavStorage, NavChannels, NavProfiles];
         _railButtons = [RailStream, RailStorage, RailChannels, RailProfiles];
         ShowStream();
@@ -89,12 +97,71 @@ public partial class MobileMainView : UserControl
     /// DaqifiSettings.Instance, no DaqifiViewModel host needed).</summary>
     private void OnSettings(object? sender, RoutedEventArgs e)
     {
+        // Only one full-screen overlay at a time — close the other so keyboard/switch-access
+        // navigation can't leave both stacked (their scrims block touch but not Tab focus).
+        NotificationsOverlay.IsVisible = false;
         SettingsOverlay.DataContext ??= new SettingsViewModel();
         SettingsOverlay.IsVisible = true;
     }
 
     private void OnCloseSettings(object? sender, RoutedEventArgs e) =>
         SettingsOverlay.IsVisible = false;
+
+    /// <summary>Opens the notifications overlay (#11) — the mobile analog of the desktop bell +
+    /// flyout. The overlay's DataContext (the shared notifications VM) is set in the ctor.</summary>
+    private void OnNotifications(object? sender, RoutedEventArgs e)
+    {
+        // Mutually exclusive with the settings overlay (see OnSettings).
+        SettingsOverlay.IsVisible = false;
+        NotificationsOverlay.IsVisible = true;
+    }
+
+    private void OnCloseNotifications(object? sender, RoutedEventArgs e) =>
+        NotificationsOverlay.IsVisible = false;
+
+    /// <summary>Opens a notification's link (e.g. a firmware "learn more") via the platform launcher,
+    /// mirroring the desktop flyout's link button. Only http/https schemes are launched (never file:,
+    /// intent:, javascript:, …); failures are logged, not swallowed, and never crash the shell.</summary>
+    private async void OnNotificationLink(object? sender, RoutedEventArgs e)
+    {
+        if (sender is not Button { Tag: string url } || string.IsNullOrWhiteSpace(url)) { return; }
+
+        // Restrict to web links — a notification's Link is data, so refuse a malformed URI or any
+        // non-http(s) scheme. Distinct messages so a bad link is diagnosable.
+        if (!Uri.TryCreate(url, UriKind.Absolute, out var uri))
+        {
+            AppLogger.Instance.Warning($"Ignored malformed notification link: {url}");
+            return;
+        }
+        if (uri.Scheme != Uri.UriSchemeHttp && uri.Scheme != Uri.UriSchemeHttps)
+        {
+            AppLogger.Instance.Warning($"Ignored notification link with unsupported scheme '{uri.Scheme}': {url}");
+            return;
+        }
+
+        try
+        {
+            var launcher = TopLevel.GetTopLevel(this)?.Launcher;
+            if (launcher is null)
+            {
+                AppLogger.Instance.Warning("No platform launcher available to open a notification link.");
+                return;
+            }
+            // LaunchUriAsync returns false (it does NOT throw) when the OS has no handler for the URI —
+            // e.g. no browser / no xdg-open association, or a locked-down device. Log that too, so the
+            // most common real failure mode isn't silently swallowed.
+            var launched = await launcher.LaunchUriAsync(uri);
+            if (!launched)
+            {
+                AppLogger.Instance.Warning($"Platform launcher could not open notification link: {url}");
+            }
+        }
+        catch (Exception ex)
+        {
+            // Best-effort: a launch failure must not crash the shell, but log it for diagnosis.
+            AppLogger.Instance.Error(ex, $"Failed to open notification link: {url}");
+        }
+    }
 
     private void OnStream(object? sender, RoutedEventArgs e) => ShowStream();
 

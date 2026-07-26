@@ -77,14 +77,31 @@
   <Grid ColumnDefinitions="Auto,*" RowDefinitions="Auto,*,Auto" Background="{DynamicResource Surface}">
 
     <!-- Top command bar (desktop chrome parity) — thin bar with right-aligned
-         settings + help. Settings mirrors the desktop settings drawer (CSV
-         delimiter). debug/notifications stay desktop-only: debug is a desktop
-         concern, and notifications need the desktop DaqifiViewModel's device
-         notification source the mobile shell doesn't run (#11). -->
+         notifications + settings + help. Notifications mirrors the desktop bell +
+         flyout; settings mirrors the desktop settings drawer (CSV delimiter). debug
+         stays desktop-only. The bar's DataContext is the notifications VM (set in
+         code-behind) so the bell badge binds to its live count (#11). -->
     <Border Grid.Row="0" Grid.ColumnSpan="2"
             Background="{DynamicResource Surface}"
             BorderBrush="{DynamicResource BorderDim}" BorderThickness="0,0,0,1">
-      <StackPanel Orientation="Horizontal" HorizontalAlignment="Right" Margin="0,4">
+      <StackPanel x:Name="TopCommandBar" Orientation="Horizontal"
+                  HorizontalAlignment="Right" Margin="0,4">
+        <Button Classes="topCommand" Click="OnNotifications" ToolTip.Tip="Notifications">
+          <Panel>
+            <StackPanel Orientation="Horizontal" Spacing="4">
+              <i:Icon Value="mdi-bell-outline" FontSize="18" VerticalAlignment="Center" />
+              <TextBlock Text="notifications" VerticalAlignment="Center" />
+            </StackPanel>
+            <!-- Unread-count badge, mirrors the desktop bell badge (StatusRed); hidden at 0 -->
+            <Border IsVisible="{Binding HasNotifications}"
+                    Background="{DynamicResource StatusRed}" CornerRadius="7.5"
+                    MinWidth="15" Height="15" Padding="3,0"
+                    HorizontalAlignment="Right" VerticalAlignment="Top" Margin="0,-2,-2,0">
+              <TextBlock Text="{Binding NotificationCount}" FontSize="9" FontWeight="Bold"
+                         Foreground="White" HorizontalAlignment="Center" VerticalAlignment="Center" />
+            </Border>
+          </Panel>
+        </Button>
         <Button Classes="topCommand" Click="OnSettings">
           <StackPanel Orientation="Horizontal" Spacing="4">
             <i:Icon Value="mdi-cog" FontSize="18" VerticalAlignment="Center" />
@@ -194,6 +211,79 @@
             </StackPanel>
           </Border>
         </StackPanel>
+      </Border>
+    </Grid>
+
+    <!-- Notifications overlay (#11) — the phone analog of the desktop bell's flyout: a
+         right drawer over a scrim listing device/update notifications, or an empty state.
+         Opened by the top-bar bell; its DataContext (the notifications VM) is shared with
+         the bell badge and set once in code-behind. Starts empty — the desktop notification
+         producers (firmware coordinator / DaqifiViewModel) don't run on mobile, so a mobile
+         source is a follow-up; the VM's producer API is ready for it. -->
+    <Grid x:Name="NotificationsOverlay" Grid.ColumnSpan="2" Grid.RowSpan="3"
+          IsVisible="False" ZIndex="30">
+      <Button Background="{DynamicResource Scrim}" HorizontalAlignment="Stretch"
+              VerticalAlignment="Stretch" BorderThickness="0" Click="OnCloseNotifications" />
+      <Border HorizontalAlignment="Right" VerticalAlignment="Stretch" Width="320"
+              Background="{DynamicResource SurfaceRaised}"
+              BorderBrush="{DynamicResource BorderDim}" BorderThickness="1,0,0,0">
+        <Grid Margin="24,28,24,24" RowDefinitions="Auto,Auto,*">
+          <Grid Grid.Row="0" ColumnDefinitions="*,Auto">
+            <StackPanel Grid.Column="0">
+              <TextBlock Text="ALERTS" FontSize="9" FontWeight="Bold"
+                         Foreground="{DynamicResource TextTertiary}" />
+              <TextBlock Text="Notifications" FontSize="22" FontWeight="Light"
+                         Foreground="{DynamicResource TextPrimary}" Margin="0,2,0,0" />
+            </StackPanel>
+            <Button Grid.Column="1" Content="&#xD7;" FontSize="18"
+                    Background="Transparent" BorderThickness="0" Cursor="Hand"
+                    Foreground="{DynamicResource TextSecondary}" Click="OnCloseNotifications" />
+          </Grid>
+
+          <Rectangle Grid.Row="1" Height="1" Fill="{DynamicResource BorderDim}" Margin="0,18,0,0" />
+
+          <!-- Empty state -->
+          <StackPanel Grid.Row="2" IsVisible="{Binding HasNoNotifications}" Spacing="10"
+                      VerticalAlignment="Center" HorizontalAlignment="Center" Margin="0,0,0,40">
+            <i:Icon Value="mdi-bell-check-outline" FontSize="34" HorizontalAlignment="Center"
+                    Foreground="{DynamicResource TextTertiary}" />
+            <TextBlock Text="You're all caught up" HorizontalAlignment="Center" FontSize="14"
+                       FontWeight="SemiBold" Foreground="{DynamicResource TextSecondary}" />
+            <TextBlock Text="Device and firmware alerts will appear here."
+                       HorizontalAlignment="Center" TextAlignment="Center" TextWrapping="Wrap"
+                       MaxWidth="240" FontSize="11" Foreground="{DynamicResource TextTertiary}" />
+          </StackPanel>
+
+          <!-- Notification list -->
+          <ScrollViewer Grid.Row="2" IsVisible="{Binding HasNotifications}" Margin="0,16,0,0">
+            <ItemsControl ItemsSource="{Binding NotificationList}">
+              <ItemsControl.ItemsPanel>
+                <ItemsPanelTemplate>
+                  <VirtualizingStackPanel />
+                </ItemsPanelTemplate>
+              </ItemsControl.ItemsPanel>
+              <ItemsControl.ItemTemplate>
+                <DataTemplate>
+                  <Border Background="{DynamicResource Surface}"
+                          BorderBrush="{DynamicResource BorderDim}" BorderThickness="1"
+                          CornerRadius="4" Padding="12" Margin="0,0,0,10">
+                    <StackPanel Spacing="8">
+                      <TextBlock Text="{Binding Message}" TextWrapping="Wrap"
+                                 FontSize="12" Foreground="{DynamicResource TextPrimary}" />
+                      <!-- Optional link (e.g. a firmware "learn more"), mirrors the desktop flyout;
+                           hidden when the notification has no link. -->
+                      <Button Content="Learn more" Click="OnNotificationLink" Tag="{Binding Link}"
+                              IsVisible="{Binding Link, Converter={x:Static StringConverters.IsNotNullOrEmpty}}"
+                              Background="Transparent" BorderThickness="0" Padding="0"
+                              Foreground="{DynamicResource Accent}" Cursor="Hand"
+                              HorizontalAlignment="Left" />
+                    </StackPanel>
+                  </Border>
+                </DataTemplate>
+              </ItemsControl.ItemTemplate>
+            </ItemsControl>
+          </ScrollViewer>
+        </Grid>
       </Border>
     </Grid>
   </Grid>
