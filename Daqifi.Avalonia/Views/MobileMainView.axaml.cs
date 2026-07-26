@@ -5,6 +5,7 @@ using Avalonia.Interactivity;
 using Avalonia.Layout;
 using Avalonia.Media;
 using Daqifi.Avalonia.Views.Mobile;
+using Daqifi.Desktop.Common.Loggers;
 using Daqifi.Desktop.ViewModels;
 
 namespace Daqifi.Avalonia.Views;
@@ -119,18 +120,34 @@ public partial class MobileMainView : UserControl
         NotificationsOverlay.IsVisible = false;
 
     /// <summary>Opens a notification's link (e.g. a firmware "learn more") via the platform launcher,
-    /// mirroring the desktop flyout's link button. Best-effort: a bad URL never crashes the shell.</summary>
+    /// mirroring the desktop flyout's link button. Only http/https schemes are launched (never file:,
+    /// intent:, javascript:, …); failures are logged, not swallowed, and never crash the shell.</summary>
     private async void OnNotificationLink(object? sender, RoutedEventArgs e)
     {
         if (sender is not Button { Tag: string url } || string.IsNullOrWhiteSpace(url)) { return; }
+
+        // Restrict to web links — a notification's Link is data, so refuse any non-http(s) scheme.
+        if (!Uri.TryCreate(url, UriKind.Absolute, out var uri)
+            || (uri.Scheme != Uri.UriSchemeHttp && uri.Scheme != Uri.UriSchemeHttps))
+        {
+            AppLogger.Instance.Warning($"Ignored notification link with unsupported scheme: {url}");
+            return;
+        }
+
         try
         {
-            var top = TopLevel.GetTopLevel(this);
-            if (top?.Launcher is { } launcher) { await launcher.LaunchUriAsync(new Uri(url)); }
+            var launcher = TopLevel.GetTopLevel(this)?.Launcher;
+            if (launcher is null)
+            {
+                AppLogger.Instance.Warning("No platform launcher available to open a notification link.");
+                return;
+            }
+            await launcher.LaunchUriAsync(uri);
         }
-        catch
+        catch (Exception ex)
         {
-            // best-effort: a malformed URL or missing launcher must not crash the shell
+            // Best-effort: a launch failure must not crash the shell, but log it for diagnosis.
+            AppLogger.Instance.Error(ex, $"Failed to open notification link: {url}");
         }
     }
 

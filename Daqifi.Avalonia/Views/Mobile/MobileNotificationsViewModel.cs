@@ -51,7 +51,8 @@ public partial class MobileNotificationsViewModel : ObservableObject
     /// source; the overlay + badge update automatically via the collection-changed handler.</summary>
     public void Add(Notifications notification)
     {
-        if (notification is not null) { OnUi(() => NotificationList.Add(notification)); }
+        // Insert at the top so the newest notification shows first, per the NotificationList contract.
+        if (notification is not null) { OnUi(() => NotificationList.Insert(0, notification)); }
     }
 
     /// <summary>Producer API: remove a notification if present.</summary>
