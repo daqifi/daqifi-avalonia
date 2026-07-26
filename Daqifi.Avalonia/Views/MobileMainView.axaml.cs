@@ -30,9 +30,16 @@ public partial class MobileMainView : UserControl
     private Button[] _navButtons = Array.Empty<Button>();
     private Button[] _railButtons = Array.Empty<Button>();
 
+    // Standalone, WPF-free notifications VM (like the mobile SettingsViewModel). Shared between the
+    // top-bar bell badge and the Notifications overlay list; starts empty (no mobile producer yet, #11).
+    private readonly MobileNotificationsViewModel _notifications = new();
+
     public MobileMainView()
     {
         InitializeComponent();
+        // Both the bell badge (in TopCommandBar) and the overlay list bind to the one VM instance.
+        TopCommandBar.DataContext = _notifications;
+        NotificationsOverlay.DataContext = _notifications;
         _navButtons = [NavStream, NavStorage, NavChannels, NavProfiles];
         _railButtons = [RailStream, RailStorage, RailChannels, RailProfiles];
         ShowStream();
@@ -95,6 +102,14 @@ public partial class MobileMainView : UserControl
 
     private void OnCloseSettings(object? sender, RoutedEventArgs e) =>
         SettingsOverlay.IsVisible = false;
+
+    /// <summary>Opens the notifications overlay (#11) — the mobile analog of the desktop bell +
+    /// flyout. The overlay's DataContext (the shared notifications VM) is set in the ctor.</summary>
+    private void OnNotifications(object? sender, RoutedEventArgs e) =>
+        NotificationsOverlay.IsVisible = true;
+
+    private void OnCloseNotifications(object? sender, RoutedEventArgs e) =>
+        NotificationsOverlay.IsVisible = false;
 
     private void OnStream(object? sender, RoutedEventArgs e) => ShowStream();
 
