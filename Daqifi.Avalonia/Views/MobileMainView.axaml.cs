@@ -147,7 +147,14 @@ public partial class MobileMainView : UserControl
                 AppLogger.Instance.Warning("No platform launcher available to open a notification link.");
                 return;
             }
-            await launcher.LaunchUriAsync(uri);
+            // LaunchUriAsync returns false (it does NOT throw) when the OS has no handler for the URI —
+            // e.g. no browser / no xdg-open association, or a locked-down device. Log that too, so the
+            // most common real failure mode isn't silently swallowed.
+            var launched = await launcher.LaunchUriAsync(uri);
+            if (!launched)
+            {
+                AppLogger.Instance.Warning($"Platform launcher could not open notification link: {url}");
+            }
         }
         catch (Exception ex)
         {
