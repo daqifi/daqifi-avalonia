@@ -40,13 +40,15 @@
        (The projektanker icon namespace is intentionally NOT used here: Avalonia
        forbids xmlns on non-root elements, and the root UserControl is left
        untouched — so the empty-state badge and the per-row action use text.) -->
-  <Grid Background="{DynamicResource Surface}">
+  <Grid Background="{DynamicResource Surface}" RowDefinitions="*,Auto">
 
-    <ScrollViewer>
+    <ScrollViewer Grid.Row="0">
       <StackPanel Classes="paneContent" Spacing="12" Margin="16">
 
         <!-- ========== HEADER ========== -->
-        <StackPanel Spacing="8">
+        <!-- Hidden in landscape-empty (code-behind): the desktop empty-state has no top
+             header, so dropping it lets the centered empty-state own the space (#13). -->
+        <StackPanel x:Name="HeaderPanel" Spacing="8">
 
           <TextBlock Text="PROFILES"
                      FontSize="{DynamicResource FontSizeSmall}" FontWeight="Bold"
@@ -85,33 +87,16 @@
           </Border>
 
           <!-- desktop: Button.IsEnabled (!IsLoggingActive) + Button.Command.
-               Primary action → shared AccentPillButton (rounded pill). -->
-          <Button Theme="{StaticResource AccentPillButton}"
+               Primary action → shared AccentPillButton (rounded pill). Portrait only —
+               in landscape the ADD action lives in the bottom status bar + centered
+               empty-state (mimicking the desktop pane); toggled in code-behind (#13). -->
+          <Button x:Name="HeaderAddButton"
+                  Theme="{StaticResource AccentPillButton}"
                   Content="+ ADD PROFILE"
                   MinHeight="44"
                   IsEnabled="{Binding !IsLoggingActive}"
                   Command="{Binding OpenNewDrawerCommand}"/>
 
-        </StackPanel>
-
-        <!-- ========== EMPTY STATE ========== -->
-        <!-- desktop: centered circular badge + CAPS title + sentence — projected
-             to the shared emptyBadge/emptyTitle/emptyBody classes. (Desktop
-             centers an mdi-tune-variant icon in the badge; the icon namespace
-             can't be declared here without touching the root UserControl, so the
-             badge is the shared token-styled circle.) -->
-        <StackPanel IsVisible="{Binding !HasProfiles}"
-                    Spacing="16"
-                    Margin="0,24"
-                    HorizontalAlignment="Center">
-          <Border Classes="emptyBadge">
-            <i:Icon Value="mdi-tune-variant" FontSize="{DynamicResource FontSizeDisplay}"
-                    Foreground="{DynamicResource TextTertiary}"
-                    HorizontalAlignment="Center" VerticalAlignment="Center"/>
-          </Border>
-          <TextBlock Classes="emptyTitle" Text="NO PROFILES SAVED"/>
-          <TextBlock Classes="emptyBody"
-                     Text="Profiles capture your device and channel configuration so you can restore it later."/>
         </StackPanel>
 
         <!-- ========== PROFILE LIST ========== -->
@@ -458,9 +443,91 @@
       </StackPanel>
     </ScrollViewer>
 
+    <!-- ========== EMPTY STATE (centered — mimics the desktop pane's centered empty state) ========== -->
+    <!-- desktop: StackPanel centered in the pane (HorizontalAlignment/VerticalAlignment=Center,
+         MaxWidth 420) with badge + CAPS title + sentence + accent ADD button. Layered over the
+         Row-0 content; shown only when there are no profiles. Centering reads correctly in both
+         orientations, and in landscape it pairs with the bottom status bar for desktop parity (#13). -->
+    <!-- Outer gate !IsDrawerOpen so the centered empty-state yields to the inline new/edit
+         drawer (which opens while HasProfiles is still false); nested !HasProfiles gates the
+         empty case. Nesting ANDs the two conditions without a multi-value converter, and
+         mirrors the desktop where the drawer scrim covers the empty state. -->
+    <Panel Grid.Row="0" IsVisible="{Binding !IsDrawerOpen}">
+      <StackPanel IsVisible="{Binding !HasProfiles}"
+                  HorizontalAlignment="Center" VerticalAlignment="Center"
+                  MaxWidth="420" Margin="24" Spacing="16">
+        <Border Classes="emptyBadge" HorizontalAlignment="Center">
+          <i:Icon Value="mdi-tune-variant" FontSize="{DynamicResource FontSizeDisplay}"
+                  Foreground="{DynamicResource TextTertiary}"
+                  HorizontalAlignment="Center" VerticalAlignment="Center"/>
+        </Border>
+        <TextBlock Classes="emptyTitle" Text="NO PROFILES SAVED"/>
+        <TextBlock Classes="emptyBody"
+                   Text="Profiles capture your device and channel configuration so you can restore it later."/>
+        <!-- No ADD button here: every state already surfaces exactly one — the header ADD in
+             portrait, the bottom status bar's ADD in landscape — so a centered one would be
+             redundant and, in the short landscape height, crowds the bottom bar (#13). -->
+      </StackPanel>
+    </Panel>
+
+    <!-- ========== BOTTOM STATUS BAR (landscape — mimics the desktop pane's bottom bar) ========== -->
+    <!-- desktop: bottom Border with "N SAVED" (or empty "0 PROFILES") + active-profile indicator +
+         logging-lock badge on the left, "+ ADD PROFILE" pill on the right. Orientation-gated in
+         code-behind — visible only in landscape, where the pane mimics the desktop layout (#13). -->
+    <Border x:Name="BottomBar" Grid.Row="1"
+            IsVisible="False"
+            Background="{DynamicResource SurfaceRaised}"
+            BorderBrush="{DynamicResource BorderDim}"
+            BorderThickness="0,1,0,0"
+            Padding="16,12">
+      <Grid ColumnDefinitions="*,Auto">
+        <StackPanel Grid.Column="0" Orientation="Horizontal" Spacing="12" VerticalAlignment="Center">
+          <!-- desktop populated bar: Run.Text (Profiles.Count) + " SAVED" -->
+          <TextBlock IsVisible="{Binding HasProfiles}"
+                     FontSize="{DynamicResource FontSizeSmall}" FontWeight="SemiBold"
+                     Foreground="{DynamicResource TextTertiary}" VerticalAlignment="Center">
+            <Run Text="{Binding Profiles.Count}"/>
+            <Run Text=" SAVED"/>
+          </TextBlock>
+          <!-- desktop empty bar: static "0 PROFILES" -->
+          <TextBlock IsVisible="{Binding !HasProfiles}"
+                     Text="0 PROFILES"
+                     FontSize="{DynamicResource FontSizeSmall}" FontWeight="SemiBold"
+                     Foreground="{DynamicResource TextTertiary}" VerticalAlignment="Center"/>
+          <!-- desktop: active profile indicator (NotNullToVis) -->
+          <TextBlock IsVisible="{Binding ActiveProfileName, Converter={x:Static StringConverters.IsNotNullOrEmpty}}"
+                     FontSize="{DynamicResource FontSizeSmall}" FontWeight="SemiBold"
+                     Foreground="{DynamicResource StatusGreen}" VerticalAlignment="Center">
+            <Run Text="·  "/>
+            <Run Text="{Binding ActiveProfileName}"/>
+            <Run Text=" ACTIVE"/>
+          </TextBlock>
+          <!-- desktop: logging lock badge -->
+          <Border IsVisible="{Binding IsLoggingActive}"
+                  Padding="8,3" CornerRadius="3"
+                  Background="{DynamicResource SurfaceActive}"
+                  BorderBrush="{DynamicResource StatusAmber}"
+                  BorderThickness="1" VerticalAlignment="Center">
+            <TextBlock Text="LOGGING · LOCKED"
+                       FontSize="{DynamicResource FontSizeSmall}" FontWeight="Bold"
+                       Foreground="{DynamicResource StatusAmber}"/>
+          </Border>
+        </StackPanel>
+        <!-- desktop: "+ ADD PROFILE" pill -->
+        <Button Grid.Column="1"
+                Theme="{StaticResource PillButton}"
+                Content="+ ADD PROFILE"
+                MinHeight="44"
+                IsEnabled="{Binding !IsLoggingActive}"
+                Command="{Binding OpenNewDrawerCommand}"/>
+      </Grid>
+    </Border>
+
     <!-- ========== CONFIRM OVERLAY (modal, over everything) ========== -->
-    <!-- desktop: Grid.IsVisible (ConfirmOverlay.IsOpen) -->
-    <Border Background="{DynamicResource Scrim}"
+    <!-- desktop: Grid.IsVisible (ConfirmOverlay.IsOpen). Spans both rows so the scrim
+         also covers the bottom status bar. -->
+    <Border Grid.Row="0" Grid.RowSpan="2"
+            Background="{DynamicResource Scrim}"
             IsVisible="{Binding ConfirmOverlay.IsOpen}">
       <Border MaxWidth="420"
               Margin="24"
