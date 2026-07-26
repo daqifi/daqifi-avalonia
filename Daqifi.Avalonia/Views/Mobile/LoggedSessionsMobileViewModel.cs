@@ -114,6 +114,10 @@ public partial class LoggedSessionsMobileViewModel : ObservableObject
     /// <summary>Lazily-built read/delete repository over the mobile DI DbContext factory.</summary>
     private SessionDataRepository? _repository;
 
+    /// <summary>The DbContext factory the repository was built over, cached for the static
+    /// single-timestamp value-spread helper (which takes the factory directly).</summary>
+    private IDbContextFactory<LoggingContext>? _factory;
+
     public LoggedSessionsMobileViewModel()
     {
         // Fire-and-forget: Reload hydrates off the UI thread and handles its own
@@ -372,6 +376,18 @@ public partial class LoggedSessionsMobileViewModel : ObservableObject
             {
                 points = seeded;
             }
+            else if (_factory is not null)
+            {
+                // Degenerate case: every sample shares one timestamp, so LoadSampledData can't
+                // sample a zero-width time range and returns null. Fall back to per-channel MIN/MAX
+                // value spreads aggregated across the FULL session (mirrors the desktop) so the plot
+                // shows the true value range rather than only the capped initial batch's first rows.
+                var channelKeys = initial.Channels
+                    .Select(c => (c.DeviceSerialNo, c.ChannelName))
+                    .ToList();
+                var spreads = SessionDataRepository.LoadSingleTickValueSpread(_factory, sessionId, channelKeys);
+                if (spreads.Values.Any(p => p.Count > 0)) { points = spreads; }
+            }
         }
 
         var factory = new PlotModelFactory();
@@ -505,10 +521,10 @@ public partial class LoggedSessionsMobileViewModel : ObservableObject
         if (_repository is not null) { return _repository; }
 
         var provider = Daqifi.Desktop.App.ServiceProvider;
-        var factory = provider?.GetService<IDbContextFactory<LoggingContext>>();
-        if (factory is null) { return null; }
+        _factory = provider?.GetService<IDbContextFactory<LoggingContext>>();
+        if (_factory is null) { return null; }
 
-        _repository = new SessionDataRepository(factory, _appLogger);
+        _repository = new SessionDataRepository(_factory, _appLogger);
         return _repository;
     }
 

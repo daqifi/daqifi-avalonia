@@ -10,6 +10,19 @@ public partial class LoggedSessionsMobileView : UserControl
     {
         InitializeComponent();
         DataContextChanged += (_, _) => WireResolver();
+
+        // Navigating away from the Storage pane detaches this cached view. Cancel any pending
+        // delete confirm so its awaiter (holding the view model alive) unwinds cleanly, and close
+        // the viewer so a large session's plot model is released — mirrors the desktop panes'
+        // explicit confirm-cancel on navigation/cleanup.
+        DetachedFromVisualTree += (_, _) =>
+        {
+            if (DataContext is LoggedSessionsMobileViewModel vm)
+            {
+                vm.ConfirmOverlay.Cancel();
+                vm.CloseViewerCommand.Execute(null);
+            }
+        };
     }
 
     // The VM owns the export logic but not the platform picker; the view (which has
