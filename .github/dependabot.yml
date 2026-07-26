@@ -1,0 +1,29 @@
+version: 2
+
+updates:
+  - package-ecosystem: nuget
+    # Explicit list rather than "/" so two directories stay out of scope:
+    #   third_party/oxyplot-avalonia — vendored fork; its Avalonia/OxyPlot.Core
+    #     versions are pinned to the app's on purpose (see its VENDORED.md).
+    #   tools/parity-audit/WpfCapture — ProjectReferences ../../../../daqifi-desktop,
+    #     which lives outside this repo, so Dependabot can't restore it.
+    directories:
+      - /Daqifi.Avalonia
+      - /Daqifi.Avalonia.Desktop
+      - /Daqifi.Avalonia.Android
+      - /tools/parity-audit/AvaloniaCapture
+    schedule:
+      interval: weekly
+      day: monday
+      time: "06:00"
+      timezone: America/Los_Angeles
+    open-pull-requests-limit: 5
+    commit-message:
+      prefix: "chore(deps)"
+      include: scope
+    groups:
+      minor-and-patch:
+        applies-to: version-updates
+        update-types:
+          - minor
+          - patch
