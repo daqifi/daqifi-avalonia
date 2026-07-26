@@ -52,11 +52,12 @@
                      FontSize="{DynamicResource FontSizeSmall}" FontWeight="Bold"
                      Foreground="{DynamicResource TextTertiary}"/>
 
-          <!-- desktop: Run.Text (Profiles.Count) -->
+          <!-- desktop: Run.Text (Profiles.Count) + " PROFILES" — match the desktop pane's wording
+               (the count reads "N PROFILES", not "N SAVED") (#13). -->
           <TextBlock FontSize="{DynamicResource FontSizeTitle}" FontWeight="Light"
                      Foreground="{DynamicResource TextPrimary}">
             <Run Text="{Binding Profiles.Count}"/>
-            <Run Text=" SAVED"/>
+            <Run Text=" PROFILES"/>
           </TextBlock>
 
           <!-- desktop: TextBlock.IsVisible + Run.Text (active profile indicator).
