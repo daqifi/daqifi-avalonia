@@ -6,6 +6,7 @@ using System.Linq;
 using System.Threading;
 using System.Threading.Tasks;
 using Avalonia.Media;
+using Avalonia.Media.Immutable;
 using Avalonia.Threading;
 using CommunityToolkit.Mvvm.ComponentModel;
 using CommunityToolkit.Mvvm.Input;
@@ -684,9 +685,14 @@ public sealed class ViewerChannel
     public ViewerChannel(string name, string colorHex)
     {
         Name = name;
+        // Use ImmutableSolidColorBrush, NOT SolidColorBrush: this runs inside BuildSessionPlot on a
+        // Task.Run background thread, and SolidColorBrush is an AvaloniaObject whose ctor calls
+        // Dispatcher.UIThread.VerifyAccess() → throws off the UI thread, which the catch would then
+        // silently mask as grey (making every legend swatch grey). ImmutableSolidColorBrush is a plain
+        // immutable IBrush with no thread affinity, so it's safe to build off-thread.
         IBrush swatch;
-        try { swatch = new SolidColorBrush(Color.Parse(colorHex)); }
-        catch { swatch = Brushes.Gray; }
+        try { swatch = new ImmutableSolidColorBrush(Color.Parse(colorHex)); }
+        catch { swatch = new ImmutableSolidColorBrush(Colors.Gray); }
         Swatch = swatch;
     }
 }
