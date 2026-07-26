@@ -11,10 +11,10 @@ public partial class LoggedSessionsMobileView : UserControl
         InitializeComponent();
         DataContextChanged += (_, _) => WireResolver();
 
-        // Navigating away from the Storage pane detaches this cached view. Cancel any pending
-        // delete confirm so its awaiter (holding the view model alive) unwinds cleanly, and close
-        // the viewer so a large session's plot model is released — mirrors the desktop panes'
-        // explicit confirm-cancel on navigation/cleanup.
+        // Detach fires only when the shell reassigns the content host (Storage → Channels/Profiles);
+        // release the viewer + pending confirm immediately on that path. The IsVisible-only exit paths
+        // (the Stream/home tab and the APP LOGS↔DEVICE LOGS pivot don't detach) are instead covered by
+        // Reload()'s on-re-entry reset, so returning to Storage always shows the fresh list.
         DetachedFromVisualTree += (_, _) =>
         {
             if (DataContext is LoggedSessionsMobileViewModel vm)

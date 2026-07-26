@@ -129,6 +129,15 @@ public partial class LoggedSessionsMobileViewModel : ObservableObject
     [RelayCommand]
     private async Task Reload()
     {
+        // On (re)entering the list, dismiss any viewer/confirm left open from a prior visit. The shell
+        // hides this pane by toggling IsVisible (no detach), so cleanup can't reliably hang off
+        // DetachedFromVisualTree on the common exit paths (the Stream/home tab, the APP↔DEVICE pivot);
+        // resetting here — Reload runs on every Storage visit — means returning always shows the fresh
+        // list and releases a large session's retained plot model. Harmless on the first load (nothing
+        // is open yet). Runs before the IsBusy guard so a re-entry still resets even mid-load.
+        CloseViewer();
+        ConfirmOverlay.Cancel();
+
         if (IsBusy) { return; }
         IsBusy = true;
         try
