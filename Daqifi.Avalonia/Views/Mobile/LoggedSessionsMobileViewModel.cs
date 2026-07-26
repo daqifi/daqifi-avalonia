@@ -293,7 +293,9 @@ public partial class LoggedSessionsMobileViewModel : ObservableObject
     private int _viewToken;
 
     // Cancels the previous viewer load when a newer ViewSession/CloseViewer supersedes it, so
-    // AllowConcurrentExecutions can't let rapid tapping pile up unbounded concurrent loads.
+    // AllowConcurrentExecutions can't let rapid tapping pile up unbounded concurrent loads. Written
+    // only on the UI thread (command handlers); never Disposed (see the ViewSession finally) so that
+    // a concurrent Cancel() can never hit a disposed source.
     private CancellationTokenSource? _viewCts;
 
     // AllowConcurrentExecutions: without it, the generated AsyncRelayCommand reports CanExecute=false
@@ -308,8 +310,7 @@ public partial class LoggedSessionsMobileViewModel : ObservableObject
         var token = ++_viewToken;   // newest wins; supersedes any in-flight load
 
         // Bound concurrency: cancel the previous (superseded) load so rapid tapping can't pile up
-        // unbounded concurrent DB reads + plot builds, then adopt a fresh source for this load
-        // (disposed by this invocation's finally).
+        // unbounded concurrent DB reads + plot builds, then adopt a fresh source for this load.
         _viewCts?.Cancel();
         var cts = _viewCts = new CancellationTokenSource();
 
@@ -362,12 +363,12 @@ public partial class LoggedSessionsMobileViewModel : ObservableObject
         }
         finally
         {
-            // We own `cts`: clear the shared field if it's still current, then dispose it (the Task.Run
-            // has finished by the finally, so nothing is still reading its token).
-            if (ReferenceEquals(_viewCts, cts)) { _viewCts = null; }
-            cts.Dispose();
-            // Only the current load owns the spinner — a superseded load must not clear it. Marshalled
-            // because the finally may resume off the UI thread and IsViewerLoading is UI-bound.
+            // Deliberately do NOT Dispose `cts`: we never use its WaitHandle or a timer, so there is no
+            // unmanaged resource to release, and not disposing removes the Cancel()-vs-Dispose() race —
+            // a concurrent CloseViewer/ViewSession only ever Cancel()s a live-or-superseded source (a
+            // harmless no-op), never a disposed one. _viewCts holds the newest source until replaced,
+            // and GC reclaims superseded ones. Only the UI-bound spinner needs the UI thread + the
+            // current-load guard (a superseded load must not clear a newer load's "Loading…").
             OnUi(() => { if (token == _viewToken) { IsViewerLoading = false; } });
         }
     }
