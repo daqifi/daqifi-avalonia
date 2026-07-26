@@ -23,8 +23,10 @@ public partial class MobileShellView : UserControl
         var plus = informational.IndexOf('+');
         var semver = plus >= 0 ? informational[..plus] : informational;
 #if DEBUG
-        var sha = plus >= 0 && informational.Length > plus + 8
-            ? $" ({informational.Substring(plus + 1, 7)})" : "";
+        // Append up to the first 7 chars of the +<sha> build metadata (git SHAs are
+        // >= 7 chars; tolerate shorter/absent metadata without an off-by-one or throw).
+        var suffix = plus >= 0 ? informational[(plus + 1)..] : "";
+        var sha = suffix.Length > 0 ? $" ({suffix[..Math.Min(7, suffix.Length)]})" : "";
 #else
         var sha = "";
 #endif
