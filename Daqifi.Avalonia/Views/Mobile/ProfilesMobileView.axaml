@@ -40,64 +40,65 @@
        (The projektanker icon namespace is intentionally NOT used here: Avalonia
        forbids xmlns on non-root elements, and the root UserControl is left
        untouched — so the empty-state badge and the per-row action use text.) -->
-  <Grid Background="{DynamicResource Surface}" RowDefinitions="*,Auto">
+  <Grid Background="{DynamicResource Surface}" RowDefinitions="Auto,*,Auto">
 
-    <ScrollViewer Grid.Row="0">
+    <!-- ========== HEADER (fixed top row) ========== -->
+    <!-- A fixed Row-0 header keeps the centered empty-state in Row 1 BELOW it, so the two can't
+         overlap in a short / split-screen (multi-window) layout, and it mirrors the desktop pane's
+         fixed header. Hidden in landscape-empty (code-behind): the desktop empty-state has no top
+         header, so dropping it lets the centered empty-state own the space (#13). -->
+    <StackPanel x:Name="HeaderPanel" Grid.Row="0" Spacing="8" Margin="16,16,16,0">
+
+      <TextBlock Text="PROFILES"
+                 FontSize="{DynamicResource FontSizeSmall}" FontWeight="Bold"
+                 Foreground="{DynamicResource TextTertiary}"/>
+
+      <!-- desktop: Run.Text (Profiles.Count) -->
+      <TextBlock FontSize="{DynamicResource FontSizeTitle}" FontWeight="Light"
+                 Foreground="{DynamicResource TextPrimary}">
+        <Run Text="{Binding Profiles.Count}"/>
+        <Run Text=" SAVED"/>
+      </TextBlock>
+
+      <!-- desktop: TextBlock.IsVisible + Run.Text (active profile indicator).
+           ActiveProfileName is a string; binding it straight to the bool
+           IsVisible throws (Convert.ToBoolean(string)) and reverts to
+           always-visible — coerce with the built-in null/empty→bool converter
+           (the desktop used its NotNullToVis converter here). -->
+      <TextBlock IsVisible="{Binding ActiveProfileName, Converter={x:Static StringConverters.IsNotNullOrEmpty}}"
+                 FontSize="{DynamicResource FontSizeSmall}" FontWeight="SemiBold"
+                 Foreground="{DynamicResource StatusGreen}">
+        <Run Text="{Binding ActiveProfileName}"/>
+        <Run Text=" ACTIVE"/>
+      </TextBlock>
+
+      <!-- desktop: Border.IsVisible (logging lock badge) -->
+      <Border IsVisible="{Binding IsLoggingActive}"
+              HorizontalAlignment="Left"
+              Padding="8,4"
+              CornerRadius="4"
+              Background="{DynamicResource SurfaceActive}"
+              BorderBrush="{DynamicResource StatusAmber}"
+              BorderThickness="1">
+        <TextBlock Text="LOGGING · LOCKED"
+                   FontSize="{DynamicResource FontSizeSmall}" FontWeight="Bold"
+                   Foreground="{DynamicResource StatusAmber}"/>
+      </Border>
+
+      <!-- desktop: Button.IsEnabled (!IsLoggingActive) + Button.Command.
+           Primary action → shared AccentPillButton (rounded pill). Portrait only — in
+           landscape the ADD action lives in the bottom status bar; toggled in code-behind (#13). -->
+      <Button x:Name="HeaderAddButton"
+              Theme="{StaticResource AccentPillButton}"
+              Content="+ ADD PROFILE"
+              MinHeight="44"
+              IsEnabled="{Binding !IsLoggingActive}"
+              Command="{Binding OpenNewDrawerCommand}"/>
+
+    </StackPanel>
+
+    <ScrollViewer Grid.Row="1">
       <StackPanel Classes="paneContent" Spacing="12" Margin="16">
-
-        <!-- ========== HEADER ========== -->
-        <!-- Hidden in landscape-empty (code-behind): the desktop empty-state has no top
-             header, so dropping it lets the centered empty-state own the space (#13). -->
-        <StackPanel x:Name="HeaderPanel" Spacing="8">
-
-          <TextBlock Text="PROFILES"
-                     FontSize="{DynamicResource FontSizeSmall}" FontWeight="Bold"
-                     Foreground="{DynamicResource TextTertiary}"/>
-
-          <!-- desktop: Run.Text (Profiles.Count) -->
-          <TextBlock FontSize="{DynamicResource FontSizeTitle}" FontWeight="Light"
-                     Foreground="{DynamicResource TextPrimary}">
-            <Run Text="{Binding Profiles.Count}"/>
-            <Run Text=" SAVED"/>
-          </TextBlock>
-
-          <!-- desktop: TextBlock.IsVisible + Run.Text (active profile indicator).
-               ActiveProfileName is a string; binding it straight to the bool
-               IsVisible throws (Convert.ToBoolean(string)) and reverts to
-               always-visible — coerce with the built-in null/empty→bool converter
-               (the desktop used its NotNullToVis converter here). -->
-          <TextBlock IsVisible="{Binding ActiveProfileName, Converter={x:Static StringConverters.IsNotNullOrEmpty}}"
-                     FontSize="{DynamicResource FontSizeSmall}" FontWeight="SemiBold"
-                     Foreground="{DynamicResource StatusGreen}">
-            <Run Text="{Binding ActiveProfileName}"/>
-            <Run Text=" ACTIVE"/>
-          </TextBlock>
-
-          <!-- desktop: Border.IsVisible (logging lock badge) -->
-          <Border IsVisible="{Binding IsLoggingActive}"
-                  HorizontalAlignment="Left"
-                  Padding="8,4"
-                  CornerRadius="4"
-                  Background="{DynamicResource SurfaceActive}"
-                  BorderBrush="{DynamicResource StatusAmber}"
-                  BorderThickness="1">
-            <TextBlock Text="LOGGING · LOCKED"
-                       FontSize="{DynamicResource FontSizeSmall}" FontWeight="Bold"
-                       Foreground="{DynamicResource StatusAmber}"/>
-          </Border>
-
-          <!-- desktop: Button.IsEnabled (!IsLoggingActive) + Button.Command.
-               Primary action → shared AccentPillButton (rounded pill). Portrait only —
-               in landscape the ADD action lives in the bottom status bar + centered
-               empty-state (mimicking the desktop pane); toggled in code-behind (#13). -->
-          <Button x:Name="HeaderAddButton"
-                  Theme="{StaticResource AccentPillButton}"
-                  Content="+ ADD PROFILE"
-                  MinHeight="44"
-                  IsEnabled="{Binding !IsLoggingActive}"
-                  Command="{Binding OpenNewDrawerCommand}"/>
-
-        </StackPanel>
 
         <!-- ========== PROFILE LIST ========== -->
         <!-- desktop: Grid.IsVisible (HasProfiles) -->
@@ -455,7 +456,7 @@
     <!-- IsHitTestVisible=False: the Panel stays visible (its child only collapses on HasProfiles),
          so make the whole overlay click-through — it has no interactive elements, and this keeps it
          from intercepting scroll/taps on the profile list beneath when populated. -->
-    <Panel Grid.Row="0" IsVisible="{Binding !IsDrawerOpen}" IsHitTestVisible="False">
+    <Panel Grid.Row="1" IsVisible="{Binding !IsDrawerOpen}" IsHitTestVisible="False">
       <StackPanel IsVisible="{Binding !HasProfiles}"
                   HorizontalAlignment="Center" VerticalAlignment="Center"
                   MaxWidth="420" Margin="24" Spacing="16">
@@ -477,7 +478,7 @@
     <!-- desktop: bottom Border with "N SAVED" (or empty "0 PROFILES") + active-profile indicator +
          logging-lock badge on the left, "+ ADD PROFILE" pill on the right. Orientation-gated in
          code-behind — visible only in landscape, where the pane mimics the desktop layout (#13). -->
-    <Border x:Name="BottomBar" Grid.Row="1"
+    <Border x:Name="BottomBar" Grid.Row="2"
             IsVisible="False"
             Background="{DynamicResource SurfaceRaised}"
             BorderBrush="{DynamicResource BorderDim}"
@@ -527,9 +528,9 @@
     </Border>
 
     <!-- ========== CONFIRM OVERLAY (modal, over everything) ========== -->
-    <!-- desktop: Grid.IsVisible (ConfirmOverlay.IsOpen). Spans both rows so the scrim
-         also covers the bottom status bar. -->
-    <Border Grid.Row="0" Grid.RowSpan="2"
+    <!-- desktop: Grid.IsVisible (ConfirmOverlay.IsOpen). Spans all rows so the scrim
+         also covers the header and bottom status bar. -->
+    <Border Grid.Row="0" Grid.RowSpan="3"
             Background="{DynamicResource Scrim}"
             IsVisible="{Binding ConfirmOverlay.IsOpen}">
       <Border MaxWidth="420"
