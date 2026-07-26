@@ -13,10 +13,10 @@
   <ItemGroup>
     <!-- Faithful pixels: Skia backend + headless windowing (no display needed). -->
     <PackageReference Include="Avalonia.Headless" Version="11.3.*" />
-    <PackageReference Include="Avalonia.Skia" Version="11.3.*" />
+    <PackageReference Include="Avalonia.Skia" Version="12.1.*" />
     <!-- ClassicDesktopStyleApplicationLifetime lives here; we use it as the app
          lifetime but never call UsePlatformDetect, so windowing stays headless. -->
-    <PackageReference Include="Avalonia.Desktop" Version="11.3.*" />
+    <PackageReference Include="Avalonia.Desktop" Version="12.1.*" />
     <PackageReference Include="Avalonia.Fonts.Inter" Version="11.3.*" />
     <PackageReference Include="Projektanker.Icons.Avalonia.MaterialDesign" Version="9.*" />
   </ItemGroup>
