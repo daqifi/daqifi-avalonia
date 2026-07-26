@@ -1,4 +1,6 @@
+using System;
 using System.Collections.ObjectModel;
+using Avalonia.Threading;
 using CommunityToolkit.Mvvm.ComponentModel;
 using Daqifi.Desktop.Models;
 
@@ -49,12 +51,21 @@ public partial class MobileNotificationsViewModel : ObservableObject
     /// source; the overlay + badge update automatically via the collection-changed handler.</summary>
     public void Add(Notifications notification)
     {
-        if (notification is not null) { NotificationList.Add(notification); }
+        if (notification is not null) { OnUi(() => NotificationList.Add(notification)); }
     }
 
     /// <summary>Producer API: remove a notification if present.</summary>
-    public void Remove(Notifications notification) => NotificationList.Remove(notification);
+    public void Remove(Notifications notification) => OnUi(() => NotificationList.Remove(notification));
 
     /// <summary>Producer API: clear all notifications.</summary>
-    public void Clear() => NotificationList.Clear();
+    public void Clear() => OnUi(() => NotificationList.Clear());
+
+    // A future notification source (device/firmware alerts) may push from a background thread, and
+    // NotificationList is UI-bound — so marshal every mutation onto the UI thread (run inline if
+    // already there) to keep the producer API safe to call from anywhere.
+    private static void OnUi(Action action)
+    {
+        if (Dispatcher.UIThread.CheckAccess()) { action(); }
+        else { Dispatcher.UIThread.Post(action); }
+    }
 }

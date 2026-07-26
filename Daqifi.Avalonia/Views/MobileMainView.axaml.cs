@@ -96,6 +96,9 @@ public partial class MobileMainView : UserControl
     /// DaqifiSettings.Instance, no DaqifiViewModel host needed).</summary>
     private void OnSettings(object? sender, RoutedEventArgs e)
     {
+        // Only one full-screen overlay at a time — close the other so keyboard/switch-access
+        // navigation can't leave both stacked (their scrims block touch but not Tab focus).
+        NotificationsOverlay.IsVisible = false;
         SettingsOverlay.DataContext ??= new SettingsViewModel();
         SettingsOverlay.IsVisible = true;
     }
@@ -105,11 +108,31 @@ public partial class MobileMainView : UserControl
 
     /// <summary>Opens the notifications overlay (#11) — the mobile analog of the desktop bell +
     /// flyout. The overlay's DataContext (the shared notifications VM) is set in the ctor.</summary>
-    private void OnNotifications(object? sender, RoutedEventArgs e) =>
+    private void OnNotifications(object? sender, RoutedEventArgs e)
+    {
+        // Mutually exclusive with the settings overlay (see OnSettings).
+        SettingsOverlay.IsVisible = false;
         NotificationsOverlay.IsVisible = true;
+    }
 
     private void OnCloseNotifications(object? sender, RoutedEventArgs e) =>
         NotificationsOverlay.IsVisible = false;
+
+    /// <summary>Opens a notification's link (e.g. a firmware "learn more") via the platform launcher,
+    /// mirroring the desktop flyout's link button. Best-effort: a bad URL never crashes the shell.</summary>
+    private async void OnNotificationLink(object? sender, RoutedEventArgs e)
+    {
+        if (sender is not Button { Tag: string url } || string.IsNullOrWhiteSpace(url)) { return; }
+        try
+        {
+            var top = TopLevel.GetTopLevel(this);
+            if (top?.Launcher is { } launcher) { await launcher.LaunchUriAsync(new Uri(url)); }
+        }
+        catch
+        {
+            // best-effort: a malformed URL or missing launcher must not crash the shell
+        }
+    }
 
     private void OnStream(object? sender, RoutedEventArgs e) => ShowStream();
 

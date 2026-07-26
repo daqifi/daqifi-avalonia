@@ -257,13 +257,27 @@
           <!-- Notification list -->
           <ScrollViewer Grid.Row="2" IsVisible="{Binding HasNotifications}" Margin="0,16,0,0">
             <ItemsControl ItemsSource="{Binding NotificationList}">
+              <ItemsControl.ItemsPanel>
+                <ItemsPanelTemplate>
+                  <VirtualizingStackPanel />
+                </ItemsPanelTemplate>
+              </ItemsControl.ItemsPanel>
               <ItemsControl.ItemTemplate>
                 <DataTemplate>
                   <Border Background="{DynamicResource Surface}"
                           BorderBrush="{DynamicResource BorderDim}" BorderThickness="1"
                           CornerRadius="4" Padding="12" Margin="0,0,0,10">
-                    <TextBlock Text="{Binding Message}" TextWrapping="Wrap"
-                               FontSize="12" Foreground="{DynamicResource TextPrimary}" />
+                    <StackPanel Spacing="8">
+                      <TextBlock Text="{Binding Message}" TextWrapping="Wrap"
+                                 FontSize="12" Foreground="{DynamicResource TextPrimary}" />
+                      <!-- Optional link (e.g. a firmware "learn more"), mirrors the desktop flyout;
+                           hidden when the notification has no link. -->
+                      <Button Content="Learn more" Click="OnNotificationLink" Tag="{Binding Link}"
+                              IsVisible="{Binding Link, Converter={x:Static StringConverters.IsNotNullOrEmpty}}"
+                              Background="Transparent" BorderThickness="0" Padding="0"
+                              Foreground="{DynamicResource Accent}" Cursor="Hand"
+                              HorizontalAlignment="Left" />
+                    </StackPanel>
                   </Border>
                 </DataTemplate>
               </ItemsControl.ItemTemplate>
