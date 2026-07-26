@@ -34,10 +34,10 @@
 		<!-- Avalonia stack (replaces WPF + MahApps.Metro per the UI catalog decision log).
 		     Avalonia.Desktop (desktop windowing/startup) lives in the Desktop head, not here —
 		     this library is platform-neutral and shared with the Android/iOS heads. -->
-		<PackageReference Include="Avalonia" Version="11.3.*" />
+		<PackageReference Include="Avalonia" Version="12.1.*" />
 		<PackageReference Include="Avalonia.Themes.Fluent" Version="11.3.*" />
 		<!-- WPF DataGrid ships in-box; Avalonia's lives in a separate package (DebugWindow) -->
-		<PackageReference Include="Avalonia.Controls.DataGrid" Version="11.3.*" />
+		<PackageReference Include="Avalonia.Controls.DataGrid" Version="12.1.*" />
 		<PackageReference Include="Avalonia.Fonts.Inter" Version="11.3.*" />
 		<PackageReference Include="Avalonia.Diagnostics" Version="11.3.*" Condition="'$(Configuration)' == 'Debug'" />
 		<!-- OxyPlot.Avalonia replaces OxyPlot.Wpf; the PlotModel layer (OxyPlot.Core) ports verbatim.
