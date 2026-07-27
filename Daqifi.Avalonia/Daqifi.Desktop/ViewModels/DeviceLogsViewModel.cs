@@ -4,6 +4,7 @@
 // the correspondence map.
 
 using System.Collections.ObjectModel;
+using System.ComponentModel;
 using System.Text;
 using Avalonia;
 using Avalonia.Controls.ApplicationLifetimes;
@@ -43,6 +44,13 @@ public partial class DeviceLogsViewModel : ObservableObject
 {
     private readonly IAppLogger _logger;
     private readonly ISdCardSessionImporter? _importerOverride;
+
+    /// <summary>
+    /// The device whose <c>IsConnected</c> notifications are currently subscribed. Held separately
+    /// from <see cref="SelectedDevice"/> so the old device can be detached after the property has
+    /// already moved on — see <see cref="WatchSelectedDeviceConnectivity"/>.
+    /// </summary>
+    private IStreamingDevice? _connectivityWatchedDevice;
 
     [ObservableProperty]
     private bool _isBusy;
@@ -247,6 +255,12 @@ public partial class DeviceLogsViewModel : ObservableObject
     // @port: Daqifi.Desktop.ViewModels.DeviceLogsViewModel.OnSelectedDeviceChanged
     partial void OnSelectedDeviceChanged(IStreamingDevice value)
     {
+        // Follow the selection with the IsConnected subscription so a drop on the *currently
+        // selected* device reaches the gate. Unsubscribe the previous device first — selection
+        // changes freely, and re-subscribing without this would leak handlers and multiply
+        // RaiseSdGateChanged calls per event.
+        WatchSelectedDeviceConnectivity(value);
+
         SdCardState = SdCardState.Unknown;
         SdCardErrorMessage = string.Empty;
 
@@ -275,12 +289,78 @@ public partial class DeviceLogsViewModel : ObservableObject
     /// change and on any connected-set change (issue #1 / Qodo "SD access state stale").
     /// </summary>
     /// <remarks>
-    /// A fully-silent WiFi transport drop raises no notification anywhere — <c>IsConnected</c> is a
-    /// computed property the device layer never signals — so the gate can still read stale until
-    /// the next reachable signal. The <see cref="RefreshFilesAsync"/> / import guards re-check
-    /// <c>IsConnected</c> at operation time, so no SD op runs against a dead transport regardless;
-    /// full reactive disconnect UX needs a device-layer IsConnected notification (separate ticket).
+    /// A silent WiFi transport drop is the characteristic failure for SD-over-WiFi, and it now
+    /// reaches the gate: the device layer signals <c>IsConnected</c> off Core's <c>StatusChanged</c>
+    /// (issue #3), and <see cref="WatchSelectedDeviceConnectivity"/> subscribes the selected device
+    /// so this runs on the drop rather than waiting for the next reachable signal. The
+    /// <see cref="RefreshFilesAsync"/> / import guards still re-check <c>IsConnected</c> at
+    /// operation time, so no SD op can run against a dead transport even if a notification is
+    /// missed.
     /// </remarks>
+    /// <summary>
+    /// Points the <c>IsConnected</c> subscription at <paramref name="device"/>, detaching it from
+    /// the previously selected device.
+    /// </summary>
+    /// <remarks>
+    /// Tracks the subscribed instance in its own field rather than re-deriving it from
+    /// <c>SelectedDevice</c>: by the time this runs the property has already been updated, so
+    /// unsubscribing via <c>SelectedDevice</c> would detach from the *new* device and leak the old
+    /// one's handler. Devices outlive this view-model (they live in <c>ConnectionManager</c>), so a
+    /// leaked handler would keep the view-model alive and multiply gate updates.
+    /// </remarks>
+    /// <param name="device">The newly selected device, or null when the selection is cleared.</param>
+    private void WatchSelectedDeviceConnectivity(IStreamingDevice? device)
+    {
+        if (ReferenceEquals(_connectivityWatchedDevice, device))
+        {
+            return;
+        }
+
+        if (_connectivityWatchedDevice is INotifyPropertyChanged previous)
+        {
+            previous.PropertyChanged -= OnSelectedDeviceConnectivityChanged;
+        }
+
+        _connectivityWatchedDevice = device;
+
+        if (device is INotifyPropertyChanged current)
+        {
+            current.PropertyChanged += OnSelectedDeviceConnectivityChanged;
+        }
+    }
+
+    /// <summary>
+    /// Recomputes the SD gate when the selected device reports a connectivity change.
+    /// </summary>
+    /// <remarks>
+    /// The device raises this from Core's transport thread on a silent drop, so marshal before
+    /// touching view-model state. An empty/null property name is the
+    /// <see cref="INotifyPropertyChanged"/> "everything changed" convention and must be treated as
+    /// a possible <c>IsConnected</c> change.
+    /// </remarks>
+    private void OnSelectedDeviceConnectivityChanged(object? sender, PropertyChangedEventArgs e)
+    {
+        if (!string.IsNullOrEmpty(e.PropertyName) &&
+            e.PropertyName != nameof(IStreamingDevice.IsConnected))
+        {
+            return;
+        }
+
+        // Ignore a late event from a device that is no longer the subscribed one.
+        if (!ReferenceEquals(sender, _connectivityWatchedDevice))
+        {
+            return;
+        }
+
+        if (Dispatcher.UIThread.CheckAccess())
+        {
+            RaiseSdGateChanged();
+            return;
+        }
+
+        Dispatcher.UIThread.Post(RaiseSdGateChanged);
+    }
+
     private void RaiseSdGateChanged()
     {
         OnPropertyChanged(nameof(CanAccessSdCard));
