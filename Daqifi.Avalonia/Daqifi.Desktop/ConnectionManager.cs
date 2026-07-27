@@ -12,6 +12,7 @@ using System.IO.Ports;
 using System.Management;
 using CommunityToolkit.Mvvm.ComponentModel;
 using Avalonia.Threading;
+using DeviceIdentity = Daqifi.Core.Device.DeviceIdentity;
 
 namespace Daqifi.Desktop;
 
@@ -310,24 +311,32 @@ public partial class ConnectionManager : ObservableObject
     // @port: Daqifi.Desktop.ConnectionManager.CheckForDuplicateDevice
     private DuplicateDeviceCheckResult CheckForDuplicateDevice(IStreamingDevice newDevice)
     {
-        // If device doesn't have a serial number, we can't check for duplicates reliably
-        if (string.IsNullOrWhiteSpace(newDevice.DeviceSerialNo))
+        // Match on Core's transport-independent DeviceIdentity (issue #752): it compares the serial
+        // number first and falls back to the MAC address when the serial is blank — the WiFi path knows
+        // a device's MAC before its serial arrives with the first status message, a case the previous
+        // serial-only comparison could not detect at all. A serial mismatch is decisive, so the weaker
+        // MAC discriminator can never merge two genuinely different units.
+        var candidateIdentity = DeviceIdentity.Create(newDevice.DeviceSerialNo, newDevice.MacAddress);
+
+        // With no discriminator at all there is nothing to compare against, so duplicates are undetectable.
+        if (candidateIdentity.IsEmpty)
         {
-            AppLogger.Instance.Information($"Device {newDevice.Name} has no serial number - cannot check for duplicates");
+            AppLogger.Instance.Information(
+                $"Device {newDevice.Name} has no serial number or MAC address - cannot check for duplicates");
             return new DuplicateDeviceCheckResult { IsDuplicate = false };
         }
 
-        // Check if any existing device has the same serial number
-        var existingDevice = ConnectedDevices.FirstOrDefault(d => 
-            !string.IsNullOrWhiteSpace(d.DeviceSerialNo) && 
-            d.DeviceSerialNo.Equals(newDevice.DeviceSerialNo, StringComparison.OrdinalIgnoreCase));
+        var existingDevice = ConnectedDevices.FirstOrDefault(d =>
+            DeviceIdentity.Create(d.DeviceSerialNo, d.MacAddress).Matches(candidateIdentity));
 
         if (existingDevice != null)
         {
             var newDeviceInterface = newDevice.ConnectionType == ConnectionType.Usb ? "USB" : "WiFi";
             var existingDeviceInterface = existingDevice.ConnectionType == ConnectionType.Usb ? "USB" : "WiFi";
             
-            AppLogger.Instance.Information($"Duplicate device detected: Device already connected via {existingDeviceInterface}, attempted to add via {newDeviceInterface}");
+            AppLogger.Instance.Information(
+                $"Duplicate device detected ({candidateIdentity}): Device already connected via " +
+                $"{existingDeviceInterface}, attempted to add via {newDeviceInterface}");
             
             return new DuplicateDeviceCheckResult 
             { 
