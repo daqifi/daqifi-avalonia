@@ -507,11 +507,14 @@ public partial class SummaryLogger : ObservableObject, ILogger
                     _buffer.MaxDeltaTicks = Math.Max(_buffer.MaxDeltaTicks, elapsed);
                 }
 
-                // Deliberately keeps the (SampleSize - 1) denominator: this branch IS guarded by
-                // SampleCount > 0, so a completed window of SampleSize messages contributes exactly
-                // SampleSize - 1 intervals. It cannot divide by zero because at a SampleSize of 1
-                // the window swaps after the first message and this guard never opens.
-                _buffer.AverageDeltaTicks += elapsed / (double)(SampleSize - 1);
+                // Running mean over the intervals this window actually holds. SampleCount is the
+                // pre-increment interval index here (1 on the first interval), so this incremental
+                // form is exact for every window length AND cannot divide by zero when the user
+                // drops the live-editable SampleSize to 1 mid-window -- which the old (SampleSize - 1)
+                // divisor did, poisoning the average with Infinity/NaN that surfaces in the Summary
+                // flyout (found in review). Diverges from upstream #763, which kept (SampleSize - 1)
+                // and carries the same latent div-by-zero.
+                _buffer.AverageDeltaTicks += (elapsed - _buffer.AverageDeltaTicks) / _buffer.SampleCount;
             }
             _buffer.LastSampleTicks = dataSample.AppTicks;
 
