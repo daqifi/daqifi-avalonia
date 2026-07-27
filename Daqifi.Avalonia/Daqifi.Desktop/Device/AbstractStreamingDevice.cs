@@ -452,16 +452,14 @@ public abstract partial class AbstractStreamingDevice : ObservableObject, IStrea
         AppLogger.Error(ex, $"Problem connecting to DAQiFi device {DisplayIdentifier}");
     }
 
-    // @port-divergence: upstream's LogConnectFailure classifies the SCPI-init failure with
-    // `case InvalidOperationException when IsScpiInitializationError(ex)` (a message-substring
-    // predicate). That is DEAD CODE against Core 1.3.0 — which the port and upstream both pin —
-    // because Core 1.3.0 (Core #317) throws a *typed* Daqifi.Core.Device.ScpiInitializationErrorException
-    // that derives directly from System.Exception, NOT InvalidOperationException, so the type
-    // pattern never matches and the environmental SCPI-init error still reaches the default
-    // Error/Sentry path. The port instead matches the typed exception directly (Core added it
-    // precisely so it can be classified without a message match) — see the `case
-    // ScpiInitializationErrorException` arms in SerialStreamingDevice / DaqifiStreamingDevice.
-    // The message-substring predicate is therefore unnecessary here. (Reported upstream.)
+    // @port-divergence: the SCPI-init connect failure is classified by the typed
+    // Daqifi.Core.Device.ScpiInitializationErrorException — see the `case ScpiInitializationErrorException`
+    // arms in SerialStreamingDevice / DaqifiStreamingDevice — rather than by upstream's
+    // `case InvalidOperationException when <message-match>`. As of the pinned Core (1.3.0), that typed
+    // exception derives from Exception, not InvalidOperationException, so the upstream type-pattern
+    // would not match it; matching the type is both correct here and Core's intended classification
+    // hook. Keep the typed match across Core bumps unless Core changes the exception's type. (Upstream
+    // carries the same InvalidOperationException match: daqifi/daqifi-desktop#775.)
 
     /// <summary>
     /// True when <paramref name="ex"/> is Core's transport reporting that the connection dropped
