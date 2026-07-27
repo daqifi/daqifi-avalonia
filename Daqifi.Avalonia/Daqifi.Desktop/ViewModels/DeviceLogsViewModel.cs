@@ -507,9 +507,12 @@ public partial class DeviceLogsViewModel : ObservableObject
     private SdCardFailure HandleImportFailure(Exception ex, string fileName, IStreamingDevice device)
     {
         var failure = SdCardFailureClassifier.Classify(ex);
-        // Only paint the SD status/error surface when the failed device is still the selected one —
-        // a stale failure must not overwrite the panel for a device the user has since switched to.
-        if (failure.IsExpectedDeviceCondition && ReferenceEquals(SelectedDevice, device))
+        // Only paint the card-wide SD panel for a DEVICE-WIDE failure (IsCardUnavailable) that is still
+        // the selected device. A per-file failure (empty file, one corrupt file, a momentary stall) is
+        // surfaced by the import summary dialog instead — painting the card-wide Error panel for it
+        // would hide the whole file list (HasFiles requires SdCardState==Ok) even though the batch keeps
+        // going and later files import fine, leaving a sticky panel that contradicts the actual outcome.
+        if (failure.IsExpectedDeviceCondition && failure.IsCardUnavailable && ReferenceEquals(SelectedDevice, device))
         {
             ApplyFailureState(failure);
         }

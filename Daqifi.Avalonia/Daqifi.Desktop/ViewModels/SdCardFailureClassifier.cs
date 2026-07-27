@@ -129,19 +129,21 @@ public static class SdCardFailureClassifier
                 // is still worth trying.
                 IsCardUnavailable: false),
 
-            // Raised when a download stalls: either the desktop's own 90s watchdog, or Core's own
-            // ~500ms serial read timeout normalized to this type in SdCardSessionImporter. A stall is
-            // an expected device/environmental condition (power-cycle guidance, no Sentry), but
-            // @port-divergence: NOT card-unavailable — Core's per-read timeout also fires on a single
-            // momentary inter-chunk gap on an otherwise-healthy device (SD read-latency spike, USB
-            // backpressure, a GC pause), so aborting the whole batch on one stall would skip healthy
-            // files; treat it as per-file and let the batch skip this one and continue.
-            SdCardDownloadStalledException => new SdCardFailure(
+            // Raised when a download stalls: either the desktop's own SUSTAINED-silence watchdog
+            // (StallTimeout > 0 — e.g. 90s of no data, genuinely device-wide), or Core's own ~500ms
+            // per-read serial timeout normalized to this type in SdCardSessionImporter with
+            // StallTimeout == 0. Both are expected device conditions (power-cycle guidance, no Sentry).
+            // @port-divergence on card-unavailability: ONLY the sustained watchdog stall is treated as
+            // device-wide (abort the batch, paint the card panel). The transport per-read timeout also
+            // fires on a single momentary inter-chunk gap on a healthy device (SD read-latency spike,
+            // USB backpressure, a GC pause), so it's per-file — don't abort, or one hiccup would skip
+            // every later healthy file.
+            SdCardDownloadStalledException stalled => new SdCardFailure(
                 State: SdCardState.Error,
                 StatusMessage: "The device stopped responding during the transfer.",
                 Guidance: POWER_CYCLE_GUIDANCE,
                 IsExpectedDeviceCondition: true,
-                IsCardUnavailable: false),
+                IsCardUnavailable: stalled.StallTimeout > TimeSpan.Zero),
 
             _ => new SdCardFailure(
                 State: SdCardState.Error,
