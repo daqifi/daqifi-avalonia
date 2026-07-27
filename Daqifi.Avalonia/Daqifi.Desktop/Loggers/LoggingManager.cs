@@ -46,7 +46,7 @@ public partial class LoggingManager : ObservableObject
     // @port: Daqifi.Desktop.Logger.LoggingManager.Loggers
     public List<ILogger> Loggers { get; }
 
-    private List<IChannel> _subscribedChannels = [];
+    private IReadOnlyList<IChannel> _subscribedChannels = Array.Empty<IChannel>();
 
     /// <summary>
     /// Gets the channels currently subscribed for logging.
@@ -495,9 +495,12 @@ public partial class LoggingManager : ObservableObject
                 channel.OnChannelUpdated += HandleChannelUpdate;
             }
 
-            // Copy-on-write: publish a new list instead of Add-ing to the one a reader on the
-            // transport thread may be enumerating right now. See SubscribedChannels' remarks.
-            Volatile.Write(ref _subscribedChannels, [.. current, channel]);
+            // Copy-on-write: publish a new immutable snapshot (AsReadOnly wraps the fresh list so a
+            // caller cannot downcast the published value back to List and mutate it) instead of
+            // Add-ing to the one a reader on the transport thread may be enumerating right now. See
+            // SubscribedChannels' remarks.
+            List<IChannel> updated = [.. current, channel];
+            Volatile.Write(ref _subscribedChannels, updated.AsReadOnly());
         }
 
         // Raised outside the lock so a binding handler can never re-enter under it.
@@ -524,10 +527,11 @@ public partial class LoggingManager : ObservableObject
             // Remove event handler if it's attached
             subscribedChannel.OnChannelUpdated -= HandleChannelUpdate;
 
-            // Copy-on-write -- see SubscribedChannels' remarks.
+            // Copy-on-write -- see SubscribedChannels' remarks. AsReadOnly so the published snapshot
+            // cannot be downcast to List and mutated outside the lock.
             var updated = new List<IChannel>(current);
             updated.Remove(subscribedChannel);
-            Volatile.Write(ref _subscribedChannels, updated);
+            Volatile.Write(ref _subscribedChannels, updated.AsReadOnly());
         }
 
         // Raised outside the lock so a binding handler can never re-enter under it.
@@ -924,8 +928,8 @@ public partial class LoggingManager : ObservableObject
             }
 
             // Copy-on-write -- see SubscribedChannels' remarks. Clear() would empty the very list a
-            // reader on the transport thread may be enumerating.
-            Volatile.Write(ref _subscribedChannels, []);
+            // reader on the transport thread may be enumerating; the empty array is immutable.
+            Volatile.Write(ref _subscribedChannels, Array.Empty<IChannel>());
         }
 
         // Raised outside the lock so a binding handler can never re-enter under it.
