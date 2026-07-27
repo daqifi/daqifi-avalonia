@@ -192,6 +192,21 @@ public partial class ConnectionDialogViewModel : ObservableObject
         if (_wifiFinder != null) { _wifiFinder.DeviceDiscovered -= HandleCoreWifiDeviceDiscovered; _wifiFinder.Dispose(); }
         _wifiDiscoveryCts?.Dispose();
 
+        // Drop stale devices from the previous discovery session when the finder is torn down and
+        // recreated (the dialog-open / firmware-flash resume path): the bound list otherwise outlives
+        // the finder that populated it and keeps devices that are no longer answering. The per-add MAC
+        // dedup guard in HandleWifiDeviceFound is RETAINED for the case this clear does not cover —
+        // RunContinuousWiFiDiscoveryAsync reuses this one finder across many DiscoverAsync sweeps and
+        // Core's dedup set is per-sweep, so a device already listed can re-fire on a later sweep (e.g.
+        // after a transient receive-socket error ends a sweep early), and this clear, which runs only
+        // on finder recreate, would not stop that duplicate. (issue #621)
+        // Routed through InvokeOnUiThread like every other AvailableWiFiDevices mutation.
+        InvokeOnUiThread(() =>
+        {
+            AvailableWiFiDevices.Clear();
+            HasNoWiFiDevices = true;
+        });
+
         _wifiFinder = new WiFiDeviceFinder(30303);
         _wifiDiscoveryCts = new CancellationTokenSource();
         _wifiFinder.DeviceDiscovered += HandleCoreWifiDeviceDiscovered;
@@ -712,11 +727,11 @@ public partial class ConnectionDialogViewModel : ObservableObject
 
         InvokeOnUiThread(() =>
         {
-            // Dedup by MAC across discovery restarts: Core's WiFiDeviceFinder only dedups within a
-            // single DiscoverAsync session (its discoveredDevices set is per-call), but the dialog
-            // restarts the finder — e.g. the firmware-flash resume path — while AvailableWiFiDevices
-            // persists and is never cleared. Without this guard a rediscovered device is added twice.
-            // Mirrors the serial path's FindSerialDeviceByPortName dedup. (issue #621)
+            // Dedup by MAC: Core's WiFiDeviceFinder dedups only within a single DiscoverAsync sweep
+            // (its discovered set is per-call), but RunContinuousWiFiDiscoveryAsync reuses this finder
+            // across sweeps while AvailableWiFiDevices persists — StartWiFiDiscovery's clear fires only
+            // on finder recreate, not per sweep — so a device already listed can re-fire on a later
+            // sweep and would be added twice without this guard. (issue #621)
             if (AvailableWiFiDevices.Any(d => d.MacAddress == wifiDevice.MacAddress)) return;
             AvailableWiFiDevices.Add(wifiDevice);
             if (HasNoWiFiDevices) { HasNoWiFiDevices = false; }
