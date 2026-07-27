@@ -251,41 +251,60 @@ public partial class PlotLogger : ObservableObject, ILogger
     public void Log(DataSample dataSample)
     {
         var key = (dataSample.DeviceSerialNo, dataSample.ChannelName);
+        var addedSeries = false;
 
-        if (!LoggedChannels.ContainsKey(key))
-        {
-            AddChannelSeries(dataSample.ChannelName,dataSample.DeviceSerialNo, dataSample.Type, dataSample.Color);
-        }
-        else
-        {
-            //Check for a change in color
-            if (LoggedChannels[key].Color.ToString().ToLower() != dataSample.Color.ToLower())
-            {
-                LoggedChannels[key].Color = OxyColor.Parse(dataSample.Color.ToLower());
-            }
-        }
-
-        if (FirstTime == null) { FirstTime = new DateTime(dataSample.TimestampTicks); }
-
-        var deltaTime = (dataSample.TimestampTicks - FirstTime.Value.Ticks) / 10000.0; //Ticks is 100 nanoseconds
-        var scaledSampleValue = dataSample.Value;
-
+        // Runs on the device transport thread, so the whole read-then-mutate sequence is held under
+        // PlotModel.SyncRoot -- the lock ClearPlot() and the render tick also take. The membership
+        // check and the FirstTime seed used to sit outside it, leaving two windows for a session-start
+        // ClearPlot() on the UI thread: the key could be present for ContainsKey and gone by the
+        // indexed access (KeyNotFoundException on a thread with no handler), and FirstTime could be
+        // nulled between the null check and the .Value dereference. See issue #759.
         lock (PlotModel.SyncRoot)
         {
+            if (!LoggedChannels.TryGetValue(key, out var series))
+            {
+                // The series may be absent because this is a new channel, or because ClearPlot()
+                // removed it while this call waited for the lock. Either way it is re-created here
+                // rather than dropping the sample.
+                AddChannelSeries(dataSample.ChannelName, dataSample.DeviceSerialNo, dataSample.Type, dataSample.Color);
+                addedSeries = true;
+            }
+            // Check for a change in color. Hex color strings are compared ordinal/case-insensitively
+            // rather than lower-cased under the current culture (which mangles ASCII letters in e.g.
+            // the Turkish locale).
+            else if (!string.Equals(series.Color.ToString(), dataSample.Color, StringComparison.OrdinalIgnoreCase))
+            {
+                series.Color = OxyColor.Parse(dataSample.Color.ToLowerInvariant());
+            }
+
+            FirstTime ??= new DateTime(dataSample.TimestampTicks);
+
+            // Ticks is 100 nanoseconds
+            var deltaTime = (dataSample.TimestampTicks - FirstTime.Value.Ticks) / 10000.0;
+            var scaledSampleValue = dataSample.Value;
+            var points = LoggedPoints[key];
+
             if (_gapDetector.IsGap(key, dataSample.FirmwareDeltaMs))
             {
-                LoggedPoints[key].Add(DataPoint.Undefined);
-                if (LoggedPoints[key].Count >= 5000)
+                points.Add(DataPoint.Undefined);
+                if (points.Count >= 5000)
                 {
-                    LoggedPoints[key].RemoveAt(0);
+                    points.RemoveAt(0);
                 }
             }
 
-            LoggedPoints[key].Add(new DataPoint(deltaTime, scaledSampleValue));
-            if (LoggedPoints[key].Count >= 5000)
+            points.Add(new DataPoint(deltaTime, scaledSampleValue));
+            if (points.Count >= 5000)
             {
-                LoggedPoints[key].RemoveAt(0);
+                points.RemoveAt(0);
             }
+        }
+
+        // Change notifications are raised outside the lock so a binding handler can never re-enter the
+        // logger while it is held. AddChannelSeries used to raise the PlotModel one itself.
+        if (addedSeries)
+        {
+            OnPropertyChanged(nameof(PlotModel));
         }
 
         OnPropertyChanged(nameof(LoggedPoints));
@@ -301,6 +320,15 @@ public partial class PlotLogger : ObservableObject, ILogger
         // No-op
     }
 
+    /// <summary>
+    /// Creates a channel's line series and point buffer and registers both with the plot.
+    /// </summary>
+    /// <remarks>
+    /// The caller must hold <c>PlotModel.SyncRoot</c> and raises the <c>PlotModel</c> change
+    /// notification after releasing it. These structural Adds race the render tick's enumeration and
+    /// <see cref="ClearPlot"/>'s removals, so without the lock a concurrent OxyPlot render or stats
+    /// recompute could observe a half-updated dictionary/series list.
+    /// </remarks>
     // @port: Daqifi.Desktop.Logger.PlotLogger.AddChannelSeries
     private void AddChannelSeries(string channelName, string DeviceSerialNo, ChannelType channelType, string newColor)
     {
@@ -340,18 +368,14 @@ public partial class PlotLogger : ObservableObject, ILogger
             _ => newLineSeries.YAxisKey
         };
 
-        // Mutate the shared collections under PlotModel.SyncRoot — the same lock held by Log()'s
-        // point-append and by the render tick (InvalidatePlot + plot-stats recompute). Without it
-        // these structural Adds raced the render-tick enumeration, so a concurrent OxyPlot render
-        // or stats recompute could observe a half-updated dictionary/series list.
-        lock (PlotModel.SyncRoot)
-        {
-            LoggedPoints.Add(key, newDataPoints);
-            LoggedChannels.Add(key, newLineSeries);
-            PlotModel.Series.Add(newLineSeries);
-        }
-
-        OnPropertyChanged(nameof(PlotModel));
+        // Structural Adds to the shared collections. The caller (Log) already holds PlotModel.SyncRoot
+        // -- the same lock the render tick (InvalidatePlot + plot-stats recompute) and ClearPlot() take
+        // -- so these run under it; without the lock they raced the render-tick enumeration and a
+        // concurrent OxyPlot render or stats recompute could observe a half-updated dictionary/series
+        // list. The caller raises the PlotModel change notification after releasing the lock.
+        LoggedPoints.Add(key, newDataPoints);
+        LoggedChannels.Add(key, newLineSeries);
+        PlotModel.Series.Add(newLineSeries);
     }
 
     private bool _firstRenderTickLogged;
@@ -499,12 +523,23 @@ public partial class PlotLogger : ObservableObject, ILogger
     // @port: Daqifi.Desktop.Logger.PlotLogger.ClearPlot
     public void ClearPlot()
     {
-        LoggedChannels.Clear();
-        LoggedPoints.Clear();
-        _gapDetector.Clear();
-        PlotModel.Series.Clear();
-        PlotModel.InvalidatePlot(true);
-        FirstTime = null;
+        // ClearPlot runs on the UI thread while Log() runs on the transport thread; both mutate the
+        // same LoggedChannels/LoggedPoints/PlotModel.Series/FirstTime, so the structural clears take
+        // PlotModel.SyncRoot -- the lock Log(), AddChannelSeries and the render tick also hold -- or a
+        // clear could interleave with a locked Log() and tear the collections (KeyNotFoundException /
+        // FirstTime race). See issue #759.
+        lock (PlotModel.SyncRoot)
+        {
+            LoggedChannels.Clear();
+            LoggedPoints.Clear();
+            _gapDetector.Clear();
+            PlotModel.Series.Clear();
+            PlotModel.InvalidatePlot(true);
+            FirstTime = null;
+        }
+
+        // Raised outside the lock, like every other change notification here: no binding handler may
+        // run while the plot lock is held.
         PlotStatsSummary = EMPTY_PLOT_STATS_SUMMARY;
         OnPropertyChanged(nameof(LoggedChannels));
         OnPropertyChanged(nameof(LoggedPoints));
