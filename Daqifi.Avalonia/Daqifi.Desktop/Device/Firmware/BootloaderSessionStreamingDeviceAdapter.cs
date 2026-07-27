@@ -89,9 +89,10 @@ public sealed class BootloaderSessionStreamingDeviceAdapter : CoreStreamingDevic
     }
 
     // Channel management and device-control members (channel/DIO/analog-output members added to
-    // Core's IStreamingDevice in 0.24.0; the PWM members and PwmFrequencyHz in 1.0.0) are
-    // intentionally no-op here: the device is already in firmware-update mode and this adapter
-    // does not configure channels, drive outputs, or reboot through the streaming command path.
+    // Core's IStreamingDevice in 0.24.0; the PWM members and PwmFrequencyHz in 1.0.0; the ADC
+    // calibration and NVM persistence members in 1.3.0) are intentionally no-op here: the device
+    // is already in firmware-update mode and this adapter does not configure channels, drive
+    // outputs, calibrate, persist NVM, or reboot through the streaming command path.
     // PwmFrequencyHz => 0 matches Core's documented "none commanded this session" sentinel.
     // @port: Daqifi.Desktop.Device.Firmware.BootloaderSessionStreamingDeviceAdapter.EnableChannel
     public void EnableChannel(IChannel channel)
@@ -148,6 +149,54 @@ public sealed class BootloaderSessionStreamingDeviceAdapter : CoreStreamingDevic
 
     // @port: Daqifi.Desktop.Device.Firmware.BootloaderSessionStreamingDeviceAdapter.Reboot
     public void Reboot()
+    {
+    }
+
+    // ADC calibration + voltage-precision members (added to Core's IStreamingDevice in 1.3.0) are
+    // intentionally no-op here for the same reason as above: a bootloader-only adapter never
+    // calibrates the ADC or persists calibration/precision to device NVM.
+    // @port: Daqifi.Desktop.Device.Firmware.BootloaderSessionStreamingDeviceAdapter.SaveAdcCalibration
+    public void SaveAdcCalibration()
+    {
+    }
+
+    // @port: Daqifi.Desktop.Device.Firmware.BootloaderSessionStreamingDeviceAdapter.LoadAdcCalibration
+    public void LoadAdcCalibration()
+    {
+    }
+
+    // @port: Daqifi.Desktop.Device.Firmware.BootloaderSessionStreamingDeviceAdapter.SetAdcCalibrationSlope
+    public void SetAdcCalibrationSlope(int channelNumber, double calM)
+    {
+    }
+
+    // @port: Daqifi.Desktop.Device.Firmware.BootloaderSessionStreamingDeviceAdapter.SetAdcCalibrationOffset
+    public void SetAdcCalibrationOffset(int channelNumber, double calB)
+    {
+    }
+
+    // @port: Daqifi.Desktop.Device.Firmware.BootloaderSessionStreamingDeviceAdapter.SaveFactoryAdcCalibration
+    public void SaveFactoryAdcCalibration()
+    {
+    }
+
+    // @port: Daqifi.Desktop.Device.Firmware.BootloaderSessionStreamingDeviceAdapter.LoadFactoryAdcCalibration
+    public void LoadFactoryAdcCalibration()
+    {
+    }
+
+    // @port: Daqifi.Desktop.Device.Firmware.BootloaderSessionStreamingDeviceAdapter.UseAdcCalibration
+    public void UseAdcCalibration(int bank)
+    {
+    }
+
+    // @port: Daqifi.Desktop.Device.Firmware.BootloaderSessionStreamingDeviceAdapter.SaveVoltagePrecision
+    public void SaveVoltagePrecision()
+    {
+    }
+
+    // @port: Daqifi.Desktop.Device.Firmware.BootloaderSessionStreamingDeviceAdapter.LoadVoltagePrecision
+    public void LoadVoltagePrecision()
     {
     }
 }
