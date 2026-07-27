@@ -168,8 +168,12 @@ jobs:
           # issues may legitimately carry it; matching the marker ensures we never edit
           # the wrong issue (and keeps the "single rolling digest" invariant).
           EXISTING=""
+          # --limit well above gh's default of 30: the label is shared with triage
+          # issues, and the long-lived digest is the OLDEST of them, so a default-sized
+          # (newest-first) page would eventually stop containing it and we'd file a
+          # duplicate digest instead of updating the real one.
           for n in $(gh issue list --repo "$GITHUB_REPOSITORY" --state open \
-            --label "$DIGEST_LABEL" --json number --jq '.[].number'); do
+            --label "$DIGEST_LABEL" --limit 200 --json number --jq '.[].number'); do
             if gh issue view "$n" --repo "$GITHUB_REPOSITORY" --json body --jq '.body' \
                | grep -q 'upstream-sync-digest'; then
               EXISTING="$n"
