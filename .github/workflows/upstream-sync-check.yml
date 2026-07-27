@@ -72,6 +72,13 @@ jobs:
             exit 1
           fi
           HEAD_SHA="$(git -C .upstream rev-parse HEAD)"
+          # The watermark must be an ancestor of HEAD, or `WATERMARK..HEAD` is misleading
+          # (e.g. upstream was rebased/force-pushed and the watermark is on orphaned
+          # history). Fail loudly rather than emit a nonsensical digest.
+          if ! git -C .upstream merge-base --is-ancestor "$WATERMARK" HEAD; then
+            echo "::error::Watermark $WATERMARK is not an ancestor of $UPSTREAM_REPO@$UPSTREAM_BRANCH ($HEAD_SHA). Upstream history may have been rewritten; reset $WATERMARK_FILE to a commit on the current branch."
+            exit 1
+          fi
           # Gate on ALL commits (merges included) so a merge-only delta still fires —
           # a merge can carry conflict-resolution changes present in neither parent.
           # COUNT (non-merge) is only for the readable checklist; MERGES drives the
@@ -156,8 +163,19 @@ jobs:
         run: |
           set -euo pipefail
           TITLE="Upstream sync digest — daqifi-desktop -> port"
-          EXISTING="$(gh issue list --repo "$GITHUB_REPOSITORY" --state open \
-            --label "$DIGEST_LABEL" --json number --jq '.[0].number // empty')"
+          # Identify the rolling digest by its hidden body marker, not just the label.
+          # The upstream-sync label is ALSO the Phase 2 triage-pickup signal, so other
+          # issues may legitimately carry it; matching the marker ensures we never edit
+          # the wrong issue (and keeps the "single rolling digest" invariant).
+          EXISTING=""
+          for n in $(gh issue list --repo "$GITHUB_REPOSITORY" --state open \
+            --label "$DIGEST_LABEL" --json number --jq '.[].number'); do
+            if gh issue view "$n" --repo "$GITHUB_REPOSITORY" --json body --jq '.body' \
+               | grep -q 'upstream-sync-digest'; then
+              EXISTING="$n"
+              break
+            fi
+          done
           if [ -n "$EXISTING" ]; then
             gh issue edit "$EXISTING" --repo "$GITHUB_REPOSITORY" --body-file "$BODY_FILE"
             gh issue comment "$EXISTING" --repo "$GITHUB_REPOSITORY" \
