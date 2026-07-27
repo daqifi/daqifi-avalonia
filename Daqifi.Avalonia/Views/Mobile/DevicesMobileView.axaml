@@ -187,6 +187,10 @@
                 <TextBlock Text="FIRMWARE" Classes="fieldLabel" />
                 <TextBlock Text="{Binding SelectedTile.Version}" Classes="infoValue" />
               </StackPanel>
+              <StackPanel Spacing="3">
+                <TextBlock Text="TYPE" Classes="fieldLabel" />
+                <TextBlock Text="{Binding SelectedTile.DeviceTypeDisplay}" Classes="infoValue" />
+              </StackPanel>
               <!-- WiFi module version: debug-gated. The desktop BoolAndToVis(ShowWifiVersion,
                    IsDebugModeEnabled) becomes nested IsVisible containers (nesting = logical AND),
                    preserving both bindings verbatim. -->

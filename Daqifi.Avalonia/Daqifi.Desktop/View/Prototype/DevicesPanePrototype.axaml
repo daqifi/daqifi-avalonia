@@ -535,6 +535,11 @@
                                         <TextBlock Text="{Binding SelectedTile.WifiVersion}"
                                                    Classes="infoValue"/>
                                     </StackPanel>
+                                    <StackPanel Grid.Column="1" Grid.Row="2" Margin="0,10,0,0">
+                                        <TextBlock Text="TYPE" Classes="infoLabel"/>
+                                        <TextBlock Text="{Binding SelectedTile.DeviceTypeDisplay}"
+                                                   Classes="infoValue"/>
+                                    </StackPanel>
                                 </Grid>
                             </Border>
 
