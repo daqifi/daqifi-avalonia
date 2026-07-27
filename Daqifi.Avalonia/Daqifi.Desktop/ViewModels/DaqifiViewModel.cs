@@ -76,6 +76,44 @@ public partial class DaqifiViewModel : ObservableObject, IFirmwareUpdateHost, IL
     /// </summary>
     // @port: Daqifi.Desktop.ViewModels.DaqifiViewModel.HasNetworkSettingsError
     public bool HasNetworkSettingsError => !string.IsNullOrEmpty(NetworkSettingsError);
+
+    /// <summary>
+    /// Staged edit buffer for the NAME field in the Devices drawer, seeded from the selected
+    /// device's current <see cref="IStreamingDevice.FriendlyName"/> when the drawer opens
+    /// (see <c>DevicesPaneViewModel.OpenSettings</c>) and re-seeded whenever the device reports
+    /// a new value (<see cref="OnSelectedDeviceChanged"/>) — unless the user has started typing
+    /// (<see cref="_pendingFriendlyNameDirty"/>), so an in-progress edit is never clobbered by a
+    /// FriendlyName update that arrives asynchronously after the drawer opens. Only written to
+    /// the device when <see cref="SetFriendlyName"/> is invoked.
+    /// </summary>
+    // @port: Daqifi.Desktop.ViewModels.DaqifiViewModel.PendingFriendlyName
+    [ObservableProperty]
+    private string? _pendingFriendlyName;
+
+    /// <summary>
+    /// True once the user has edited <see cref="PendingFriendlyName"/> by hand — blocks
+    /// <see cref="SeedPendingFriendlyName"/> from overwriting an in-progress edit when the
+    /// device's <see cref="IStreamingDevice.FriendlyName"/> changes. Reset whenever the buffer is
+    /// (re)seeded programmatically.
+    /// </summary>
+    private bool _pendingFriendlyNameDirty;
+
+    /// <summary>Guards <see cref="OnPendingFriendlyNameChanged"/> during a programmatic seed.</summary>
+    private bool _isSeedingPendingFriendlyName;
+
+    [ObservableProperty]
+    private bool _friendlyNameApplied;
+
+    [ObservableProperty]
+    [NotifyPropertyChangedFor(nameof(HasFriendlyNameError))]
+    private string? _friendlyNameError;
+
+    /// <summary>
+    /// True when <see cref="FriendlyNameError"/> has a message to display.
+    /// Used to toggle visibility of the inline error row in the Devices drawer.
+    /// </summary>
+    // @port: Daqifi.Desktop.ViewModels.DaqifiViewModel.HasFriendlyNameError
+    public bool HasFriendlyNameError => !string.IsNullOrEmpty(FriendlyNameError);
     [ObservableProperty]
     private bool _isAppSettingsOpen;
 
@@ -195,6 +233,7 @@ public partial class DaqifiViewModel : ObservableObject, IFirmwareUpdateHost, IL
     // construction paths, so callers null-check it exactly as the previous monitor field was.
     private DiskSpaceMonitorCoordinator? _diskSpaceCoordinator;
     private CancellationTokenSource? _networkSettingsAppliedCts;
+    private CancellationTokenSource? _friendlyNameAppliedCts;
     private DispatcherTimer? _sdLoggingElapsedTimer;
     private DateTime? _sdLoggingStartedAt;
 
@@ -967,6 +1006,152 @@ public partial class DaqifiViewModel : ObservableObject, IFirmwareUpdateHost, IL
             return;
         }
         _networkSettingsAppliedCts = null;
+        try
+        {
+            cts.Cancel();
+        }
+        finally
+        {
+            cts.Dispose();
+        }
+    }
+
+    /// <summary>
+    /// Sets and persists the selected device's friendly name from <see cref="PendingFriendlyName"/>.
+    /// Mirrors <see cref="UpdateNetworkConfiguration"/>'s guard/status-feedback shape.
+    /// </summary>
+    // @port: Daqifi.Desktop.ViewModels.DaqifiViewModel.SetFriendlyName
+    [RelayCommand]
+    public async Task SetFriendlyName()
+    {
+        FriendlyNameApplied = false;
+        FriendlyNameError = null;
+
+        var device = SelectedDevice;
+        if (device == null)
+        {
+            FriendlyNameError = "Select a device before setting a name.";
+            return;
+        }
+        if (!device.IsConnected)
+        {
+            FriendlyNameError = "Cannot set the device name — the device is not connected.";
+            return;
+        }
+
+        var name = PendingFriendlyName?.Trim() ?? string.Empty;
+        try
+        {
+            // SetFriendlyName sends SCPI commands synchronously (serial/TCP write); run it off
+            // the UI thread so a slow or stalled device write cannot freeze the UI.
+            await Task.Run(() => device.SetFriendlyName(name));
+
+            // Show the committed value rather than clearing the field — a blank box after a
+            // successful save reads as "it didn't take" even though the device now has the name.
+            SeedPendingFriendlyName(name);
+            _ = ShowFriendlyNameAppliedStatusAsync();
+        }
+        catch (ArgumentException ex)
+        {
+            _appLogger.Warning(ex, $"Rejected friendly name '{name}' for device {device.DeviceDisplayName}");
+            FriendlyNameError = ex.Message;
+        }
+    }
+
+    /// <summary>
+    /// Sets <see cref="PendingFriendlyName"/> without marking the edit buffer dirty. Used to seed
+    /// the drawer's NAME field when it opens (<c>DevicesPaneViewModel.OpenSettings</c>), after a
+    /// successful save, and whenever the selected device's <see cref="IStreamingDevice.FriendlyName"/>
+    /// changes and the user has not started editing (<see cref="OnSelectedDeviceChanged"/>).
+    /// </summary>
+    // @port: Daqifi.Desktop.ViewModels.DaqifiViewModel.SeedPendingFriendlyName
+    internal void SeedPendingFriendlyName(string value)
+    {
+        _isSeedingPendingFriendlyName = true;
+        try
+        {
+            PendingFriendlyName = value;
+        }
+        finally
+        {
+            _isSeedingPendingFriendlyName = false;
+        }
+        _pendingFriendlyNameDirty = false;
+    }
+
+    // @port: Daqifi.Desktop.ViewModels.DaqifiViewModel.OnPendingFriendlyNameChanged
+    partial void OnPendingFriendlyNameChanged(string? value)
+    {
+        if (!_isSeedingPendingFriendlyName)
+        {
+            _pendingFriendlyNameDirty = true;
+        }
+    }
+
+    /// <summary>
+    /// Keeps the Devices drawer's NAME field in sync with the selected device's reported
+    /// <see cref="IStreamingDevice.FriendlyName"/>, which can arrive asynchronously (fire-and-forget
+    /// inbound-message handling) after the drawer has already opened. Re-subscribes on every
+    /// selection change so only the currently selected device's updates apply — an update from a
+    /// device the user has since deselected/disconnected from must not touch the buffer.
+    /// </summary>
+    // @port: Daqifi.Desktop.ViewModels.DaqifiViewModel.OnSelectedDeviceChanged
+    partial void OnSelectedDeviceChanged(IStreamingDevice? oldValue, IStreamingDevice? newValue)
+    {
+        if (oldValue is INotifyPropertyChanged oldNotifier)
+        {
+            oldNotifier.PropertyChanged -= OnSelectedDeviceFriendlyNameChanged;
+        }
+        if (newValue is INotifyPropertyChanged newNotifier)
+        {
+            newNotifier.PropertyChanged += OnSelectedDeviceFriendlyNameChanged;
+        }
+    }
+
+    // @port: Daqifi.Desktop.ViewModels.DaqifiViewModel.OnSelectedDeviceFriendlyNameChanged
+    private void OnSelectedDeviceFriendlyNameChanged(object? sender, PropertyChangedEventArgs e)
+    {
+        if (e.PropertyName != nameof(IStreamingDevice.FriendlyName))
+        {
+            return;
+        }
+        // Don't clobber an in-progress edit, and ignore stale events from a device that is no
+        // longer selected (unsubscription races with the async inbound-message pipeline).
+        if (_pendingFriendlyNameDirty || sender != SelectedDevice)
+        {
+            return;
+        }
+        if (sender is IStreamingDevice device)
+        {
+            SeedPendingFriendlyName(device.FriendlyName);
+        }
+    }
+
+    // @port: Daqifi.Desktop.ViewModels.DaqifiViewModel.ShowFriendlyNameAppliedStatusAsync
+    private async Task ShowFriendlyNameAppliedStatusAsync()
+    {
+        CancelAndDisposeFriendlyNameAppliedCts();
+        _friendlyNameAppliedCts = new CancellationTokenSource();
+        var token = _friendlyNameAppliedCts.Token;
+
+        FriendlyNameApplied = true;
+        try
+        {
+            await Task.Delay(TimeSpan.FromSeconds(3), token);
+            FriendlyNameApplied = false;
+        }
+        catch (TaskCanceledException) { }
+    }
+
+    // @port: Daqifi.Desktop.ViewModels.DaqifiViewModel.CancelAndDisposeFriendlyNameAppliedCts
+    private void CancelAndDisposeFriendlyNameAppliedCts()
+    {
+        var cts = _friendlyNameAppliedCts;
+        if (cts == null)
+        {
+            return;
+        }
+        _friendlyNameAppliedCts = null;
         try
         {
             cts.Cancel();
@@ -2436,6 +2621,9 @@ public partial class DaqifiViewModel : ObservableObject, IFirmwareUpdateHost, IL
 
         // Transient WiFi-settings "applied" status timer.
         CancelAndDisposeNetworkSettingsCts();
+
+        // Transient device-name "applied" status timer.
+        CancelAndDisposeFriendlyNameAppliedCts();
 
         // SD-card elapsed-time DispatcherTimer.
         if (_sdLoggingElapsedTimer != null)

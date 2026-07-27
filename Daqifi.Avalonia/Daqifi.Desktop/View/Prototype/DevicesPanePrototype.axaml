@@ -544,6 +544,50 @@
                                 </Grid>
                             </Border>
 
+                            <!-- NAME -->
+                            <TextBlock Text="NAME" Classes="infoLabel" Margin="0,16,0,6"/>
+                            <Border Classes="drawerTextField">
+                                <TextBox Classes="drawerTextBox"
+                                         MaxLength="31"
+                                         Text="{Binding Shell.PendingFriendlyName, Mode=TwoWay, UpdateSourceTrigger=PropertyChanged}"/>
+                            </Border>
+
+                            <Button Theme="{StaticResource AccentPillButton}"
+                                    Content="SAVE NAME"
+                                    HorizontalAlignment="Right"
+                                    Margin="0,10,0,0"
+                                    Command="{Binding Shell.SetFriendlyNameCommand}"/>
+
+                            <StackPanel Orientation="Horizontal"
+                                        Margin="0,10,0,0"
+                                        IsVisible="{Binding Shell.FriendlyNameApplied}">
+                                <i:Icon Value="mdi-check-circle-outline"
+                                        FontSize="12"
+                                        Foreground="{DynamicResource StatusGreen}"
+                                        VerticalAlignment="Center"
+                                        Margin="0,0,6,0"/>
+                                <TextBlock Text="Name saved"
+                                           Foreground="{DynamicResource StatusGreen}"
+                                           FontSize="11"
+                                           VerticalAlignment="Center"/>
+                            </StackPanel>
+
+                            <StackPanel Orientation="Horizontal"
+                                        Margin="0,10,0,0"
+                                        IsVisible="{Binding Shell.HasFriendlyNameError}">
+                                <i:Icon Value="mdi-alert-circle-outline"
+                                        FontSize="12"
+                                        Foreground="{DynamicResource StatusRed}"
+                                        VerticalAlignment="Top"
+                                        Margin="0,2,6,0"/>
+                                <TextBlock Text="{Binding Shell.FriendlyNameError}"
+                                           Foreground="{DynamicResource StatusRed}"
+                                           FontSize="11"
+                                           TextWrapping="Wrap"
+                                           MaxWidth="320"
+                                           VerticalAlignment="Center"/>
+                            </StackPanel>
+
                             <!-- DATA ACQUISITION -->
                             <TextBlock Text="DATA ACQUISITION" Classes="sectionLabel drawerSectionLabel"/>
 
