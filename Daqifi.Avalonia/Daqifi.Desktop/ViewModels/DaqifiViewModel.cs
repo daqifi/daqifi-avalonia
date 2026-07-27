@@ -1046,6 +1046,17 @@ public partial class DaqifiViewModel : ObservableObject, IFirmwareUpdateHost, IL
             // the UI thread so a slow or stalled device write cannot freeze the UI.
             await Task.Run(() => device.SetFriendlyName(name));
 
+            // The awaited write can be slow, and the user may have switched the drawer to a different
+            // device while it ran. The write to THIS device still succeeded, but the drawer state
+            // (PendingFriendlyName + the "applied" checkmark) belongs to whatever device is selected
+            // NOW — seeding A's name into B's open drawer would clobber B's edit buffer and, on a
+            // second Save, write A's name to B's NVM. Mirror the sibling OnSelectedDeviceFriendlyNameChanged
+            // guard and only touch drawer state when this device is still the selected one.
+            if (device != SelectedDevice)
+            {
+                return;
+            }
+
             // Show the committed value rather than clearing the field — a blank box after a
             // successful save reads as "it didn't take" even though the device now has the name.
             SeedPendingFriendlyName(name);
@@ -2624,6 +2635,14 @@ public partial class DaqifiViewModel : ObservableObject, IFirmwareUpdateHost, IL
 
         // Transient device-name "applied" status timer.
         CancelAndDisposeFriendlyNameAppliedCts();
+
+        // Friendly-name sync subscribes OnSelectedDeviceFriendlyNameChanged on the selected device
+        // (OnSelectedDeviceChanged), and that device is rooted by ConnectionManager.Instance.ConnectedDevices,
+        // so without this the disposed VM stays reachable via the device's PropertyChanged delegate.
+        if (SelectedDevice is INotifyPropertyChanged friendlyNameNotifier)
+        {
+            friendlyNameNotifier.PropertyChanged -= OnSelectedDeviceFriendlyNameChanged;
+        }
 
         // SD-card elapsed-time DispatcherTimer.
         if (_sdLoggingElapsedTimer != null)
