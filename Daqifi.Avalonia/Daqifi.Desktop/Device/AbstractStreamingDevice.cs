@@ -578,8 +578,12 @@ public abstract partial class AbstractStreamingDevice : ObservableObject, IStrea
     /// drop such as a silent WiFi/TCP link death) onto its <c>Status</c>; <see cref="IsConnected"/>
     /// is a computed property that raises no change on its own, so without this bridge an
     /// IsConnected-derived binding or command would read stale until an unrelated signal (issue #3).
-    /// Raises <see cref="ObservableObject.OnPropertyChanged"/> directly — the same pattern the other
-    /// Core-event handlers use; Avalonia marshals binding updates to the UI thread.
+    /// Raises <see cref="ObservableObject.OnPropertyChanged"/> directly, matching how every other
+    /// Core-event-driven notification in this class is raised (e.g. the device-metadata properties
+    /// refreshed from inbound messages) — this handler deliberately does not introduce a different
+    /// threading discipline for one property. Core may raise this off the UI thread, so if the
+    /// class ever adopts dispatcher marshalling for Core-driven notifications, it should be applied
+    /// uniformly here and at those sites, not piecemeal.
     /// </summary>
     private void OnCoreStatusChanged(object? sender, DeviceStatusEventArgs e)
     {
