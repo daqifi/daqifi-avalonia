@@ -117,6 +117,14 @@ public sealed class DeviceTileViewModel : ObservableObject, IDisposable
     // @port: Daqifi.Desktop.ViewModels.DeviceTileViewModel.OnDevicePropertyChanged
     private void OnDevicePropertyChanged(object? sender, PropertyChangedEventArgs e)
     {
+        // Null/empty PropertyName is the INotifyPropertyChanged "everything changed" convention;
+        // re-raise all of this tile's derived properties so a bulk notification isn't silently dropped.
+        if (string.IsNullOrEmpty(e.PropertyName))
+        {
+            OnPropertyChanged(string.Empty);
+            return;
+        }
+
         switch (e.PropertyName)
         {
             case nameof(IStreamingDevice.IsConnected):
