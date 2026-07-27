@@ -288,7 +288,13 @@ public partial class DeviceLogsViewModel : ObservableObject
             // subsystem, filesystem error) become expected device conditions (Warning, no Sentry) with
             // actionable guidance; anything else keeps the Error path.
             var failure = SdCardFailureClassifier.Classify(ex);
-            ApplyFailureState(failure);
+            // Only paint the SD surface if this refresh's device is still selected — the success path
+            // above returns early on a mid-refresh selection change, and HandleImportFailure guards the
+            // same way, so a stale failure can't overwrite the current device's panel.
+            if (ReferenceEquals(SelectedDevice, device))
+            {
+                ApplyFailureState(failure);
+            }
             LogFailure(ex, failure, $"Failed to refresh SD card files on device {device.DeviceSerialNo}");
         }
         finally

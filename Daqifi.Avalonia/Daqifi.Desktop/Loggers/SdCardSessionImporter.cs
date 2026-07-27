@@ -262,6 +262,20 @@ public class SdCardSessionImporter : ISdCardSessionImporter
             // stall, so a genuine user cancel still propagates as OperationCanceledException.
             throw new SdCardDownloadStalledException(fileName, _downloadStallTimeout);
         }
+        catch (TimeoutException ex) when (ex is not SdCardDownloadStalledException)
+        {
+            // Core's SD receiver imposes its OWN read timeout on the transport (Core's serial
+            // transport sets SerialPort.ReadTimeout ~= 500ms) and throws a plain TimeoutException when
+            // the device goes silent mid-transfer — "Transport stream closed before receiving the EOF
+            // marker". Over USB serial (the only transport SD import supports) that transport read
+            // timeout fires long before this watchdog's deadline and never surfaces as a cancellation,
+            // so the OCE branch above can't catch it and the raw TimeoutException would otherwise reach
+            // the classifier's default arm (Sentry Error + wrong guidance) — the exact #754 regression
+            // this file exists to prevent. A TimeoutException from the download call is, by definition,
+            // a stalled transfer, so normalize it to the typed stall exception. Matched by TYPE (not
+            // message) but SCOPED to the download call, so an unrelated timeout elsewhere is unaffected.
+            throw new SdCardDownloadStalledException(fileName, _downloadStallTimeout);
+        }
     }
 
     /// <summary>
