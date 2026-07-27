@@ -15,18 +15,22 @@ public class EnumDescriptionConverter : IValueConverter
     // @port: Daqifi.Desktop.Helpers.EnumDescriptionConverter.GetEnumDescription
     private string GetEnumDescription(Enum enumObj)
     {
+        // Undefined/out-of-range enum values are not named members, so GetField returns null.
+        // Fall back to the value's string form rather than dereferencing null.
         var fieldInfo = enumObj.GetType().GetField(enumObj.ToString());
-
-        var attribArray = fieldInfo.GetCustomAttributes(false);
-
-        if (attribArray.Length == 0)
+        if (fieldInfo == null)
         {
             return enumObj.ToString();
         }
 
-        var attrib = attribArray[0] as DescriptionAttribute;
-        return attrib.Description;
+        // Select the DescriptionAttribute specifically: a member may carry other attributes, and
+        // GetCustomAttributes order is not guaranteed. Fall back to the member name when absent.
+        var descriptionAttribute = fieldInfo
+            .GetCustomAttributes(typeof(DescriptionAttribute), false)
+            .OfType<DescriptionAttribute>()
+            .FirstOrDefault();
 
+        return descriptionAttribute?.Description ?? enumObj.ToString();
     }
 
     // @port: Daqifi.Desktop.Helpers.EnumDescriptionConverter.Convert
