@@ -1,0 +1,218 @@
+name: Upstream sync check
+
+# Weekly check for new commits on daqifi-desktop (the upstream WPF app) that may need
+# porting into this Avalonia port. It files ONE rolling "digest" issue (label
+# `upstream-sync`) listing the commit delta since the last-reviewed watermark, for
+# triage. Triage itself (the "auto-triage" phase) is deliberately NOT run as an LLM in
+# CI — see the Phase 2 note near the bottom of this file for why — but by a supervised
+# agent that picks up the labelled issue.
+#
+# Setup + the watermark contract: .github/upstream-sync/README.md
+
+on:
+  schedule:
+    - cron: '17 6 * * 1'      # Mondays 06:17 UTC
+  workflow_dispatch:
+    inputs:
+      force:
+        description: 'Rebuild the digest even when there are no new commits'
+        type: boolean
+        default: false
+
+permissions:
+  contents: read
+  issues: write
+
+concurrency:
+  group: upstream-sync
+  cancel-in-progress: false
+
+env:
+  UPSTREAM_REPO: daqifi/daqifi-desktop
+  UPSTREAM_BRANCH: main
+  WATERMARK_FILE: .github/upstream-sync/last-reviewed.sha
+  DIGEST_LABEL: upstream-sync
+
+jobs:
+  digest:
+    runs-on: ubuntu-latest
+    outputs:
+      has_delta: ${{ steps.delta.outputs.has_delta }}
+      count: ${{ steps.delta.outputs.count }}
+      watermark: ${{ steps.delta.outputs.watermark }}
+      head: ${{ steps.delta.outputs.head }}
+      issue_number: ${{ steps.publish.outputs.issue_number }}
+    steps:
+      - name: Check out the port repo
+        uses: actions/checkout@v4
+
+      - name: Check out upstream (read-only)
+        uses: actions/checkout@v4
+        with:
+          repository: ${{ env.UPSTREAM_REPO }}
+          ref: ${{ env.UPSTREAM_BRANCH }}
+          token: ${{ secrets.UPSTREAM_SYNC_TOKEN }}
+          path: .upstream
+          fetch-depth: 0
+          # Do NOT leave the PAT in .upstream/.git/config after the fetch — history
+          # reads below need no credential, and a persisted token is exfiltratable.
+          persist-credentials: false
+
+      - name: Compute the commit delta since the watermark
+        id: delta
+        run: |
+          set -euo pipefail
+          WATERMARK="$(tr -d '[:space:]' < "$WATERMARK_FILE")"
+          if [ -z "$WATERMARK" ]; then
+            echo "::error::$WATERMARK_FILE is empty. Bootstrap it with an upstream commit SHA."
+            exit 1
+          fi
+          if ! git -C .upstream cat-file -e "${WATERMARK}^{commit}" 2>/dev/null; then
+            echo "::error::Watermark $WATERMARK is not a commit in $UPSTREAM_REPO. Reset it to a valid SHA."
+            exit 1
+          fi
+          HEAD_SHA="$(git -C .upstream rev-parse HEAD)"
+          # The watermark must be an ancestor of HEAD, or `WATERMARK..HEAD` is misleading
+          # (e.g. upstream was rebased/force-pushed and the watermark is on orphaned
+          # history). Fail loudly rather than emit a nonsensical digest.
+          if ! git -C .upstream merge-base --is-ancestor "$WATERMARK" HEAD; then
+            echo "::error::Watermark $WATERMARK is not an ancestor of $UPSTREAM_REPO@$UPSTREAM_BRANCH ($HEAD_SHA). Upstream history may have been rewritten; reset $WATERMARK_FILE to a commit on the current branch."
+            exit 1
+          fi
+          # Gate on ALL commits (merges included) so a merge-only delta still fires —
+          # a merge can carry conflict-resolution changes present in neither parent.
+          # COUNT (non-merge) is only for the readable checklist; MERGES drives the
+          # full-range-diff warning in the digest body.
+          COUNT_ALL="$(git -C .upstream rev-list --count "${WATERMARK}..HEAD")"
+          COUNT="$(git -C .upstream rev-list --count --no-merges "${WATERMARK}..HEAD")"
+          MERGES="$(git -C .upstream rev-list --count --merges "${WATERMARK}..HEAD")"
+          {
+            echo "watermark=$WATERMARK"
+            echo "head=$HEAD_SHA"
+            echo "count=$COUNT"
+            echo "merges=$MERGES"
+          } >> "$GITHUB_OUTPUT"
+          if [ "$COUNT_ALL" -gt 0 ] || [ "${{ inputs.force }}" = "true" ]; then
+            echo "has_delta=true" >> "$GITHUB_OUTPUT"
+            echo "Delta: $COUNT_ALL commit(s) since $WATERMARK ($COUNT non-merge, $MERGES merge)"
+          else
+            echo "has_delta=false" >> "$GITHUB_OUTPUT"
+            echo "Up to date: no new upstream commits since $WATERMARK"
+          fi
+
+      - name: Build the digest body
+        if: steps.delta.outputs.has_delta == 'true'
+        id: body
+        env:
+          WATERMARK: ${{ steps.delta.outputs.watermark }}
+          HEAD_SHA: ${{ steps.delta.outputs.head }}
+          COUNT: ${{ steps.delta.outputs.count }}
+          MERGES: ${{ steps.delta.outputs.merges }}
+        run: |
+          set -euo pipefail
+          BODY_FILE="$RUNNER_TEMP/digest.md"
+          {
+            echo "## Upstream sync digest — \`$UPSTREAM_REPO\` -> this port"
+            echo
+            echo "- **Watermark (last reviewed):** \`$WATERMARK\`"
+            echo "- **Upstream \`$UPSTREAM_BRANCH\` HEAD:** \`$HEAD_SHA\`"
+            echo "- **New non-merge commits:** $COUNT"
+            echo
+            echo "### Commits to triage (oldest first — port in this order)"
+            echo
+            # Commit subjects and author names are UNTRUSTED (upstream takes external
+            # PRs) and land in a digest a human reads to make porting decisions. Emit
+            # the fields unit-separated and strip backticks and angle brackets before
+            # rendering, so a crafted subject can't break out of its code span or inject
+            # raw HTML to spoof triage guidance.
+            git -C .upstream log --no-merges --reverse \
+              --format='%h%x1f%s%x1f%an%x1f%ad' --date=short \
+              "$WATERMARK..$HEAD_SHA" \
+            | while IFS=$'\x1f' read -r h s an ad rest; do
+                # Strip 0x1F too, and sanitize EVERY untrusted field including the
+                # trailing one: a subject may itself contain literal 0x1F bytes, which
+                # desyncs the split and shifts subject text into the later variables.
+                # `rest` is an overflow sink so nothing unsanitized can be printed.
+                s="$(printf  '%s' "$s"  | tr -d '`<>\037')"
+                an="$(printf '%s' "$an" | tr -d '`<>\037')"
+                ad="$(printf '%s' "$ad" | tr -d '`<>\037')"
+                printf -- '- [ ] `%s` %s <sub>(%s, %s)</sub>\n' "$h" "$s" "$an" "$ad"
+              done
+            echo
+            if [ "${MERGES:-0}" -gt 0 ]; then
+              echo "> **Note:** this range also contains **$MERGES merge commit(s)** (not listed above). A merge's conflict resolution can introduce production changes present in *neither* parent, so before advancing the watermark, verify against the **full-range diff** — \`git diff $WATERMARK..$HEAD_SHA\` — not only the per-commit list."
+              echo
+            fi
+            echo "### How to triage — do NOT assume a gap from the commit list"
+            echo
+            echo "> This port is co-developed with upstream in lockstep, so most commits are **already present**. For each one:"
+            echo "> 1. \`git -C <daqifi-desktop> show <sha>\` — read the real diff."
+            echo "> 2. **Grep the port for the changed symbols/types/methods.** Already there, or structurally immune? -> tick as ALREADY-PORTED."
+            echo "> 3. Real gap -> port via the gated PR flow (build -> security + code-review -> Qodo -> adversarial audit -> merge)."
+            echo "> 4. Test-only / chore-only -> usually N/A."
+            echo
+            echo "**When the pass is done, advance the watermark:** set \`$WATERMARK_FILE\` to \`$HEAD_SHA\` and commit. That closes this digest until the next real delta."
+            echo
+            echo "<sub>Auto-filed by \`.github/workflows/upstream-sync-check.yml\`. <!-- upstream-sync-digest --></sub>"
+          } > "$BODY_FILE"
+          echo "body_file=$BODY_FILE" >> "$GITHUB_OUTPUT"
+
+      - name: Ensure the digest label exists
+        if: steps.delta.outputs.has_delta == 'true'
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          gh label create "$DIGEST_LABEL" \
+            --repo "$GITHUB_REPOSITORY" \
+            --color 1D76DB \
+            --description "Upstream desktop commits awaiting port triage" 2>/dev/null || true
+
+      - name: Publish / update the rolling digest issue
+        if: steps.delta.outputs.has_delta == 'true'
+        id: publish
+        env:
+          GH_TOKEN: ${{ github.token }}
+          BODY_FILE: ${{ steps.body.outputs.body_file }}
+          HEAD_SHA: ${{ steps.delta.outputs.head }}
+          COUNT: ${{ steps.delta.outputs.count }}
+        run: |
+          set -euo pipefail
+          TITLE="Upstream sync digest — daqifi-desktop -> port"
+          # Identify the rolling digest by its hidden body marker, not just the label.
+          # The upstream-sync label is ALSO the Phase 2 triage-pickup signal, so other
+          # issues may legitimately carry it; matching the marker ensures we never edit
+          # the wrong issue (and keeps the "single rolling digest" invariant).
+          EXISTING=""
+          # --limit well above gh's default of 30: the label is shared with triage
+          # issues, and the long-lived digest is the OLDEST of them, so a default-sized
+          # (newest-first) page would eventually stop containing it and we'd file a
+          # duplicate digest instead of updating the real one.
+          for n in $(gh issue list --repo "$GITHUB_REPOSITORY" --state open \
+            --label "$DIGEST_LABEL" --limit 200 --json number --jq '.[].number'); do
+            if gh issue view "$n" --repo "$GITHUB_REPOSITORY" --json body --jq '.body' \
+               | grep -q 'upstream-sync-digest'; then
+              EXISTING="$n"
+              break
+            fi
+          done
+          if [ -n "$EXISTING" ]; then
+            gh issue edit "$EXISTING" --repo "$GITHUB_REPOSITORY" --body-file "$BODY_FILE"
+            gh issue comment "$EXISTING" --repo "$GITHUB_REPOSITORY" \
+              --body "Upstream advanced to \`$HEAD_SHA\` — $COUNT commit(s) since the watermark. Digest refreshed."
+            NUM="$EXISTING"
+          else
+            URL="$(gh issue create --repo "$GITHUB_REPOSITORY" --title "$TITLE" \
+              --label "$DIGEST_LABEL" --body-file "$BODY_FILE")"
+            NUM="${URL##*/}"
+          fi
+          echo "issue_number=$NUM" >> "$GITHUB_OUTPUT"
+          echo "Digest issue: #$NUM"
+
+  # ── Phase 2 — supervised auto-triage (label-driven, no LLM in CI) ────────────
+  # Deliberately NOT an in-CI LLM step. Running a model over untrusted upstream
+  # diffs with unrestricted shell next to live credentials is the "lethal trifecta"
+  # (prompt injection -> credential exfiltration to the digest issue). Instead the
+  # digest issue is labelled `upstream-sync`; a *supervised* agent picks it up in an
+  # environment that actually has guardrails and human oversight — the maintainer's
+  # local gated Claude Code session (e.g. the daqifi-loop skill), which runs the
+  # gap-analysis and the gated port PR flow. See .github/upstream-sync/README.md.
