@@ -94,16 +94,24 @@ public partial class ConnectionManager : ObservableObject
     /// After a firmware update ends, tears down the just-updated device iff Core's post-flash reconnect
     /// left it disconnected. A successful update reconnects the device (no-op here); a failed one leaves
     /// a stale entry the desktop's teardown paths deliberately skipped during the flash, so reconcile it
-    /// exactly as a normal disconnect would (unsubscribe channels, Disconnect, surface the disconnect).
+    /// exactly as a normal disconnect would (unsubscribe channels, Disconnect). Teardown ONLY — see the
+    /// note below on why the port does not raise the generic disconnect alarm here.
     /// </summary>
     // @port: Daqifi.Desktop.ConnectionManager.ReconcileDeviceAfterUpdate
     private void ReconcileDeviceAfterUpdate(IStreamingDevice device)
     {
-        // @port-divergence: upstream marshals via UiThreadHelper.InvokeOnUiThread and sets a
-        // LastDisconnectReason string; the port has neither (its disconnect UX is the bare
-        // NotifyConnection bool — see CheckIfSerialDeviceWasRemoved). Marshal with the port's
-        // Dispatcher.UIThread.Post (non-blocking; this setter can fire from the firmware task's
-        // continuation thread) and surface the failure via NotifyConnection only.
+        // @port-divergence: upstream marshals via UiThreadHelper.InvokeOnUiThread and, after the
+        // teardown, sets a SCOPED LastDisconnectReason ("… did not reconnect after the firmware update.
+        // Power-cycle …") which its NotifyConnection handler surfaces as that specific message. The port
+        // has no LastDisconnectReason — its NotifyConnection handler shows a FIXED generic "Device
+        // disconnected unexpectedly." So raising NotifyConnection here would pop that alarming,
+        // contradictory dialog right after the firmware coordinator already showed the correct outcome
+        // dialog (e.g. the JumpingToApp "firmware installed, power-cycle" message) — two conflicting
+        // dialogs for one event. Instead do teardown ONLY: Unsubscribe + Disconnect clean up the stale
+        // entry (the device-list UI updates from the resulting ConnectedDevices change), and all user
+        // messaging is left to the firmware coordinator, which owns the success/failure dialog. Marshal
+        // with the port's Dispatcher.UIThread.Post (non-blocking; this setter can fire from the firmware
+        // task's continuation thread).
         Dispatcher.UIThread.Post(() =>
         {
             // Reconnected cleanly, or already removed by another path — nothing to reconcile.
@@ -118,7 +126,6 @@ public partial class ConnectionManager : ObservableObject
             }
 
             Disconnect(device);
-            NotifyConnection = true;
         });
     }
 
