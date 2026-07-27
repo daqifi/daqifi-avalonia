@@ -399,7 +399,7 @@ public partial class DeviceLogsViewModel : ObservableObject
         var failCount = 0;
         var timestampWarningCount = 0;
         SdCardFailure? abortingFailure = null;
-        SdCardFailure? lastFailure = null;
+        SdCardFailure? lastExpectedFailure = null;
 
         try
         {
@@ -435,7 +435,13 @@ public partial class DeviceLogsViewModel : ObservableObject
                 {
                     var failure = HandleImportFailure(ex, file.FileName, device);
                     failCount++;
-                    lastFailure = failure;
+                    // Remember the last EXPECTED device condition (not just the last failure), so a later
+                    // unexpected app error doesn't drop the actionable guidance an earlier card condition
+                    // carried.
+                    if (failure.IsExpectedDeviceCondition)
+                    {
+                        lastExpectedFailure = failure;
+                    }
 
                     // The SD subsystem is unusable, not just this one file — every remaining file
                     // would fail the same multi-second way, so stop rather than grinding through them.
@@ -463,14 +469,17 @@ public partial class DeviceLogsViewModel : ObservableObject
             {
                 message += $"\n\nImport stopped early: {abortingFailure.Guidance}";
             }
-            else if (lastFailure != null && lastFailure.IsExpectedDeviceCondition)
+            else if (successCount == 0 && lastExpectedFailure != null)
             {
-                // Surface actionable guidance even when we didn't abort. This matters most for a wedged
-                // SD subsystem over Windows USB serial: Core's ~500ms per-read timeout (a per-file
-                // "stall", StallTimeout==0) beats the sustained watchdog, so the device-wide abort path
-                // is unreachable there and every file fails per-file — without this the batch summary
-                // would report only a failure count and never tell the user to power-cycle (issue #754).
-                message += $"\n\n{lastFailure.Guidance}";
+                // Surface actionable guidance when we didn't abort but NOTHING imported — i.e. every file
+                // failed with a device condition, which over Windows USB serial is how a wedged SD
+                // subsystem presents (Core's ~500ms per-read timeout beats the sustained watchdog, so the
+                // device-wide abort path is unreachable and every file fails per-file). Without this the
+                // batch summary would report only a failure count and never tell the user to power-cycle
+                // (issue #754). The successCount==0 guard is deliberate: if some files imported, the
+                // device is demonstrably working, so a lone empty/corrupt/hiccup file must NOT trigger a
+                // misleading "power-cycle the device" — its failure is already in the count.
+                message += $"\n\n{lastExpectedFailure.Guidance}";
             }
 
             await ShowMessage("Import Complete", message, MessageBoxButton.OK);
