@@ -7,6 +7,7 @@ using System.ComponentModel;
 using CommunityToolkit.Mvvm.ComponentModel;
 using Daqifi.Desktop.Device;
 using Avalonia.Media;
+using DeviceType = Daqifi.Core.Device.DeviceType;
 using Avalonia.Media.Immutable;
 using Brush = Avalonia.Media.IBrush;
 
@@ -37,6 +38,19 @@ public sealed class DeviceTileViewModel : ObservableObject, IDisposable
     /// <summary>Firmware version as shown on the tile.</summary>
     // @port: Daqifi.Desktop.ViewModels.DeviceTileViewModel.Version
     public string Version => Device.DeviceVersion;
+
+    /// <summary>
+    /// User-friendly detected device type — "Nyquist 1/2/3" for the recognized family,
+    /// "Unknown" before detection completes or for unrecognized hardware.
+    /// </summary>
+    // @port: Daqifi.Desktop.ViewModels.DeviceTileViewModel.DeviceTypeDisplay
+    public string DeviceTypeDisplay => Device.DeviceType switch
+    {
+        DeviceType.Nyquist1 => "Nyquist 1",
+        DeviceType.Nyquist2 => "Nyquist 2",
+        DeviceType.Nyquist3 => "Nyquist 3",
+        _ => "Unknown"
+    };
 
     /// <summary>COM port (USB) or IP address (WiFi).</summary>
     // @port: Daqifi.Desktop.ViewModels.DeviceTileViewModel.Identifier
@@ -103,6 +117,14 @@ public sealed class DeviceTileViewModel : ObservableObject, IDisposable
     // @port: Daqifi.Desktop.ViewModels.DeviceTileViewModel.OnDevicePropertyChanged
     private void OnDevicePropertyChanged(object? sender, PropertyChangedEventArgs e)
     {
+        // Null/empty PropertyName is the INotifyPropertyChanged "everything changed" convention;
+        // re-raise all of this tile's derived properties so a bulk notification isn't silently dropped.
+        if (string.IsNullOrEmpty(e.PropertyName))
+        {
+            OnPropertyChanged(string.Empty);
+            return;
+        }
+
         switch (e.PropertyName)
         {
             case nameof(IStreamingDevice.IsConnected):
@@ -111,6 +133,9 @@ public sealed class DeviceTileViewModel : ObservableObject, IDisposable
                 break;
             case nameof(IStreamingDevice.IsFirmwareOutdated):
                 OnPropertyChanged(nameof(IsFirmwareOutdated));
+                break;
+            case nameof(IStreamingDevice.DeviceType):
+                OnPropertyChanged(nameof(DeviceTypeDisplay));
                 break;
             case nameof(IStreamingDevice.IsWifiFirmwareOutdated):
                 OnPropertyChanged(nameof(IsWifiFirmwareOutdated));

@@ -8,6 +8,7 @@ using ChannelDirection = Daqifi.Core.Channel.ChannelDirection;
 using Daqifi.Core.Device.Network;
 using Daqifi.Core.Device.SdCard;
 using Daqifi.Desktop.Models;
+using DeviceType = Daqifi.Core.Device.DeviceType;
 
 namespace Daqifi.Desktop.Device;
 
@@ -81,6 +82,13 @@ public interface IStreamingDevice : IDevice
     string DeviceVersion { get; set; }
     // @port: Daqifi.Desktop.Device.IStreamingDevice.IsFirmwareOutdated
     bool IsFirmwareOutdated { get; set; }
+
+    /// <summary>
+    /// Gets the detected device type (e.g. Nyquist 1/2/3), or <see cref="DeviceType.Unknown"/>
+    /// when the device has not yet been identified.
+    /// </summary>
+    // @port: Daqifi.Desktop.Device.IStreamingDevice.DeviceType
+    DeviceType DeviceType { get; }
 
     /// <summary>
     /// Gets whether this device has a separately-flashable WINC1500 WiFi module — i.e. it is
