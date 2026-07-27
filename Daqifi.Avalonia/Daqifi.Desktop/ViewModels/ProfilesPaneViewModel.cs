@@ -312,7 +312,10 @@ public partial class ProfilesPaneViewModel : ObservableObject
     // @port: Daqifi.Desktop.ViewModels.ProfilesPaneViewModel.MatchProfileToConnected
     private static Dictionary<ProfileDevice, IStreamingDevice> MatchProfileToConnected(Profile profile)
     {
-        var claimed = new HashSet<IStreamingDevice>();
+        // Identity set: match each profile entry to a distinct connected instance. With
+        // DaqifiStreamingDevice's value-based GetHashCode, two devices sharing Name/IP/MAC would
+        // collide in a default set and one could be double-claimed — ReferenceComparer prevents that.
+        var claimed = new HashSet<IStreamingDevice>(ReferenceComparer<IStreamingDevice>.Instance);
         var result = new Dictionary<ProfileDevice, IStreamingDevice>();
         var connected = ConnectionManager.Instance.ConnectedDevices.ToList();
 
