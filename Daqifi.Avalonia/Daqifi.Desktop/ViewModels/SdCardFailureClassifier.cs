@@ -90,15 +90,19 @@ public static class SdCardFailureClassifier
                 IsExpectedDeviceCondition: true,
                 IsCardUnavailable: true),
 
-            // The device opened the file and closed it again without sending a byte. Core only
-            // throws this after exhausting its own retries, so by the time it reaches us the SD
-            // subsystem is wedged rather than merely slow.
+            // The device opened the file and closed it again without sending a byte. This is
+            // AMBIGUOUS — Core cannot distinguish a wedged SD subsystem from a genuinely empty (0-byte)
+            // log file (an interrupted logging session leaves those on FAT) — so it throws this for
+            // both. Keep the power-cycle guidance, but @port-divergence: do NOT mark the whole card
+            // unavailable. Upstream sets this true, which makes a batch import abort on the FIRST empty
+            // file and silently skip every later (healthy) file; treating it as per-file lets the batch
+            // skip just this file and keep going. (Upstream shares the abort — reported upstream.)
             SdCardEmptyTransferException => new SdCardFailure(
                 State: SdCardState.Error,
                 StatusMessage: "The device returned no data for this file.",
                 Guidance: POWER_CYCLE_GUIDANCE,
                 IsExpectedDeviceCondition: true,
-                IsCardUnavailable: true),
+                IsCardUnavailable: false),
 
             SdCardBusyException => new SdCardFailure(
                 State: SdCardState.Error,
@@ -112,7 +116,9 @@ public static class SdCardFailureClassifier
                 StatusMessage: filesystem.DeviceMessage ?? filesystem.Message,
                 Guidance: GENERIC_CARD_GUIDANCE,
                 IsExpectedDeviceCondition: true,
-                IsCardUnavailable: true),
+                // @port-divergence (as above): a filesystem error can be specific to one corrupt file,
+                // so per-file rather than card-wide — a batch skips it and keeps going.
+                IsCardUnavailable: false),
 
             SdCardOperationException operation => new SdCardFailure(
                 State: SdCardState.Error,
@@ -123,16 +129,19 @@ public static class SdCardFailureClassifier
                 // is still worth trying.
                 IsCardUnavailable: false),
 
-            // Raised by the desktop's own stall watchdog (see SdCardSessionImporter) when the
-            // device stops sending data mid-transfer without ever failing the request. Matched by
-            // its specific type, not by TimeoutException: an unrelated timeout reaching here is
-            // not evidence that the SD subsystem is wedged, and must keep the Error path.
+            // Raised when a download stalls: either the desktop's own 90s watchdog, or Core's own
+            // ~500ms serial read timeout normalized to this type in SdCardSessionImporter. A stall is
+            // an expected device/environmental condition (power-cycle guidance, no Sentry), but
+            // @port-divergence: NOT card-unavailable — Core's per-read timeout also fires on a single
+            // momentary inter-chunk gap on an otherwise-healthy device (SD read-latency spike, USB
+            // backpressure, a GC pause), so aborting the whole batch on one stall would skip healthy
+            // files; treat it as per-file and let the batch skip this one and continue.
             SdCardDownloadStalledException => new SdCardFailure(
                 State: SdCardState.Error,
                 StatusMessage: "The device stopped responding during the transfer.",
                 Guidance: POWER_CYCLE_GUIDANCE,
                 IsExpectedDeviceCondition: true,
-                IsCardUnavailable: true),
+                IsCardUnavailable: false),
 
             _ => new SdCardFailure(
                 State: SdCardState.Error,

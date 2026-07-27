@@ -28,6 +28,21 @@ public sealed class SdCardDownloadStalledException : TimeoutException
         StallTimeout = stallTimeout;
     }
 
+    /// <summary>
+    /// Initializes a new instance from an underlying transport timeout — used when Core's own read
+    /// timeout (not this watchdog) detected the stall, so the original exception is preserved as the
+    /// inner exception and no specific watchdog duration is claimed (<see cref="StallTimeout"/> is zero).
+    /// </summary>
+    /// <param name="fileName">The SD card file whose transfer stalled.</param>
+    /// <param name="innerException">The underlying timeout that signalled the stall.</param>
+    public SdCardDownloadStalledException(string fileName, Exception innerException)
+        : base($"The device stopped sending data for '{fileName}' mid-transfer, so the download was abandoned.",
+               innerException)
+    {
+        FileName = fileName;
+        StallTimeout = TimeSpan.Zero;
+    }
+
     /// <summary>The SD card file whose transfer stalled.</summary>
     public string FileName { get; }
 

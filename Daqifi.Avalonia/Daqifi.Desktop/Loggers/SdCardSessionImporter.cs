@@ -274,7 +274,9 @@ public class SdCardSessionImporter : ISdCardSessionImporter
             // this file exists to prevent. A TimeoutException from the download call is, by definition,
             // a stalled transfer, so normalize it to the typed stall exception. Matched by TYPE (not
             // message) but SCOPED to the download call, so an unrelated timeout elsewhere is unaffected.
-            throw new SdCardDownloadStalledException(fileName, _downloadStallTimeout);
+            // Preserve the original timeout as the inner exception for diagnostics (and don't claim the
+            // 90s watchdog duration — Core's own read timeout fired here, not the watchdog).
+            throw new SdCardDownloadStalledException(fileName, ex);
         }
     }
 
