@@ -120,9 +120,19 @@ jobs:
             echo
             echo "### Commits to triage (oldest first — port in this order)"
             echo
+            # Commit subjects and author names are UNTRUSTED (upstream takes external
+            # PRs) and land in a digest a human reads to make porting decisions. Emit
+            # the fields unit-separated and strip backticks and angle brackets before
+            # rendering, so a crafted subject can't break out of its code span or inject
+            # raw HTML to spoof triage guidance.
             git -C .upstream log --no-merges --reverse \
-              --format='- [ ] `%h` %s <sub>(%an, %ad)</sub>' --date=short \
-              "$WATERMARK..$HEAD_SHA"
+              --format='%h%x1f%s%x1f%an%x1f%ad' --date=short \
+              "$WATERMARK..$HEAD_SHA" \
+            | while IFS=$'\x1f' read -r h s an ad; do
+                s="$(printf '%s' "$s" | tr -d '`<>')"
+                an="$(printf '%s' "$an" | tr -d '`<>')"
+                printf -- '- [ ] `%s` %s <sub>(%s, %s)</sub>\n' "$h" "$s" "$an" "$ad"
+              done
             echo
             if [ "${MERGES:-0}" -gt 0 ]; then
               echo "> **Note:** this range also contains **$MERGES merge commit(s)** (not listed above). A merge's conflict resolution can introduce production changes present in *neither* parent, so before advancing the watermark, verify against the **full-range diff** — \`git diff $WATERMARK..$HEAD_SHA\` — not only the per-commit list."
