@@ -17,6 +17,7 @@ using System.Runtime.InteropServices; // Added for P/Invoke
 using CommunityToolkit.Mvvm.ComponentModel; // Added using
 using Daqifi.Core.Device; // Added for DeviceType, DeviceTypeDetector, DeviceMetadata, DeviceCapabilities, DeviceState
 using Daqifi.Core.Device.Protocol; // Added for ProtobufProtocolHandler
+using Daqifi.Core.Communication.Transport; // Added for TransportNotConnectedException (typed connect-classification)
 using Daqifi.Core.Communication.Messages; // Added for IInboundMessage
 using CoreStreamingDevice = Daqifi.Core.Device.DaqifiStreamingDevice;
 using Daqifi.Core.Device.SdCard;
@@ -451,6 +452,28 @@ public abstract partial class AbstractStreamingDevice : ObservableObject, IStrea
     {
         AppLogger.Error(ex, $"Problem connecting to DAQiFi device {DisplayIdentifier}");
     }
+
+    // @port-divergence: the SCPI-init connect failure is classified by the typed
+    // Daqifi.Core.Device.ScpiInitializationErrorException — see the `case ScpiInitializationErrorException`
+    // arms in SerialStreamingDevice / DaqifiStreamingDevice — rather than by upstream's
+    // `case InvalidOperationException when <message-match>`. As of the pinned Core (1.3.0), that typed
+    // exception derives from Exception, not InvalidOperationException, so the upstream type-pattern
+    // would not match it; matching the type is both correct here and Core's intended classification
+    // hook. Keep the typed match across Core bumps unless Core changes the exception's type. (Upstream
+    // carries the same InvalidOperationException match: daqifi/daqifi-desktop#775.)
+
+    /// <summary>
+    /// True when <paramref name="ex"/> is Core's transport reporting that the connection dropped
+    /// mid-initialization. Core's <see cref="TransportNotConnectedException"/> — the device unplugged,
+    /// powered off, WiFi/AP dropped, or a DTR-triggered MCU reset closed the link while Core was still
+    /// bringing the session up. Environmental, not an app bug, so the connect path downgrades it to a
+    /// warning. Matched by TYPE, not message: Core throws this same exception with several wordings
+    /// ("… is not connected.", "… is no longer connected.") from the serial/TCP transports AND from
+    /// DaqifiDevice.ExecuteTextCommandAsync during the SCPI-init exchange, so a substring match would
+    /// miss the common silent-drop-mid-init case (the exact #588/#740 scenario). Shared by both transports.
+    /// </summary>
+    // @port: Daqifi.Desktop.Device.AbstractStreamingDevice.IsTransportDisconnectedError
+    internal static bool IsTransportDisconnectedError(Exception ex) => ex is TransportNotConnectedException;
 
     /// <summary>
     /// Tears down the Core device created by <see cref="Connect"/>: unsubscribes Core

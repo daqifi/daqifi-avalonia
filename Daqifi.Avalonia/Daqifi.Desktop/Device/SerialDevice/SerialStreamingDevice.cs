@@ -124,11 +124,55 @@ public class SerialStreamingDevice : AbstractStreamingDevice, ILanChipInfoProvid
                 // already holds the port open. Same classification as above.
                 AppLogger.Warning(ex, $"Cannot connect on {PortName}: port is in use by another process");
                 break;
+            case TimeoutException:
+                // OnCoreDeviceInitialized polls for the device's initial status and throws this
+                // when the device never reports it within InitialStatusTimeout. A newly-enumerated
+                // COM port whose driver/firmware hasn't settled yet, or a device that's unplugged/
+                // powered off/stuck non-responsive, is a user/environmental condition, not an app
+                // bug — same classification as the WiFi connect-timeout case (issues #517, #632).
+                AppLogger.Warning(ex, $"Device on {PortName} did not respond within the connection timeout");
+                break;
+            case ScpiInitializationErrorException:
+                // Core's init sequence throws the typed ScpiInitializationErrorException (Core #317)
+                // when a command gets a SCPI -200 execution error back, from two sibling sites:
+                // "SCPI error during initialization" (echo/stop/power/stream-format/sysinfo) and
+                // "SCPI error while setting stream interface to USB" (the SYSTem:STReam:INTerface 0
+                // switch). Firmware persists the last stream interface across sessions, so a device
+                // previously left streaming over WiFi commonly triggers this on the next USB connect.
+                // Classified by the typed exception, not a message match (Core added the type in
+                // 1.3.0 for exactly this) — a device/environmental condition, not an app bug
+                // (issue #589). See the @port-divergence note in AbstractStreamingDevice.
+                AppLogger.Warning(ex,
+                    $"Device on {PortName} returned a SCPI error during initialization " +
+                    "(including stream-interface setup)");
+                break;
+            case InvalidOperationException when IsTransportClosedError(ex):
+                // The serial transport opens the COM port during CreateCoreDevice, then Core's init
+                // reads/writes it. If the port closes in that window — device unplugged, powered off,
+                // or the USB driver drops it mid-connect — accessing the transport stream throws an
+                // InvalidOperationException: .NET's SerialPort.BaseStream getter throws "The BaseStream
+                // is only available when the port is open." and Core throws the typed
+                // TransportNotConnectedException (type-matched via IsTransportClosedError, so all its
+                // wordings are caught). Both mean the port vanished mid-initialization — a user/environmental
+                // condition, not an app bug — same classification as the cases above (issue #588).
+                AppLogger.Warning(ex, $"Device on {PortName} disconnected during initialization");
+                break;
             default:
                 AppLogger.Error(ex, $"Failed to connect on {PortName}");
                 break;
         }
     }
+
+    /// <summary>
+    /// True when <paramref name="ex"/> means the serial transport closed mid-initialization: either
+    /// .NET's SerialPort.BaseStream "only available when the port is open" (a bare InvalidOperationException,
+    /// so message-matched) or Core's typed TransportNotConnectedException (type-matched via
+    /// IsTransportDisconnectedError, catching all its wordings). Both mean the COM port vanished mid-init.
+    /// </summary>
+    // @port: Daqifi.Desktop.Device.SerialDevice.SerialStreamingDevice.IsTransportClosedError
+    internal static bool IsTransportClosedError(Exception ex) =>
+        ex.Message.Contains("BaseStream is only available when the port is open", StringComparison.OrdinalIgnoreCase)
+        || IsTransportDisconnectedError(ex);
 
     /// <summary>
     /// Signals the initial-status wait so <see cref="OnCoreDeviceInitialized"/> can return,
