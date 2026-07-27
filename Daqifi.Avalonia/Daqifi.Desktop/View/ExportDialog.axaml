@@ -66,7 +66,7 @@
             <i:Icon Value="mdi-alert-circle-outline" FontSize="46" HorizontalAlignment="Center"
                     Foreground="{StaticResource StatusRed}"
                     IsVisible="{Binding !ExportSucceeded}"/>
-            <TextBlock Text="{Binding ExportResultMessage}" FontSize="16" HorizontalAlignment="Center" Margin="0,14,0,4" Foreground="{StaticResource TextPrimary}"/>
+            <TextBlock Text="{Binding ExportResultMessage}" FontSize="16" HorizontalAlignment="Center" TextAlignment="Center" TextWrapping="Wrap" Margin="0,14,0,4" Foreground="{StaticResource TextPrimary}"/>
             <TextBlock Text="{Binding ExportFilePath}" FontSize="11" HorizontalAlignment="Center" TextAlignment="Center" TextWrapping="Wrap"
                        Foreground="{StaticResource TextSecondary}" Margin="0,0,0,22"
                        IsVisible="{Binding ExportSucceeded}"/>

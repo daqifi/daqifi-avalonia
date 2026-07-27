@@ -261,13 +261,14 @@ public partial class ExportDialogViewModel : ObservableObject
         catch (Exception ex)
         {
             failed = true;
-            // Any write-side failure to the chosen destination surfaces as IOException — or a subtype:
-            // DirectoryNotFoundException for a removed drive / unreachable share, a bare disk-full
-            // IOException, PathTooLongException for a long session name. The exporter's void methods now
-            // propagate it instead of swallowing it as a false success; give an actionable hint that
-            // covers the plausible causes without over-claiming any single one (issue #747).
-            failureMessage = ex is IOException
-                ? "Export failed — could not write to the destination. It may be open in another program, on a disconnected drive, or the disk may be full. Check the destination and try again."
+            // Write-side failures to the chosen destination surface either as IOException (locked file,
+            // removed drive, full disk, long path — DirectoryNotFoundException / PathTooLongException
+            // etc. are all IOException subtypes) or as UnauthorizedAccessException (destination is
+            // read-only or a folder ACL denies write — that one is NOT an IOException). The exporter's
+            // void methods now propagate instead of swallowing it as a false success; give one concise
+            // actionable hint (issue #747), kept short so it fits the fixed-size result dialog.
+            failureMessage = ex is IOException or UnauthorizedAccessException
+                ? "Export failed — couldn't write to the destination. Make sure it isn't open in another program or read-only, then try again."
                 : "Export failed. Please try again.";
             AppLogger.Instance.Error(ex, "Problem Exporting Data");
             AppLogger.Instance.AddBreadcrumb("export", "Data export failed", Common.Loggers.BreadcrumbLevel.Error);
