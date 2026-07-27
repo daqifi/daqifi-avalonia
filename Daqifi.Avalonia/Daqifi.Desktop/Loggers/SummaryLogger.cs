@@ -80,17 +80,17 @@ public partial class SummaryLogger : ObservableObject, ILogger
         public double MinDelta => _current.MinDeltaTicks;
 
         /// <summary>
-        /// The maximum time between samples
+        /// The largest sample value seen on this channel
         /// </summary>
         public double MaxValue => _current.MaxValue;
 
         /// <summary>
-        /// The minimum time between samples
+        /// The smallest sample value seen on this channel
         /// </summary>
         public double MinValue => _current.MinValue;
 
         /// <summary>
-        /// The minimum time between samples
+        /// The mean of the sample values seen on this channel
         /// </summary>
         public double AverageValue => _current.AverageValue;
     }
@@ -128,17 +128,17 @@ public partial class SummaryLogger : ObservableObject, ILogger
         public long MinDeltaTicks { get; set; }
 
         /// <summary>
-        /// The average value of these samples
+        /// The running mean of these samples
         /// </summary>
         public double AverageValue { get; set; }
 
         /// <summary>
-        /// The minimum value of these samples
+        /// The maximum value of these samples
         /// </summary>
         public double MaxValue { get; set; }
 
         /// <summary>
-        /// The maximum value of these samples
+        /// The minimum value of these samples
         /// </summary>
         public double MinValue { get; set; }
 
@@ -201,17 +201,17 @@ public partial class SummaryLogger : ObservableObject, ILogger
         public long MinDeltaTicks { get; set; }
 
         /// <summary>
-        /// The maximum time between when the board reported a message and when the app recieved it
+        /// The longest time between when the board reported a message and when the app received it
         /// </summary>
         public long MaxLatencyTicks { get; set; }
 
         /// <summary>
-        /// The inimum time between when the board reported a message and when the app recieved it
+        /// The shortest time between when the board reported a message and when the app received it
         /// </summary>
         public long MinLatencyTicks { get; set; }
 
         /// <summary>
-        /// The minimum time between when the board reported a message and when the app recieved it
+        /// The running mean time between when the board reported a message and when the app received it
         /// </summary>
         public double AverageLatencyTicks { get; set; }
 
@@ -309,19 +309,19 @@ public partial class SummaryLogger : ObservableObject, ILogger
     public double AverageDelta => _current.AverageDeltaTicks;
 
     /// <summary>
-    /// The maximum time between samples
+    /// The longest message latency in the sample set
     /// </summary>
     // @port: Daqifi.Desktop.Logger.SummaryLogger.MaxLatency
     public double MaxLatency => _current.MaxLatencyTicks;
 
     /// <summary>
-    /// The minimum time between samples
+    /// The shortest message latency in the sample set
     /// </summary>
     // @port: Daqifi.Desktop.Logger.SummaryLogger.MinLatency
     public double MinLatency => _current.MinLatencyTicks;
 
     /// <summary>
-    /// The minimum time between samples
+    /// The mean message latency of the sample set
     /// </summary>
     // @port: Daqifi.Desktop.Logger.SummaryLogger.AverageLatency
     public double AverageLatency => _current.AverageLatencyTicks;
@@ -411,8 +411,13 @@ public partial class SummaryLogger : ObservableObject, ILogger
             if (buffer.SampleCount == 0)
             {
                 buffer.FirstSampleTicks = dataSample.TimestampTicks;
-                buffer.MinValue = buffer.MinValue;
-                buffer.MaxValue = buffer.MaxValue;
+
+                // Seed the running extremes from the first sample of the window, the same way the
+                // delta and latency accumulators seed themselves. ChannelBuffer starts (and
+                // Reset()s) at 0, so without this the extremes stay anchored at 0 and Math.Min/
+                // Math.Max report 0 for any channel that never crosses zero.
+                buffer.MinValue = dataSample.Value;
+                buffer.MaxValue = dataSample.Value;
             }
             else
             {
@@ -420,7 +425,11 @@ public partial class SummaryLogger : ObservableObject, ILogger
                 buffer.MaxValue = Math.Max(dataSample.Value, buffer.MaxValue);
             }
 
-            buffer.AverageValue += dataSample.Value / SampleSize;
+            // Accumulate the mean incrementally over the samples this channel actually received.
+            // SampleSize counts device *messages*, not per-channel samples, and it is a live,
+            // user-editable field on the Summary flyout, so dividing by it rescaled an in-progress
+            // average. This form is exact for every window length and independent of SampleSize.
+            buffer.AverageValue += (dataSample.Value - buffer.AverageValue) / (buffer.SampleCount + 1);
 
             if (buffer.SampleCount > 0)
             {
@@ -435,7 +444,12 @@ public partial class SummaryLogger : ObservableObject, ILogger
                     buffer.MinDeltaTicks = Math.Min(buffer.MinDeltaTicks, elapsed);
                     buffer.MaxDeltaTicks = Math.Max(buffer.MaxDeltaTicks, elapsed);
                 }
-                buffer.AverageDeltaTicks += elapsed / (double)(SampleSize - 1);
+                // Mean over the intervals this channel actually saw, for the same reason
+                // AverageValue is: SampleSize bounds the window in device *messages*, not this
+                // channel's interval count. At the k-th interval SampleCount is exactly k, so this
+                // self-seeds on the first interval and cannot divide by zero (guarded by
+                // SampleCount > 0).
+                buffer.AverageDeltaTicks += (elapsed - buffer.AverageDeltaTicks) / buffer.SampleCount;
             }
             buffer.LastSampleTicks = dataSample.TimestampTicks;
 
@@ -472,7 +486,12 @@ public partial class SummaryLogger : ObservableObject, ILogger
                 _buffer.MinLatencyTicks = Math.Min(latency, _buffer.MinLatencyTicks);
                 _buffer.MaxLatencyTicks = Math.Max(latency, _buffer.MaxLatencyTicks);
             }
-            _buffer.AverageLatencyTicks += latency / (double)(SampleSize - 1);
+            // Mean over the messages this window actually holds. This accumulator has no
+            // first-message guard, so it runs for all SampleSize messages of a completed window --
+            // one more than the (SampleSize - 1) it used to divide by, which read the average high
+            // and produced Infinity at the SampleSize of 1 the Summary flyout permits. SampleCount
+            // is the pre-increment count, so this seeds the first value by 1 and the n-th by n.
+            _buffer.AverageLatencyTicks += (latency - _buffer.AverageLatencyTicks) / (_buffer.SampleCount + 1);
 
             if (_buffer.SampleCount > 0)
             {
@@ -488,6 +507,10 @@ public partial class SummaryLogger : ObservableObject, ILogger
                     _buffer.MaxDeltaTicks = Math.Max(_buffer.MaxDeltaTicks, elapsed);
                 }
 
+                // Deliberately keeps the (SampleSize - 1) denominator: this branch IS guarded by
+                // SampleCount > 0, so a completed window of SampleSize messages contributes exactly
+                // SampleSize - 1 intervals. It cannot divide by zero because at a SampleSize of 1
+                // the window swaps after the first message and this guard never opens.
                 _buffer.AverageDeltaTicks += elapsed / (double)(SampleSize - 1);
             }
             _buffer.LastSampleTicks = dataSample.AppTicks;
