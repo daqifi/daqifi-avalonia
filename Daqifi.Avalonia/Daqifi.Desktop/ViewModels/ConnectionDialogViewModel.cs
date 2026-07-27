@@ -161,6 +161,63 @@ public partial class ConnectionDialogViewModel : ObservableObject
 
         // Set up the duplicate device handler
         ConnectionManager.Instance.DuplicateDeviceHandler = HandleDuplicateDevice;
+
+        // React to a firmware update starting/ending while this dialog is open: pause serial + WiFi
+        // discovery for the duration so a per-cycle port probe can't steal the COM port during Core's
+        // post-flash reconnect window (issue #738). The Start*Discovery guards below cover a dialog
+        // opened mid-flash; this event covers a dialog already open when the flash starts.
+        ConnectionManager.Instance.FirmwareUpdateInProgressChanged += OnFirmwareUpdateInProgressChanged;
+    }
+
+    // @port: Daqifi.Desktop.ViewModels.ConnectionDialogViewModel.OnFirmwareUpdateInProgressChanged
+    private void OnFirmwareUpdateInProgressChanged(object? sender, EventArgs e)
+    {
+        // Marshal onto the UI thread: the event is raised from the firmware coordinator's async flow,
+        // and the discovery start/stop paths mutate bound collections.
+        InvokeOnUiThread(() =>
+        {
+            if (_closed) { return; }
+
+            if (ConnectionManager.Instance.IsFirmwareUpdateInProgress)
+            {
+                StopWiFiDiscovery();
+                _ = StopSerialDiscoveryAsync();
+            }
+            else
+            {
+                // Flash finished — bring discovery back so the dialog keeps listing devices. The stop we
+                // issued at flash start may still be draining (a wedged port can hold the discovery loop
+                // task past its cancellation, leaving _*DiscoveryTask incomplete), and Start*Discovery
+                // refuses to start while that drain is in flight. So retry the start once the drain
+                // completes rather than dropping it — otherwise discovery could stay stopped for the rest
+                // of the dialog.
+                RestartDiscoveryWhenDrained(_wifiDiscoveryTask, StartWiFiDiscovery);
+                RestartDiscoveryWhenDrained(_serialDiscoveryTask, StartSerialDiscovery);
+            }
+        });
+    }
+
+    /// <summary>
+    /// Starts a discovery transport, deferring the start until any in-flight stop/drain for that
+    /// transport completes. The drain signal is the port's discovery-loop task (nulled by its own
+    /// completion continuation), so a non-completed task means "still winding down". <paramref name="start"/>
+    /// carries its own idempotency + firmware-in-progress guards, so a redundant or now-invalid call is a
+    /// harmless no-op.
+    /// </summary>
+    // @port: Daqifi.Desktop.ViewModels.ConnectionDialogViewModel.RestartDiscoveryWhenDrained
+    private void RestartDiscoveryWhenDrained(Task? drainTask, Action start)
+    {
+        if (drainTask is { IsCompleted: false })
+        {
+            drainTask.ContinueWith(
+                _ => InvokeOnUiThread(start),
+                CancellationToken.None,
+                TaskContinuationOptions.None,
+                TaskScheduler.Default);
+            return;
+        }
+
+        start();
     }
 
     // @port: Daqifi.Desktop.ViewModels.ConnectionDialogViewModel.OnHidDevicesChanged
@@ -186,6 +243,11 @@ public partial class ConnectionDialogViewModel : ObservableObject
         // Idempotent while actually running; allow a restart once the prior loop has completed (e.g.
         // it was drained around a firmware flash), otherwise a stale task reference blocks discovery.
         if (_closed || _wifiDiscoveryTask is { IsCompleted: false }) { return; }
+
+        // Don't run discovery during a firmware update: its per-cycle bus probing can starve the
+        // flash / steal the reconnecting COM port (issue #738). Covers a dialog opened mid-flash;
+        // OnFirmwareUpdateInProgressChanged restarts discovery when the flash ends.
+        if (ConnectionManager.Instance.IsFirmwareUpdateInProgress) { return; }
 
         // Restart-after-drain: dispose the prior finder/CTS before replacing them so we never leak a
         // subscribed finder or an undisposed CancellationTokenSource.
@@ -227,6 +289,13 @@ public partial class ConnectionDialogViewModel : ObservableObject
     private void StartSerialDiscovery()
     {
         if (_closed || _serialDiscoveryTask is { IsCompleted: false }) { return; }
+
+        // Don't probe COM ports during a firmware update: Core opens/reconnects the device's port
+        // itself across the flash, and the SerialDeviceFinder opens every DAQiFi VID/PID port each
+        // cycle — a probe landing in Core's JumpingToApp reconnect window steals the port and strands
+        // the update in a timeout (issue #738). Covers a dialog opened mid-flash;
+        // OnFirmwareUpdateInProgressChanged restarts discovery when the flash ends.
+        if (ConnectionManager.Instance.IsFirmwareUpdateInProgress) { return; }
 
         if (_serialFinder != null) { _serialFinder.DeviceDiscovered -= HandleCoreSerialDeviceDiscovered; _serialFinder.Dispose(); }
         _serialDiscoveryCts?.Dispose();
@@ -760,6 +829,8 @@ public partial class ConnectionDialogViewModel : ObservableObject
         StopWiFiDiscovery();
         // Fire-and-forget: cancel discovery and clean up without waiting for task completion
         _ = StopSerialDiscoveryAsync();
+
+        ConnectionManager.Instance.FirmwareUpdateInProgressChanged -= OnFirmwareUpdateInProgressChanged;
 
         // HID bootloader holds are owned by the app-global watcher and intentionally persist after the
         // dialog closes (so a sitting bootloader stays wedge-proof). Only unsubscribe this dialog from
