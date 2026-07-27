@@ -397,11 +397,12 @@ public partial class ChannelsPaneViewModel : ObservableObject, IDisposable
         // The map is only refreshed on Rebuild, so between a disconnect and the next Rebuild it can
         // still hold a device that has left ConnectedDevices. Confirm the owner is still connected so
         // a caller racing a disconnect (ToggleChannel/OpenSettings on a not-yet-removed tile) never
-        // acts on gone hardware — this restores the null the old live serial scan returned. A snapshot
-        // avoids racing a concurrent connect/disconnect mutation of the list. Membership is by
-        // reference identity, not IStreamingDevice's value Equals: if this owner disconnected and a
-        // value-equal instance reconnected in the same window, a value match would resolve the gone
-        // owner as still present, defeating the freshness check (and the ownership map is identity-keyed).
+        // acts on gone hardware — this restores the null the old live serial scan returned. ToList()
+        // scans a point-in-time copy rather than the live list, which (per the original lookup's own
+        // note) mutates during connect/disconnect flows. Membership is by reference identity, not
+        // IStreamingDevice's value Equals: if this owner disconnected and a value-equal instance
+        // reconnected in the same window, a value match would resolve the gone owner as still present,
+        // defeating the freshness check (and the ownership map is identity-keyed).
         return ConnectionManager.Instance.ConnectedDevices.ToList().Any(d => ReferenceEquals(d, owner))
             ? owner
             : null;
