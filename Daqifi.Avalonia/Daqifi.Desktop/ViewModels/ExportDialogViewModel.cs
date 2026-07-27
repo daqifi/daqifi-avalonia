@@ -261,11 +261,13 @@ public partial class ExportDialogViewModel : ObservableObject
         catch (Exception ex)
         {
             failed = true;
-            // A locked destination (open in Excel or another program) surfaces as IOException from the
-            // CSV write; give the user the actionable reason instead of the generic message. The
-            // exporter's void methods now propagate this instead of swallowing it as a false success.
+            // Any write-side failure to the chosen destination surfaces as IOException — or a subtype:
+            // DirectoryNotFoundException for a removed drive / unreachable share, a bare disk-full
+            // IOException, PathTooLongException for a long session name. The exporter's void methods now
+            // propagate it instead of swallowing it as a false success; give an actionable hint that
+            // covers the plausible causes without over-claiming any single one (issue #747).
             failureMessage = ex is IOException
-                ? "Export failed — the destination file may be open in another program. Close it and try again."
+                ? "Export failed — could not write to the destination. It may be open in another program, on a disconnected drive, or the disk may be full. Check the destination and try again."
                 : "Export failed. Please try again.";
             AppLogger.Instance.Error(ex, "Problem Exporting Data");
             AppLogger.Instance.AddBreadcrumb("export", "Data export failed", Common.Loggers.BreadcrumbLevel.Error);
