@@ -453,6 +453,31 @@ public abstract partial class AbstractStreamingDevice : ObservableObject, IStrea
     }
 
     /// <summary>
+    /// True when <paramref name="ex"/> is Core's init sequence reporting a SCPI -200 execution
+    /// error — from either the general init commands ("SCPI error during initialization") or the
+    /// stream-interface switch specifically ("SCPI error while setting stream interface to USB").
+    /// A device that answered but rejected an init command (firmware left mid-stream, timing) is a
+    /// device/environmental condition, not an app bug, so both transports downgrade it to a warning.
+    /// Matched by message substring because Core surfaces it as a bare InvalidOperationException with
+    /// no dedicated type — so unrelated InvalidOperationException bugs still hit the Error/Sentry path.
+    /// </summary>
+    // @port: Daqifi.Desktop.Device.AbstractStreamingDevice.IsScpiInitializationError
+    internal static bool IsScpiInitializationError(Exception ex) =>
+        ex.Message.Contains("SCPI error during initialization", StringComparison.OrdinalIgnoreCase) ||
+        ex.Message.Contains("SCPI error while setting stream interface to USB", StringComparison.OrdinalIgnoreCase);
+
+    /// <summary>
+    /// True when <paramref name="ex"/> is Core's transport reporting that the connection dropped
+    /// mid-initialization: <c>InvalidOperationException("Transport is not connected.")</c>. The device
+    /// disconnected (unplugged, powered off, WiFi/AP drop) while Core was still bringing the session
+    /// up — an environmental condition, not an app bug, so the connect path downgrades it to a warning.
+    /// The message is transport-agnostic, so both serial and WiFi share this predicate.
+    /// </summary>
+    // @port: Daqifi.Desktop.Device.AbstractStreamingDevice.IsTransportDisconnectedError
+    internal static bool IsTransportDisconnectedError(Exception ex) =>
+        ex.Message.Contains("Transport is not connected", StringComparison.OrdinalIgnoreCase);
+
+    /// <summary>
     /// Tears down the Core device created by <see cref="Connect"/>: unsubscribes Core
     /// events, disconnects, and disposes. Safe to call when no Core device is set.
     /// Transports override to also tear down transport-specific state and must call the

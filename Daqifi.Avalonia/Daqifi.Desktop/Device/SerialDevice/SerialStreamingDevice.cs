@@ -124,11 +124,52 @@ public class SerialStreamingDevice : AbstractStreamingDevice, ILanChipInfoProvid
                 // already holds the port open. Same classification as above.
                 AppLogger.Warning(ex, $"Cannot connect on {PortName}: port is in use by another process");
                 break;
+            case TimeoutException:
+                // OnCoreDeviceInitialized polls for the device's initial status and throws this
+                // when the device never reports it within InitialStatusTimeout. A newly-enumerated
+                // COM port whose driver/firmware hasn't settled yet, or a device that's unplugged/
+                // powered off/stuck non-responsive, is a user/environmental condition, not an app
+                // bug — same classification as the WiFi connect-timeout case (issues #517, #632).
+                AppLogger.Warning(ex, $"Device on {PortName} did not respond within the connection timeout");
+                break;
+            case InvalidOperationException when IsScpiInitializationError(ex):
+                // Core's init sequence throws a bare InvalidOperationException when a command gets a
+                // SCPI -200 execution error back, from two sibling sites: "SCPI error during
+                // initialization" (echo/stop/power/stream-format/sysinfo) and "SCPI error while
+                // setting stream interface to USB" (the SYSTem:STReam:INTerface 0 switch). Firmware
+                // persists the last stream interface across sessions, so a device previously left
+                // streaming over WiFi commonly triggers this on the next USB connect. Matched by
+                // message substring (Core has no typed exception yet) so other InvalidOperationException
+                // bugs still hit Error. Device/environmental condition, not an app bug (issue #589).
+                AppLogger.Warning(ex,
+                    $"Device on {PortName} returned a SCPI error during initialization " +
+                    "(including stream-interface setup)");
+                break;
+            case InvalidOperationException when IsTransportClosedError(ex):
+                // The serial transport opens the COM port during CreateCoreDevice, then Core's init
+                // reads/writes it. If the port closes in that window — device unplugged, powered off,
+                // or the USB driver drops it mid-connect — accessing the transport stream throws an
+                // InvalidOperationException: .NET's SerialPort.BaseStream getter throws "The BaseStream
+                // is only available when the port is open." and Core's transport throws "Transport is
+                // not connected." Both mean the port vanished mid-initialization — a user/environmental
+                // condition, not an app bug — same classification as the cases above (issue #588).
+                AppLogger.Warning(ex, $"Device on {PortName} disconnected during initialization");
+                break;
             default:
                 AppLogger.Error(ex, $"Failed to connect on {PortName}");
                 break;
         }
     }
+
+    /// <summary>
+    /// True when <paramref name="ex"/> means the serial transport closed mid-initialization: either
+    /// .NET's SerialPort.BaseStream "only available when the port is open" or Core's transport-not-
+    /// connected signal. Both mean the COM port vanished while Core was bringing the session up.
+    /// </summary>
+    // @port: Daqifi.Desktop.Device.SerialDevice.SerialStreamingDevice.IsTransportClosedError
+    internal static bool IsTransportClosedError(Exception ex) =>
+        ex.Message.Contains("BaseStream is only available when the port is open", StringComparison.OrdinalIgnoreCase)
+        || IsTransportDisconnectedError(ex);
 
     /// <summary>
     /// Signals the initial-status wait so <see cref="OnCoreDeviceInitialized"/> can return,

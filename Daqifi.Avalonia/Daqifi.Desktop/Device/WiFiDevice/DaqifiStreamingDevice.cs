@@ -143,6 +143,24 @@ public class DaqifiStreamingDevice : AbstractStreamingDevice
                 // Connection refused / host unreachable. Same classification as above.
                 AppLogger.Warning(ex, $"Cannot reach device at {IpAddress}:{Port}: {socketEx.SocketErrorCode}");
                 break;
+            case InvalidOperationException when IsScpiInitializationError(ex):
+                // Core's init throws a bare InvalidOperationException ("SCPI error during
+                // initialization") when an init command gets a SCPI -200 back. The WiFi transport
+                // runs the identical Core init sequence as serial (the shared Connect template runs
+                // InitializeAsync after the TCP connect), so a device left in a bad state is the same
+                // device/environmental condition here, not an app bug — downgrade to a Warning,
+                // mirroring the serial classification (issues #589, #709).
+                AppLogger.Warning(ex, $"Device at {IpAddress}:{Port} returned a SCPI error during initialization");
+                break;
+            case InvalidOperationException when IsTransportDisconnectedError(ex):
+                // Core opens the TCP transport in CreateCoreDevice, then the shared Connect template
+                // runs InitializeAsync over it. If the connection drops in that window — device powered
+                // off, WiFi/AP drop, host roams networks — Core throws InvalidOperationException
+                // "Transport is not connected." Same device/environmental condition the serial path
+                // downgrades for a port that vanishes mid-init (issue #588); the message is
+                // transport-agnostic, so classify it as a Warning here too (issue #740).
+                AppLogger.Warning(ex, $"Device at {IpAddress}:{Port} disconnected during initialization");
+                break;
             default:
                 AppLogger.Error(ex, $"Problem with connecting to DAQiFi Device at {IpAddress}:{Port}");
                 break;
