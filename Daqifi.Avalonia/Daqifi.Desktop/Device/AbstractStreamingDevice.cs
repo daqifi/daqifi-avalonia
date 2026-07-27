@@ -108,8 +108,9 @@ public abstract partial class AbstractStreamingDevice : ObservableObject, IStrea
     // current streaming session. Cleared alongside every ResetAll(), which per Core's contract also
     // drops per-device frequencies. Without an explicit frequency the processor reconstructs against
     // its 20 ns fallback tick (50 MHz), compressing the timeline ~16% since current firmware runs the
-    // streaming timestamp timer at 42 MHz.
-    private bool _timestampFrequencyApplied;
+    // streaming timestamp timer at 42 MHz. volatile so the transport thread promptly observes the UI
+    // thread's reset (matching the other cross-thread streaming-state flags above).
+    private volatile bool _timestampFrequencyApplied;
 
     // First-frame validation state (issue #573 follow-up). The device's leftover frame survives
     // a USB disconnect/reconnect, and a freshly connected instance has no counter reference to
