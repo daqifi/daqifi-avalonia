@@ -348,7 +348,7 @@
                            MaxWidth="360"
                            Margin="0,0,0,8"
                            IsVisible="{Binding SdCardErrorMessage, Converter={x:Static StringConverters.IsNotNullOrEmpty}}"/>
-                <TextBlock Text="The card may be corrupt or busy. Try a different card or reformat (FAT32)."
+                <TextBlock Text="{Binding SdCardErrorGuidance}"
                            FontSize="13"
                            FontWeight="Light"
                            Foreground="{StaticResource TextPrimary}"
