@@ -151,8 +151,9 @@ public class SerialStreamingDevice : AbstractStreamingDevice, ILanChipInfoProvid
                 // reads/writes it. If the port closes in that window — device unplugged, powered off,
                 // or the USB driver drops it mid-connect — accessing the transport stream throws an
                 // InvalidOperationException: .NET's SerialPort.BaseStream getter throws "The BaseStream
-                // is only available when the port is open." and Core's transport throws "Transport is
-                // not connected." Both mean the port vanished mid-initialization — a user/environmental
+                // is only available when the port is open." and Core throws the typed
+                // TransportNotConnectedException (type-matched via IsTransportClosedError, so all its
+                // wordings are caught). Both mean the port vanished mid-initialization — a user/environmental
                 // condition, not an app bug — same classification as the cases above (issue #588).
                 AppLogger.Warning(ex, $"Device on {PortName} disconnected during initialization");
                 break;
@@ -164,8 +165,9 @@ public class SerialStreamingDevice : AbstractStreamingDevice, ILanChipInfoProvid
 
     /// <summary>
     /// True when <paramref name="ex"/> means the serial transport closed mid-initialization: either
-    /// .NET's SerialPort.BaseStream "only available when the port is open" or Core's transport-not-
-    /// connected signal. Both mean the COM port vanished while Core was bringing the session up.
+    /// .NET's SerialPort.BaseStream "only available when the port is open" (a bare InvalidOperationException,
+    /// so message-matched) or Core's typed TransportNotConnectedException (type-matched via
+    /// IsTransportDisconnectedError, catching all its wordings). Both mean the COM port vanished mid-init.
     /// </summary>
     // @port: Daqifi.Desktop.Device.SerialDevice.SerialStreamingDevice.IsTransportClosedError
     internal static bool IsTransportClosedError(Exception ex) =>

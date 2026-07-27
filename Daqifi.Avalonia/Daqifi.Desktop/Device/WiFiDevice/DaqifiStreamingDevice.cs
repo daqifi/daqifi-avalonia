@@ -156,10 +156,11 @@ public class DaqifiStreamingDevice : AbstractStreamingDevice
             case InvalidOperationException when IsTransportDisconnectedError(ex):
                 // Core opens the TCP transport in CreateCoreDevice, then the shared Connect template
                 // runs InitializeAsync over it. If the connection drops in that window — device powered
-                // off, WiFi/AP drop, host roams networks — Core throws InvalidOperationException
-                // "Transport is not connected." Same device/environmental condition the serial path
-                // downgrades for a port that vanishes mid-init (issue #588); the message is
-                // transport-agnostic, so classify it as a Warning here too (issue #740).
+                // off, WiFi/AP drop, host roams networks — Core throws the typed
+                // TransportNotConnectedException (matched by type, not message — it surfaces with several
+                // wordings incl. "no longer connected" from the SCPI-init exchange). Same
+                // device/environmental condition the serial path downgrades (issue #588); classify it as
+                // a Warning here too (issue #740).
                 AppLogger.Warning(ex, $"Device at {IpAddress}:{Port} disconnected during initialization");
                 break;
             default:
