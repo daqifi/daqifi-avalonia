@@ -40,7 +40,28 @@ jobs:
       watermark: ${{ steps.delta.outputs.watermark }}
       head: ${{ steps.delta.outputs.head }}
       issue_number: ${{ steps.publish.outputs.issue_number }}
+      autotriage_ready: ${{ steps.phase2.outputs.ready }}
     steps:
+      # Phase 2 needs BOTH the opt-in variable AND the API-key secret. The secrets
+      # context is not allowed in a job-level `if:`, so decide here (secrets ARE
+      # available to a step env) and export one boolean the autotriage job gates on —
+      # otherwise "variable on, secret forgotten" would run claude-code-action with an
+      # empty key and turn the weekly run red instead of skipping silently.
+      - name: Detect whether Phase 2 (auto-triage) can run
+        id: phase2
+        env:
+          ANTHROPIC_API_KEY: ${{ secrets.ANTHROPIC_API_KEY }}
+          AUTOTRIAGE_ENABLED: ${{ vars.UPSTREAM_SYNC_AUTOTRIAGE }}
+        run: |
+          set -euo pipefail
+          if [ -n "${ANTHROPIC_API_KEY:-}" ] && [ "${AUTOTRIAGE_ENABLED:-}" = "true" ]; then
+            echo "ready=true" >> "$GITHUB_OUTPUT"
+            echo "Phase 2 enabled (opt-in variable set and API key present)."
+          else
+            echo "ready=false" >> "$GITHUB_OUTPUT"
+            echo "Phase 2 skipped (needs UPSTREAM_SYNC_AUTOTRIAGE=true and ANTHROPIC_API_KEY)."
+          fi
+
       - name: Check out the port repo
         uses: actions/checkout@v4
 
@@ -159,9 +180,12 @@ jobs:
   # and repo SECRET  ANTHROPIC_API_KEY.  Skipped otherwise (no API cost).
   autotriage:
     needs: digest
+    # autotriage_ready already folds in BOTH the opt-in variable and the presence of
+    # the API-key secret (computed in the digest job's phase2 step), so a missing
+    # secret makes this a silent no-op rather than a failed run.
     if: >-
       needs.digest.outputs.has_delta == 'true' &&
-      vars.UPSTREAM_SYNC_AUTOTRIAGE == 'true'
+      needs.digest.outputs.autotriage_ready == 'true'
     runs-on: ubuntu-latest
     timeout-minutes: 20
     permissions:
