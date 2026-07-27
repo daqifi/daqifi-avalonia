@@ -1,0 +1,204 @@
+name: Upstream sync check
+
+# Weekly check for new commits on daqifi-desktop (the upstream WPF app) that may need
+# porting into this Avalonia port. Phase 1 files ONE rolling "digest" issue listing the
+# commit delta since the last-reviewed watermark, for human/agent triage. Phase 2
+# (opt-in) runs Claude Code to pre-classify each commit as an advisory comment.
+#
+# Setup + the watermark contract: .github/upstream-sync/README.md
+
+on:
+  schedule:
+    - cron: '17 6 * * 1'      # Mondays 06:17 UTC
+  workflow_dispatch:
+    inputs:
+      force:
+        description: 'Rebuild the digest even when there are no new commits'
+        type: boolean
+        default: false
+
+permissions:
+  contents: read
+  issues: write
+
+concurrency:
+  group: upstream-sync
+  cancel-in-progress: false
+
+env:
+  UPSTREAM_REPO: daqifi/daqifi-desktop
+  UPSTREAM_BRANCH: main
+  WATERMARK_FILE: .github/upstream-sync/last-reviewed.sha
+  DIGEST_LABEL: upstream-sync
+
+jobs:
+  digest:
+    runs-on: ubuntu-latest
+    outputs:
+      has_delta: ${{ steps.delta.outputs.has_delta }}
+      count: ${{ steps.delta.outputs.count }}
+      watermark: ${{ steps.delta.outputs.watermark }}
+      head: ${{ steps.delta.outputs.head }}
+      issue_number: ${{ steps.publish.outputs.issue_number }}
+    steps:
+      - name: Check out the port repo
+        uses: actions/checkout@v4
+
+      - name: Check out upstream (read-only)
+        uses: actions/checkout@v4
+        with:
+          repository: ${{ env.UPSTREAM_REPO }}
+          ref: ${{ env.UPSTREAM_BRANCH }}
+          token: ${{ secrets.UPSTREAM_SYNC_TOKEN }}
+          path: .upstream
+          fetch-depth: 0
+
+      - name: Compute the commit delta since the watermark
+        id: delta
+        run: |
+          set -euo pipefail
+          WATERMARK="$(tr -d '[:space:]' < "$WATERMARK_FILE")"
+          if [ -z "$WATERMARK" ]; then
+            echo "::error::$WATERMARK_FILE is empty. Bootstrap it with an upstream commit SHA."
+            exit 1
+          fi
+          if ! git -C .upstream cat-file -e "${WATERMARK}^{commit}" 2>/dev/null; then
+            echo "::error::Watermark $WATERMARK is not a commit in $UPSTREAM_REPO. Reset it to a valid SHA."
+            exit 1
+          fi
+          HEAD_SHA="$(git -C .upstream rev-parse HEAD)"
+          COUNT="$(git -C .upstream rev-list --count --no-merges "${WATERMARK}..HEAD")"
+          {
+            echo "watermark=$WATERMARK"
+            echo "head=$HEAD_SHA"
+            echo "count=$COUNT"
+          } >> "$GITHUB_OUTPUT"
+          if [ "$COUNT" -gt 0 ] || [ "${{ inputs.force }}" = "true" ]; then
+            echo "has_delta=true" >> "$GITHUB_OUTPUT"
+            echo "Delta: $COUNT new non-merge commit(s) ($WATERMARK..$HEAD_SHA)"
+          else
+            echo "has_delta=false" >> "$GITHUB_OUTPUT"
+            echo "Up to date: no new upstream commits since $WATERMARK"
+          fi
+
+      - name: Build the digest body
+        if: steps.delta.outputs.has_delta == 'true'
+        id: body
+        env:
+          WATERMARK: ${{ steps.delta.outputs.watermark }}
+          HEAD_SHA: ${{ steps.delta.outputs.head }}
+          COUNT: ${{ steps.delta.outputs.count }}
+        run: |
+          set -euo pipefail
+          BODY_FILE="$RUNNER_TEMP/digest.md"
+          {
+            echo "## Upstream sync digest — \`$UPSTREAM_REPO\` -> this port"
+            echo
+            echo "- **Watermark (last reviewed):** \`$WATERMARK\`"
+            echo "- **Upstream \`$UPSTREAM_BRANCH\` HEAD:** \`$HEAD_SHA\`"
+            echo "- **New non-merge commits:** $COUNT"
+            echo
+            echo "### Commits to triage (oldest first — port in this order)"
+            echo
+            git -C .upstream log --no-merges --reverse \
+              --format='- [ ] `%h` %s <sub>(%an, %ad)</sub>' --date=short \
+              "$WATERMARK..$HEAD_SHA"
+            echo
+            echo "### How to triage — do NOT assume a gap from the commit list"
+            echo
+            echo "> This port is co-developed with upstream in lockstep, so most commits are **already present**. For each one:"
+            echo "> 1. \`git -C <daqifi-desktop> show <sha>\` — read the real diff."
+            echo "> 2. **Grep the port for the changed symbols/types/methods.** Already there, or structurally immune? -> tick as ALREADY-PORTED."
+            echo "> 3. Real gap -> port via the gated PR flow (build -> security + code-review -> Qodo -> adversarial audit -> merge)."
+            echo "> 4. Test-only / chore-only -> usually N/A."
+            echo
+            echo "**When the pass is done, advance the watermark:** set \`$WATERMARK_FILE\` to \`$HEAD_SHA\` and commit. That closes this digest until the next real delta."
+            echo
+            echo "<sub>Auto-filed by \`.github/workflows/upstream-sync-check.yml\`. <!-- upstream-sync-digest --></sub>"
+          } > "$BODY_FILE"
+          echo "body_file=$BODY_FILE" >> "$GITHUB_OUTPUT"
+
+      - name: Ensure the digest label exists
+        if: steps.delta.outputs.has_delta == 'true'
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          gh label create "$DIGEST_LABEL" \
+            --repo "$GITHUB_REPOSITORY" \
+            --color 1D76DB \
+            --description "Upstream desktop commits awaiting port triage" 2>/dev/null || true
+
+      - name: Publish / update the rolling digest issue
+        if: steps.delta.outputs.has_delta == 'true'
+        id: publish
+        env:
+          GH_TOKEN: ${{ github.token }}
+          BODY_FILE: ${{ steps.body.outputs.body_file }}
+          HEAD_SHA: ${{ steps.delta.outputs.head }}
+          COUNT: ${{ steps.delta.outputs.count }}
+        run: |
+          set -euo pipefail
+          TITLE="Upstream sync digest — daqifi-desktop -> port"
+          EXISTING="$(gh issue list --repo "$GITHUB_REPOSITORY" --state open \
+            --label "$DIGEST_LABEL" --json number --jq '.[0].number // empty')"
+          if [ -n "$EXISTING" ]; then
+            gh issue edit "$EXISTING" --repo "$GITHUB_REPOSITORY" --body-file "$BODY_FILE"
+            gh issue comment "$EXISTING" --repo "$GITHUB_REPOSITORY" \
+              --body "Upstream advanced to \`$HEAD_SHA\` — $COUNT commit(s) since the watermark. Digest refreshed."
+            NUM="$EXISTING"
+          else
+            URL="$(gh issue create --repo "$GITHUB_REPOSITORY" --title "$TITLE" \
+              --label "$DIGEST_LABEL" --body-file "$BODY_FILE")"
+            NUM="${URL##*/}"
+          fi
+          echo "issue_number=$NUM" >> "$GITHUB_OUTPUT"
+          echo "Digest issue: #$NUM"
+
+  # ── Phase 2 (opt-in): pre-classify each commit with Claude Code ──────────────
+  # Enable by setting repo VARIABLE  UPSTREAM_SYNC_AUTOTRIAGE = true
+  # and repo SECRET  ANTHROPIC_API_KEY.  Skipped otherwise (no API cost).
+  autotriage:
+    needs: digest
+    if: >-
+      needs.digest.outputs.has_delta == 'true' &&
+      vars.UPSTREAM_SYNC_AUTOTRIAGE == 'true'
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    permissions:
+      contents: read
+      issues: write
+    steps:
+      - name: Check out the port repo
+        uses: actions/checkout@v4
+
+      - name: Check out upstream (read-only)
+        uses: actions/checkout@v4
+        with:
+          repository: ${{ env.UPSTREAM_REPO }}
+          ref: ${{ env.UPSTREAM_BRANCH }}
+          token: ${{ secrets.UPSTREAM_SYNC_TOKEN }}
+          path: .upstream
+          fetch-depth: 0
+
+      - name: Classify the delta and comment on the digest issue
+        uses: anthropics/claude-code-action@v1
+        with:
+          anthropic_api_key: ${{ secrets.ANTHROPIC_API_KEY }}
+          github_token: ${{ github.token }}
+          prompt: |
+            You are triaging upstream commits for a WPF->Avalonia port. READ-ONLY analysis plus ONE issue comment. Do NOT open PRs, do NOT push code, do NOT edit files.
+
+            - The Avalonia port is the repo checked out at the workspace root (app code under `Daqifi.Avalonia/Daqifi.Desktop/`, mirroring the upstream `Daqifi.Desktop` namespace with `// @port:` / `// @port-divergence:` markers).
+            - The upstream WPF source is checked out at `./.upstream` (app code under `Daqifi.Desktop/`).
+            - The new commits to triage are `${{ needs.digest.outputs.watermark }}..${{ needs.digest.outputs.head }}` on the upstream checkout.
+
+            For EACH non-merge commit in that range:
+            1. `git -C .upstream show <sha>` — identify the changed production symbols/types/methods (ignore pure test/chore changes).
+            2. Grep the port for those symbols. Decide ALREADY-PORTED (present, or structurally immune — cite the port file:line), PORT-AS-IS, ADAPT (port structure differs — say how), or N/A (test-only/chore/WPF-specific).
+            3. Note any Daqifi.Core prerequisite.
+
+            Then post ONE comment on issue #${{ needs.digest.outputs.issue_number }} in this repo (use `gh issue comment`): a markdown table (commit | verdict | port evidence or the concrete change needed | Core prereq), then a one-line "recommended porting order" covering the real gaps only. Be rigorous; most will be ALREADY-PORTED because the repos co-develop in lockstep. Prefix the comment with "Auto-triage (advisory — verify before porting):".
+          claude_args: |
+            --max-turns 40
+            --model claude-sonnet-5
+            --allowedTools Bash,Read,Grep,Glob
