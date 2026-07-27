@@ -523,12 +523,23 @@ public partial class PlotLogger : ObservableObject, ILogger
     // @port: Daqifi.Desktop.Logger.PlotLogger.ClearPlot
     public void ClearPlot()
     {
-        LoggedChannels.Clear();
-        LoggedPoints.Clear();
-        _gapDetector.Clear();
-        PlotModel.Series.Clear();
-        PlotModel.InvalidatePlot(true);
-        FirstTime = null;
+        // ClearPlot runs on the UI thread while Log() runs on the transport thread; both mutate the
+        // same LoggedChannels/LoggedPoints/PlotModel.Series/FirstTime, so the structural clears take
+        // PlotModel.SyncRoot -- the lock Log(), AddChannelSeries and the render tick also hold -- or a
+        // clear could interleave with a locked Log() and tear the collections (KeyNotFoundException /
+        // FirstTime race). See issue #759.
+        lock (PlotModel.SyncRoot)
+        {
+            LoggedChannels.Clear();
+            LoggedPoints.Clear();
+            _gapDetector.Clear();
+            PlotModel.Series.Clear();
+            PlotModel.InvalidatePlot(true);
+            FirstTime = null;
+        }
+
+        // Raised outside the lock, like every other change notification here: no binding handler may
+        // run while the plot lock is held.
         PlotStatsSummary = EMPTY_PLOT_STATS_SUMMARY;
         OnPropertyChanged(nameof(LoggedChannels));
         OnPropertyChanged(nameof(LoggedPoints));
