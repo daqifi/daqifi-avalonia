@@ -22,6 +22,7 @@ using Daqifi.Core.Communication.Messages; // Added for IInboundMessage
 using CoreStreamingDevice = Daqifi.Core.Device.DaqifiStreamingDevice;
 using Daqifi.Core.Device.SdCard;
 using CoreSdCardFileInfo = Daqifi.Core.Device.SdCard.SdCardFileInfo;
+using Avalonia.Threading; // Added for marshalling IsConnected notifications to the UI thread (issue #3)
 
 namespace Daqifi.Desktop.Device;
 
@@ -404,7 +405,7 @@ public abstract partial class AbstractStreamingDevice : ObservableObject, IStrea
             // Notify IsConnected on connect. Core sets Status=Connected inside CreateCoreDevice/
             // InitializeAsync — the first (and possibly only) transition can fire before the
             // StatusChanged handler is attached above, so raise it explicitly here too (issue #3).
-            OnPropertyChanged(nameof(IsConnected));
+            RaiseIsConnectedChanged();
             return true;
         }
         catch (Exception ex)
@@ -550,7 +551,7 @@ public abstract partial class AbstractStreamingDevice : ObservableObject, IStrea
 
         // CoreDevice is now null, so IsConnected reads false. The explicit-disconnect path
         // unsubscribes StatusChanged before cleanup, so notify here to cover teardown (issue #3).
-        OnPropertyChanged(nameof(IsConnected));
+        RaiseIsConnectedChanged();
     }
 
     // @port: Daqifi.Desktop.Device.AbstractStreamingDevice.UnsubscribeCoreDeviceEvents
@@ -578,16 +579,40 @@ public abstract partial class AbstractStreamingDevice : ObservableObject, IStrea
     /// drop such as a silent WiFi/TCP link death) onto its <c>Status</c>; <see cref="IsConnected"/>
     /// is a computed property that raises no change on its own, so without this bridge an
     /// IsConnected-derived binding or command would read stale until an unrelated signal (issue #3).
-    /// Raises <see cref="ObservableObject.OnPropertyChanged"/> directly, matching how every other
-    /// Core-event-driven notification in this class is raised (e.g. the device-metadata properties
-    /// refreshed from inbound messages) — this handler deliberately does not introduce a different
-    /// threading discipline for one property. Core may raise this off the UI thread, so if the
-    /// class ever adopts dispatcher marshalling for Core-driven notifications, it should be applied
-    /// uniformly here and at those sites, not piecemeal.
+    /// Marshals through <see cref="RaiseIsConnectedChanged"/> because Core raises this from its
+    /// transport thread.
     /// </summary>
     private void OnCoreStatusChanged(object? sender, DeviceStatusEventArgs e)
     {
-        OnPropertyChanged(nameof(IsConnected));
+        RaiseIsConnectedChanged();
+    }
+
+    /// <summary>
+    /// Raises the <see cref="IsConnected"/> change notification on the UI thread.
+    /// </summary>
+    /// <remarks>
+    /// Every producer of this notification can run off the UI thread: Core raises
+    /// <c>StatusChanged</c> from its transport thread (including a transport-detected silent drop),
+    /// and <see cref="Connect"/> / <see cref="CleanupConnection"/> run on whatever thread drives
+    /// connect and teardown. The notification does not stop at a bool — <c>DeviceTileViewModel</c>
+    /// re-raises <c>TileBorderBrush</c> off it, which is a <c>Brush</c>, so an unmarshalled raise
+    /// pushes UI-valued state to bindings from a worker thread.
+    /// <para>
+    /// Uses <c>Post</c> rather than <c>Invoke</c>, matching <c>ConnectionManager</c>: it is
+    /// non-blocking, so a Core callback is never held while the UI thread catches up, and it cannot
+    /// deadlock if the UI thread is itself waiting on Core.
+    /// </para>
+    /// </remarks>
+    private void RaiseIsConnectedChanged()
+    {
+        if (Dispatcher.UIThread.CheckAccess())
+        {
+            OnPropertyChanged(nameof(IsConnected));
+        }
+        else
+        {
+            Dispatcher.UIThread.Post(() => OnPropertyChanged(nameof(IsConnected)));
+        }
     }
     #endregion
 
