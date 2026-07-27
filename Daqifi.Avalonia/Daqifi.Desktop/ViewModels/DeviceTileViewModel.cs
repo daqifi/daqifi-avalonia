@@ -35,6 +35,10 @@ public sealed class DeviceTileViewModel : ObservableObject, IDisposable
     // @port: Daqifi.Desktop.ViewModels.DeviceTileViewModel.SerialNumber
     public string SerialNumber => Device.DeviceSerialNo;
 
+    /// <summary>User-defined friendly name, or empty when none is set on the device.</summary>
+    // @port: Daqifi.Desktop.ViewModels.DeviceTileViewModel.FriendlyName
+    public string FriendlyName => Device.FriendlyName;
+
     /// <summary>Firmware version as shown on the tile.</summary>
     // @port: Daqifi.Desktop.ViewModels.DeviceTileViewModel.Version
     public string Version => Device.DeviceVersion;
@@ -148,6 +152,9 @@ public sealed class DeviceTileViewModel : ObservableObject, IDisposable
                 break;
             case nameof(IStreamingDevice.DeviceSerialNo):
                 OnPropertyChanged(nameof(SerialNumber));
+                break;
+            case nameof(IStreamingDevice.FriendlyName):
+                OnPropertyChanged(nameof(FriendlyName));
                 break;
             case nameof(IStreamingDevice.DeviceVersion):
                 OnPropertyChanged(nameof(Version));

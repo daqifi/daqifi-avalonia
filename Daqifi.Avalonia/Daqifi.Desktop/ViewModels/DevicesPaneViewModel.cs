@@ -193,6 +193,10 @@ public partial class DevicesPaneViewModel : ObservableObject, IDisposable
             _shell.SelectedDevice = tile.Device;
             _shell.SelectedDeviceSupportsFirmwareUpdate =
                 tile.Device.ConnectionType == ConnectionType.Usb;
+            // Seed the drawer's NAME edit buffer from the device's current friendly name and clear
+            // any stale validation error from a previous drawer session.
+            _shell.SeedPendingFriendlyName(tile.Device.FriendlyName);
+            _shell.FriendlyNameError = null;
         }
         IsSettingsOpen = true;
     }
