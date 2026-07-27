@@ -132,15 +132,16 @@ public class SerialStreamingDevice : AbstractStreamingDevice, ILanChipInfoProvid
                 // bug — same classification as the WiFi connect-timeout case (issues #517, #632).
                 AppLogger.Warning(ex, $"Device on {PortName} did not respond within the connection timeout");
                 break;
-            case InvalidOperationException when IsScpiInitializationError(ex):
-                // Core's init sequence throws a bare InvalidOperationException when a command gets a
-                // SCPI -200 execution error back, from two sibling sites: "SCPI error during
-                // initialization" (echo/stop/power/stream-format/sysinfo) and "SCPI error while
-                // setting stream interface to USB" (the SYSTem:STReam:INTerface 0 switch). Firmware
-                // persists the last stream interface across sessions, so a device previously left
-                // streaming over WiFi commonly triggers this on the next USB connect. Matched by
-                // message substring (Core has no typed exception yet) so other InvalidOperationException
-                // bugs still hit Error. Device/environmental condition, not an app bug (issue #589).
+            case ScpiInitializationErrorException:
+                // Core's init sequence throws the typed ScpiInitializationErrorException (Core #317)
+                // when a command gets a SCPI -200 execution error back, from two sibling sites:
+                // "SCPI error during initialization" (echo/stop/power/stream-format/sysinfo) and
+                // "SCPI error while setting stream interface to USB" (the SYSTem:STReam:INTerface 0
+                // switch). Firmware persists the last stream interface across sessions, so a device
+                // previously left streaming over WiFi commonly triggers this on the next USB connect.
+                // Classified by the typed exception, not a message match (Core added the type in
+                // 1.3.0 for exactly this) — a device/environmental condition, not an app bug
+                // (issue #589). See the @port-divergence note in AbstractStreamingDevice.
                 AppLogger.Warning(ex,
                     $"Device on {PortName} returned a SCPI error during initialization " +
                     "(including stream-interface setup)");

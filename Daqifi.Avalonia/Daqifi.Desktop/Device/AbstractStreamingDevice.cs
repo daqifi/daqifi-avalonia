@@ -452,19 +452,16 @@ public abstract partial class AbstractStreamingDevice : ObservableObject, IStrea
         AppLogger.Error(ex, $"Problem connecting to DAQiFi device {DisplayIdentifier}");
     }
 
-    /// <summary>
-    /// True when <paramref name="ex"/> is Core's init sequence reporting a SCPI -200 execution
-    /// error — from either the general init commands ("SCPI error during initialization") or the
-    /// stream-interface switch specifically ("SCPI error while setting stream interface to USB").
-    /// A device that answered but rejected an init command (firmware left mid-stream, timing) is a
-    /// device/environmental condition, not an app bug, so both transports downgrade it to a warning.
-    /// Matched by message substring because Core surfaces it as a bare InvalidOperationException with
-    /// no dedicated type — so unrelated InvalidOperationException bugs still hit the Error/Sentry path.
-    /// </summary>
-    // @port: Daqifi.Desktop.Device.AbstractStreamingDevice.IsScpiInitializationError
-    internal static bool IsScpiInitializationError(Exception ex) =>
-        ex.Message.Contains("SCPI error during initialization", StringComparison.OrdinalIgnoreCase) ||
-        ex.Message.Contains("SCPI error while setting stream interface to USB", StringComparison.OrdinalIgnoreCase);
+    // @port-divergence: upstream's LogConnectFailure classifies the SCPI-init failure with
+    // `case InvalidOperationException when IsScpiInitializationError(ex)` (a message-substring
+    // predicate). That is DEAD CODE against Core 1.3.0 — which the port and upstream both pin —
+    // because Core 1.3.0 (Core #317) throws a *typed* Daqifi.Core.Device.ScpiInitializationErrorException
+    // that derives directly from System.Exception, NOT InvalidOperationException, so the type
+    // pattern never matches and the environmental SCPI-init error still reaches the default
+    // Error/Sentry path. The port instead matches the typed exception directly (Core added it
+    // precisely so it can be classified without a message match) — see the `case
+    // ScpiInitializationErrorException` arms in SerialStreamingDevice / DaqifiStreamingDevice.
+    // The message-substring predicate is therefore unnecessary here. (Reported upstream.)
 
     /// <summary>
     /// True when <paramref name="ex"/> is Core's transport reporting that the connection dropped
