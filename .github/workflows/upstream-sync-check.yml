@@ -128,9 +128,14 @@ jobs:
             git -C .upstream log --no-merges --reverse \
               --format='%h%x1f%s%x1f%an%x1f%ad' --date=short \
               "$WATERMARK..$HEAD_SHA" \
-            | while IFS=$'\x1f' read -r h s an ad; do
-                s="$(printf '%s' "$s" | tr -d '`<>')"
-                an="$(printf '%s' "$an" | tr -d '`<>')"
+            | while IFS=$'\x1f' read -r h s an ad rest; do
+                # Strip 0x1F too, and sanitize EVERY untrusted field including the
+                # trailing one: a subject may itself contain literal 0x1F bytes, which
+                # desyncs the split and shifts subject text into the later variables.
+                # `rest` is an overflow sink so nothing unsanitized can be printed.
+                s="$(printf  '%s' "$s"  | tr -d '`<>\037')"
+                an="$(printf '%s' "$an" | tr -d '`<>\037')"
+                ad="$(printf '%s' "$ad" | tr -d '`<>\037')"
                 printf -- '- [ ] `%s` %s <sub>(%s, %s)</sub>\n' "$h" "$s" "$an" "$ad"
               done
             echo
