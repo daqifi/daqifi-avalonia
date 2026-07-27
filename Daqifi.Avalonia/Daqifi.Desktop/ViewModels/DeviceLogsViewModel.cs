@@ -41,7 +41,8 @@ public enum SdCardState
 // @port: Daqifi.Desktop.ViewModels.DeviceLogsViewModel
 public partial class DeviceLogsViewModel : ObservableObject
 {
-    private readonly AppLogger _logger = AppLogger.Instance;
+    private readonly IAppLogger _logger;
+    private readonly ISdCardSessionImporter? _importerOverride;
 
     [ObservableProperty]
     private bool _isBusy;
@@ -67,6 +68,14 @@ public partial class DeviceLogsViewModel : ObservableObject
     [NotifyPropertyChangedFor(nameof(HasSdCardError))]
     [NotifyPropertyChangedFor(nameof(SdCardStatusLine))]
     private string _sdCardErrorMessage = string.Empty;
+
+    /// <summary>
+    /// Actionable guidance for the current SD card error, set by <see cref="SdCardFailureClassifier"/>
+    /// and shown in the error panel. Defaults to the generic card guidance.
+    /// </summary>
+    // @port: Daqifi.Desktop.ViewModels.DeviceLogsViewModel.SdCardErrorGuidance
+    [ObservableProperty]
+    private string _sdCardErrorGuidance = SdCardFailureClassifier.GENERIC_CARD_GUIDANCE;
 
     private ObservableCollection<SdCardFile> _deviceFiles;
 
@@ -139,8 +148,25 @@ public partial class DeviceLogsViewModel : ObservableObject
     // @port: Daqifi.Desktop.ViewModels.DeviceLogsViewModel.RefreshFilesCommand
     public IAsyncRelayCommand RefreshFilesCommand { get; }
 
-    public DeviceLogsViewModel()
+    /// <summary>
+    /// The first refresh kicked off when a device becomes selected. Exposed so a test can await the
+    /// initial load; production code fires it and forgets it.
+    /// </summary>
+    // @port: Daqifi.Desktop.ViewModels.DeviceLogsViewModel.InitialRefreshTask
+    internal Task? InitialRefreshTask { get; private set; }
+
+    public DeviceLogsViewModel() : this(null, null) { }
+
+    /// <summary>
+    /// Test seam: injects the logger and SD card importer. Production uses the parameterless ctor,
+    /// which passes null so the defaults (<see cref="AppLogger.Instance"/> and a real
+    /// <see cref="SdCardSessionImporter"/>) are used.
+    /// </summary>
+    internal DeviceLogsViewModel(IAppLogger? logger, ISdCardSessionImporter? importer)
     {
+        _logger = logger ?? AppLogger.Instance;
+        _importerOverride = importer;
+
         ConnectedDevices = new ObservableCollection<IStreamingDevice>();
         DeviceFiles = new ObservableCollection<SdCardFile>();
         DeviceFiles.CollectionChanged += OnDeviceFilesCollectionChanged;
@@ -203,7 +229,7 @@ public partial class DeviceLogsViewModel : ObservableObject
         {
             if (CanAccessSdCard)
             {
-                _ = RefreshFilesAsync();
+                InitialRefreshTask = RefreshFilesAsync();
             }
             else
             {
@@ -256,29 +282,20 @@ public partial class DeviceLogsViewModel : ObservableObject
 
             SdCardState = SdCardState.Ok;
         }
-        catch (SdCardNotPresentException ex)
-        {
-            SdCardState = SdCardState.NotPresent;
-            SdCardErrorMessage = string.Empty;
-            _logger.Warning($"SD card not present in device {device.DeviceSerialNo}: {ex.Message}");
-        }
-        catch (SdCardFilesystemException ex)
-        {
-            SdCardState = SdCardState.Error;
-            SdCardErrorMessage = ex.DeviceMessage ?? ex.Message;
-            _logger.Error(ex, "SD card filesystem error");
-        }
-        catch (SdCardOperationException ex)
-        {
-            SdCardState = SdCardState.Error;
-            SdCardErrorMessage = ex.LastScpiError ?? ex.Message;
-            _logger.Error(ex, "SD card operation error");
-        }
         catch (Exception ex)
         {
-            SdCardState = SdCardState.Error;
-            SdCardErrorMessage = ex.Message;
-            _logger.Error(ex, "Failed to refresh SD card files");
+            // Route every failure through the classifier: typed Core SD conditions (no card, wedged
+            // subsystem, filesystem error) become expected device conditions (Warning, no Sentry) with
+            // actionable guidance; anything else keeps the Error path.
+            var failure = SdCardFailureClassifier.Classify(ex);
+            // Only paint the SD surface if this refresh's device is still selected — the success path
+            // above returns early on a mid-refresh selection change, and HandleImportFailure guards the
+            // same way, so a stale failure can't overwrite the current device's panel.
+            if (ReferenceEquals(SelectedDevice, device))
+            {
+                ApplyFailureState(failure);
+            }
+            LogFailure(ex, failure, $"Failed to refresh SD card files on device {device.DeviceSerialNo}");
         }
         finally
         {
@@ -320,15 +337,17 @@ public partial class DeviceLogsViewModel : ObservableObject
     // @port: Daqifi.Desktop.ViewModels.DeviceLogsViewModel.ImportFile
     private async Task ImportFile(SdCardFile? file)
     {
-        if (file == null || SelectedDevice == null || !CanAccessSdCard) return;
+        // Snapshot the device up front so a selection change during the async import can't retarget
+        // it or misattribute a failure to a different device's drawer.
+        var device = SelectedDevice;
+        if (file == null || device == null || !CanAccessSdCard) return;
 
         try
         {
             IsBusy = true;
             BusyMessage = $"Downloading {file.FileName}...";
 
-            var loggingContext = App.ServiceProvider.GetRequiredService<IDbContextFactory<LoggingContext>>();
-            var importer = new SdCardSessionImporter(loggingContext);
+            var importer = ResolveImporter();
 
             var progress = new Progress<ImportProgress>(p =>
             {
@@ -336,12 +355,9 @@ public partial class DeviceLogsViewModel : ObservableObject
             });
 
             var result = await Task.Run(() =>
-                importer.ImportFromDeviceAsync(SelectedDevice, file.FileName, null, progress, CancellationToken.None));
+                importer.ImportFromDeviceAsync(device, file.FileName, null, progress, CancellationToken.None));
 
-            Dispatcher.UIThread.Invoke(() =>
-            {
-                LoggingManager.Instance.LoggingSessions.Add(result.Session);
-            });
+            AddImportedSession(result.Session);
 
             var message = $"Successfully imported {file.FileName}";
             var timestampWarning = result.TimestampQuality.BuildUserWarning();
@@ -358,9 +374,9 @@ public partial class DeviceLogsViewModel : ObservableObject
         }
         catch (Exception ex)
         {
-            _logger.Error(ex, $"Error importing {file.FileName}");
+            var failure = HandleImportFailure(ex, file.FileName, device);
             await ShowMessage("Import Failed",
-                $"Failed to import {file.FileName}. Please check the device connection and try again.",
+                $"Could not import {file.FileName}.\n\n{failure.Guidance}",
                 MessageBoxButton.OK);
         }
         finally
@@ -374,19 +390,22 @@ public partial class DeviceLogsViewModel : ObservableObject
     // @port: Daqifi.Desktop.ViewModels.DeviceLogsViewModel.ImportAllFiles
     private async Task ImportAllFiles()
     {
-        if (SelectedDevice == null || !CanAccessSdCard || DeviceFiles == null || !DeviceFiles.Any()) return;
+        // Snapshot the device up front (see ImportFile).
+        var device = SelectedDevice;
+        if (device == null || !CanAccessSdCard || DeviceFiles == null || !DeviceFiles.Any()) return;
 
         var filesToImport = DeviceFiles.ToList();
         var successCount = 0;
         var failCount = 0;
         var timestampWarningCount = 0;
+        SdCardFailure? abortingFailure = null;
+        SdCardFailure? lastExpectedFailure = null;
 
         try
         {
             IsBusy = true;
 
-            var loggingContext = App.ServiceProvider.GetRequiredService<IDbContextFactory<LoggingContext>>();
-            var importer = new SdCardSessionImporter(loggingContext);
+            var importer = ResolveImporter();
 
             for (var i = 0; i < filesToImport.Count; i++)
             {
@@ -401,12 +420,9 @@ public partial class DeviceLogsViewModel : ObservableObject
                     });
 
                     var result = await Task.Run(() =>
-                        importer.ImportFromDeviceAsync(SelectedDevice, file.FileName, null, progress, CancellationToken.None));
+                        importer.ImportFromDeviceAsync(device, file.FileName, null, progress, CancellationToken.None));
 
-                    Dispatcher.UIThread.Invoke(() =>
-                    {
-                        LoggingManager.Instance.LoggingSessions.Add(result.Session);
-                    });
+                    AddImportedSession(result.Session);
 
                     if (result.TimestampQuality.HasDegenerateTimeAxis)
                     {
@@ -417,8 +433,23 @@ public partial class DeviceLogsViewModel : ObservableObject
                 }
                 catch (Exception ex)
                 {
-                    _logger.Error(ex, $"Error importing {file.FileName}");
+                    var failure = HandleImportFailure(ex, file.FileName, device);
                     failCount++;
+                    // Remember the last EXPECTED device condition (not just the last failure), so a later
+                    // unexpected app error doesn't drop the actionable guidance an earlier card condition
+                    // carried.
+                    if (failure.IsExpectedDeviceCondition)
+                    {
+                        lastExpectedFailure = failure;
+                    }
+
+                    // The SD subsystem is unusable, not just this one file — every remaining file
+                    // would fail the same multi-second way, so stop rather than grinding through them.
+                    if (failure.IsCardUnavailable)
+                    {
+                        abortingFailure = failure;
+                        break;
+                    }
                 }
             }
 
@@ -434,6 +465,23 @@ public partial class DeviceLogsViewModel : ObservableObject
                            "timestamps; their sessions' time axes may be flat or partially collapsed.";
             }
 
+            if (abortingFailure != null)
+            {
+                message += $"\n\nImport stopped early: {abortingFailure.Guidance}";
+            }
+            else if (successCount == 0 && lastExpectedFailure != null)
+            {
+                // Surface actionable guidance when we didn't abort but NOTHING imported — i.e. every file
+                // failed with a device condition, which over Windows USB serial is how a wedged SD
+                // subsystem presents (Core's ~500ms per-read timeout beats the sustained watchdog, so the
+                // device-wide abort path is unreachable and every file fails per-file). Without this the
+                // batch summary would report only a failure count and never tell the user to power-cycle
+                // (issue #754). The successCount==0 guard is deliberate: if some files imported, the
+                // device is demonstrably working, so a lone empty/corrupt/hiccup file must NOT trigger a
+                // misleading "power-cycle the device" — its failure is already in the count.
+                message += $"\n\n{lastExpectedFailure.Guidance}";
+            }
+
             await ShowMessage("Import Complete", message, MessageBoxButton.OK);
         }
         catch (Exception ex)
@@ -447,6 +495,71 @@ public partial class DeviceLogsViewModel : ObservableObject
         {
             IsBusy = false;
             BusyMessage = string.Empty;
+        }
+    }
+
+    // @port: Daqifi.Desktop.ViewModels.DeviceLogsViewModel.ResolveImporter
+    private ISdCardSessionImporter ResolveImporter()
+    {
+        if (_importerOverride != null)
+        {
+            return _importerOverride;
+        }
+
+        var loggingContext = App.ServiceProvider.GetRequiredService<IDbContextFactory<LoggingContext>>();
+        return new SdCardSessionImporter(loggingContext);
+    }
+
+    // @port: Daqifi.Desktop.ViewModels.DeviceLogsViewModel.AddImportedSession
+    private static void AddImportedSession(LoggingSession session)
+    {
+        if (!Dispatcher.UIThread.CheckAccess())
+        {
+            Dispatcher.UIThread.Invoke(() => LoggingManager.Instance.LoggingSessions.Add(session));
+        }
+        else
+        {
+            LoggingManager.Instance.LoggingSessions.Add(session);
+        }
+    }
+
+    // @port: Daqifi.Desktop.ViewModels.DeviceLogsViewModel.HandleImportFailure
+    private SdCardFailure HandleImportFailure(Exception ex, string fileName, IStreamingDevice device)
+    {
+        var failure = SdCardFailureClassifier.Classify(ex);
+        // Only paint the card-wide SD panel for a DEVICE-WIDE failure (IsCardUnavailable) that is still
+        // the selected device. A per-file failure (empty file, one corrupt file, a momentary stall) is
+        // surfaced by the import summary dialog instead — painting the card-wide Error panel for it
+        // would hide the whole file list (HasFiles requires SdCardState==Ok) even though the batch keeps
+        // going and later files import fine, leaving a sticky panel that contradicts the actual outcome.
+        if (failure.IsExpectedDeviceCondition && failure.IsCardUnavailable && ReferenceEquals(SelectedDevice, device))
+        {
+            ApplyFailureState(failure);
+        }
+        LogFailure(ex, failure, $"Error importing {fileName} from device {device.DeviceSerialNo}");
+        return failure;
+    }
+
+    // @port: Daqifi.Desktop.ViewModels.DeviceLogsViewModel.ApplyFailureState
+    private void ApplyFailureState(SdCardFailure failure)
+    {
+        SdCardState = failure.State;
+        SdCardErrorMessage = failure.StatusMessage;
+        SdCardErrorGuidance = failure.Guidance;
+    }
+
+    // @port: Daqifi.Desktop.ViewModels.DeviceLogsViewModel.LogFailure
+    private void LogFailure(Exception ex, SdCardFailure failure, string context)
+    {
+        // Expected device conditions (no card, wedged subsystem, filesystem error) log at Warning so
+        // they do not raise Sentry issues; a genuine defect keeps the Error path.
+        if (failure.IsExpectedDeviceCondition)
+        {
+            _logger.Warning(ex, $"{context}: {failure.Guidance}");
+        }
+        else
+        {
+            _logger.Error(ex, context);
         }
     }
 
