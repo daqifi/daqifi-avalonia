@@ -388,7 +388,18 @@ public partial class ChannelsPaneViewModel : ObservableObject, IDisposable
     // @port: Daqifi.Desktop.ViewModels.ChannelsPaneViewModel.FindOwningDevice
     private Daqifi.Desktop.Device.IStreamingDevice? FindOwningDevice(IChannel channel)
     {
-        return _channelOwners.GetValueOrDefault(channel);
+        var owner = _channelOwners.GetValueOrDefault(channel);
+        if (owner == null)
+        {
+            return null;
+        }
+
+        // The map is only refreshed on Rebuild, so between a disconnect and the next Rebuild it can
+        // still hold a device that has left ConnectedDevices. Confirm the owner is still connected so
+        // a caller racing a disconnect (ToggleChannel/OpenSettings on a not-yet-removed tile) never
+        // acts on gone hardware — this restores the null the old live serial scan returned. A snapshot
+        // avoids racing a concurrent connect/disconnect mutation of the list.
+        return ConnectionManager.Instance.ConnectedDevices.ToList().Contains(owner) ? owner : null;
     }
 
     // @port: Daqifi.Desktop.ViewModels.ChannelsPaneViewModel.CloseSettings
