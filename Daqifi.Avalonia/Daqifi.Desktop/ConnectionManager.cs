@@ -114,8 +114,12 @@ public partial class ConnectionManager : ObservableObject
         // task's continuation thread).
         Dispatcher.UIThread.Post(() =>
         {
-            // Reconnected cleanly, or already removed by another path — nothing to reconcile.
-            if (!ConnectedDevices.Contains(device) || device.IsConnected)
+            // Post is deferred, so a NEW firmware update for this device may have started between the
+            // clear that queued this and now (rapid consecutive updates). If so, defer to that update
+            // rather than tearing down a device that is being flashed again — the same #738 invariant
+            // the WMI teardown path (CheckIfSerialDeviceWasRemoved) guards. Also nothing to do if it
+            // reconnected cleanly or was already removed by another path.
+            if (IsDeviceBeingUpdated(device) || !ConnectedDevices.Contains(device) || device.IsConnected)
             {
                 return;
             }
