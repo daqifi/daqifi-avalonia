@@ -102,6 +102,16 @@ public abstract partial class AbstractStreamingDevice : ObservableObject, IStrea
     private int _pwmFrequencyHz = DEFAULT_PWM_FREQUENCY_HZ;
 
     private readonly ITimestampProcessor _timestampProcessor = new TimestampProcessor();
+
+    // Serializes the reset / apply / process sequence on _timestampProcessor and its
+    // _timestampFrequencyApplied gate. ResetAll runs on the UI thread
+    // (InitializeStreaming / StopStreaming) while SetTimestampFrequency and ProcessTimestamp run on
+    // the transport thread. Without serialization a ResetAll interleaved between the transport
+    // thread's SetTimestampFrequency and its gate write would drop the just-applied frequency yet
+    // leave the gate latched "applied", pinning the session to the 50 MHz fallback (issue #39).
+    // Core's TimestampProcessor is not itself thread-safe, so the lock also guards its
+    // rollover / baseline state against a concurrent reset.
+    private readonly object _timestampProcessorSync = new();
     private List<SdCardFile> _sdCardFiles = [];
 
     // Leftover-frame detection state (issue #573). The last-seen counter is tracked for every
@@ -116,9 +126,10 @@ public abstract partial class AbstractStreamingDevice : ObservableObject, IStrea
     // current streaming session. Cleared alongside every ResetAll(), which per Core's contract also
     // drops per-device frequencies. Without an explicit frequency the processor reconstructs against
     // its 20 ns fallback tick (50 MHz), compressing the timeline ~16% since current firmware runs the
-    // streaming timestamp timer at 42 MHz. volatile so the transport thread promptly observes the UI
-    // thread's reset (matching the other cross-thread streaming-state flags above).
-    private volatile bool _timestampFrequencyApplied;
+    // streaming timestamp timer at 42 MHz. All reads and writes are serialized under
+    // _timestampProcessorSync (issue #39), which supplies the cross-thread ordering and visibility
+    // the bare volatile flag previously could not.
+    private bool _timestampFrequencyApplied;
 
     // First-frame validation state (issue #573 follow-up). The device's leftover frame survives
     // a USB disconnect/reconnect, and a freshly connected instance has no counter reference to
@@ -683,26 +694,36 @@ public abstract partial class AbstractStreamingDevice : ObservableObject, IStrea
 
         var deviceId = message.DeviceSn.ToString(CultureInfo.InvariantCulture);
 
-        // Apply the device's real streaming-clock frequency to Core's processor once per session.
-        // Without it the processor reconstructs against its 20 ns fallback tick (50 MHz) while current
-        // firmware runs the timer at 42 MHz, compressing the reconstructed timeline ~16% and drifting
-        // without bound (each timestamp is the previous plus elapsed ticks). Applied here, where the
-        // device-id key is known to match the one ProcessTimestamp uses, and re-applied per session
-        // because InitializeStreaming's ResetAll() drops per-device frequencies with the baselines.
-        if (!_timestampFrequencyApplied && TimestampFrequency != 0)
+        // Apply the device's real streaming-clock frequency to Core's processor once per session, then
+        // reconstruct this frame's timestamp — the whole sequence under _timestampProcessorSync so a
+        // UI-thread ResetAll (InitializeStreaming / StopStreaming) can neither interleave between the
+        // apply and its gate write (which would strand the session on the 50 MHz fallback, issue #39)
+        // nor race Core's non-thread-safe processor state. Without the frequency the processor
+        // reconstructs against its 20 ns fallback tick (50 MHz) while current firmware runs the timer at
+        // 42 MHz, compressing the reconstructed timeline ~16% and drifting without bound (each timestamp
+        // is the previous plus elapsed ticks). Applied where the device-id key is known to match the one
+        // ProcessTimestamp uses, and re-applied per session because ResetAll() drops per-device
+        // frequencies with the baselines.
+        DateTime messageTimestamp;
+        bool rollover;
+        double? firmwareDeltaMs;
+        lock (_timestampProcessorSync)
         {
-            _timestampProcessor.SetTimestampFrequency(deviceId, TimestampFrequency);
-            _timestampFrequencyApplied = true;
-        }
+            if (!_timestampFrequencyApplied && TimestampFrequency != 0)
+            {
+                _timestampProcessor.SetTimestampFrequency(deviceId, TimestampFrequency);
+                _timestampFrequencyApplied = true;
+            }
 
-        // Use Core's TimestampProcessor for rollover handling
-        var timestampResult = _timestampProcessor.ProcessTimestamp(deviceId, message.MsgTimeStamp);
-        var messageTimestamp = timestampResult.Timestamp;
-        var rollover = timestampResult.WasRollover;
-        // Firmware-measured inter-message delta (immune to TCP jitter); null for the first message.
-        var firmwareDeltaMs = timestampResult.IsFirstMessage
-            ? (double?)null
-            : timestampResult.SecondsBetweenMessages * 1000.0;
+            // Use Core's TimestampProcessor for rollover handling
+            var timestampResult = _timestampProcessor.ProcessTimestamp(deviceId, message.MsgTimeStamp);
+            messageTimestamp = timestampResult.Timestamp;
+            rollover = timestampResult.WasRollover;
+            // Firmware-measured inter-message delta (immune to TCP jitter); null for the first message.
+            firmwareDeltaMs = timestampResult.IsFirstMessage
+                ? (double?)null
+                : timestampResult.SecondsBetweenMessages * 1000.0;
+        }
 
         var digitalCount = 0;
         var analogCount = 0;
@@ -1205,8 +1226,11 @@ public abstract partial class AbstractStreamingDevice : ObservableObject, IStrea
         // With a counter reference (any frame seen on this connection), leftovers are recognized
         // directly; without one (first session after connect — the device's leftover survives a
         // disconnect/reconnect), the first frame is held and validated against its successor.
-        _timestampProcessor.ResetAll();
-        _timestampFrequencyApplied = false;
+        lock (_timestampProcessorSync)
+        {
+            _timestampProcessor.ResetAll();
+            _timestampFrequencyApplied = false;
+        }
         _discardedLeftoverFrameCount = 0;
         _checkForLeftoverFrames = _hasSeenDeviceTimestamp;
         _pendingFirstFrameValidation = !_hasSeenDeviceTimestamp;
@@ -1243,8 +1267,11 @@ public abstract partial class AbstractStreamingDevice : ObservableObject, IStrea
         AppLogger.AddBreadcrumb("streaming", "Streaming stopped");
 
         // Reset timestamp processor state for clean restart
-        _timestampProcessor.ResetAll();
-        _timestampFrequencyApplied = false;
+        lock (_timestampProcessorSync)
+        {
+            _timestampProcessor.ResetAll();
+            _timestampFrequencyApplied = false;
+        }
 
         foreach (var channel in DataChannels)
         {
