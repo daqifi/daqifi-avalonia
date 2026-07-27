@@ -102,8 +102,12 @@ public class OptimizedLoggingSessionExporter
         }
         catch (Exception ex)
         {
+            // Propagate after logging: this void overload is the desktop export path, and its sole
+            // caller (ExportDialogViewModel) needs the failure to surface a truthful result instead of
+            // a false "Export complete". The Try* overload keeps swallowing (returns false) for mobile.
             _appLogger.Error(ex,
                 $"Exception in OptimizedExportLoggingSession (sessionId={loggingSession?.ID}, filepath={filepath}, relativeTime={exportRelativeTime})");
+            throw;
         }
     }
 
@@ -197,8 +201,11 @@ public class OptimizedLoggingSessionExporter
         }
         catch (Exception ex)
         {
+            // Propagate after logging (see ExportLoggingSession): the desktop VM needs the failure so it
+            // never reports a false success on a locked or otherwise unwritable destination.
             _appLogger.Error(ex,
                 $"Failed in OptimizedExportAverageSamples (sessionId={session?.ID}, filepath={filepath}, averageWindow={averageQuantity}, relativeTime={exportRelativeTime})");
+            throw;
         }
     }
     #endregion

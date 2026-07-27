@@ -201,6 +201,7 @@ public partial class ExportDialogViewModel : ObservableObject
 
         var cancelled = false;
         var failed = false;
+        var failureMessage = "Export failed. Please try again.";
         try
         {
             await Task.Run(async () =>
@@ -260,6 +261,15 @@ public partial class ExportDialogViewModel : ObservableObject
         catch (Exception ex)
         {
             failed = true;
+            // Write-side failures to the chosen destination surface either as IOException (locked file,
+            // removed drive, full disk, long path — DirectoryNotFoundException / PathTooLongException
+            // etc. are all IOException subtypes) or as UnauthorizedAccessException (destination is
+            // read-only or a folder ACL denies write — that one is NOT an IOException). The exporter's
+            // void methods now propagate instead of swallowing it as a false success; give one concise
+            // actionable hint (issue #747), kept short so it fits the fixed-size result dialog.
+            failureMessage = ex is IOException or UnauthorizedAccessException
+                ? "Export failed — couldn't write to the destination. Make sure it isn't open in another program or read-only, then try again."
+                : "Export failed. Please try again.";
             AppLogger.Instance.Error(ex, "Problem Exporting Data");
             AppLogger.Instance.AddBreadcrumb("export", "Data export failed", Common.Loggers.BreadcrumbLevel.Error);
         }
@@ -274,7 +284,7 @@ public partial class ExportDialogViewModel : ObservableObject
             if (!cancelled)
             {
                 ExportSucceeded = !failed;
-                ExportResultMessage = failed ? "Export failed. Please try again." : "Export complete";
+                ExportResultMessage = failed ? failureMessage : "Export complete";
                 IsExportComplete = true;
             }
 
