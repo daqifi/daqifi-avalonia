@@ -15,12 +15,23 @@ listing them with a triage checklist. No new commits → it does nothing. It nev
 auto-files per-commit tickets (most commits are already ported; that would just be
 spam) — it produces **one digest for a human or agent to triage**.
 
-**Phase 2 — auto-triage (opt-in, off by default).** If enabled, a second job runs
-Claude Code headlessly to pre-classify each commit (ALREADY-PORTED / PORT-AS-IS /
-ADAPT / N/A, with port evidence) and posts that as an **advisory comment** on the
-digest issue. It is deliberately scoped to *analysis + comment only* — it does **not**
-open PRs or push code, so the gated-merge discipline (build → security + code-review →
-Qodo → adversarial audit → merge) is preserved for a human/agent to run.
+**Phase 2 — supervised auto-triage (label-driven).** The digest issue carries the
+`upstream-sync` label; a **supervised** agent picks it up and runs the gap-analysis
+(grep the port for each commit's symbols → ALREADY-PORTED / PORT-AS-IS / ADAPT / N/A)
+and then the gated port PR flow (build → security + code-review → Qodo → adversarial
+audit → merge). That agent is the maintainer's **local, gated Claude Code session**
+(e.g. via the `daqifi-loop` skill) — an environment with real guardrails and a human in
+the loop.
+
+Auto-triage is deliberately **not** run as an LLM step inside CI. A model reading
+untrusted upstream diffs, with shell access, next to live workflow credentials is the
+classic prompt-injection "lethal trifecta": a malicious upstream diff could instruct the
+model to read a persisted token and exfiltrate it into the (world-readable) digest
+comment. Keeping the model out of CI removes that surface entirely while preserving the
+capability where it's safe. (If you ever want in-CI pre-classification anyway, it must be
+built as a split design — a no-write LLM job whose output a *separate, non-LLM* step
+posts, with `persist-credentials: false` and no PAT/GITHUB_TOKEN in the model's env — and
+even then the residual is worth a deliberate decision.)
 
 ## The watermark
 
@@ -34,22 +45,18 @@ being reconstructed by hand each time.)
 
 ## Setup
 
-### Required (Phase 1)
+The workflow needs exactly one secret:
 
 - **Secret `UPSTREAM_SYNC_TOKEN`** — a token that can *read* `daqifi-desktop` (a
   fine-grained PAT with `Contents: read` on `daqifi/daqifi-desktop`, or a GitHub App
   installation token). The default `GITHUB_TOKEN` is scoped to this repo only and cannot
-  read another repo, so a checkout of the upstream needs this. Issue creation on *this*
-  repo uses the built-in `GITHUB_TOKEN` (`issues: write`) — no extra scope needed there.
+  read another repo, so the upstream checkout needs this. The checkout uses
+  `persist-credentials: false` so the token is not left behind in `.git/config`. Issue
+  creation on *this* repo uses the built-in `GITHUB_TOKEN` (`issues: write`) — no extra
+  scope needed there.
 
-### To enable Phase 2 (optional)
-
-Both must be present, or the job skips silently (no API cost):
-
-- **Variable `UPSTREAM_SYNC_AUTOTRIAGE`** = `true` (repo → Settings → Variables).
-- **Secret `ANTHROPIC_API_KEY`** — an Anthropic API key. Phase 2 spends API credits on
-  each run that has a non-empty delta; `--max-turns` and a Sonnet model keep it bounded,
-  and `timeout-minutes` caps runaway jobs.
+Phase 2 (triage) needs **no** CI secret or variable — it happens in your local gated
+Claude Code session against the labelled digest issue (see above).
 
 ## Running it by hand
 

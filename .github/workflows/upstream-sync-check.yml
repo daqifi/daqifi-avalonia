@@ -1,9 +1,11 @@
 name: Upstream sync check
 
 # Weekly check for new commits on daqifi-desktop (the upstream WPF app) that may need
-# porting into this Avalonia port. Phase 1 files ONE rolling "digest" issue listing the
-# commit delta since the last-reviewed watermark, for human/agent triage. Phase 2
-# (opt-in) runs Claude Code to pre-classify each commit as an advisory comment.
+# porting into this Avalonia port. It files ONE rolling "digest" issue (label
+# `upstream-sync`) listing the commit delta since the last-reviewed watermark, for
+# triage. Triage itself (the "auto-triage" phase) is deliberately NOT run as an LLM in
+# CI — see the Phase 2 note near the bottom of this file for why — but by a supervised
+# agent that picks up the labelled issue.
 #
 # Setup + the watermark contract: .github/upstream-sync/README.md
 
@@ -40,28 +42,7 @@ jobs:
       watermark: ${{ steps.delta.outputs.watermark }}
       head: ${{ steps.delta.outputs.head }}
       issue_number: ${{ steps.publish.outputs.issue_number }}
-      autotriage_ready: ${{ steps.phase2.outputs.ready }}
     steps:
-      # Phase 2 needs BOTH the opt-in variable AND the API-key secret. The secrets
-      # context is not allowed in a job-level `if:`, so decide here (secrets ARE
-      # available to a step env) and export one boolean the autotriage job gates on —
-      # otherwise "variable on, secret forgotten" would run claude-code-action with an
-      # empty key and turn the weekly run red instead of skipping silently.
-      - name: Detect whether Phase 2 (auto-triage) can run
-        id: phase2
-        env:
-          ANTHROPIC_API_KEY: ${{ secrets.ANTHROPIC_API_KEY }}
-          AUTOTRIAGE_ENABLED: ${{ vars.UPSTREAM_SYNC_AUTOTRIAGE }}
-        run: |
-          set -euo pipefail
-          if [ -n "${ANTHROPIC_API_KEY:-}" ] && [ "${AUTOTRIAGE_ENABLED:-}" = "true" ]; then
-            echo "ready=true" >> "$GITHUB_OUTPUT"
-            echo "Phase 2 enabled (opt-in variable set and API key present)."
-          else
-            echo "ready=false" >> "$GITHUB_OUTPUT"
-            echo "Phase 2 skipped (needs UPSTREAM_SYNC_AUTOTRIAGE=true and ANTHROPIC_API_KEY)."
-          fi
-
       - name: Check out the port repo
         uses: actions/checkout@v4
 
@@ -73,6 +54,9 @@ jobs:
           token: ${{ secrets.UPSTREAM_SYNC_TOKEN }}
           path: .upstream
           fetch-depth: 0
+          # Do NOT leave the PAT in .upstream/.git/config after the fetch — history
+          # reads below need no credential, and a persisted token is exfiltratable.
+          persist-credentials: false
 
       - name: Compute the commit delta since the watermark
         id: delta
@@ -88,15 +72,22 @@ jobs:
             exit 1
           fi
           HEAD_SHA="$(git -C .upstream rev-parse HEAD)"
+          # Gate on ALL commits (merges included) so a merge-only delta still fires —
+          # a merge can carry conflict-resolution changes present in neither parent.
+          # COUNT (non-merge) is only for the readable checklist; MERGES drives the
+          # full-range-diff warning in the digest body.
+          COUNT_ALL="$(git -C .upstream rev-list --count "${WATERMARK}..HEAD")"
           COUNT="$(git -C .upstream rev-list --count --no-merges "${WATERMARK}..HEAD")"
+          MERGES="$(git -C .upstream rev-list --count --merges "${WATERMARK}..HEAD")"
           {
             echo "watermark=$WATERMARK"
             echo "head=$HEAD_SHA"
             echo "count=$COUNT"
+            echo "merges=$MERGES"
           } >> "$GITHUB_OUTPUT"
-          if [ "$COUNT" -gt 0 ] || [ "${{ inputs.force }}" = "true" ]; then
+          if [ "$COUNT_ALL" -gt 0 ] || [ "${{ inputs.force }}" = "true" ]; then
             echo "has_delta=true" >> "$GITHUB_OUTPUT"
-            echo "Delta: $COUNT new non-merge commit(s) ($WATERMARK..$HEAD_SHA)"
+            echo "Delta: $COUNT_ALL commit(s) since $WATERMARK ($COUNT non-merge, $MERGES merge)"
           else
             echo "has_delta=false" >> "$GITHUB_OUTPUT"
             echo "Up to date: no new upstream commits since $WATERMARK"
@@ -109,6 +100,7 @@ jobs:
           WATERMARK: ${{ steps.delta.outputs.watermark }}
           HEAD_SHA: ${{ steps.delta.outputs.head }}
           COUNT: ${{ steps.delta.outputs.count }}
+          MERGES: ${{ steps.delta.outputs.merges }}
         run: |
           set -euo pipefail
           BODY_FILE="$RUNNER_TEMP/digest.md"
@@ -125,6 +117,10 @@ jobs:
               --format='- [ ] `%h` %s <sub>(%an, %ad)</sub>' --date=short \
               "$WATERMARK..$HEAD_SHA"
             echo
+            if [ "${MERGES:-0}" -gt 0 ]; then
+              echo "> **Note:** this range also contains **$MERGES merge commit(s)** (not listed above). A merge's conflict resolution can introduce production changes present in *neither* parent, so before advancing the watermark, verify against the **full-range diff** — \`git diff $WATERMARK..$HEAD_SHA\` — not only the per-commit list."
+              echo
+            fi
             echo "### How to triage — do NOT assume a gap from the commit list"
             echo
             echo "> This port is co-developed with upstream in lockstep, so most commits are **already present**. For each one:"
@@ -175,54 +171,11 @@ jobs:
           echo "issue_number=$NUM" >> "$GITHUB_OUTPUT"
           echo "Digest issue: #$NUM"
 
-  # ── Phase 2 (opt-in): pre-classify each commit with Claude Code ──────────────
-  # Enable by setting repo VARIABLE  UPSTREAM_SYNC_AUTOTRIAGE = true
-  # and repo SECRET  ANTHROPIC_API_KEY.  Skipped otherwise (no API cost).
-  autotriage:
-    needs: digest
-    # autotriage_ready already folds in BOTH the opt-in variable and the presence of
-    # the API-key secret (computed in the digest job's phase2 step), so a missing
-    # secret makes this a silent no-op rather than a failed run.
-    if: >-
-      needs.digest.outputs.has_delta == 'true' &&
-      needs.digest.outputs.autotriage_ready == 'true'
-    runs-on: ubuntu-latest
-    timeout-minutes: 20
-    permissions:
-      contents: read
-      issues: write
-    steps:
-      - name: Check out the port repo
-        uses: actions/checkout@v4
-
-      - name: Check out upstream (read-only)
-        uses: actions/checkout@v4
-        with:
-          repository: ${{ env.UPSTREAM_REPO }}
-          ref: ${{ env.UPSTREAM_BRANCH }}
-          token: ${{ secrets.UPSTREAM_SYNC_TOKEN }}
-          path: .upstream
-          fetch-depth: 0
-
-      - name: Classify the delta and comment on the digest issue
-        uses: anthropics/claude-code-action@v1
-        with:
-          anthropic_api_key: ${{ secrets.ANTHROPIC_API_KEY }}
-          github_token: ${{ github.token }}
-          prompt: |
-            You are triaging upstream commits for a WPF->Avalonia port. READ-ONLY analysis plus ONE issue comment. Do NOT open PRs, do NOT push code, do NOT edit files.
-
-            - The Avalonia port is the repo checked out at the workspace root (app code under `Daqifi.Avalonia/Daqifi.Desktop/`, mirroring the upstream `Daqifi.Desktop` namespace with `// @port:` / `// @port-divergence:` markers).
-            - The upstream WPF source is checked out at `./.upstream` (app code under `Daqifi.Desktop/`).
-            - The new commits to triage are `${{ needs.digest.outputs.watermark }}..${{ needs.digest.outputs.head }}` on the upstream checkout.
-
-            For EACH non-merge commit in that range:
-            1. `git -C .upstream show <sha>` — identify the changed production symbols/types/methods (ignore pure test/chore changes).
-            2. Grep the port for those symbols. Decide ALREADY-PORTED (present, or structurally immune — cite the port file:line), PORT-AS-IS, ADAPT (port structure differs — say how), or N/A (test-only/chore/WPF-specific).
-            3. Note any Daqifi.Core prerequisite.
-
-            Then post ONE comment on issue #${{ needs.digest.outputs.issue_number }} in this repo (use `gh issue comment`): a markdown table (commit | verdict | port evidence or the concrete change needed | Core prereq), then a one-line "recommended porting order" covering the real gaps only. Be rigorous; most will be ALREADY-PORTED because the repos co-develop in lockstep. Prefix the comment with "Auto-triage (advisory — verify before porting):".
-          claude_args: |
-            --max-turns 40
-            --model claude-sonnet-5
-            --allowedTools Bash,Read,Grep,Glob
+  # ── Phase 2 — supervised auto-triage (label-driven, no LLM in CI) ────────────
+  # Deliberately NOT an in-CI LLM step. Running a model over untrusted upstream
+  # diffs with unrestricted shell next to live credentials is the "lethal trifecta"
+  # (prompt injection -> credential exfiltration to the digest issue). Instead the
+  # digest issue is labelled `upstream-sync`; a *supervised* agent picks it up in an
+  # environment that actually has guardrails and human oversight — the maintainer's
+  # local gated Claude Code session (e.g. the daqifi-loop skill), which runs the
+  # gap-analysis and the gated port PR flow. See .github/upstream-sync/README.md.
