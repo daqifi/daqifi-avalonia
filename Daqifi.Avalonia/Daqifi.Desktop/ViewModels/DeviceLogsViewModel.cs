@@ -399,6 +399,7 @@ public partial class DeviceLogsViewModel : ObservableObject
         var failCount = 0;
         var timestampWarningCount = 0;
         SdCardFailure? abortingFailure = null;
+        SdCardFailure? lastFailure = null;
 
         try
         {
@@ -434,6 +435,7 @@ public partial class DeviceLogsViewModel : ObservableObject
                 {
                     var failure = HandleImportFailure(ex, file.FileName, device);
                     failCount++;
+                    lastFailure = failure;
 
                     // The SD subsystem is unusable, not just this one file — every remaining file
                     // would fail the same multi-second way, so stop rather than grinding through them.
@@ -460,6 +462,15 @@ public partial class DeviceLogsViewModel : ObservableObject
             if (abortingFailure != null)
             {
                 message += $"\n\nImport stopped early: {abortingFailure.Guidance}";
+            }
+            else if (lastFailure != null && lastFailure.IsExpectedDeviceCondition)
+            {
+                // Surface actionable guidance even when we didn't abort. This matters most for a wedged
+                // SD subsystem over Windows USB serial: Core's ~500ms per-read timeout (a per-file
+                // "stall", StallTimeout==0) beats the sustained watchdog, so the device-wide abort path
+                // is unreachable there and every file fails per-file — without this the batch summary
+                // would report only a failure count and never tell the user to power-cycle (issue #754).
+                message += $"\n\n{lastFailure.Guidance}";
             }
 
             await ShowMessage("Import Complete", message, MessageBoxButton.OK);
