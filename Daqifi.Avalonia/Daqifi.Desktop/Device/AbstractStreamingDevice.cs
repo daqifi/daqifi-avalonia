@@ -602,16 +602,29 @@ public abstract partial class AbstractStreamingDevice : ObservableObject, IStrea
     /// non-blocking, so a Core callback is never held while the UI thread catches up, and it cannot
     /// deadlock if the UI thread is itself waiting on Core.
     /// </para>
+    /// <para>
+    /// Non-throwing, following <c>BootloaderWatcher</c>: during app/dispatcher shutdown <c>Post</c>
+    /// can throw, and teardown is exactly when this runs — closing the app disconnects its devices,
+    /// so <see cref="CleanupConnection"/> marshals from a Core callback while the dispatcher is
+    /// going away. A marshal failure must never propagate into Core's callback or abort teardown;
+    /// if the dispatcher is gone there is nothing left bound to update.
+    /// </para>
     /// </remarks>
     private void RaiseIsConnectedChanged()
     {
         if (Dispatcher.UIThread.CheckAccess())
         {
             OnPropertyChanged(nameof(IsConnected));
+            return;
         }
-        else
+
+        try
         {
             Dispatcher.UIThread.Post(() => OnPropertyChanged(nameof(IsConnected)));
+        }
+        catch (Exception)
+        {
+            // Dispatcher unavailable / shutting down — drop the UI update.
         }
     }
     #endregion
