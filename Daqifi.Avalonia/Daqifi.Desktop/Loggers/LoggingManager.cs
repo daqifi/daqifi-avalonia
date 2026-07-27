@@ -30,6 +30,14 @@ public partial class LoggingManager : ObservableObject
     private static string ProfileAppDirectory = Daqifi.Desktop.Common.AppDataPaths.DataDirectory;
     private static readonly string ProfileSettingsXmlPath = ProfileAppDirectory + "\\DAQifiProfilesConfiguration.xml";
     private readonly IDbContextFactory<LoggingContext> _loggingContext;
+
+    /// <summary>
+    /// Serializes writers of <see cref="SubscribedChannels"/>. Readers never take it -- they read a
+    /// published snapshot -- so it is never held while calling into a logger or raising a
+    /// notification, and it cannot nest inside any other lock.
+    /// </summary>
+    private readonly object _subscribedChannelsSync = new();
+
     private bool _hasActiveApplicationSession;
     private bool _hasActiveApplicationSamples;
     #endregion
@@ -38,8 +46,27 @@ public partial class LoggingManager : ObservableObject
     // @port: Daqifi.Desktop.Logger.LoggingManager.Loggers
     public List<ILogger> Loggers { get; }
 
-    [ObservableProperty]
-    private List<IChannel> _subscribedChannels = [];
+    private IReadOnlyList<IChannel> _subscribedChannels = Array.Empty<IChannel>();
+
+    /// <summary>
+    /// Gets the channels currently subscribed for logging.
+    /// </summary>
+    /// <remarks>
+    /// The returned list is a <b>snapshot that is never mutated</b>: every change goes through
+    /// <see cref="Subscribe"/>, <see cref="Unsubscribe"/> or <see cref="ClearChannelList"/>, each of
+    /// which publishes a brand-new list rather than changing this one in place (copy-on-write). That
+    /// is what makes the property safe to read from a non-UI thread -- <see cref="PlotLogger"/>
+    /// resolves channel visibility from the device transport thread while the UI thread subscribes
+    /// and unsubscribes, and <see cref="List{T}"/> does not tolerate a read that overlaps an
+    /// Add/Remove/Clear (it throws <see cref="InvalidOperationException"/> mid-enumeration, or
+    /// observes a torn state). Exposed as <see cref="IReadOnlyList{T}"/>, and those three methods are
+    /// the only way in, so the guarantee is a property of the API rather than of caller discipline.
+    /// Written under <see cref="_subscribedChannelsSync"/> and published with <see cref="Volatile"/>
+    /// so a reader on another core cannot observe a partially constructed list -- an explicit property
+    /// rather than [ObservableProperty] for exactly that reason (the generated accessors do a plain
+    /// field read/write).
+    /// </remarks>
+    public IReadOnlyList<IChannel> SubscribedChannels => Volatile.Read(ref _subscribedChannels);
 
     [ObservableProperty]
     private bool _active;
@@ -201,7 +228,7 @@ public partial class LoggingManager : ObservableObject
     private LoggingManager()
     {
         Loggers = [];
-        SubscribedChannels = [];
+        // _subscribedChannels starts empty via its field initializer; it has no setter (copy-on-write).
         _loggingContext = App.ServiceProvider.GetRequiredService<IDbContextFactory<LoggingContext>>();
     }
 
@@ -451,40 +478,63 @@ public partial class LoggingManager : ObservableObject
     // @port: Daqifi.Desktop.Logger.LoggingManager.Subscribe
     public void Subscribe(IChannel channel)
     {
-        if (SubscribedChannels.Any(x => x.DeviceSerialNo == channel.DeviceSerialNo && x.Name == channel.Name))
+        lock (_subscribedChannelsSync)
         {
-            return;
+            var current = _subscribedChannels;
+
+            if (current.Any(x => x.DeviceSerialNo == channel.DeviceSerialNo && x.Name == channel.Name))
+            {
+                return;
+            }
+
+            channel.IsActive = true;
+
+            // Only attach streaming handlers if in Stream mode
+            if (CurrentMode == LoggingMode.Stream)
+            {
+                channel.OnChannelUpdated += HandleChannelUpdate;
+            }
+
+            // Copy-on-write: publish a new immutable snapshot (AsReadOnly wraps the fresh list so a
+            // caller cannot downcast the published value back to List and mutate it) instead of
+            // Add-ing to the one a reader on the transport thread may be enumerating right now. See
+            // SubscribedChannels' remarks.
+            List<IChannel> updated = [.. current, channel];
+            Volatile.Write(ref _subscribedChannels, updated.AsReadOnly());
         }
 
-        channel.IsActive = true;
-
-        // Only attach streaming handlers if in Stream mode
-        if (CurrentMode == LoggingMode.Stream)
-        {
-            channel.OnChannelUpdated += HandleChannelUpdate;
-        }
-
-        SubscribedChannels.Add(channel);
+        // Raised outside the lock so a binding handler can never re-enter under it.
         OnPropertyChanged(nameof(SubscribedChannels));
     }
 
     // @port: Daqifi.Desktop.Logger.LoggingManager.Unsubscribe
     public void Unsubscribe(IChannel channel)
     {
-        var subscribedChannel = SubscribedChannels
-            .FirstOrDefault(x => x.DeviceSerialNo == channel.DeviceSerialNo && x.Name == channel.Name && x.IsActive);
-
-        if (subscribedChannel == null)
+        lock (_subscribedChannelsSync)
         {
-            return;
+            var current = _subscribedChannels;
+
+            var subscribedChannel = current.FirstOrDefault(
+                x => x.DeviceSerialNo == channel.DeviceSerialNo && x.Name == channel.Name && x.IsActive);
+
+            if (subscribedChannel == null)
+            {
+                return;
+            }
+
+            subscribedChannel.IsActive = false;
+
+            // Remove event handler if it's attached
+            subscribedChannel.OnChannelUpdated -= HandleChannelUpdate;
+
+            // Copy-on-write -- see SubscribedChannels' remarks. AsReadOnly so the published snapshot
+            // cannot be downcast to List and mutated outside the lock.
+            var updated = new List<IChannel>(current);
+            updated.Remove(subscribedChannel);
+            Volatile.Write(ref _subscribedChannels, updated.AsReadOnly());
         }
 
-        subscribedChannel.IsActive = false;
-
-        // Remove event handler if it's attached
-        subscribedChannel.OnChannelUpdated -= HandleChannelUpdate;
-
-        SubscribedChannels.Remove(subscribedChannel);
+        // Raised outside the lock so a binding handler can never re-enter under it.
         OnPropertyChanged(nameof(SubscribedChannels));
     }
     #endregion
@@ -869,12 +919,20 @@ public partial class LoggingManager : ObservableObject
     // @port: Daqifi.Desktop.Logger.LoggingManager.ClearChannelList
     private void ClearChannelList()
     {
-        foreach (var channel in SubscribedChannels)
+        lock (_subscribedChannelsSync)
         {
-            channel.IsActive = false;
-            channel.OnChannelUpdated -= HandleChannelUpdate;
+            foreach (var channel in _subscribedChannels)
+            {
+                channel.IsActive = false;
+                channel.OnChannelUpdated -= HandleChannelUpdate;
+            }
+
+            // Copy-on-write -- see SubscribedChannels' remarks. Clear() would empty the very list a
+            // reader on the transport thread may be enumerating; the empty array is immutable.
+            Volatile.Write(ref _subscribedChannels, Array.Empty<IChannel>());
         }
-        SubscribedChannels.Clear();
+
+        // Raised outside the lock so a binding handler can never re-enter under it.
         OnPropertyChanged(nameof(SubscribedChannels));
     }
 }
