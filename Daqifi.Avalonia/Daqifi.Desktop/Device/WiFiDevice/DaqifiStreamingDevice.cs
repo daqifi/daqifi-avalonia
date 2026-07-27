@@ -194,7 +194,7 @@ public class DaqifiStreamingDevice : AbstractStreamingDevice
     }
 
     // @port: Daqifi.Desktop.Device.WiFiDevice.DaqifiStreamingDevice.Equals
-    public override bool Equals(object obj)
+    public override bool Equals(object? obj)
     {
         if (obj is not DaqifiStreamingDevice other) { return false; }
         if (Name != other.Name) { return false; }
@@ -202,5 +202,15 @@ public class DaqifiStreamingDevice : AbstractStreamingDevice
         if (MacAddress != other.MacAddress) { return false; }
         return true;
     }
+
+    // @port: Daqifi.Desktop.Device.WiFiDevice.DaqifiStreamingDevice.GetHashCode
+    // Overriding Equals without GetHashCode makes hashed lookups (HashSet/Dictionary)
+    // inconsistent with equality; combine the same fields Equals compares.
+    // NOTE: Name/IpAddress/MacAddress are mutable, so a device's value-hash can change
+    // after insertion. Collections that must track *object identity* across such mutations
+    // (subscription sets, connected-device maps) key on ReferenceComparer instead — see
+    // DaqifiViewModel/ProfilesPaneViewModel. This value-hash exists only for value-equality
+    // uses that don't outlive a field change.
+    public override int GetHashCode() => HashCode.Combine(Name, IpAddress, MacAddress);
     #endregion
 }
