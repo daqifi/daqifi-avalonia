@@ -289,13 +289,19 @@ public partial class DeviceLogsViewModel : ObservableObject
     /// change and on any connected-set change (issue #1 / Qodo "SD access state stale").
     /// </summary>
     /// <remarks>
-    /// A silent WiFi transport drop is the characteristic failure for SD-over-WiFi, and it now
-    /// reaches the gate: the device layer signals <c>IsConnected</c> off Core's <c>StatusChanged</c>
-    /// (issue #3), and <see cref="WatchSelectedDeviceConnectivity"/> subscribes the selected device
-    /// so this runs on the drop rather than waiting for the next reachable signal. The
-    /// <see cref="RefreshFilesAsync"/> / import guards still re-check <c>IsConnected</c> at
-    /// operation time, so no SD op can run against a dead transport even if a notification is
-    /// missed.
+    /// A <em>reported</em> disconnect now reaches the gate promptly: the device layer signals
+    /// <c>IsConnected</c> off Core's <c>StatusChanged</c> (issue #3) and
+    /// <see cref="WatchSelectedDeviceConnectivity"/> subscribes the selected device, so an explicit
+    /// disconnect, a USB removal, or a Core-detected transport loss updates this without waiting for
+    /// the next connected-set change.
+    /// <para>
+    /// A fully <em>silent</em> TCP death still does not: Core's <c>TcpStreamTransport</c> raises
+    /// <c>StatusChanged</c> only from its connect-failure and <c>DisconnectAsync</c> paths — there is
+    /// no read-error hook or keepalive — so <c>IsConnected</c> stays true until something else
+    /// notices. Filed upstream as daqifi-core#394. Until then the gate can read stale in that case,
+    /// which is a cosmetic staleness only: every SD operation re-checks <c>IsConnected</c> at
+    /// operation time and the download stall watchdog bounds any request issued against a dead link.
+    /// </para>
     /// </remarks>
     /// <summary>
     /// Points the <c>IsConnected</c> subscription at <paramref name="device"/>, detaching it from
@@ -558,13 +564,18 @@ public partial class DeviceLogsViewModel : ObservableObject
 
             for (var i = 0; i < filesToImport.Count; i++)
             {
-                // Re-check connectivity every iteration, not just once before the loop. A silent
-                // WiFi/TCP drop mid-batch leaves CoreDevice non-null, so the downstream null-guard
-                // still passes and each remaining file is issued against a dead transport — where
-                // it burns the full DOWNLOAD_STALL_TIMEOUT before failing (a 20-file batch would sit
-                // behind the busy overlay for ~30 minutes). The per-file classification can't stop
-                // this either: a dropped transport surfaces as a per-file condition
-                // (IsCardUnavailable false), so the device-wide abort below never fires.
+                // Re-check connectivity every iteration, not just once before the loop: the device
+                // can go away mid-batch, and CoreDevice stays non-null, so the downstream null-guard
+                // still passes and each remaining file would be issued against a dead transport.
+                //
+                // Covers a disconnect Core actually reports — an explicit Disconnect(), a USB
+                // removal, or a transport-signalled loss (Core's ConnectionStatus.Lost). It does NOT
+                // cover a fully silent TCP death: Core's TcpStreamTransport raises StatusChanged
+                // only from its connect-failure and DisconnectAsync paths (no read-error hook or
+                // keepalive), so IsConnected stays true and this check cannot see it. That case is
+                // caught instead by the download stall watchdog, whose SdCardDownloadStalledException
+                // classifies card-unavailable and breaks below — costing one stall timeout for the
+                // batch rather than one per remaining file.
                 if (!device.IsConnected)
                 {
                     disconnectedMidBatch = true;
