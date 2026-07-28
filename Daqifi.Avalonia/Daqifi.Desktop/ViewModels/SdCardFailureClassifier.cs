@@ -1,3 +1,4 @@
+using Daqifi.Core.Device; // FeatureNotSupportedException (firmware feature gating, Core ADR 0001)
 using Daqifi.Core.Device.SdCard;
 using Daqifi.Desktop.Loggers;
 
@@ -68,6 +69,15 @@ public static class SdCardFailureClassifier
     /// <summary>Guidance for a failure the desktop could not attribute to the card.</summary>
     internal const string UNEXPECTED_FAILURE_GUIDANCE =
         "Please check the device connection and try again.";
+
+    /// <summary>
+    /// Guidance for a device whose firmware predates SD file transfer over WiFi. The firmware
+    /// gained it in v3.7.0 (daqifi-nyquist-firmware #598/#599); older units still serve SD over a
+    /// USB cable, which is the immediate workaround.
+    /// </summary>
+    internal const string FIRMWARE_TOO_OLD_FOR_WIFI_SD_GUIDANCE =
+        "This device's firmware is too old for SD card access over WiFi. Update the firmware, " +
+        "or connect the device by USB to read its SD card.";
     #endregion
 
     #region Public Methods
@@ -144,6 +154,22 @@ public static class SdCardFailureClassifier
                 Guidance: POWER_CYCLE_GUIDANCE,
                 IsExpectedDeviceCondition: true,
                 IsCardUnavailable: stalled.StallTimeout > TimeSpan.Zero),
+
+            // Core gates SD file transfer over WiFi behind DeviceFeature.SdFileTransferOverWifi
+            // (min firmware v3.7.0, per its ADR 0001) and throws this when the connected device's
+            // firmware predates it. Core's general floor is 3.5.0, so a perfectly healthy 3.5.x/3.6.x
+            // unit — which streams fine and connects over WiFi — lands here the moment the SD pane
+            // opens. That is an ordinary device condition, not an app defect: log at Warning (no
+            // Sentry issue) and tell the user the actionable thing (update firmware, or use USB).
+            // Card-wide, so a batch import aborts instead of re-hitting the identical gate per file.
+            FeatureNotSupportedException featureNotSupported => new SdCardFailure(
+                State: SdCardState.Error,
+                StatusMessage: featureNotSupported.RequiredVersion is { } required
+                    ? $"SD card access over WiFi requires device firmware {required} or newer."
+                    : "SD card access over WiFi is not supported by this device's firmware.",
+                Guidance: FIRMWARE_TOO_OLD_FOR_WIFI_SD_GUIDANCE,
+                IsExpectedDeviceCondition: true,
+                IsCardUnavailable: true),
 
             _ => new SdCardFailure(
                 State: SdCardState.Error,

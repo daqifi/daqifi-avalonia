@@ -432,10 +432,14 @@ public partial class DeviceLogsViewModel : ObservableObject
             // subsystem, filesystem error) become expected device conditions (Warning, no Sentry) with
             // actionable guidance; anything else keeps the Error path.
             var failure = SdCardFailureClassifier.Classify(ex);
-            // Only paint the SD surface if this refresh's device is still selected — the success path
-            // above returns early on a mid-refresh selection change, and HandleImportFailure guards the
-            // same way, so a stale failure can't overwrite the current device's panel.
-            if (ReferenceEquals(SelectedDevice, device))
+            // Only paint the SD surface if this refresh's device is still the selected one AND is
+            // still connected. The selection half mirrors the success path's post-await check and
+            // HandleImportFailure, so a stale failure can't overwrite the current device's panel.
+            // The IsConnected half matters now that SD runs over WiFi (issue #1): a silent drop
+            // closes the gate via RaiseSdGateChanged, which resets the SD state — and the failing
+            // refresh's own exception would otherwise land right after and repaint an error over
+            // that reset, contradicting the "Device disconnected" UX.
+            if (ReferenceEquals(SelectedDevice, device) && device.IsConnected)
             {
                 ApplyFailureState(failure);
             }
@@ -544,6 +548,7 @@ public partial class DeviceLogsViewModel : ObservableObject
         var timestampWarningCount = 0;
         SdCardFailure? abortingFailure = null;
         SdCardFailure? lastExpectedFailure = null;
+        var disconnectedMidBatch = false;
 
         try
         {
@@ -553,6 +558,19 @@ public partial class DeviceLogsViewModel : ObservableObject
 
             for (var i = 0; i < filesToImport.Count; i++)
             {
+                // Re-check connectivity every iteration, not just once before the loop. A silent
+                // WiFi/TCP drop mid-batch leaves CoreDevice non-null, so the downstream null-guard
+                // still passes and each remaining file is issued against a dead transport — where
+                // it burns the full DOWNLOAD_STALL_TIMEOUT before failing (a 20-file batch would sit
+                // behind the busy overlay for ~30 minutes). The per-file classification can't stop
+                // this either: a dropped transport surfaces as a per-file condition
+                // (IsCardUnavailable false), so the device-wide abort below never fires.
+                if (!device.IsConnected)
+                {
+                    disconnectedMidBatch = true;
+                    break;
+                }
+
                 var file = filesToImport[i];
                 BusyMessage = $"Importing file {i + 1} of {filesToImport.Count}: {file.FileName}...";
 
@@ -609,7 +627,15 @@ public partial class DeviceLogsViewModel : ObservableObject
                            "timestamps; their sessions' time axes may be flat or partially collapsed.";
             }
 
-            if (abortingFailure != null)
+            if (disconnectedMidBatch)
+            {
+                // Say so explicitly: without this a batch cut short by a disconnect reports the same
+                // "Import Complete" summary as a finished one, and the user has no way to tell that
+                // the untouched files were skipped rather than imported.
+                message += "\n\nImport stopped early: the device disconnected. Reconnect and run " +
+                           "Import All again to pick up the remaining files.";
+            }
+            else if (abortingFailure != null)
             {
                 message += $"\n\nImport stopped early: {abortingFailure.Guidance}";
             }
