@@ -3,13 +3,13 @@
         x:Class="Daqifi.Desktop.View.MigrationStatusWindow"
         Title="DAQiFi"
         WindowStartupLocation="CenterScreen"
-        SystemDecorations="None"
+        WindowDecorations="None"
         CanResize="False"
         SizeToContent="WidthAndHeight"
         Background="{StaticResource Surface}"
         Topmost="True">
     <!-- Ported from Daqifi.Desktop/View/MigrationStatusWindow.xaml.
-         WPF WindowStyle="None" + AllowsTransparency → SystemDecorations="None";
+         WPF WindowStyle="None" + AllowsTransparency → WindowDecorations="None" (SystemDecorations in Avalonia 11);
          ResizeMode="NoResize" → CanResize="False";
          RenderOptions.BitmapScalingMode → BitmapInterpolationMode;
          WPF pack-relative image path → avares:// URI. -->

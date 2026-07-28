@@ -1,7 +1,7 @@
 using Avalonia.Controls;
 using Avalonia.Interactivity;
 using Daqifi.Desktop.Services;
-using Projektanker.Icons.Avalonia;
+using Optris.Icons.Avalonia;
 
 namespace Daqifi.Desktop.View.Dialogs;
 

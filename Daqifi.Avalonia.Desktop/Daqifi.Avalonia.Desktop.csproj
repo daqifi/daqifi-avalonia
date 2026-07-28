@@ -20,7 +20,7 @@
 		     StartWithClassicDesktopLifetime live here; the shared library is
 		     platform-neutral and must NOT carry this desktop-only package (it
 		     would otherwise flow transitively into the Android head). -->
-		<PackageReference Include="Avalonia.Desktop" Version="11.3.*" />
+		<PackageReference Include="Avalonia.Desktop" Version="12.0.5" />
 	</ItemGroup>
 
 	<ItemGroup>
