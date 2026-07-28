@@ -1156,6 +1156,25 @@ public abstract partial class AbstractStreamingDevice : ObservableObject, IStrea
 
         var coreDevice = GetCoreDevice(CoreDeviceForSd, SD_UNAVAILABLE_MESSAGE);
         var files = Task.Run(() => coreDevice.GetSdCardFilesAsync()).GetAwaiter().GetResult();
+
+        // An EMPTY result is ambiguous and must be corroborated before it is shown as "SD card OK,
+        // no files". Core's text exchange returns the lines it collected when its response window
+        // elapses rather than throwing, and its list parser reads "no error lines and no content
+        // lines" as an empty directory — so a device that never answered is indistinguishable from
+        // one with nothing on its card. Over USB that barely mattered (an unplug faults the serial
+        // transport and Core throws), but issue #1 puts SD on WiFi, where a silently dead or merely
+        // congested link produces exactly this shape and the user would be told the card is fine
+        // and empty while their files sit on an unreachable device.
+        //
+        // The storage query is the corroborating signal: unlike the list, its parser cannot read a
+        // missing reply as success, so it throws when nothing comes back. Let that exception
+        // propagate — callers already route SD failures through SdCardFailureClassifier, which
+        // reports it correctly. A round-trip is spent only on the empty-list path.
+        if (files.Count == 0)
+        {
+            Task.Run(() => coreDevice.GetSdCardStorageAsync()).GetAwaiter().GetResult();
+        }
+
         UpdateSdCardFiles(MapSdCardFiles(files));
     }
 
