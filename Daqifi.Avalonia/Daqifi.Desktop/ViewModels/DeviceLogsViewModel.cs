@@ -156,8 +156,10 @@ public partial class DeviceLogsViewModel : ObservableObject
     };
 
     /// <summary>
-    /// Short status string appended to the connection status bar.
-    /// Returns an empty string when the SD card state is unknown.
+    /// Short status string appended to the connection status bar. Empty when the SD card state is
+    /// unknown, and also when SD is not accessible at all (no device selected, the selected device
+    /// has disconnected, or its transport does not carry SD) — otherwise a disconnected device
+    /// would keep advertising a stale "SD card OK · N files" beside its disconnect message.
     /// </summary>
     // @port: Daqifi.Desktop.ViewModels.DeviceLogsViewModel.SdCardStatusLine
     public string SdCardStatusLine => !CanAccessSdCard ? string.Empty : SdCardState switch
@@ -364,7 +366,18 @@ public partial class DeviceLogsViewModel : ObservableObject
             return;
         }
 
-        Dispatcher.UIThread.Post(RaiseSdGateChanged);
+        // Non-throwing, for the same reason AbstractStreamingDevice.RaiseIsConnectedChanged and
+        // BootloaderWatcher guard theirs: this runs on Core's transport thread, and the disconnect
+        // that triggers it is exactly what app shutdown produces — so Post can be called as the
+        // dispatcher goes away. An escape here would propagate into Core's callback.
+        try
+        {
+            Dispatcher.UIThread.Post(RaiseSdGateChanged);
+        }
+        catch (Exception)
+        {
+            // Dispatcher unavailable / shutting down — drop the gate refresh; nothing is bound.
+        }
     }
 
     private void RaiseSdGateChanged()
@@ -445,11 +458,26 @@ public partial class DeviceLogsViewModel : ObservableObject
             // closes the gate via RaiseSdGateChanged, which resets the SD state — and the failing
             // refresh's own exception would otherwise land right after and repaint an error over
             // that reset, contradicting the "Device disconnected" UX.
-            if (ReferenceEquals(SelectedDevice, device) && device.IsConnected)
+            var stillCurrent = ReferenceEquals(SelectedDevice, device) && device.IsConnected;
+            if (stillCurrent)
             {
                 ApplyFailureState(failure);
             }
-            LogFailure(ex, failure, $"Failed to refresh SD card files on device {device.DeviceSerialNo}");
+
+            var context = $"Failed to refresh SD card files on device {device.DeviceSerialNo}";
+            if (stillCurrent)
+            {
+                LogFailure(ex, failure, context);
+            }
+            else
+            {
+                // The device disconnected or the user switched away mid-refresh, which is the most
+                // likely CAUSE of this exception — an in-flight SD read against a device that is
+                // going away. Reporting that at Error would file a Sentry issue for ordinary user
+                // action (unplugging, switching devices), which is exactly the false-positive class
+                // #754 set out to remove. Keep the record, drop the severity.
+                _logger.Warning(ex, $"{context} (device disconnected or deselected during refresh)");
+            }
         }
         finally
         {
