@@ -1,3 +1,4 @@
+using Daqifi.Core.Communication.Transport; // TransportNotConnectedException (typed link-loss)
 using Daqifi.Core.Device; // FeatureNotSupportedException (firmware feature gating, Core ADR 0001)
 using Daqifi.Core.Device.SdCard;
 using Daqifi.Desktop.Loggers;
@@ -78,6 +79,10 @@ public static class SdCardFailureClassifier
     internal const string FIRMWARE_TOO_OLD_FOR_WIFI_SD_GUIDANCE =
         "This device's firmware is too old for SD card access over WiFi. Update the firmware, " +
         "or connect the device by USB to read its SD card.";
+
+    /// <summary>Guidance when the link died out from under an in-flight SD operation.</summary>
+    internal const string TRANSPORT_GONE_GUIDANCE =
+        "The connection to the device was lost. Reconnect and try again.";
     #endregion
 
     #region Public Methods
@@ -168,6 +173,21 @@ public static class SdCardFailureClassifier
                     ? $"SD card access over WiFi requires device firmware {required} or newer."
                     : "SD card access over WiFi is not supported by this device's firmware.",
                 Guidance: FIRMWARE_TOO_OLD_FOR_WIFI_SD_GUIDANCE,
+                IsExpectedDeviceCondition: true,
+                IsCardUnavailable: true),
+
+            // The link died under an in-flight SD operation — the user unplugged the device, or a
+            // WiFi/TCP session ended. Matched by TYPE, not by inspecting ambient device state at the
+            // call site: whether an exception is a disconnect artifact is a property of the
+            // exception, and deciding it from "was the device still connected when this was caught"
+            // would also downgrade a genuine app defect that merely coincided with a disconnect,
+            // losing its Error/Sentry report. ObjectDisposedException is included because a torn-down
+            // stream surfaces that way rather than as a typed transport error.
+            // Device-wide, so a batch import stops instead of re-failing every remaining file.
+            TransportNotConnectedException or ObjectDisposedException => new SdCardFailure(
+                State: SdCardState.Error,
+                StatusMessage: "The connection to the device was lost.",
+                Guidance: TRANSPORT_GONE_GUIDANCE,
                 IsExpectedDeviceCondition: true,
                 IsCardUnavailable: true),
 

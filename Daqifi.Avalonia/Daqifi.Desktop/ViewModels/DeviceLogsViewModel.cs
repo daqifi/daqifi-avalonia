@@ -458,26 +458,17 @@ public partial class DeviceLogsViewModel : ObservableObject
             // closes the gate via RaiseSdGateChanged, which resets the SD state — and the failing
             // refresh's own exception would otherwise land right after and repaint an error over
             // that reset, contradicting the "Device disconnected" UX.
-            var stillCurrent = ReferenceEquals(SelectedDevice, device) && device.IsConnected;
-            if (stillCurrent)
+            if (ReferenceEquals(SelectedDevice, device) && device.IsConnected)
             {
                 ApplyFailureState(failure);
             }
 
-            var context = $"Failed to refresh SD card files on device {device.DeviceSerialNo}";
-            if (stillCurrent)
-            {
-                LogFailure(ex, failure, context);
-            }
-            else
-            {
-                // The device disconnected or the user switched away mid-refresh, which is the most
-                // likely CAUSE of this exception — an in-flight SD read against a device that is
-                // going away. Reporting that at Error would file a Sentry issue for ordinary user
-                // action (unplugging, switching devices), which is exactly the false-positive class
-                // #754 set out to remove. Keep the record, drop the severity.
-                _logger.Warning(ex, $"{context} (device disconnected or deselected during refresh)");
-            }
+            // Log unconditionally and let the classifier set the severity. A disconnect that kills an
+            // in-flight refresh throws a typed transport error, which the classifier already treats
+            // as an expected device condition (Warning, no Sentry) — so the false-positive case is
+            // handled by TYPE. Downgrading here based on "is the device still current" instead would
+            // also silence a genuine defect that merely coincided with a device switch.
+            LogFailure(ex, failure, $"Failed to refresh SD card files on device {device.DeviceSerialNo}");
         }
         finally
         {
