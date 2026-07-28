@@ -1166,10 +1166,18 @@ public abstract partial class AbstractStreamingDevice : ObservableObject, IStrea
         // congested link produces exactly this shape and the user would be told the card is fine
         // and empty while their files sit on an unreachable device.
         //
-        // The storage query is the corroborating signal: unlike the list, its parser cannot read a
-        // missing reply as success, so it throws when nothing comes back. Let that exception
-        // propagate — callers already route SD failures through SdCardFailureClassifier, which
-        // reports it correctly. A round-trip is spent only on the empty-list path.
+        // The storage query is the best corroborating signal available here: unlike the list, its
+        // parser cannot read a missing reply as success, so it throws when nothing comes back. Let
+        // that exception propagate — callers already route SD failures through
+        // SdCardFailureClassifier, which reports it correctly. A round-trip is spent only on the
+        // empty-list path.
+        //
+        // This NARROWS the ambiguity, it does not remove it: a successful storage query proves the
+        // device answered a LATER request, not that the listing itself was complete, so a LIST that
+        // was lost or truncated while the link then recovered still reads as an empty card. Only
+        // Core can close that gap — it is the layer that knows a reply never arrived — and it is
+        // filed as daqifi-core#396. Accepted here as the strict improvement over reporting every
+        // unreachable device as a healthy empty card.
         if (files.Count == 0)
         {
             Task.Run(() => coreDevice.GetSdCardStorageAsync()).GetAwaiter().GetResult();
