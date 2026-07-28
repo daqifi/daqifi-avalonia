@@ -4,6 +4,7 @@
 // the correspondence map.
 
 using System.Collections.ObjectModel;
+using System.ComponentModel;
 using System.Text;
 using Avalonia;
 using Avalonia.Controls.ApplicationLifetimes;
@@ -43,6 +44,13 @@ public partial class DeviceLogsViewModel : ObservableObject
 {
     private readonly IAppLogger _logger;
     private readonly ISdCardSessionImporter? _importerOverride;
+
+    /// <summary>
+    /// The device whose <c>IsConnected</c> notifications are currently subscribed. Held separately
+    /// from <see cref="SelectedDevice"/> so the old device can be detached after the property has
+    /// already moved on — see <see cref="WatchSelectedDeviceConnectivity"/>.
+    /// </summary>
+    private IStreamingDevice? _connectivityWatchedDevice;
 
     [ObservableProperty]
     private bool _isBusy;
@@ -105,36 +113,56 @@ public partial class DeviceLogsViewModel : ObservableObject
     }
 
     // @port: Daqifi.Desktop.ViewModels.DeviceLogsViewModel.CanAccessSdCard
-    public bool CanAccessSdCard => SelectedDevice?.ConnectionType == ConnectionType.Usb;
+    // SD file access (LIST / download) is transport-agnostic (issue #1): the firmware routes SD
+    // replies to the requesting link (USB or WiFi/TCP — daqifi-nyquist-firmware #598/#599) and
+    // Core's SD path drives its consumer swap against the transport stream regardless of type.
+    // Gate on "device supports SD + connected" (issue #1's own prescription), NOT connection type
+    // alone: IsConnected must be checked because a device can drop mid-session (silently over
+    // WiFi) while still selected — a non-null-but-disconnected Core would otherwise pass the
+    // GetCoreDevice null-guard and run SD ops against a dead transport.
+    // Capture SelectedDevice into the pattern local `device` so it is read exactly once — the
+    // observable property is nullable and could flip to null between two reads under
+    // selection/disconnect reentrancy (Qodo "SelectedDevice double-read race").
+    public bool CanAccessSdCard =>
+        SelectedDevice is { IsConnected: true } device &&
+        device.ConnectionType is ConnectionType.Usb or ConnectionType.Wifi;
 
-    /// <summary>True when the USB device has an OK SD card but no log files on it.</summary>
+    /// <summary>True when the device has an OK SD card but no log files on it.</summary>
     // @port: Daqifi.Desktop.ViewModels.DeviceLogsViewModel.HasNoFiles
     public bool HasNoFiles => (DeviceFiles?.Any() != true) && CanAccessSdCard && SdCardState == SdCardState.Ok;
 
-    /// <summary>True when the USB device has an OK SD card with at least one log file.</summary>
+    /// <summary>True when the device has an OK SD card with at least one log file.</summary>
     // @port: Daqifi.Desktop.ViewModels.DeviceLogsViewModel.HasFiles
     public bool HasFiles => CanAccessSdCard && (DeviceFiles?.Any() == true) && SdCardState == SdCardState.Ok;
 
-    /// <summary>True when the USB device reports that no SD card is installed.</summary>
+    /// <summary>True when the device reports that no SD card is installed.</summary>
     // @port: Daqifi.Desktop.ViewModels.DeviceLogsViewModel.HasSdCardNotPresent
     public bool HasSdCardNotPresent => CanAccessSdCard && SdCardState == SdCardState.NotPresent;
 
-    /// <summary>True when the USB device reports an SD card error.</summary>
+    /// <summary>True when the device reports an SD card error.</summary>
     // @port: Daqifi.Desktop.ViewModels.DeviceLogsViewModel.HasSdCardError
     public bool HasSdCardError => CanAccessSdCard && SdCardState == SdCardState.Error;
 
     // @port: Daqifi.Desktop.ViewModels.DeviceLogsViewModel.ConnectionTypeMessage
-    public string ConnectionTypeMessage => SelectedDevice == null ? string.Empty :
-        SelectedDevice.ConnectionType == ConnectionType.Usb ?
-            "USB Connected - SD Card Access Available" :
-            "WiFi Connected - SD Card Access Requires USB Connection";
+    // Kept consistent with CanAccessSdCard: a selected-but-disconnected device reports the drop
+    // rather than a misleading "SD Card Access Available" (Qodo "Report disconnected devices
+    // accurately"). The switch reads SelectedDevice exactly once (no double-read race).
+    public string ConnectionTypeMessage => SelectedDevice switch
+    {
+        null => string.Empty,
+        { IsConnected: false } => "Device disconnected - reconnect to access the SD card",
+        { ConnectionType: ConnectionType.Usb } => "USB Connected - SD Card Access Available",
+        _ => "WiFi Connected - SD Card Access Available",
+    };
 
     /// <summary>
-    /// Short status string appended to the connection status bar.
-    /// Returns an empty string when the SD card state is unknown.
+    /// Short status string appended to the connection status bar. Empty when the SD card state is
+    /// unknown, and also when SD is not accessible at all (no device selected, the selected device
+    /// has disconnected, or its transport does not carry SD) — otherwise a disconnected device
+    /// would keep advertising a stale "SD card OK · N files" beside its disconnect message.
     /// </summary>
     // @port: Daqifi.Desktop.ViewModels.DeviceLogsViewModel.SdCardStatusLine
-    public string SdCardStatusLine => SdCardState switch
+    public string SdCardStatusLine => !CanAccessSdCard ? string.Empty : SdCardState switch
     {
         SdCardState.Ok =>
             $" · SD card OK · {DeviceFiles?.Count ?? 0} {(DeviceFiles?.Count == 1 ? "file" : "files")}",
@@ -207,6 +235,13 @@ public partial class DeviceLogsViewModel : ObservableObject
             {
                 SelectedDevice = ConnectedDevices.First();
             }
+
+            // Recompute the SD gate on every connected-set change. CanAccessSdCard now depends on
+            // the selected device's IsConnected (issue #1), and an explicit Disconnect() or a USB
+            // removal fires ConnectionManager's "ConnectedDevices" even when the SelectedDevice
+            // *reference* is unchanged — so the gate must recompute here, not only on selection
+            // change (Qodo "SD access state stale").
+            RaiseSdGateChanged();
         }
 
         if (!Dispatcher.UIThread.CheckAccess())
@@ -222,6 +257,12 @@ public partial class DeviceLogsViewModel : ObservableObject
     // @port: Daqifi.Desktop.ViewModels.DeviceLogsViewModel.OnSelectedDeviceChanged
     partial void OnSelectedDeviceChanged(IStreamingDevice value)
     {
+        // Follow the selection with the IsConnected subscription so a drop on the *currently
+        // selected* device reaches the gate. Unsubscribe the previous device first — selection
+        // changes freely, and re-subscribing without this would leak handlers and multiply
+        // RaiseSdGateChanged calls per event.
+        WatchSelectedDeviceConnectivity(value);
+
         SdCardState = SdCardState.Unknown;
         SdCardErrorMessage = string.Empty;
 
@@ -241,20 +282,136 @@ public partial class DeviceLogsViewModel : ObservableObject
             DeviceFiles.Clear();
         }
 
+        RaiseSdGateChanged();
+    }
+
+    /// <summary>
+    /// Re-raises the SD-access gate — <see cref="CanAccessSdCard"/>, its dependent visibility
+    /// flags, the connection message, and the refresh command's CanExecute. Invoked on selection
+    /// change and on any connected-set change (issue #1 / Qodo "SD access state stale").
+    /// </summary>
+    /// <remarks>
+    /// A <em>reported</em> disconnect now reaches the gate promptly: the device layer signals
+    /// <c>IsConnected</c> off Core's <c>StatusChanged</c> (issue #3) and
+    /// <see cref="WatchSelectedDeviceConnectivity"/> subscribes the selected device, so an explicit
+    /// disconnect, a USB removal, or a Core-detected transport loss updates this without waiting for
+    /// the next connected-set change.
+    /// <para>
+    /// A fully <em>silent</em> TCP death still does not: Core's <c>TcpStreamTransport</c> raises
+    /// <c>StatusChanged</c> only from its connect-failure and <c>DisconnectAsync</c> paths — there is
+    /// no read-error hook or keepalive — so <c>IsConnected</c> stays true until something else
+    /// notices. Filed upstream as daqifi-core#394. Until then the gate can read stale in that case,
+    /// which is a cosmetic staleness only: every SD operation re-checks <c>IsConnected</c> at
+    /// operation time and the download stall watchdog bounds any request issued against a dead link.
+    /// </para>
+    /// </remarks>
+    /// <summary>
+    /// Points the <c>IsConnected</c> subscription at <paramref name="device"/>, detaching it from
+    /// the previously selected device.
+    /// </summary>
+    /// <remarks>
+    /// Tracks the subscribed instance in its own field rather than re-deriving it from
+    /// <c>SelectedDevice</c>: by the time this runs the property has already been updated, so
+    /// unsubscribing via <c>SelectedDevice</c> would detach from the *new* device and leak the old
+    /// one's handler. Devices outlive this view-model (they live in <c>ConnectionManager</c>), so a
+    /// leaked handler would keep the view-model alive and multiply gate updates.
+    /// </remarks>
+    /// <param name="device">The newly selected device, or null when the selection is cleared.</param>
+    private void WatchSelectedDeviceConnectivity(IStreamingDevice? device)
+    {
+        if (ReferenceEquals(_connectivityWatchedDevice, device))
+        {
+            return;
+        }
+
+        if (_connectivityWatchedDevice is INotifyPropertyChanged previous)
+        {
+            previous.PropertyChanged -= OnSelectedDeviceConnectivityChanged;
+        }
+
+        _connectivityWatchedDevice = device;
+
+        if (device is INotifyPropertyChanged current)
+        {
+            current.PropertyChanged += OnSelectedDeviceConnectivityChanged;
+        }
+    }
+
+    /// <summary>
+    /// Recomputes the SD gate when the selected device reports a connectivity change.
+    /// </summary>
+    /// <remarks>
+    /// The device raises this from Core's transport thread on a silent drop, so marshal before
+    /// touching view-model state. An empty/null property name is the
+    /// <see cref="INotifyPropertyChanged"/> "everything changed" convention and must be treated as
+    /// a possible <c>IsConnected</c> change.
+    /// </remarks>
+    private void OnSelectedDeviceConnectivityChanged(object? sender, PropertyChangedEventArgs e)
+    {
+        if (!string.IsNullOrEmpty(e.PropertyName) &&
+            e.PropertyName != nameof(IStreamingDevice.IsConnected))
+        {
+            return;
+        }
+
+        // Ignore a late event from a device that is no longer the subscribed one.
+        if (!ReferenceEquals(sender, _connectivityWatchedDevice))
+        {
+            return;
+        }
+
+        if (Dispatcher.UIThread.CheckAccess())
+        {
+            RaiseSdGateChanged();
+            return;
+        }
+
+        // Non-throwing, for the same reason AbstractStreamingDevice.RaiseIsConnectedChanged and
+        // BootloaderWatcher guard theirs: this runs on Core's transport thread, and the disconnect
+        // that triggers it is exactly what app shutdown produces — so Post can be called as the
+        // dispatcher goes away. An escape here would propagate into Core's callback.
+        try
+        {
+            Dispatcher.UIThread.Post(RaiseSdGateChanged);
+        }
+        catch (Exception)
+        {
+            // Dispatcher unavailable / shutting down — drop the gate refresh; nothing is bound.
+        }
+    }
+
+    private void RaiseSdGateChanged()
+    {
         OnPropertyChanged(nameof(CanAccessSdCard));
         OnPropertyChanged(nameof(HasNoFiles));
         OnPropertyChanged(nameof(HasSdCardNotPresent));
         OnPropertyChanged(nameof(HasSdCardError));
         OnPropertyChanged(nameof(HasFiles));
         OnPropertyChanged(nameof(ConnectionTypeMessage));
+        // SdCardStatusLine is now gated on CanAccessSdCard too, so re-raise it when the gate
+        // flips (on close via the state reset below it also re-raises through SdCardState;
+        // this covers the gate OPENING on reconnect, where no state change occurs).
+        OnPropertyChanged(nameof(SdCardStatusLine));
         RefreshFilesCommand.NotifyCanExecuteChanged();
+
+        // When SD is no longer accessible (e.g. the selected device disconnected), drop the now-stale
+        // SD state + file list so SdCardStatusLine doesn't keep showing a phantom "SD card OK · N
+        // files" next to a "Device disconnected" message (Qodo "Stale SD status line"). Setting
+        // SdCardState and clearing DeviceFiles each re-raise SdCardStatusLine / Has* on their own.
+        if (!CanAccessSdCard)
+        {
+            SdCardState = SdCardState.Unknown;
+            SdCardErrorMessage = string.Empty;
+            DeviceFiles.Clear();
+        }
     }
 
     // @port: Daqifi.Desktop.ViewModels.DeviceLogsViewModel.RefreshFilesAsync
     internal async Task RefreshFilesAsync()
     {
         var device = SelectedDevice;
-        if (device == null || device.ConnectionType != ConnectionType.Usb)
+        if (device is not { IsConnected: true } ||
+            device.ConnectionType is not (ConnectionType.Usb or ConnectionType.Wifi))
         {
             return;
         }
@@ -270,7 +427,13 @@ public partial class DeviceLogsViewModel : ObservableObject
 
             await Task.Run(() => device.RefreshSdCardFiles());
 
-            if (SelectedDevice != device)
+            // Re-validate after the await: the selection can change AND the device can disconnect
+            // while RefreshSdCardFiles ran. Bail without repopulating in either case so a completing
+            // refresh can't overwrite a disconnect reset (RaiseSdGateChanged) with a stale
+            // "SD card OK · N files" that contradicts the disconnect UX (Qodo "Refresh overwrites
+            // disconnect reset"). Both this continuation and the reset run on the UI thread, so the
+            // check-then-set below is atomic w.r.t. the reset — no lock needed.
+            if (SelectedDevice != device || !device.IsConnected)
             {
                 return;
             }
@@ -288,13 +451,23 @@ public partial class DeviceLogsViewModel : ObservableObject
             // subsystem, filesystem error) become expected device conditions (Warning, no Sentry) with
             // actionable guidance; anything else keeps the Error path.
             var failure = SdCardFailureClassifier.Classify(ex);
-            // Only paint the SD surface if this refresh's device is still selected — the success path
-            // above returns early on a mid-refresh selection change, and HandleImportFailure guards the
-            // same way, so a stale failure can't overwrite the current device's panel.
-            if (ReferenceEquals(SelectedDevice, device))
+            // Only paint the SD surface if this refresh's device is still the selected one AND is
+            // still connected. The selection half mirrors the success path's post-await check and
+            // HandleImportFailure, so a stale failure can't overwrite the current device's panel.
+            // The IsConnected half matters now that SD runs over WiFi (issue #1): a silent drop
+            // closes the gate via RaiseSdGateChanged, which resets the SD state — and the failing
+            // refresh's own exception would otherwise land right after and repaint an error over
+            // that reset, contradicting the "Device disconnected" UX.
+            if (ReferenceEquals(SelectedDevice, device) && device.IsConnected)
             {
                 ApplyFailureState(failure);
             }
+
+            // Log unconditionally and let the classifier set the severity. A disconnect that kills an
+            // in-flight refresh throws a typed transport error, which the classifier already treats
+            // as an expected device condition (Warning, no Sentry) — so the false-positive case is
+            // handled by TYPE. Downgrading here based on "is the device still current" instead would
+            // also silence a genuine defect that merely coincided with a device switch.
             LogFailure(ex, failure, $"Failed to refresh SD card files on device {device.DeviceSerialNo}");
         }
         finally
@@ -400,6 +573,7 @@ public partial class DeviceLogsViewModel : ObservableObject
         var timestampWarningCount = 0;
         SdCardFailure? abortingFailure = null;
         SdCardFailure? lastExpectedFailure = null;
+        var disconnectedMidBatch = false;
 
         try
         {
@@ -409,6 +583,24 @@ public partial class DeviceLogsViewModel : ObservableObject
 
             for (var i = 0; i < filesToImport.Count; i++)
             {
+                // Re-check connectivity every iteration, not just once before the loop: the device
+                // can go away mid-batch, and CoreDevice stays non-null, so the downstream null-guard
+                // still passes and each remaining file would be issued against a dead transport.
+                //
+                // Covers a disconnect Core actually reports — an explicit Disconnect(), a USB
+                // removal, or a transport-signalled loss (Core's ConnectionStatus.Lost). It does NOT
+                // cover a fully silent TCP death: Core's TcpStreamTransport raises StatusChanged
+                // only from its connect-failure and DisconnectAsync paths (no read-error hook or
+                // keepalive), so IsConnected stays true and this check cannot see it. That case is
+                // caught instead by the download stall watchdog, whose SdCardDownloadStalledException
+                // classifies card-unavailable and breaks below — costing one stall timeout for the
+                // batch rather than one per remaining file.
+                if (!device.IsConnected)
+                {
+                    disconnectedMidBatch = true;
+                    break;
+                }
+
                 var file = filesToImport[i];
                 BusyMessage = $"Importing file {i + 1} of {filesToImport.Count}: {file.FileName}...";
 
@@ -465,7 +657,15 @@ public partial class DeviceLogsViewModel : ObservableObject
                            "timestamps; their sessions' time axes may be flat or partially collapsed.";
             }
 
-            if (abortingFailure != null)
+            if (disconnectedMidBatch)
+            {
+                // Say so explicitly: without this a batch cut short by a disconnect reports the same
+                // "Import Complete" summary as a finished one, and the user has no way to tell that
+                // the untouched files were skipped rather than imported.
+                message += "\n\nImport stopped early: the device disconnected. Reconnect and run " +
+                           "Import All again to pick up the remaining files.";
+            }
+            else if (abortingFailure != null)
             {
                 message += $"\n\nImport stopped early: {abortingFailure.Guidance}";
             }

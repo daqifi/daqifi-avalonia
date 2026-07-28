@@ -6,8 +6,9 @@
        DeviceLogsViewModel. Styled with the shared component language (pills, chips,
        list rows, mono, empty-state) so it matches the desktop Logged Data pane.
 
-       SD-card offload is USB-gated: DeviceLogsViewModel.CanAccessSdCard is true ONLY
-       for ConnectionType.Usb; over WiFi the pane shows the "requires USB" callout. -->
+       SD-card offload works over USB and WiFi/TCP (issue #1): DeviceLogsViewModel.CanAccessSdCard
+       is true for either connection type, so the callout below only shows when no device is
+       connected. Wi-Fi SD offload is a big mobile win — no OTG cable needed. -->
   <Grid Background="{DynamicResource Surface}">
     <ScrollViewer>
       <StackPanel Classes="paneContent" Spacing="14" Margin="16,20">
@@ -57,18 +58,18 @@
                   IsEnabled="{Binding CanAccessSdCard}" MinHeight="40" />
         </StackPanel>
 
-        <!-- USB-required callout: SD offload needs a USB (OTG) link. -->
+        <!-- No-device callout: SD offload works once a device is connected (USB or Wi-Fi). -->
         <Border IsVisible="{Binding !CanAccessSdCard}"
                 Background="{DynamicResource SurfaceRaised}"
                 BorderBrush="{DynamicResource StatusAmber}" BorderThickness="1"
                 CornerRadius="8" Padding="16,14">
           <StackPanel Spacing="6">
-            <TextBlock Text="SD-card offload needs a USB connection"
+            <TextBlock Text="Connect a device to browse its SD card"
                        FontWeight="SemiBold" FontSize="{DynamicResource FontSizeBody}"
                        Foreground="{DynamicResource StatusAmber}" />
             <TextBlock TextWrapping="Wrap" FontSize="{DynamicResource FontSizeCaption}"
                        Foreground="{DynamicResource TextSecondary}"
-                       Text="Log files stored on the device SD card are read over a direct USB (OTG) link — connect the phone to the DAQiFi with a USB-C cable. Wi-Fi streams live data but cannot browse on-device storage." />
+                       Text="Log files stored on the device SD card can be listed and downloaded over either a Wi-Fi/TCP link or a direct USB-C (OTG) cable. Connect to a DAQiFi device to get started." />
           </StackPanel>
         </Border>
 

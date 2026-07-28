@@ -1140,21 +1140,49 @@ public abstract partial class AbstractStreamingDevice : ObservableObject, IStrea
     }
 
     /// <summary>
-    /// Refreshes the list of SD card log files from the connected USB device.
+    /// Refreshes the list of SD card log files from the connected device.
     /// </summary>
-    /// <exception cref="InvalidOperationException">Thrown when the device is not connected via USB or SD operations cannot be performed.</exception>
+    /// <remarks>
+    /// Transport-agnostic (issue #1): SD file access works over USB and WiFi/TCP alike — the
+    /// firmware serves the SD reply on whichever link issued the request. Availability is gated
+    /// by <see cref="CoreDeviceForSd"/> (null on devices without SD support → SD_UNAVAILABLE),
+    /// not by connection type.
+    /// </remarks>
+    /// <exception cref="InvalidOperationException">Thrown when SD operations cannot be performed on this device.</exception>
     // @port: Daqifi.Desktop.Device.AbstractStreamingDevice.RefreshSdCardFiles
     public void RefreshSdCardFiles()
     {
-        if (ConnectionType != ConnectionType.Usb)
-        {
-            throw new InvalidOperationException("SD Card access is only available when connected via USB");
-        }
-
         EnsureSdOperationsQuiesced();
 
         var coreDevice = GetCoreDevice(CoreDeviceForSd, SD_UNAVAILABLE_MESSAGE);
         var files = Task.Run(() => coreDevice.GetSdCardFilesAsync()).GetAwaiter().GetResult();
+
+        // An EMPTY result is ambiguous and must be corroborated before it is shown as "SD card OK,
+        // no files". Core's text exchange returns the lines it collected when its response window
+        // elapses rather than throwing, and its list parser reads "no error lines and no content
+        // lines" as an empty directory — so a device that never answered is indistinguishable from
+        // one with nothing on its card. Over USB that barely mattered (an unplug faults the serial
+        // transport and Core throws), but issue #1 puts SD on WiFi, where a silently dead or merely
+        // congested link produces exactly this shape and the user would be told the card is fine
+        // and empty while their files sit on an unreachable device.
+        //
+        // The storage query is the best corroborating signal available here: unlike the list, its
+        // parser cannot read a missing reply as success, so it throws when nothing comes back. Let
+        // that exception propagate — callers already route SD failures through
+        // SdCardFailureClassifier, which reports it correctly. A round-trip is spent only on the
+        // empty-list path.
+        //
+        // This NARROWS the ambiguity, it does not remove it: a successful storage query proves the
+        // device answered a LATER request, not that the listing itself was complete, so a LIST that
+        // was lost or truncated while the link then recovered still reads as an empty card. Only
+        // Core can close that gap — it is the layer that knows a reply never arrived — and it is
+        // filed as daqifi-core#396. Accepted here as the strict improvement over reporting every
+        // unreachable device as a healthy empty card.
+        if (files.Count == 0)
+        {
+            Task.Run(() => coreDevice.GetSdCardStorageAsync()).GetAwaiter().GetResult();
+        }
+
         UpdateSdCardFiles(MapSdCardFiles(files));
     }
 

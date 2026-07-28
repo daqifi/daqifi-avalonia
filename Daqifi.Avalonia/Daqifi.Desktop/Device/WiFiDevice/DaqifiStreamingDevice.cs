@@ -15,8 +15,12 @@ namespace Daqifi.Desktop.Device.WiFiDevice;
 
 /// <summary>
 /// WiFi streaming device that uses Core's DaqifiStreamingDevice directly for communication.
-/// Unlike USB devices, WiFi devices don't need consumer swapping because SD card operations
-/// are only available over USB.
+/// SD-card file access (LIST / download / delete) is available over WiFi/TCP as well as USB:
+/// the firmware routes SD replies to whichever link issued the request
+/// (daqifi-nyquist-firmware #598/#599), and Core's SD path drives its protobuf-consumer
+/// pause/swap against the transport stream regardless of transport type — so this device
+/// exposes <see cref="AbstractStreamingDevice.CoreDeviceForSd"/> the same way the USB/serial
+/// devices do (issue #1).
 /// </summary>
 // @port: Daqifi.Desktop.Device.WiFiDevice.DaqifiStreamingDevice
 public class DaqifiStreamingDevice : AbstractStreamingDevice
@@ -29,6 +33,12 @@ public class DaqifiStreamingDevice : AbstractStreamingDevice
     public bool IsPowerOn { get; set; }
     // @port: Daqifi.Desktop.Device.WiFiDevice.DaqifiStreamingDevice.ConnectionType
     public override ConnectionType ConnectionType => ConnectionType.Wifi;
+
+    // SD file operations run over the same TCP stream this device already uses for
+    // streaming — Core's SD path is transport-agnostic (issue #1). Mirrors the
+    // serial/USB devices' CoreDeviceForSd override.
+    // @port: Daqifi.Desktop.Device.WiFiDevice.DaqifiStreamingDevice.CoreDeviceForSd
+    protected override CoreStreamingDevice? CoreDeviceForSd => CoreDevice;
 
     #endregion
 

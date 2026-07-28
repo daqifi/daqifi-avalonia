@@ -257,23 +257,23 @@
                            MaxWidth="320"/>
             </StackPanel>
 
-            <!-- Empty state: no device selected / WiFi (cannot access SD) -->
+            <!-- Empty state: no device connected (SD access is available over USB and WiFi) -->
             <StackPanel VerticalAlignment="Center"
                         HorizontalAlignment="Center"
                         IsVisible="{Binding !CanAccessSdCard}">
-                <i:Icon Value="mdi-usb-port"
+                <i:Icon Value="mdi-sd"
                         FontSize="40"
                         Foreground="{StaticResource TextTertiary}"
                         Opacity="0.5"
                         HorizontalAlignment="Center"
                         Margin="0,0,0,12"/>
-                <TextBlock Text="USB REQUIRED"
+                <TextBlock Text="NO DEVICE"
                            FontSize="11"
                            FontWeight="Bold"
                            Foreground="{StaticResource TextTertiary}"
                            HorizontalAlignment="Center"
                            Margin="0,0,0,6"/>
-                <TextBlock Text="Connect a device over USB to browse its SD card."
+                <TextBlock Text="Connect a device over USB or Wi-Fi to browse its SD card."
                            FontSize="13"
                            FontWeight="Light"
                            Foreground="{StaticResource TextPrimary}"
