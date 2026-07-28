@@ -181,10 +181,15 @@ public static class SdCardFailureClassifier
             // call site: whether an exception is a disconnect artifact is a property of the
             // exception, and deciding it from "was the device still connected when this was caught"
             // would also downgrade a genuine app defect that merely coincided with a disconnect,
-            // losing its Error/Sentry report. ObjectDisposedException is included because a torn-down
-            // stream surfaces that way rather than as a typed transport error.
+            // losing its Error/Sentry report.
+            //
+            // Deliberately ONLY the typed transport error. ObjectDisposedException was tried here and
+            // is far too broad: an import also disposes a DbContext and file streams, so a disposal
+            // defect in parsing or database write would be silently downgraded to "reconnect and try
+            // again" and hide a real bug. A suppressed Error costs more than a noisy one, so anything
+            // less specific than this type keeps the Error path.
             // Device-wide, so a batch import stops instead of re-failing every remaining file.
-            TransportNotConnectedException or ObjectDisposedException => new SdCardFailure(
+            TransportNotConnectedException => new SdCardFailure(
                 State: SdCardState.Error,
                 StatusMessage: "The connection to the device was lost.",
                 Guidance: TRANSPORT_GONE_GUIDANCE,
