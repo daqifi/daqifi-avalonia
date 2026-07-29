@@ -1,0 +1,29 @@
+<Project>
+
+  <!--
+    Repo-wide NuGet restore policy.
+
+    Every PackageReference in this repo is pinned to an exact version, and restore writes a
+    packages.lock.json next to each project recording the full transitive closure with content
+    hashes. Together these mean a restore resolves to the same bytes on every machine and in CI,
+    and any drift — a re-published package, a transitive bump, an unpinned addition — fails the
+    restore instead of silently changing the build.
+
+    This is the substantive supply-chain control for the repo: it covers all ~27 packages rather
+    than singling out one dependency for special treatment. It is also why vendoring a package is
+    not required merely to freeze it (see #70 for that decision, and third_party/oxyplot-avalonia
+    for the case where vendoring IS warranted — no compatible NuGet release exists at all).
+
+    CI should restore in locked mode (the RestoreLockedMode property, or the equivalent restore
+    flag) so a drifted lock file is an error rather than a silent regeneration. Locally, add or bump
+    a package and restore normally to update the lock file, then commit it with the change.
+
+    NOTE: third_party/oxyplot-avalonia has its own Directory.Build.props and MSBuild stops at the
+    first one it finds walking up, so this file is NOT inherited there — the property is set in
+    that file too. Keep them in step.
+  -->
+  <PropertyGroup>
+    <RestorePackagesWithLockFile>true</RestorePackagesWithLockFile>
+  </PropertyGroup>
+
+</Project>

@@ -3,6 +3,10 @@
          OxyPlot.Core 2.1.2), which is outside the vendored subtree. Pin to the
          app's versions instead — see VENDORED.md. -->
     <PropertyGroup>
+        <!-- Set here as well as in the repo-root Directory.Build.props: MSBuild stops at the first
+             Directory.Build.props it finds walking up, so this subtree does NOT inherit the root
+             one. Keep the two in step. -->
+        <RestorePackagesWithLockFile>true</RestorePackagesWithLockFile>
         <AvaloniaVersion>12.0.5</AvaloniaVersion>
         <!-- Avalonia 12 flips this default to true, which would require x:DataType on the
              tracker ControlTemplates in Themes/Default.axaml ({Binding Position} etc.).
