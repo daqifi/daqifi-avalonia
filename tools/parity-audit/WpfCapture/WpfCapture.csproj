@@ -7,6 +7,17 @@
     <ImplicitUsings>enable</ImplicitUsings>
     <StartupObject>WpfCapture.Program</StartupObject>
     <RuntimeIdentifier>win-x64</RuntimeIdentifier>
+
+    <!-- Opted OUT of the repo-wide lock-file policy in the root Directory.Build.props, which
+         this project would otherwise inherit. A lock file here would record the transitive
+         closure of the SIBLING daqifi-desktop repo (see the ProjectReference below), so it
+         would go stale every time that repo bumps a package — and no PR in THIS repo would
+         ever update it, turning the CI locked-mode gate into a guaranteed false failure.
+         This harness is a Windows-only diagnostic that never ships and cannot restore at all
+         without the sibling checkout present, so it is not part of the supply-chain surface
+         the policy exists to protect. Every project that IS shipped keeps its lock file. -->
+    <RestorePackagesWithLockFile>false</RestorePackagesWithLockFile>
+    <RestoreLockedMode>false</RestoreLockedMode>
   </PropertyGroup>
 
   <ItemGroup>

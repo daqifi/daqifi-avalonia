@@ -32,6 +32,11 @@
     NOTE: third_party/oxyplot-avalonia has its own Directory.Build.props and MSBuild stops at the
     first one it finds walking up, so this file is NOT inherited there — the property is set in
     that file too. Keep them in step.
+
+    NOTE: tools/parity-audit/WpfCapture opts OUT (see its csproj). It ProjectReferences the
+    sibling daqifi-desktop repo, so a lock file there would encode another repo's closure and
+    go stale on that repo's package bumps, with no PR here able to refresh it. Five of the six
+    projects carry lock files; that one is the deliberate exception.
   -->
   <PropertyGroup>
     <RestorePackagesWithLockFile>true</RestorePackagesWithLockFile>
