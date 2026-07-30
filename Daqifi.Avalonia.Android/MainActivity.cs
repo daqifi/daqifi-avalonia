@@ -26,9 +26,11 @@ public class MainActivity : AvaloniaMainActivity
         // without it Android power-save-filters the broadcast replies and
         // discovery silently finds nothing.
         //
-        // These stay activity-scoped rather than moving to MainApplication alongside the icon
-        // provider: both capture `this` as their Android Context, and handing an Activity context
-        // to the longer-lived application object would leak the activity across recreations.
+        // Registered here rather than in MainApplication alongside the icon provider because both
+        // need an Android Context, and OnCreate is the first point one exists. Neither RETAINS the
+        // activity: each constructor promotes its argument to ApplicationContext and keeps only
+        // that plus a system service (WifiManager / UsbManager), so leaving these statics set
+        // across an activity destroy+recreate cannot pin a dead MainActivity.
         NetworkDiscoveryScope.Current = new MulticastDiscoveryScope(this);
         // Register the USB (OTG) host connector so the mobile shell can offer a
         // "Connect via USB" affordance (experimental — see Usb/AndroidUsbStreamTransport).
