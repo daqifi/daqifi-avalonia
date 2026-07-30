@@ -11,7 +11,7 @@
     <!--
         Ported from Daqifi.Desktop/View/Prototype/DevicesPanePrototype.xaml (upstream WPF).
 
-        hal: xaml_behaviors — Microsoft.Xaml.Behaviors.Wpf → Avalonia.Xaml.Behaviors:
+        hal: xaml_behaviors — Microsoft.Xaml.Behaviors.Wpf → Xaml.Behaviors.Avalonia:
         i:Interaction.Triggers/EventTrigger/InvokeCommandAction become
         ia:Interaction.Behaviors + iac:EventTriggerBehavior/InvokeCommandAction.
         WPF BooleanToInverse converter → Avalonia `!` binding negation.
