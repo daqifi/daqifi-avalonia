@@ -14,9 +14,20 @@
     not required merely to freeze it (see #70 for that decision, and third_party/oxyplot-avalonia
     for the case where vendoring IS warranted — no compatible NuGet release exists at all).
 
-    CI should restore in locked mode (the RestoreLockedMode property, or the equivalent restore
-    flag) so a drifted lock file is an error rather than a silent regeneration. Locally, add or bump
-    a package and restore normally to update the lock file, then commit it with the change.
+    IMPORTANT: RestorePackagesWithLockFile only GENERATES the lock file. On its own, a restore that
+    encounters drift quietly REGENERATES it instead of failing, which defeats the purpose. Locked
+    mode is what turns the lock file into a gate, so RestoreLockedMode is enabled below whenever an
+    automated build is detected.
+
+    Locally it stays off, because it has to: adding or bumping a package legitimately changes the
+    closure, so a developer restores normally to update the lock file and commits it alongside the
+    change. To rehearse the gate by hand, pass -p:ContinuousIntegrationBuild=true (or restore with
+    the locked-mode flag).
+
+    NOTE (2026-07-28): this repo currently has NO build workflow — .github/workflows holds only the
+    upstream-sync check — so nothing exercises the gate automatically yet. The pins and committed
+    lock files still deliver reproducibility and make dependency changes reviewable in the diff; the
+    enforcement arm activates the moment a build workflow exists. Tracked separately.
 
     NOTE: third_party/oxyplot-avalonia has its own Directory.Build.props and MSBuild stops at the
     first one it finds walking up, so this file is NOT inherited there — the property is set in
@@ -24,6 +35,10 @@
   -->
   <PropertyGroup>
     <RestorePackagesWithLockFile>true</RestorePackagesWithLockFile>
+    <!-- Fail on drift in automated builds, stay permissive for local development. `CI` is set by
+         GitHub Actions (and most other runners) automatically; ContinuousIntegrationBuild is the
+         MSBuild-native switch and lets a developer rehearse the gate on demand. -->
+    <RestoreLockedMode Condition="'$(ContinuousIntegrationBuild)' == 'true' Or '$(CI)' == 'true'">true</RestoreLockedMode>
   </PropertyGroup>
 
 </Project>
