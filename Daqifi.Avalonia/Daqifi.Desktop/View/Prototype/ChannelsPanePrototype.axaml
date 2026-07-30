@@ -33,7 +33,7 @@
           DevicesPanePrototype dialect note.
         - iconPacks PackIconMaterial Cog/Chip → i:Icon mdi-cog / mdi-chip.
         - UpdateSourceTrigger=PropertyChanged dropped (Avalonia default); LostFocus kept
-          (supported in Avalonia 11.3).
+          (supported in Avalonia 11.3+).
         - Binding.Delay kept (exists since Avalonia 11.1): 500 ms duty-cycle slider
           debounce + 300 ms scale-expression debounce, upstream parity.
         - divergence: DataTemplate DataType attribute dropped — downstream compiles with

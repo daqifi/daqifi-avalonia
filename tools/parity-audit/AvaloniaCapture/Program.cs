@@ -6,8 +6,8 @@ using Avalonia.Headless;
 using Avalonia.Interactivity;
 using Avalonia.Threading;
 using Daqifi.Avalonia.Views;
-using Projektanker.Icons.Avalonia;
-using Projektanker.Icons.Avalonia.MaterialDesign;
+using Optris.Icons.Avalonia;
+using Optris.Icons.Avalonia.MaterialDesign;
 
 // Parity-audit screenshot harness for the Avalonia port. Boots the REAL
 // Daqifi.Avalonia app headless (Skia backend, no display) via the app's own DI
@@ -91,6 +91,11 @@ internal static class AvaloniaCapture
     private static AppBuilder BuildAvaloniaApp() =>
         AppBuilder.Configure<Daqifi.Avalonia.App>()
             .UseSkia()
+            // Avalonia 12 decoupled text shaping from the renderer, so an explicit UseSkia() no
+            // longer brings a shaper with it. Without this the capture renders without shaped text —
+            // which a build cannot catch, and which would silently corrupt every parity montage this
+            // tool exists to produce. The desktop head is unaffected: UsePlatformDetect wires it up.
+            .UseHarfBuzz()
             .UseHeadless(new AvaloniaHeadlessPlatformOptions { UseHeadlessDrawing = false })
             .WithInterFont();
 
@@ -138,7 +143,7 @@ internal static class AvaloniaCapture
         try { mobile = new MobileMainView(); }
         catch (Exception ex) { _failed = true; Console.WriteLine($"[FAIL] MobileMainView ctor: {ex}"); return; }
 
-        var host = new Window { SizeToContent = SizeToContent.Manual, SystemDecorations = SystemDecorations.None };
+        var host = new Window { SizeToContent = SizeToContent.Manual, WindowDecorations = WindowDecorations.None };
         host.Content = mobile;
 
         // Sizes are the Samsung Galaxy A16's real *logical* content area (physical

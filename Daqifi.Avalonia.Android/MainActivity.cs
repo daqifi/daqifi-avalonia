@@ -1,11 +1,8 @@
 using Android.App;
 using Android.Content.PM;
 using Android.OS;
-using Avalonia;
 using Avalonia.Android;
 using Daqifi.Avalonia.Services;
-using Projektanker.Icons.Avalonia;
-using Projektanker.Icons.Avalonia.MaterialDesign;
 
 namespace Daqifi.Avalonia.Android;
 
@@ -18,7 +15,9 @@ namespace Daqifi.Avalonia.Android;
     Icon = "@drawable/icon",
     MainLauncher = true,
     ConfigurationChanges = ConfigChanges.Orientation | ConfigChanges.ScreenSize | ConfigChanges.UiMode)]
-public class MainActivity : AvaloniaMainActivity<App>
+// Avalonia 12: AvaloniaMainActivity is non-generic and no longer carries the builder hooks —
+// the app type and CustomizeAppBuilder moved to AvaloniaAndroidApplication<TApp>. See MainApplication.
+public class MainActivity : AvaloniaMainActivity
 {
     protected override void OnCreate(Bundle? savedInstanceState)
     {
@@ -26,19 +25,17 @@ public class MainActivity : AvaloniaMainActivity<App>
         // view, so the mobile shell's WiFi scan holds the MulticastLock —
         // without it Android power-save-filters the broadcast replies and
         // discovery silently finds nothing.
+        //
+        // Passing `this` does NOT retain the activity: each constructor promotes its argument to
+        // ApplicationContext and keeps only that plus a system service (WifiManager / UsbManager),
+        // so leaving these statics set across an activity destroy+recreate cannot pin a dead
+        // MainActivity. That also means MainApplication — itself a Context, and constructed first —
+        // would work just as well as a home for them; they sit here only because the ordering
+        // requirement above is stated against the activity's own view load.
         NetworkDiscoveryScope.Current = new MulticastDiscoveryScope(this);
         // Register the USB (OTG) host connector so the mobile shell can offer a
         // "Connect via USB" affordance (experimental — see Usb/AndroidUsbStreamTransport).
         MobileUsbConnector.Current = new Usb.AndroidUsbConnector(this);
         base.OnCreate(savedInstanceState);
-    }
-
-    protected override AppBuilder CustomizeAppBuilder(AppBuilder builder)
-    {
-        // Register the Material Design icon pack so `i:Icon` (the desktop nav rail's
-        // mdi-* glyphs, reused by the mobile landscape shell) renders on Android too.
-        IconProvider.Current.Register<MaterialDesignIconProvider>();
-        return base.CustomizeAppBuilder(builder)
-            .WithInterFont();
     }
 }

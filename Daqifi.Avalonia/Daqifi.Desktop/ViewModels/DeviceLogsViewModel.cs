@@ -8,6 +8,7 @@ using System.ComponentModel;
 using System.Text;
 using Avalonia;
 using Avalonia.Controls.ApplicationLifetimes;
+using Avalonia.Input.Platform; // Avalonia 12: IClipboard.SetTextAsync is an extension method
 using Avalonia.Threading;
 using Daqifi.Desktop.Services;
 using CommunityToolkit.Mvvm.ComponentModel;

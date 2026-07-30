@@ -34,20 +34,19 @@
 		<!-- Avalonia stack (replaces WPF + MahApps.Metro per the UI catalog decision log).
 		     Avalonia.Desktop (desktop windowing/startup) lives in the Desktop head, not here —
 		     this library is platform-neutral and shared with the Android/iOS heads. -->
-		<PackageReference Include="Avalonia" Version="11.3.*" />
-		<PackageReference Include="Avalonia.Themes.Fluent" Version="11.3.*" />
+		<PackageReference Include="Avalonia" Version="12.0.5" />
+		<PackageReference Include="Avalonia.Themes.Fluent" Version="12.0.5" />
 		<!-- WPF DataGrid ships in-box; Avalonia's lives in a separate package (DebugWindow) -->
-		<PackageReference Include="Avalonia.Controls.DataGrid" Version="11.3.*" />
-		<PackageReference Include="Avalonia.Fonts.Inter" Version="11.3.*" />
-		<PackageReference Include="Avalonia.Diagnostics" Version="11.3.*" Condition="'$(Configuration)' == 'Debug'" />
+		<PackageReference Include="Avalonia.Controls.DataGrid" Version="12.0.1" />
+		<PackageReference Include="Avalonia.Fonts.Inter" Version="12.0.5" />
 		<!-- OxyPlot.Avalonia replaces OxyPlot.Wpf; the PlotModel layer (OxyPlot.Core) ports verbatim.
 		     VENDORED as a ProjectReference: the NuGet 2.1.0 release targets Avalonia 0.10 and
 		     crashes at runtime under Avalonia 11 — see third_party/oxyplot-avalonia/VENDORED.md -->
 		<PackageReference Include="OxyPlot.Core" Version="2.2.0" />
 		<!-- Same Material glyph set as MahApps.Metro.IconPacks.Material -->
-		<PackageReference Include="Projektanker.Icons.Avalonia.MaterialDesign" Version="9.*" />
+		<PackageReference Include="Optris.Icons.Avalonia.MaterialDesign" Version="12.0.7" />
 		<!-- Direct port of Microsoft.Xaml.Behaviors.Wpf -->
-		<PackageReference Include="Avalonia.Xaml.Behaviors" Version="11.3.*" />
+		<PackageReference Include="Xaml.Behaviors.Avalonia" Version="12.0.5" />
 
 		<!-- Platform-neutral stack carried over from upstream Daqifi.Desktop + Daqifi.Desktop.Common -->
 		<PackageReference Include="CommunityToolkit.Mvvm" Version="8.4.2" />

@@ -7,6 +7,27 @@
     <ImplicitUsings>enable</ImplicitUsings>
     <StartupObject>WpfCapture.Program</StartupObject>
     <RuntimeIdentifier>win-x64</RuntimeIdentifier>
+
+    <!-- Opted OUT of the repo-wide lock-file policy in the root Directory.Build.props, which
+         this project would otherwise inherit. It is the one project with no committed
+         packages.lock.json, so today it silently generates an untracked one on restore rather
+         than failing: locked mode only rejects a restore when a lock file EXISTS and has
+         drifted. Verified — a cold CI=true restore with the file absent generates it and
+         succeeds.
+
+         The opt-out closes the TRAP, not a current failure. The obvious "fix" for the missing
+         file is to commit one, and that lock file would record the transitive closure of the
+         SIBLING daqifi-desktop repo (see the ProjectReference below). It would go stale every
+         time that repo bumps a package, with no PR in THIS repo able to refresh it — turning
+         the gate into a guaranteed false failure. Stating the exemption explicitly reads as
+         "deliberately unpinned" instead of as an oversight inviting that fix.
+
+         Safe because this harness is a Windows-only diagnostic that never ships and cannot
+         restore at all without the sibling checkout present, so it is not part of the
+         supply-chain surface the policy exists to protect. Every project that IS shipped keeps
+         its lock file. -->
+    <RestorePackagesWithLockFile>false</RestorePackagesWithLockFile>
+    <RestoreLockedMode>false</RestoreLockedMode>
   </PropertyGroup>
 
   <ItemGroup>

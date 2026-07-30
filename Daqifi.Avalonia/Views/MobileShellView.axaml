@@ -139,7 +139,7 @@
 				           Foreground="{DynamicResource TextTertiary}" />
 				<Grid ColumnDefinitions="*,90,Auto" ColumnSpacing="8">
 					<TextBox Grid.Column="0" Text="{Binding ManualIp}"
-					         Watermark="192.168.1.234" FontSize="{DynamicResource FontSizeBody}" />
+					         PlaceholderText="192.168.1.234" FontSize="{DynamicResource FontSizeBody}" />
 					<TextBox Grid.Column="1" Text="{Binding ManualPort}"
 					         FontSize="{DynamicResource FontSizeBody}" />
 					<Button Grid.Column="2" Content="Connect" Theme="{StaticResource AccentPillButton}"
