@@ -94,3 +94,17 @@ if missing:
 if extra:
     print(f"\nEXTRA in candidate ({len(extra)}): {', '.join(extra)}")
 print(f"\n{len(rows)} screens compared, {len(missing)} missing, {len(extra)} extra")
+
+# Make the failure modes the header comment already warned about actually FAIL.
+# Printing "0 screens compared" and exiting 0 is the worst outcome this tool has:
+# a caller reads success and concludes parity held, when nothing was compared at
+# all — a typo'd path, an empty directory, or a capture run that produced nothing.
+# Exit codes match .github/scripts/check_avalonia_versions.py: 2 = could not run,
+# 1 = ran and found a problem.
+if not rows:
+    sys.exit("\nerror: 0 screens compared - nothing to conclude from. Check that "
+             "the baseline directory contains .png captures and that the candidate "
+             "run produced matching filenames.")
+if missing:
+    sys.exit(f"\nerror: {len(missing)} baseline screen(s) absent from the candidate "
+             "set; the comparison is incomplete.")
