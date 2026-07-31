@@ -105,22 +105,21 @@ def main(argv: list[str]) -> int:
         if not packages:
             continue
 
-        label = path
         root = packages.get(ROOT_PACKAGE)
         if root is None:
             failures.append(
-                f"{label}: resolves Avalonia packages but not `{ROOT_PACKAGE}` "
+                f"{path}: resolves Avalonia packages but not `{ROOT_PACKAGE}` "
                 "itself — cannot establish the core version")
             continue
-        core_versions[label] = root
+        core_versions[path] = root
 
         for name, version in sorted(packages.items()):
-            seen[name][version].append(label)
+            seen[name][version].append(path)
             if name in SATELLITES or name == ROOT_PACKAGE:
                 continue
             if version != root:
                 failures.append(
-                    f"{label}: {name} {version} != core {ROOT_PACKAGE} {root}. "
+                    f"{path}: {name} {version} != core {ROOT_PACKAGE} {root}. "
                     "Bump it in lockstep, or add it to SATELLITES with a reason "
                     "if it genuinely ships on its own cadence.")
 

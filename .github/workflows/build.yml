@@ -116,7 +116,12 @@ jobs:
         uses: actions/upload-artifact@v4
         with:
           name: assets-android
-          path: 'Daqifi.Avalonia.Android/obj/project.assets.json'
+          # Same glob as the desktop job, not the single concrete path: for one
+          # file upload-artifact strips the tree to its least common ancestor, so
+          # the concrete path would arrive as a bare project.assets.json with no
+          # project to attribute a failure to — and would collide under
+          # merge-multiple with any other job that did the same.
+          path: '**/obj/project.assets.json'
           if-no-files-found: error
 
   avalonia-graph:
