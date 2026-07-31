@@ -133,27 +133,38 @@
                             <DataGridTextColumn Header="Time"
                                                 Binding="{Binding Timestamp, StringFormat=HH:mm:ss.fff}"
                                                 Width="80"/>
-                            <!-- Auto, not the upstream fixed 60/50 px: those are faithful to the
-                                 WPF original but clip in Avalonia, whose Fluent DataGrid draws
-                                 header text larger, rendering "Device" as "De" and "Count" as "C"
-                                 (port #81). Auto sizes to the wider of header and cells, so it
-                                 cannot re-clip at a different font or DPI the way a new hardcoded
-                                 number could. -->
+                            <!-- Auto + MaxWidth, not the upstream fixed 60/50 px. The fixed widths
+                                 are faithful to the WPF original but clip under Avalonia's Fluent
+                                 DataGrid, which draws header text larger — "Device" rendered as
+                                 "De", "Count" as "C" (#81). Auto ALONE was wrong the other way
+                                 (#82): DeviceId is a device SERIAL, 19 digits on real hardware, so
+                                 Auto measured ~200px and pushed the payload columns out of view.
+                                 Auto still grows to fit the HEADER at any font or DPI; MaxWidth
+                                 stops it growing to fit the DATA. Over-long serials ellipsize,
+                                 which is the right trade — the serial is context, not the value
+                                 being read. -->
                             <DataGridTextColumn Header="Device"
                                                 Binding="{Binding DeviceId}"
-                                                Width="Auto"/>
+                                                Width="Auto" MaxWidth="110"/>
                             <DataGridTextColumn Header="Count"
                                                 Binding="{Binding AnalogDataCount}"
-                                                Width="Auto"/>
+                                                Width="Auto" MaxWidth="80"/>
                             <DataGridTextColumn Header="Channels"
                                                 Binding="{Binding ActiveChannelNames, Converter={StaticResource ListToStringConverter}}"
                                                 Width="100"/>
+                            <!-- Star, not fixed 120: star columns divide whatever space is LEFT,
+                                 so the grid's content width can never exceed the viewport and no
+                                 column can be pushed out of sight. With all-fixed/Auto widths the
+                                 total is a sum that grows unbounded — which is how a wide Device
+                                 value shoved Scaled Data off-screen. These two are the payload this
+                                 window exists to show, so they are the ones that must always be
+                                 visible. -->
                             <DataGridTextColumn Header="Raw Data"
                                                 Binding="{Binding RawAnalogValues, Converter={StaticResource ListToStringConverter}}"
-                                                Width="120"/>
+                                                Width="*" MinWidth="120"/>
                             <DataGridTextColumn Header="Scaled Data"
                                                 Binding="{Binding ScaledAnalogValues, Converter={StaticResource ListToStringConverter}}"
-                                                Width="120"/>
+                                                Width="*" MinWidth="120"/>
                         </DataGrid.Columns>
                     </DataGrid>
                 </Grid>
