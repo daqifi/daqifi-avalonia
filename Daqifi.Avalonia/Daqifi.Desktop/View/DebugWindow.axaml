@@ -4,7 +4,7 @@
         x:Class="Daqifi.Desktop.View.DebugWindow"
         Title="DAQiFi Debug Console"
         Height="600"
-        Width="1000"
+        Width="1200"
         WindowStartupLocation="CenterOwner"
         ShowInTaskbar="False"
         Background="{StaticResource Surface}">
@@ -14,6 +14,11 @@
         Gray9 (value chips) → SurfaceActive, Gray7 (splitter) → BorderDim.
         Dialogs.Accent buttons → Classes="accent"; PackIconMaterial → i:Icon;
         WPF DataGrid → Avalonia.Controls.DataGrid (theme included from App.axaml).
+
+        Width is 1200, up from upstream's 1000: the six history columns share the
+        right-hand 3* pane, only ~583px wide at 1000. Auto widths plus the horizontal
+        scrollbar mean nothing is lost at 1000 either — this just means less scrolling
+        for the common case.
     -->
     <Grid RowDefinitions="Auto,*,Auto">
 
@@ -128,43 +133,45 @@
                               HeadersVisibility="Column"
                               CanUserReorderColumns="False"
                               CanUserResizeColumns="True"
-                              CanUserSortColumns="True">
+                              CanUserSortColumns="True"
+                              ScrollViewer.HorizontalScrollBarVisibility="Auto">
                         <DataGrid.Columns>
                             <DataGridTextColumn Header="Time"
                                                 Binding="{Binding Timestamp, StringFormat=HH:mm:ss.fff}"
-                                                Width="80"/>
-                            <!-- Auto + MaxWidth, not the upstream fixed 60/50 px. The fixed widths
-                                 are faithful to the WPF original but clip under Avalonia's Fluent
-                                 DataGrid, which draws header text larger — "Device" rendered as
-                                 "De", "Count" as "C" (#81). Auto ALONE was wrong the other way
-                                 (#82): DeviceId is a device SERIAL, 19 digits on real hardware, so
-                                 Auto measured ~200px and pushed the payload columns out of view.
-                                 Auto still grows to fit the HEADER at any font or DPI; MaxWidth
-                                 stops it growing to fit the DATA. Over-long serials ellipsize,
-                                 which is the right trade — the serial is context, not the value
-                                 being read. -->
+                                                Width="Auto"/>
+                            <!-- Every column is Auto, paired with the horizontal scrollbar
+                                 enabled on the DataGrid above. Nothing is clipped and nothing is
+                                 hidden: columns take the width their content needs, and the grid
+                                 scrolls when the total exceeds the pane.
+
+                                 Upstream's fixed pixel widths (Device 60, Count 50) are faithful
+                                 to WPF but clip under Avalonia's Fluent DataGrid, which draws
+                                 headers larger — they rendered as "De" and "C" (#81). Re-deriving
+                                 fixed numbers that fit is a trap: they have to be re-derived for
+                                 every font, DPI and header change, and squeezing six columns into
+                                 a ~583px pane clipped whichever one lost the budget. Auto asks the
+                                 layout engine the question instead of hardcoding its answer. -->
                             <DataGridTextColumn Header="Device"
                                                 Binding="{Binding DeviceId}"
-                                                Width="Auto" MaxWidth="110"/>
+                                                Width="Auto"/>
                             <DataGridTextColumn Header="Count"
                                                 Binding="{Binding AnalogDataCount}"
-                                                Width="Auto" MaxWidth="80"/>
+                                                Width="Auto"/>
                             <DataGridTextColumn Header="Channels"
                                                 Binding="{Binding ActiveChannelNames, Converter={StaticResource ListToStringConverter}}"
-                                                Width="100"/>
-                            <!-- Star, not fixed 120: star columns divide whatever space is LEFT,
-                                 so the grid's content width can never exceed the viewport and no
-                                 column can be pushed out of sight. With all-fixed/Auto widths the
-                                 total is a sum that grows unbounded — which is how a wide Device
-                                 value shoved Scaled Data off-screen. These two are the payload this
-                                 window exists to show, so they are the ones that must always be
-                                 visible. -->
+                                                Width="Auto"/>
+                            <!-- Auto here too. These carry the widest values (per-channel raw
+                                 and scaled arrays), so they are the columns most likely to push the
+                                 total past the pane — which is exactly what the horizontal
+                                 scrollbar is for. Star widths were tried and rejected: they cap
+                                 total width, but only by stealing space back from the metadata
+                                 columns, which re-clips THEIR headers. -->
                             <DataGridTextColumn Header="Raw Data"
                                                 Binding="{Binding RawAnalogValues, Converter={StaticResource ListToStringConverter}}"
-                                                Width="*" MinWidth="120"/>
+                                                Width="Auto"/>
                             <DataGridTextColumn Header="Scaled Data"
                                                 Binding="{Binding ScaledAnalogValues, Converter={StaticResource ListToStringConverter}}"
-                                                Width="*" MinWidth="120"/>
+                                                Width="Auto"/>
                         </DataGrid.Columns>
                     </DataGrid>
                 </Grid>
