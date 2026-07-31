@@ -250,7 +250,13 @@ internal static class AvaloniaCapture
     private static byte[] Encode(Window w)
     {
         using var buffer = new MemoryStream();
-        w.CaptureRenderedFrame()?.Save(buffer);
+        // Dispose the frame: CaptureRenderedFrame returns a WriteableBitmap, which is
+        // IDisposable over a native Skia-backed pixel surface the GC does not reclaim
+        // promptly. The settle loop calls this 2-41 times PER SCREEN across 18 screens,
+        // so dropping each one piles up hundreds of full-resolution native buffers in a
+        // single run.
+        using var frame = w.CaptureRenderedFrame();
+        frame?.Save(buffer);
         return buffer.ToArray();
     }
 
