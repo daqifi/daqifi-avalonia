@@ -133,12 +133,18 @@
                             <DataGridTextColumn Header="Time"
                                                 Binding="{Binding Timestamp, StringFormat=HH:mm:ss.fff}"
                                                 Width="80"/>
+                            <!-- Auto, not the upstream fixed 60/50 px: those are faithful to the
+                                 WPF original but clip in Avalonia, whose Fluent DataGrid draws
+                                 header text larger, rendering "Device" as "De" and "Count" as "C"
+                                 (port #81). Auto sizes to the wider of header and cells, so it
+                                 cannot re-clip at a different font or DPI the way a new hardcoded
+                                 number could. -->
                             <DataGridTextColumn Header="Device"
                                                 Binding="{Binding DeviceId}"
-                                                Width="60"/>
+                                                Width="Auto"/>
                             <DataGridTextColumn Header="Count"
                                                 Binding="{Binding AnalogDataCount}"
-                                                Width="50"/>
+                                                Width="Auto"/>
                             <DataGridTextColumn Header="Channels"
                                                 Binding="{Binding ActiveChannelNames, Converter={StaticResource ListToStringConverter}}"
                                                 Width="100"/>
