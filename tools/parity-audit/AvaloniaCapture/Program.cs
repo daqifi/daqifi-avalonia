@@ -1,3 +1,4 @@
+using System.Globalization;
 using System.Reflection;
 using Avalonia;
 using Avalonia.Controls;
@@ -319,8 +320,13 @@ internal static class AvaloniaCapture
                                   (written.Exists ? "empty" : "missing"));
                 return;
             }
-            Console.WriteLine($"[OK]   {name}: {written.Length:N0} bytes, " +
-                              $"settled in {rounds} round(s)");
+            // InvariantCulture, not the ambient one: "N0" under a French locale emits a
+            // NON-BREAKING SPACE (U+00A0) as the group separator, which is exactly the
+            // non-ASCII the WSL/Windows console mangles — and it would also make this
+            // line's grouping vary by machine, which run-to-run log comparison relies on
+            // not doing.
+            var size = written.Length.ToString("N0", CultureInfo.InvariantCulture);
+            Console.WriteLine($"[OK]   {name}: {size} bytes, settled in {rounds} round(s)");
         }
         catch (Exception ex)
         {
