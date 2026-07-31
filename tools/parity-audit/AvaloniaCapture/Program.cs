@@ -250,11 +250,16 @@ internal static class AvaloniaCapture
     private static byte[] Encode(Window w)
     {
         using var buffer = new MemoryStream();
-        // Dispose the frame: CaptureRenderedFrame returns a WriteableBitmap, which is
-        // IDisposable over a native Skia-backed pixel surface the GC does not reclaim
-        // promptly. The settle loop calls this 2-41 times PER SCREEN across 18 screens,
-        // so dropping each one piles up hundreds of full-resolution native buffers in a
-        // single run.
+        // Dispose the frame. CaptureRenderedFrame allocates a NEW caller-owned
+        // WriteableBitmap per call (headless copies out of the locked framebuffer), and
+        // the settle loop calls this 2-41 times per screen rather than once.
+        //
+        // Hygiene, not a crash fix: the pixel store is an UnmanagedBlob whose ctor calls
+        // GC.AddMemoryPressure, so undisposed frames are GC-visible, provoke collection,
+        // and are freed by finalizers. Dropping them is not an unbounded native leak, and
+        // the pre-settle code did not dispose either. Deterministic release is still
+        // right — it just keeps peak transient pressure (~5 MB per 1440x900 frame) off
+        // the finalizer queue.
         using var frame = w.CaptureRenderedFrame();
         frame?.Save(buffer);
         return buffer.ToArray();
