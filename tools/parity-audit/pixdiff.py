@@ -12,8 +12,20 @@ import sys
 
 from PIL import Image, ImageChops
 
+if len(sys.argv) < 3:
+    sys.exit(f"usage: {os.path.basename(sys.argv[0])} "
+             "<baseline-dir> <candidate-dir> [diff-out-dir]")
+
 base_dir, cand_dir = sys.argv[1], sys.argv[2]
 diff_dir = sys.argv[3] if len(sys.argv) > 3 else None
+
+# Check both inputs before doing anything: a typo'd path would otherwise surface as
+# a bare OSError traceback, or — worse — an empty baseline listing would report
+# "0 screens compared" as if that were a clean result.
+for label, path in (("baseline", base_dir), ("candidate", cand_dir)):
+    if not os.path.isdir(path):
+        sys.exit(f"error: {label} directory does not exist: {path}")
+
 if diff_dir:
     os.makedirs(diff_dir, exist_ok=True)
 
@@ -37,8 +49,17 @@ for name in names:
     diff = ImageChops.difference(a, b)
     bbox = diff.getbbox()
     total = a.size[0] * a.size[1]
-    # Flatten to a per-pixel max-channel delta.
-    flat = diff.convert("L").point(lambda v: v)
+    # Per-pixel MAX channel delta, via two pointwise lighter() folds.
+    #
+    # NOT diff.convert("L"): that is a luminance-weighted mix
+    # (0.299R + 0.587G + 0.114B), so it systematically UNDER-REPORTS. A pure-blue
+    # change of 255 would score 0.114*255 = 29, and a pixel differing by 1 in blue
+    # alone rounds to 0 and vanishes from the changed-pixel count entirely. For a
+    # parity gate that must answer "did anything move", channel-blind is the wrong
+    # question: a colour shift matters regardless of how much it moves perceived
+    # brightness.
+    red, green, blue = diff.split()
+    flat = ImageChops.lighter(ImageChops.lighter(red, green), blue)
     hist = flat.histogram()
     changed = total - hist[0]
     worst = max((i for i, c in enumerate(hist) if c), default=0)
