@@ -43,6 +43,27 @@ per-user data dir is used.
 ./run.sh /some/out/dir  # or a custom out dir
 ```
 
+### Output paths under WSL (read this before hunting for missing PNGs)
+
+Both harnesses pin `RuntimeIdentifier=win-x64`, so launching them from WSL runs
+them on the **Windows** .NET runtime through interop. `Path.GetFullPath` then
+resolves a Linux-style argument against a Windows root:
+
+| you pass | files actually land in | Linux sees them at |
+|---|---|---|
+| `/tmp/shots` | `C:\tmp\shots` | `/mnt/c/tmp/shots` |
+| `C:\tmp\shots` | `C:\tmp\shots` | `/mnt/c/tmp/shots` |
+
+This cost an hour once (#74): the tool reported 18 successful captures while
+`ls /tmp/shots` showed an empty directory. `AvaloniaCapture` now prints the
+**resolved** directory up front, flags the rewrite when it happens, and reports
+the byte count of every file it writes — so that particular silent no-op is no
+longer possible. Pass a Windows-style path when you want both sides to agree on
+one location.
+
+Note that `ls` hides dotfiles: the isolated `.appdata` directory (throwaway DB +
+logs) is there even when a plain `ls` of the output dir suggests otherwise.
+
 `run.sh` runs all three steps. To run a single harness directly:
 
 ```bash
