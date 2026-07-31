@@ -390,7 +390,7 @@
                       CanUserReorderColumns="False"
                       CanUserResizeColumns="False"
                       CanUserSortColumns="False"
-                      ScrollViewer.HorizontalScrollBarVisibility="Disabled">
+                      HorizontalScrollBarVisibility="Disabled">
                 <DataGrid.Columns>
                     <DataGridTemplateColumn Header="NAME" Width="320">
                         <DataGridTemplateColumn.CellTemplate>

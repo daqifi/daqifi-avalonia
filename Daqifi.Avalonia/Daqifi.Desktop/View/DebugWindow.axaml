@@ -125,6 +125,16 @@
                         <TextBlock Text="Debug History (Last 100 packets)" FontWeight="Bold" FontSize="14"/>
                     </Border>
 
+                    <!-- HorizontalScrollBarVisibility is DataGrid's OWN property, not
+                         ScrollViewer's attached one. Avalonia's DataGrid contains no ScrollViewer:
+                         its template drives named PART_HorizontalScrollbar / PART_VerticalScrollbar
+                         ScrollBar parts from C#, and it registers its own direct property. The
+                         attached ScrollViewer.HorizontalScrollBarVisibility is INERT here — nothing
+                         reads it. (That attached form IS correct on TextBox / ListBox, whose
+                         templates template-bind it; see ErrorDialog and ConnectionDialog.) The
+                         Fluent DataGrid theme already defaults this to Auto, so the attached
+                         spelling appeared to work while doing nothing. Setting it directly is what
+                         actually pins the behaviour against a future theme override. -->
                     <DataGrid Grid.Row="1"
                               ItemsSource="{Binding DebugData.Entries}"
                               AutoGenerateColumns="False"
@@ -134,15 +144,15 @@
                               CanUserReorderColumns="False"
                               CanUserResizeColumns="True"
                               CanUserSortColumns="True"
-                              ScrollViewer.HorizontalScrollBarVisibility="Auto">
+                              HorizontalScrollBarVisibility="Auto">
                         <DataGrid.Columns>
                             <DataGridTextColumn Header="Time"
                                                 Binding="{Binding Timestamp, StringFormat=HH:mm:ss.fff}"
                                                 Width="Auto"/>
-                            <!-- Every column is Auto, paired with the horizontal scrollbar
-                                 enabled on the DataGrid above. Nothing is clipped and nothing is
-                                 hidden: columns take the width their content needs, and the grid
-                                 scrolls when the total exceeds the pane.
+                            <!-- Every column is Auto, paired with HorizontalScrollBarVisibility
+                                 on the DataGrid above. Nothing is clipped and nothing is hidden:
+                                 columns take the width their content needs, and the grid scrolls
+                                 when the total exceeds the pane.
 
                                  Upstream's fixed pixel widths (Device 60, Count 50) are faithful
                                  to WPF but clip under Avalonia's Fluent DataGrid, which draws
