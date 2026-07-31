@@ -27,23 +27,6 @@ internal static class AvaloniaCapture
     public static void Main(string[] args)
     {
         var requestedOutDir = args.Length > 0 ? args[0] : Path.Combine(AppContext.BaseDirectory, "out");
-        // Resolve ONCE, up front, and use the resolved path for everything below — including the
-        // closing "done ->" line. This project pins RuntimeIdentifier=win-x64, so when it is
-        // launched from WSL it executes on the WINDOWS .NET runtime through interop, and
-        // GetFullPath resolves a Linux-style argument against a Windows root: `/tmp/shots`
-        // becomes `C:\tmp\shots`. Echoing the raw argument back made that invisible — the tool
-        // reported writing 18 files to /tmp/shots while every byte landed on the Windows
-        // filesystem, and `ls /tmp/shots` showed an empty directory (port #74).
-        _outDir = Path.GetFullPath(requestedOutDir);
-        if (!string.Equals(_outDir, requestedOutDir, StringComparison.Ordinal))
-        {
-            Console.WriteLine($"[INFO] '{requestedOutDir}' resolved to '{_outDir}'");
-            // ASCII only in console literals: this harness is normally run through WSL interop on
-            // the Windows console, which mangles non-ASCII (the em-dash here printed as '-').
-            Console.WriteLine("[INFO] under WSL a Linux-style path resolves against a Windows root " +
-                              "(win-x64 runtime): look for output there, or pass a Windows path.");
-        }
-        Console.WriteLine($"[INFO] output directory: {_outDir}");
 
         var desktop = new ClassicDesktopStyleApplicationLifetime
         {
@@ -55,6 +38,29 @@ internal static class AvaloniaCapture
             // Setup lives inside the try so any path error (a bad output-dir arg, GetFullPath on a
             // malformed value) reports the same "[FAIL]" + exit-1 controlled failure as a boot crash,
             // instead of an uncaught throw that bypasses the harness's diagnostic in a CI/tooling run.
+            // That is why the resolution below is HERE and not up beside the argument parse: on a
+            // malformed path GetFullPath throws, and outside this block it would take the process
+            // down with a raw stack trace instead of the harness's diagnostic.
+            //
+            // Resolve ONCE and use the resolved path for everything after — including the closing
+            // "done ->" line. This project pins RuntimeIdentifier=win-x64, so launched from WSL it
+            // executes on the WINDOWS .NET runtime through interop, and GetFullPath resolves a
+            // Linux-style argument against a Windows root: `/tmp/shots` becomes `C:\tmp\shots`.
+            // Echoing the raw argument back made that invisible — the tool reported writing 18 files
+            // to /tmp/shots while every byte landed on the Windows filesystem, and `ls /tmp/shots`
+            // showed an empty directory (port #74).
+            _outDir = Path.GetFullPath(requestedOutDir);
+            if (!string.Equals(_outDir, requestedOutDir, StringComparison.Ordinal))
+            {
+                Console.WriteLine($"[INFO] '{requestedOutDir}' resolved to '{_outDir}'");
+                // ASCII only in console literals: this harness is normally run through WSL interop
+                // on the Windows console, which mangles non-ASCII (an em-dash here printed as '-').
+                Console.WriteLine("[INFO] under WSL a Linux-style path resolves against a Windows " +
+                                  "root (win-x64 runtime): look for output there, or pass a " +
+                                  "Windows path.");
+            }
+            Console.WriteLine($"[INFO] output directory: {_outDir}");
+
             Directory.CreateDirectory(_outDir);
 
             Environment.SetEnvironmentVariable("DAQIFI_TEST_MODE", "1");
