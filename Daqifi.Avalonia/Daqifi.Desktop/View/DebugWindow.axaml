@@ -4,7 +4,7 @@
         x:Class="Daqifi.Desktop.View.DebugWindow"
         Title="DAQiFi Debug Console"
         Height="600"
-        Width="1200"
+        Width="1000"
         WindowStartupLocation="CenterOwner"
         ShowInTaskbar="False"
         Background="{StaticResource Surface}">
@@ -15,10 +15,13 @@
         Dialogs.Accent buttons → Classes="accent"; PackIconMaterial → i:Icon;
         WPF DataGrid → Avalonia.Controls.DataGrid (theme included from App.axaml).
 
-        Width is 1200, up from upstream's 1000: the six history columns share the
-        right-hand 3* pane, only ~583px wide at 1000. Auto widths plus the horizontal
-        scrollbar mean nothing is lost at 1000 either — this just means less scrolling
-        for the common case.
+        Width stays at upstream's 1000. A 1200 was tried for less scrolling, but the
+        window opens with a bare Show() (no owner), so WindowStartupLocation CenterOwner
+        degrades to CenterScreen — and Avalonia's ApplyScreenConstraint deliberately does
+        NOT clamp a window wider than the work area. At 1366x768 @125% (~1093 DIP usable)
+        a 1200-wide window opens with its right edge, Close button included, off-screen.
+        Auto widths plus the horizontal scrollbar mean nothing is lost at 1000, so the
+        convenience was not worth buying that.
     -->
     <Grid RowDefinitions="Auto,*,Auto">
 
@@ -128,7 +131,8 @@
                     <!-- HorizontalScrollBarVisibility is DataGrid's OWN property, not
                          ScrollViewer's attached one. Avalonia's DataGrid contains no ScrollViewer:
                          its template drives named PART_HorizontalScrollbar / PART_VerticalScrollbar
-                         ScrollBar parts from C#, and it registers its own direct property. The
+                         ScrollBar parts from C#, and it registers its own StyledProperty of
+                         the same name. The
                          attached ScrollViewer.HorizontalScrollBarVisibility is INERT here — nothing
                          reads it. (That attached form IS correct on TextBox / ListBox, whose
                          templates template-bind it; see ErrorDialog and ConnectionDialog.) The

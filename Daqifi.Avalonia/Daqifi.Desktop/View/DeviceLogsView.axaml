@@ -376,7 +376,8 @@
                  upstream headers/rows were non-interactive, so reorder/resize/sort off. -->
             <!-- Auto, NOT the Disabled this carried before. That Disabled was written as
                  ScrollViewer.HorizontalScrollBarVisibility, which is INERT on a DataGrid (DataGrid
-                 has its own direct property and no ScrollViewer in its template), so it never took
+                 has its own StyledProperty of that name and no ScrollViewer in its
+                 template), so it never took
                  effect — the Fluent theme's Auto default is what has actually been shipping.
                  Switching to the native property without also changing the value would have
                  ACTIVATED an intent nobody ever validated: these columns are fixed and sum to
