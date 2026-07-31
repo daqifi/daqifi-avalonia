@@ -230,30 +230,71 @@ internal static class AvaloniaCapture
         }
     }
 
+    // A fixed number of pumps does NOT guarantee a settled frame: Avalonia transitions are
+    // time-based, so whether a fade-in has finished when the shutter opens is a race. That race
+    // silently corrupts the whole point of this tool. Measured on the Storage pane: two runs of
+    // the SAME binary at the SAME commit differed on 65.6% of pixels (mean channel delta 10.3),
+    // because one run caught the pane at ~50% opacity mid-fade and the other caught it settled.
+    // Diffed against another Avalonia version that reads as a catastrophic visual regression.
+    //
+    // So instead of pumping a fixed number of times and hoping, pump until two consecutive frames
+    // are byte-identical. Comparing encoded PNGs is exact and needs no pixel-buffer access.
+    private const int SettleMaxRounds = 40;
+
+    private static byte[] Encode(Window w)
+    {
+        using var buffer = new MemoryStream();
+        w.CaptureRenderedFrame()?.Save(buffer);
+        return buffer.ToArray();
+    }
+
+    private static (byte[] Frame, bool Settled, int Rounds) SettledFrame(Window w)
+    {
+        Pump();
+        var previous = Encode(w);
+        for (var round = 1; round <= SettleMaxRounds; round++)
+        {
+            Pump();
+            var current = Encode(w);
+            if (current.Length == previous.Length && current.AsSpan().SequenceEqual(previous))
+            {
+                return (current, true, round);
+            }
+            previous = current;
+        }
+        return (previous, false, SettleMaxRounds);
+    }
+
     private static void Capture(string name, Window w)
     {
         try
         {
-            Pump();
-            var frame = w.CaptureRenderedFrame();
-            if (frame is null) { _failed = true; Console.WriteLine($"[FAIL] {name}: null frame"); return; }
+            var (encoded, settled, rounds) = SettledFrame(w);
+            if (encoded.Length == 0) { _failed = true; Console.WriteLine($"[FAIL] {name}: null frame"); return; }
+            if (!settled)
+            {
+                // Never save a frame we know is still moving — that is the silent-corruption case.
+                _failed = true;
+                Console.WriteLine($"[FAIL] {name}: still changing after {SettleMaxRounds} settle " +
+                                  "rounds; capture would be non-deterministic");
+                return;
+            }
             var path = Path.Combine(_outDir, name + ".png");
-            frame.Save(path);
+            File.WriteAllBytes(path, encoded);
 
-            // Confirm the write instead of inferring it from "Save did not throw". A frame can be
-            // non-null with correct PixelSize and still produce nothing on disk, and the harness
-            // reporting [OK] for 18 captures that wrote zero bytes is precisely the failure this
-            // tool must never have — it exists to be trusted about what the UI looked like.
+            // Confirm the write instead of inferring it from "the call did not throw". The harness
+            // reporting [OK] for captures that wrote zero bytes is precisely the failure this tool
+            // must never have — it exists to be trusted about what the UI looked like.
             var written = new FileInfo(path);
             if (!written.Exists || written.Length == 0)
             {
                 _failed = true;
-                Console.WriteLine($"[FAIL] {name}: Save() returned but {path} is " +
+                Console.WriteLine($"[FAIL] {name}: wrote {path} but it is " +
                                   (written.Exists ? "empty" : "missing"));
                 return;
             }
-            Console.WriteLine($"[OK]   {name}: {frame.PixelSize.Width}x{frame.PixelSize.Height} " +
-                              $"({written.Length:N0} bytes)");
+            Console.WriteLine($"[OK]   {name}: {written.Length:N0} bytes, " +
+                              $"settled in {rounds} round(s)");
         }
         catch (Exception ex)
         {
