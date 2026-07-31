@@ -53,11 +53,20 @@ internal static class AvaloniaCapture
             if (!string.Equals(_outDir, requestedOutDir, StringComparison.Ordinal))
             {
                 Console.WriteLine($"[INFO] '{requestedOutDir}' resolved to '{_outDir}'");
+                // Only explain the WSL trap when this actually IS it: a POSIX-absolute argument
+                // that came back non-POSIX. GetFullPath also rewrites the string for ordinary
+                // normalization (a relative path, "..", trailing or forward slashes), and blaming
+                // those on the Windows-root rewrite would send someone hunting for output on the
+                // wrong filesystem when the resolved path is perfectly correct.
+                //
                 // ASCII only in console literals: this harness is normally run through WSL interop
                 // on the Windows console, which mangles non-ASCII (an em-dash here printed as '-').
-                Console.WriteLine("[INFO] under WSL a Linux-style path resolves against a Windows " +
-                                  "root (win-x64 runtime): look for output there, or pass a " +
-                                  "Windows path.");
+                if (requestedOutDir.StartsWith('/') && !_outDir.StartsWith('/'))
+                {
+                    Console.WriteLine("[INFO] under WSL a Linux-style path resolves against a " +
+                                      "Windows root (win-x64 runtime): look for output there, or " +
+                                      "pass a Windows path.");
+                }
             }
             Console.WriteLine($"[INFO] output directory: {_outDir}");
 
