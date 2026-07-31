@@ -26,7 +26,24 @@ internal static class AvaloniaCapture
     [STAThread]
     public static void Main(string[] args)
     {
-        _outDir = args.Length > 0 ? args[0] : Path.Combine(AppContext.BaseDirectory, "out");
+        var requestedOutDir = args.Length > 0 ? args[0] : Path.Combine(AppContext.BaseDirectory, "out");
+        // Resolve ONCE, up front, and use the resolved path for everything below — including the
+        // closing "done ->" line. This project pins RuntimeIdentifier=win-x64, so when it is
+        // launched from WSL it executes on the WINDOWS .NET runtime through interop, and
+        // GetFullPath resolves a Linux-style argument against a Windows root: `/tmp/shots`
+        // becomes `C:\tmp\shots`. Echoing the raw argument back made that invisible — the tool
+        // reported writing 18 files to /tmp/shots while every byte landed on the Windows
+        // filesystem, and `ls /tmp/shots` showed an empty directory (port #74).
+        _outDir = Path.GetFullPath(requestedOutDir);
+        if (!string.Equals(_outDir, requestedOutDir, StringComparison.Ordinal))
+        {
+            Console.WriteLine($"[INFO] '{requestedOutDir}' resolved to '{_outDir}'");
+            // ASCII only in console literals: this harness is normally run through WSL interop on
+            // the Windows console, which mangles non-ASCII (the em-dash here printed as '-').
+            Console.WriteLine("[INFO] under WSL a Linux-style path resolves against a Windows root " +
+                              "(win-x64 runtime): look for output there, or pass a Windows path.");
+        }
+        Console.WriteLine($"[INFO] output directory: {_outDir}");
 
         var desktop = new ClassicDesktopStyleApplicationLifetime
         {
@@ -46,11 +63,11 @@ internal static class AvaloniaCapture
             // DAQIFI_DATA_DIR override). Kept under _outDir (rather than the system temp) because it's
             // always a valid path on every host the harness runs on — notably WSL, where
             // Path.GetTempPath() returns a Windows path the Linux runtime can't resolve. Must be set
-            // before the app bootstrap first touches AppDataPaths below. GetFullPath so the override is
-            // always absolute — the app resolves a relative override against the cwd, so an absolute
-            // value keeps the isolated DB unambiguous and co-located with the (same-cwd) PNG output.
+            // before the app bootstrap first touches AppDataPaths below. Already absolute: _outDir is
+            // resolved at the top, and the app requires an absolute override to place the DB
+            // unambiguously rather than against whatever cwd it inherits.
             Environment.SetEnvironmentVariable(
-                "DAQIFI_DATA_DIR", Path.GetFullPath(Path.Combine(_outDir, ".appdata")));
+                "DAQIFI_DATA_DIR", Path.Combine(_outDir, ".appdata"));
             IconProvider.Current.Register<MaterialDesignIconProvider>();
 
             BuildAvaloniaApp().SetupWithLifetime(desktop);
@@ -222,7 +239,21 @@ internal static class AvaloniaCapture
             if (frame is null) { _failed = true; Console.WriteLine($"[FAIL] {name}: null frame"); return; }
             var path = Path.Combine(_outDir, name + ".png");
             frame.Save(path);
-            Console.WriteLine($"[OK]   {name}: {frame.PixelSize.Width}x{frame.PixelSize.Height}");
+
+            // Confirm the write instead of inferring it from "Save did not throw". A frame can be
+            // non-null with correct PixelSize and still produce nothing on disk, and the harness
+            // reporting [OK] for 18 captures that wrote zero bytes is precisely the failure this
+            // tool must never have — it exists to be trusted about what the UI looked like.
+            var written = new FileInfo(path);
+            if (!written.Exists || written.Length == 0)
+            {
+                _failed = true;
+                Console.WriteLine($"[FAIL] {name}: Save() returned but {path} is " +
+                                  (written.Exists ? "empty" : "missing"));
+                return;
+            }
+            Console.WriteLine($"[OK]   {name}: {frame.PixelSize.Width}x{frame.PixelSize.Height} " +
+                              $"({written.Length:N0} bytes)");
         }
         catch (Exception ex)
         {
