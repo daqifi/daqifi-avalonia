@@ -69,6 +69,26 @@ jobs:
           dotnet restore Daqifi.Avalonia.Desktop/Daqifi.Avalonia.Desktop.csproj
           dotnet restore tools/parity-audit/AvaloniaCapture/AvaloniaCapture.csproj
 
+      # Locked mode fails a restore whose lock file has DRIFTED, but a lock file can also be
+      # committed already-wrong in a way that only surfaces as a confusing error later. The
+      # specific trap: an explicit `-r <rid>` restore rewrites the lock to hold only that RID
+      # (#85), and committing that yields "NU1004: the project's runtime identifiers have
+      # changed" on the next run. Asserting the tree is unchanged after restore catches any such
+      # mutation at its source and names the file, instead of leaving the next person to decode a
+      # RID-mismatch error.
+      - name: Lock files must be unchanged by restore
+        run: |
+          set -euo pipefail
+          if ! git diff --quiet -- '**/packages.lock.json'; then
+            echo "::error::restore modified a committed lock file — it was not in the state a" \
+                 "clean restore produces. Most often this is a lock file committed from a" \
+                 "'-r <rid>' build, which prunes the other RIDs. Re-restore without -r (or with" \
+                 "--force-evaluate) and commit that."
+            git diff --stat -- '**/packages.lock.json'
+            exit 1
+          fi
+          echo "lock files unchanged by restore"
+
       # AvaloniaCapture pins RuntimeIdentifier=win-x64; that cross-builds fine on
       # Linux (it just cannot be RUN here), so it is worth compiling as a gate.
       - name: Build

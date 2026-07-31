@@ -24,10 +24,29 @@
     change. To rehearse the gate by hand, pass -p:ContinuousIntegrationBuild=true (or restore with
     the locked-mode flag).
 
-    NOTE (2026-07-28): this repo currently has NO build workflow — .github/workflows holds only the
-    upstream-sync check — so nothing exercises the gate automatically yet. The pins and committed
-    lock files still deliver reproducibility and make dependency changes reviewable in the diff; the
-    enforcement arm activates the moment a build workflow exists. Tracked separately.
+    The gate is live: .github/workflows/build.yml restores and builds every head with CI set, so a
+    drifted lock file fails the run (#76 / #77).
+
+    DO NOT COMMIT A LOCK FILE PRODUCED BY AN EXPLICIT -r/--runtime RESTORE. A RID-specific restore
+    REWRITES the lock file to hold only that RID, dropping the others:
+
+        dotnet restore Daqifi.Avalonia.Desktop -r win-x64
+        -> lock targets go from  net10.0 + linux-x64, osx-arm64, osx-x64, win-x64
+                           to    net10.0 + win-x64
+
+    Committing that breaks CI on the very next run, because the pruned file no longer matches the
+    project's declared RuntimeIdentifiers:
+
+        error NU1004: The project's runtime identifiers have changed from.
+        Project's runtime identifiers: linux-x64;osx-arm64;osx-x64;win-x64,
+        lock file's runtime identifiers win-x64.
+
+    This is easy to do by accident — publishing, or building the Windows head from WSL, both use an
+    explicit RID — and one such restore rewrote 1004 lines across three lock files, which reads as
+    innocuous churn in a diff. If `git status` shows a packages.lock.json modified after a RID
+    build, revert it; do not stage it. Restoring without -r (or with --force-evaluate) puts the full
+    RID set back. The build workflow also asserts the tree is unchanged after restore, so this
+    cannot land silently (#85).
 
     NOTE: third_party/oxyplot-avalonia has its own Directory.Build.props and MSBuild stops at the
     first one it finds walking up, so this file is NOT inherited there — the property is set in
