@@ -10,7 +10,7 @@
         <!-- Must mirror the root file's locked-mode arm too: generation alone lets a drifted
              restore silently regenerate the lock file instead of failing. -->
         <RestoreLockedMode Condition="'$(ContinuousIntegrationBuild)' == 'true' Or '$(CI)' == 'true'">true</RestoreLockedMode>
-        <AvaloniaVersion>12.0.5</AvaloniaVersion>
+        <AvaloniaVersion>12.1.1</AvaloniaVersion>
         <!-- Avalonia 12 flips this default to true, which would require x:DataType on the
              tracker ControlTemplates in Themes/Default.axaml ({Binding Position} etc.).
              Pinning it false keeps the vendored source a minimal diff from upstream master,

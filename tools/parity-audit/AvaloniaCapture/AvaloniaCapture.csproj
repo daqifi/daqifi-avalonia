@@ -12,13 +12,13 @@
 
   <ItemGroup>
     <!-- Faithful pixels: Skia backend + headless windowing (no display needed). -->
-    <PackageReference Include="Avalonia.Headless" Version="12.0.5" />
-    <PackageReference Include="Avalonia.Skia" Version="12.0.5" />
-    <PackageReference Include="Avalonia.HarfBuzz" Version="12.0.5" />
+    <PackageReference Include="Avalonia.Headless" Version="12.1.1" />
+    <PackageReference Include="Avalonia.Skia" Version="12.1.1" />
+    <PackageReference Include="Avalonia.HarfBuzz" Version="12.1.1" />
     <!-- ClassicDesktopStyleApplicationLifetime lives here; we use it as the app
          lifetime but never call UsePlatformDetect, so windowing stays headless. -->
-    <PackageReference Include="Avalonia.Desktop" Version="12.0.5" />
-    <PackageReference Include="Avalonia.Fonts.Inter" Version="12.0.5" />
+    <PackageReference Include="Avalonia.Desktop" Version="12.1.1" />
+    <PackageReference Include="Avalonia.Fonts.Inter" Version="12.1.1" />
     <PackageReference Include="Optris.Icons.Avalonia.MaterialDesign" Version="12.0.7" />
   </ItemGroup>
 

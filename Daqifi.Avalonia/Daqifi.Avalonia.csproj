@@ -34,11 +34,11 @@
 		<!-- Avalonia stack (replaces WPF + MahApps.Metro per the UI catalog decision log).
 		     Avalonia.Desktop (desktop windowing/startup) lives in the Desktop head, not here —
 		     this library is platform-neutral and shared with the Android/iOS heads. -->
-		<PackageReference Include="Avalonia" Version="12.0.5" />
-		<PackageReference Include="Avalonia.Themes.Fluent" Version="12.0.5" />
+		<PackageReference Include="Avalonia" Version="12.1.1" />
+		<PackageReference Include="Avalonia.Themes.Fluent" Version="12.1.1" />
 		<!-- WPF DataGrid ships in-box; Avalonia's lives in a separate package (DebugWindow) -->
-		<PackageReference Include="Avalonia.Controls.DataGrid" Version="12.0.1" />
-		<PackageReference Include="Avalonia.Fonts.Inter" Version="12.0.5" />
+		<PackageReference Include="Avalonia.Controls.DataGrid" Version="12.1.0" />
+		<PackageReference Include="Avalonia.Fonts.Inter" Version="12.1.1" />
 		<!-- OxyPlot.Avalonia replaces OxyPlot.Wpf; the PlotModel layer (OxyPlot.Core) ports verbatim.
 		     VENDORED as a ProjectReference: the NuGet 2.1.0 release targets Avalonia 0.10 and
 		     crashes at runtime under Avalonia 11 — see third_party/oxyplot-avalonia/VENDORED.md -->
