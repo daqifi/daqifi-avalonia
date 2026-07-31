@@ -25,7 +25,13 @@ Usage:
     check_avalonia_versions.py <project.assets.json> [...]
     check_avalonia_versions.py --glob            # discover under the repo root
 
-Exits 0 when both checks pass, 1 on any violation, 2 on bad input.
+Exit codes are distinct on purpose, so a caller can tell a real dependency problem
+apart from a broken invocation:
+
+    0  both checks passed
+    1  a genuine violation: lockstep break or split graph
+    2  the check could not run: no arguments, nothing matched, an unreadable or
+       malformed assets file, or no Avalonia package anywhere in the inputs
 """
 
 from __future__ import annotations
@@ -86,7 +92,7 @@ def main(argv: list[str]) -> int:
         if not paths:
             print("FAIL: --glob matched no project.assets.json — nothing was "
                   "restored, so nothing was checked.")
-            return 1
+            return 2
     else:
         paths = argv[1:]
 
@@ -99,8 +105,10 @@ def main(argv: list[str]) -> int:
         try:
             packages = avalonia_packages(path)
         except (OSError, json.JSONDecodeError) as exc:
+            # 2, not 1: an unreadable or malformed assets file is a tooling/input problem,
+            # and a caller must be able to tell that apart from "the graph really is split".
             print(f"FAIL: cannot read {path}: {exc}")
-            return 1
+            return 2
 
         if not packages:
             continue
@@ -125,7 +133,7 @@ def main(argv: list[str]) -> int:
 
     if not core_versions:
         print("FAIL: no project.assets.json referenced any Avalonia package.")
-        return 1
+        return 2
 
     # Check 2 — one version per package across every project.
     for name in sorted(seen):

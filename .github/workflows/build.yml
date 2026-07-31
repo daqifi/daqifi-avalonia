@@ -102,6 +102,24 @@ jobs:
       - name: Install the android workload
         run: dotnet workload install android
 
+      # ANDROID_HOME comes from the runner image, not from anything this repo controls, so
+      # assert it before use. Unset or stale, the restore instead fails deep in the Android
+      # targets with an XA5300-style "SDK not found" message that reads like a project
+      # problem rather than an environment one.
+      - name: Verify the Android SDK is present
+        run: |
+          set -euo pipefail
+          if [ -z "${ANDROID_HOME:-}" ]; then
+            echo "::error::ANDROID_HOME is not set on this runner image."
+            exit 1
+          fi
+          if [ ! -d "${ANDROID_HOME}/platforms" ]; then
+            echo "::error::ANDROID_HOME='${ANDROID_HOME}' has no platforms/ directory;" \
+                 "it does not look like an Android SDK."
+            exit 1
+          fi
+          echo "ANDROID_HOME=${ANDROID_HOME}"
+
       - name: Restore
         run: |
           dotnet restore Daqifi.Avalonia.Android/Daqifi.Avalonia.Android.csproj \
@@ -139,6 +157,12 @@ jobs:
         with:
           path: graphs
           merge-multiple: true
+
+      # Run the guard's own tests before trusting its verdict. Its value is entirely in
+      # FAILING on a split graph; a guard that silently only ever passes reads as coverage
+      # while providing none.
+      - name: Self-test the guard
+        run: python3 .github/scripts/test_check_avalonia_versions.py
 
       - name: Check the Avalonia graph
         run: |
