@@ -7,6 +7,7 @@ Reports, per screen: dimensions, % of pixels differing at all, mean absolute
 channel delta, and the worst single-pixel delta. Writes an amplified diff image
 per changed screen when an output dir is given.
 """
+import functools
 import os
 import sys
 
@@ -39,17 +40,21 @@ rows = []
 for name in names:
     if name in missing:
         continue
-    a = Image.open(os.path.join(base_dir, name)).convert("RGB")
-    b = Image.open(os.path.join(cand_dir, name)).convert("RGB")
+    # RGBA, not RGB: Pillow's RGBA->RGB drops alpha without compositing, so an
+    # alpha-only change would compare as identical. AvaloniaCapture's PNGs carry no
+    # alpha today, making this a no-op there (alpha reads 255 everywhere and folds in
+    # as a constant-zero channel) — but "the current producer happens not to emit it"
+    # is not a property a regression gate should quietly depend on.
+    a = Image.open(os.path.join(base_dir, name)).convert("RGBA")
+    b = Image.open(os.path.join(cand_dir, name)).convert("RGBA")
     if a.size != b.size:
         rows.append((name, f"{a.size[0]}x{a.size[1]}", "SIZE MISMATCH",
                      f"{b.size[0]}x{b.size[1]}", "", ""))
         continue
 
     diff = ImageChops.difference(a, b)
-    bbox = diff.getbbox()
     total = a.size[0] * a.size[1]
-    # Per-pixel MAX channel delta, via two pointwise lighter() folds.
+    # Per-pixel MAX channel delta, folding all channels (incl. alpha) with lighter().
     #
     # NOT diff.convert("L"): that is a luminance-weighted mix
     # (0.299R + 0.587G + 0.114B), so it systematically UNDER-REPORTS. A pure-blue
@@ -58,8 +63,13 @@ for name in names:
     # parity gate that must answer "did anything move", channel-blind is the wrong
     # question: a colour shift matters regardless of how much it moves perceived
     # brightness.
-    red, green, blue = diff.split()
-    flat = ImageChops.lighter(ImageChops.lighter(red, green), blue)
+    flat = functools.reduce(ImageChops.lighter, diff.split())
+    # bbox from the FOLDED single channel, never from the RGBA diff: getbbox() treats
+    # alpha=0 as transparent, and an alpha-identical pair has an all-zero alpha channel
+    # in its diff — so diff.getbbox() reports None (i.e. "identical") for images that
+    # differ substantially in colour. Folding first asks the question we actually mean:
+    # is any channel non-zero anywhere.
+    bbox = flat.getbbox()
     hist = flat.histogram()
     changed = total - hist[0]
     worst = max((i for i, c in enumerate(hist) if c), default=0)
@@ -70,7 +80,7 @@ for name in names:
 
     if diff_dir and bbox is not None:
         # Amplify so sub-perceptual deltas are visible in the artifact.
-        amplified = diff.point(lambda v: min(255, v * 12))
+        amplified = flat.point(lambda v: min(255, v * 12))
         amplified.save(os.path.join(diff_dir, name))
 
 width = max(len(r[0]) for r in rows) if rows else 20
