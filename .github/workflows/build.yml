@@ -1,0 +1,176 @@
+name: Build
+
+# Compile gate for every head, and the thing that finally makes the committed
+# packages.lock.json files load-bearing.
+#
+# GitHub Actions sets CI=true, which is one of the two conditions on
+# RestoreLockedMode in the repo-root Directory.Build.props, so restores here run in
+# LOCKED mode: a lock file that has drifted from the project's dependencies fails
+# with NU1004 instead of being silently regenerated. Before #71 nothing in this repo
+# exercised that, and nothing checked that any head still compiled — the Avalonia 12
+# migration surfaced two breaks (androidx.lifecycle.runtime forcing minSdk 23, and
+# the capture harness needing Avalonia.HarfBuzz once text shaping was decoupled from
+# the renderer) that only a build could have found.
+#
+# tools/parity-audit/WpfCapture is deliberately absent: it targets net10.0-windows
+# and ProjectReferences the SIBLING daqifi-desktop repo, so it cannot restore here at
+# all. It is also opted out of the lock-file policy — see its csproj.
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  # Cancel superseded runs on a PR branch, but never on main.
+  group: build-${{ github.ref }}
+  cancel-in-progress: ${{ github.event_name == 'pull_request' }}
+
+env:
+  DOTNET_NOLOGO: 'true'
+  DOTNET_CLI_TELEMETRY_OPTOUT: 'true'
+
+jobs:
+  desktop:
+    name: Library + Desktop head + capture harness
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-dotnet@v4
+        with:
+          dotnet-version: '10.0.x'
+
+      # Fail loudly if the locked-mode gate is NOT actually armed. Without this the
+      # whole workflow could go green while restores silently ran unlocked — the
+      # failure mode that made the lock files decorative in the first place. Checked
+      # against a real project so it reflects the inherited Directory.Build.props.
+      - name: Verify locked-mode restore is armed
+        run: |
+          set -euo pipefail
+          locked=$(dotnet msbuild Daqifi.Avalonia/Daqifi.Avalonia.csproj \
+            -getProperty:RestoreLockedMode)
+          echo "RestoreLockedMode=${locked}"
+          if [ "${locked}" != "true" ]; then
+            echo "::error::RestoreLockedMode is '${locked}', expected 'true'." \
+                 "Lock files are not being enforced — the gate is off."
+            exit 1
+          fi
+
+      # Restored explicitly (rather than implicitly via build) so an NU1004
+      # lock-file drift failure is attributed to its own step.
+      - name: Restore
+        run: |
+          dotnet restore Daqifi.Avalonia/Daqifi.Avalonia.csproj
+          dotnet restore Daqifi.Avalonia.Desktop/Daqifi.Avalonia.Desktop.csproj
+          dotnet restore tools/parity-audit/AvaloniaCapture/AvaloniaCapture.csproj
+
+      # AvaloniaCapture pins RuntimeIdentifier=win-x64; that cross-builds fine on
+      # Linux (it just cannot be RUN here), so it is worth compiling as a gate.
+      - name: Build
+        run: |
+          dotnet build Daqifi.Avalonia/Daqifi.Avalonia.csproj \
+            -c Release --no-restore
+          dotnet build Daqifi.Avalonia.Desktop/Daqifi.Avalonia.Desktop.csproj \
+            -c Release --no-restore
+          dotnet build tools/parity-audit/AvaloniaCapture/AvaloniaCapture.csproj \
+            -c Release --no-restore
+
+      - name: Upload dependency graphs
+        uses: actions/upload-artifact@v4
+        with:
+          name: assets-desktop
+          path: '**/obj/project.assets.json'
+          if-no-files-found: error
+
+  android:
+    name: Android head
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-dotnet@v4
+        with:
+          dotnet-version: '10.0.x'
+
+      # Not preinstalled with the SDK; the Android SDK itself ships on the runner
+      # image and is pointed at by ANDROID_HOME.
+      - name: Install the android workload
+        run: dotnet workload install android
+
+      # ANDROID_HOME comes from the runner image, not from anything this repo controls, so
+      # assert it before use. Unset or stale, the restore instead fails deep in the Android
+      # targets with an XA5300-style "SDK not found" message that reads like a project
+      # problem rather than an environment one.
+      - name: Verify the Android SDK is present
+        run: |
+          set -euo pipefail
+          if [ -z "${ANDROID_HOME:-}" ]; then
+            echo "::error::ANDROID_HOME is not set on this runner image."
+            exit 1
+          fi
+          if [ ! -d "${ANDROID_HOME}/platforms" ]; then
+            echo "::error::ANDROID_HOME='${ANDROID_HOME}' has no platforms/ directory;" \
+                 "it does not look like an Android SDK."
+            exit 1
+          fi
+          echo "ANDROID_HOME=${ANDROID_HOME}"
+
+      - name: Restore
+        run: |
+          dotnet restore Daqifi.Avalonia.Android/Daqifi.Avalonia.Android.csproj \
+            -p:AndroidSdkDirectory="$ANDROID_HOME"
+
+      - name: Build
+        run: |
+          dotnet build Daqifi.Avalonia.Android/Daqifi.Avalonia.Android.csproj \
+            -c Release --no-restore -p:AndroidSdkDirectory="$ANDROID_HOME"
+
+      - name: Upload dependency graph
+        uses: actions/upload-artifact@v4
+        with:
+          name: assets-android
+          # Same glob as the desktop job, not the single concrete path: for one
+          # file upload-artifact strips the tree to its least common ancestor, so
+          # the concrete path would arrive as a bare project.assets.json with no
+          # project to attribute a failure to — and would collide under
+          # merge-multiple with any other job that did the same.
+          path: '**/obj/project.assets.json'
+          if-no-files-found: error
+
+  avalonia-graph:
+    name: Avalonia version lockstep
+    runs-on: ubuntu-latest
+    # Runs only once both heads have resolved, because the check that matters most
+    # — the same package resolving to different versions in different heads — is
+    # invisible when looking at any single project.
+    needs: [desktop, android]
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Download dependency graphs
+        uses: actions/download-artifact@v4
+        with:
+          path: graphs
+          merge-multiple: true
+
+      # Run the guard's own tests before trusting its verdict. Its value is entirely in
+      # FAILING on a split graph; a guard that silently only ever passes reads as coverage
+      # while providing none.
+      - name: Self-test the guard
+        run: python3 .github/scripts/test_check_avalonia_versions.py
+
+      - name: Check the Avalonia graph
+        run: |
+          set -euo pipefail
+          mapfile -t assets < <(find graphs -name project.assets.json | sort)
+          if [ "${#assets[@]}" -eq 0 ]; then
+            echo "::error::No project.assets.json artifacts were downloaded."
+            exit 1
+          fi
+          printf 'checking %s\n' "${assets[@]}"
+          python3 .github/scripts/check_avalonia_versions.py "${assets[@]}"
