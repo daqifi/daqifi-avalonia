@@ -14,6 +14,14 @@
         Gray9 (value chips) → SurfaceActive, Gray7 (splitter) → BorderDim.
         Dialogs.Accent buttons → Classes="accent"; PackIconMaterial → i:Icon;
         WPF DataGrid → Avalonia.Controls.DataGrid (theme included from App.axaml).
+
+        Width stays at upstream's 1000. A 1200 was tried for less scrolling, but the
+        window opens with a bare Show() (no owner), so WindowStartupLocation CenterOwner
+        degrades to CenterScreen — and Avalonia's ApplyScreenConstraint deliberately does
+        NOT clamp a window wider than the work area. At 1366x768 @125% (~1093 DIP usable)
+        a 1200-wide window opens with its right edge, Close button included, off-screen.
+        Auto widths plus the horizontal scrollbar mean nothing is lost at 1000, so the
+        convenience was not worth buying that.
     -->
     <Grid RowDefinitions="Auto,*,Auto">
 
@@ -120,6 +128,17 @@
                         <TextBlock Text="Debug History (Last 100 packets)" FontWeight="Bold" FontSize="14"/>
                     </Border>
 
+                    <!-- HorizontalScrollBarVisibility is DataGrid's OWN property, not
+                         ScrollViewer's attached one. Avalonia's DataGrid contains no ScrollViewer:
+                         its template drives named PART_HorizontalScrollbar / PART_VerticalScrollbar
+                         ScrollBar parts from C#, and it registers its own StyledProperty of
+                         the same name. The
+                         attached ScrollViewer.HorizontalScrollBarVisibility is INERT here — nothing
+                         reads it. (That attached form IS correct on TextBox / ListBox, whose
+                         templates template-bind it; see ErrorDialog and ConnectionDialog.) The
+                         Fluent DataGrid theme already defaults this to Auto, so the attached
+                         spelling appeared to work while doing nothing. Setting it directly is what
+                         actually pins the behaviour against a future theme override. -->
                     <DataGrid Grid.Row="1"
                               ItemsSource="{Binding DebugData.Entries}"
                               AutoGenerateColumns="False"
@@ -128,17 +147,24 @@
                               HeadersVisibility="Column"
                               CanUserReorderColumns="False"
                               CanUserResizeColumns="True"
-                              CanUserSortColumns="True">
+                              CanUserSortColumns="True"
+                              HorizontalScrollBarVisibility="Auto">
                         <DataGrid.Columns>
                             <DataGridTextColumn Header="Time"
                                                 Binding="{Binding Timestamp, StringFormat=HH:mm:ss.fff}"
-                                                Width="80"/>
-                            <!-- Auto, not the upstream fixed 60/50 px: those are faithful to the
-                                 WPF original but clip in Avalonia, whose Fluent DataGrid draws
-                                 header text larger, rendering "Device" as "De" and "Count" as "C"
-                                 (port #81). Auto sizes to the wider of header and cells, so it
-                                 cannot re-clip at a different font or DPI the way a new hardcoded
-                                 number could. -->
+                                                Width="Auto"/>
+                            <!-- Every column is Auto, paired with HorizontalScrollBarVisibility
+                                 on the DataGrid above. Nothing is clipped and nothing is hidden:
+                                 columns take the width their content needs, and the grid scrolls
+                                 when the total exceeds the pane.
+
+                                 Upstream's fixed pixel widths (Device 60, Count 50) are faithful
+                                 to WPF but clip under Avalonia's Fluent DataGrid, which draws
+                                 headers larger — they rendered as "De" and "C" (#81). Re-deriving
+                                 fixed numbers that fit is a trap: they have to be re-derived for
+                                 every font, DPI and header change, and squeezing six columns into
+                                 a ~583px pane clipped whichever one lost the budget. Auto asks the
+                                 layout engine the question instead of hardcoding its answer. -->
                             <DataGridTextColumn Header="Device"
                                                 Binding="{Binding DeviceId}"
                                                 Width="Auto"/>
@@ -147,13 +173,19 @@
                                                 Width="Auto"/>
                             <DataGridTextColumn Header="Channels"
                                                 Binding="{Binding ActiveChannelNames, Converter={StaticResource ListToStringConverter}}"
-                                                Width="100"/>
+                                                Width="Auto"/>
+                            <!-- Auto here too. These carry the widest values (per-channel raw
+                                 and scaled arrays), so they are the columns most likely to push the
+                                 total past the pane — which is exactly what the horizontal
+                                 scrollbar is for. Star widths were tried and rejected: they cap
+                                 total width, but only by stealing space back from the metadata
+                                 columns, which re-clips THEIR headers. -->
                             <DataGridTextColumn Header="Raw Data"
                                                 Binding="{Binding RawAnalogValues, Converter={StaticResource ListToStringConverter}}"
-                                                Width="120"/>
+                                                Width="Auto"/>
                             <DataGridTextColumn Header="Scaled Data"
                                                 Binding="{Binding ScaledAnalogValues, Converter={StaticResource ListToStringConverter}}"
-                                                Width="120"/>
+                                                Width="Auto"/>
                         </DataGrid.Columns>
                     </DataGrid>
                 </Grid>

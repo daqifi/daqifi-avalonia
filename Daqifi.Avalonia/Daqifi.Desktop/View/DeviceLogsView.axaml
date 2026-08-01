@@ -374,6 +374,16 @@
             <!-- File list (visible only when USB device has at least one file).
                  divergence: WPF ListView+GridView → DataGrid with template columns;
                  upstream headers/rows were non-interactive, so reorder/resize/sort off. -->
+            <!-- Auto, NOT the Disabled this carried before. That Disabled was written as
+                 ScrollViewer.HorizontalScrollBarVisibility, which is INERT on a DataGrid (DataGrid
+                 has its own StyledProperty of that name and no ScrollViewer in its
+                 template), so it never took
+                 effect — the Fluent theme's Auto default is what has actually been shipping.
+                 Switching to the native property without also changing the value would have
+                 ACTIVATED an intent nobody ever validated: these columns are fixed and sum to
+                 740px, against MainWindow MinWidth=720 (less again after chrome and margins), so
+                 Disabled makes the rightmost action column unreachable at small window sizes.
+                 Auto preserves the behaviour that has always shipped. -->
             <DataGrid Name="DeviceFilesList"
                       AutomationProperties.AutomationId="SdCardFileList"
                       ItemsSource="{Binding DeviceFiles}"
@@ -390,7 +400,7 @@
                       CanUserReorderColumns="False"
                       CanUserResizeColumns="False"
                       CanUserSortColumns="False"
-                      ScrollViewer.HorizontalScrollBarVisibility="Disabled">
+                      HorizontalScrollBarVisibility="Auto">
                 <DataGrid.Columns>
                     <DataGridTemplateColumn Header="NAME" Width="320">
                         <DataGridTemplateColumn.CellTemplate>
