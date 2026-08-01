@@ -145,6 +145,22 @@ jobs:
           dotnet restore Daqifi.Avalonia.Android/Daqifi.Avalonia.Android.csproj \
             -p:AndroidSdkDirectory="$ANDROID_HOME"
 
+      # Same guard as the desktop job — the Android head restores its own graph and can
+      # mutate its own lock file, so checking only one job would leave half the repo
+      # unguarded.
+      - name: Lock files must be unchanged by restore
+        run: |
+          set -euo pipefail
+          if ! git diff --quiet -- '**/packages.lock.json'; then
+            echo "::error::restore modified a committed lock file — it was not in the state a" \
+                 "clean restore produces. Most often this is a lock file committed from a" \
+                 "'-r <rid>' build, which prunes the other RIDs. Re-restore without that flag" \
+                 "(or force-evaluate) and commit the result."
+            git diff --stat -- '**/packages.lock.json'
+            exit 1
+          fi
+          echo "lock files unchanged by restore"
+
       - name: Build
         run: |
           dotnet build Daqifi.Avalonia.Android/Daqifi.Avalonia.Android.csproj \
