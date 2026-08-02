@@ -167,9 +167,12 @@ only do compile-level checks
 
 It fires only *off* Mac — it is what the Windows/WSL box reports, which is where
 these two `⚠` blocks were captured, verbatim, by adding the `ios` target to a
-throwaway copy of `project.yaml` and running `doctor`. (The wrap mid-sentence is
-Rich's 80-column wrap, reproduced as-is rather than tidied, so what is printed
-here is what you can actually match against.) On darwin it is suppressed
+throwaway copy of `project.yaml` and running `doctor`. (The mid-sentence break
+is Rich's 80-column wrap, reproduced as-is rather than tidied — including the
+trailing space after `can`, which is Rich's and is deliberate here, not stray.
+`cat -A` on the real output shows `…this host can $`. Please don't strip it;
+what is printed here is what you can actually match against.) On darwin it is
+suppressed
 entirely. The gate is a `sys.platform != "darwin"` check in portomatic's
 dotnet-workload check; find it with `grep -n 'darwin' src/portomatic/doctor.py`
 rather than by line number, since §0 clones portomatic unpinned and any line
