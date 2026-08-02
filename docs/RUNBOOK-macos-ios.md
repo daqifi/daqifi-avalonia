@@ -102,9 +102,81 @@ path edits" hazard — git already ignores it. That also means it is invisible t
 review: if a portomatic command behaves oddly, this file is the first thing to
 check and the last thing anyone else can see.
 
-> The same applies to §2.2's "add the head to `dotnet.targets`" — that is
-> `.portomatic/project.yaml`, i.e. a **local** edit on your machine only. Adding
-> the iOS head to `Daqifi.Avalonia.slnx` *is* a committed change.
+> The same applies to the `dotnet.targets` edit below — `dotnet.targets` lives
+> in `.portomatic/project.yaml`, so it is a **local** edit on your machine only
+> and no one else will ever see it. Adding the iOS head to
+> `Daqifi.Avalonia.slnx` (§2.2) *is* a committed change.
+
+### The two target blocks you need
+
+Append these to `dotnet.targets` now — this is the one place they are written
+out, and §2.2's "add the head to `dotnet.targets`" refers back here rather than
+asking for a second edit. Add the `osx-arm64` block today; the `ios` block only
+matters once you start PART 2, but adding both now costs nothing and arms
+`doctor` to tell you what iOS will need.
+
+Both were validated against portomatic's own
+loader (`portomatic.config.load_project`) rather than written from memory — the
+schema is `extra="forbid"`, so a mistyped key fails loudly instead of being
+silently ignored:
+
+```yaml
+  - name: osx-arm64
+    rid: osx-arm64
+    configuration: Release
+    self_contained: true
+  - name: ios
+    tfm: net10.0-ios
+    configuration: Release
+    project: Daqifi.Avalonia.iOS/Daqifi.Avalonia.iOS.csproj
+```
+
+Desktop targets take a **`rid`**; mobile heads take a **`tfm`** plus their own
+`project`, because a mobile head is a different csproj rather than a different
+RID of the same one — compare the existing `android` entry.
+
+Adding the `ios` target is what arms `doctor`'s iOS checks — they are driven off
+this matrix, so until the target exists `doctor` has nothing to say about iOS.
+
+**On your Mac, having done §0's workload install, the line you want is:**
+
+```
+✓ dotnet workload: ios: installed
+```
+
+`doctor` marks status with a glyph — `✓` ok, `⚠` warn, `✗` fail, `·` skipped —
+not a word. Grep for the check *name* (`dotnet workload: ios`), never for a
+status token.
+
+If you instead get the `⚠` form, then §0's `dotnet workload install ios` did not
+take. That is a real finding, not expected noise; run the fix hint `doctor`
+prints under it:
+
+```
+⚠ dotnet workload: ios: required by the dotnet target matrix but not installed
+   → dotnet workload install ios
+```
+
+There is a second warning you will **not** see on a Mac, and should not go
+hunting for when it fails to appear:
+
+```
+⚠ dotnet ios host: iOS targets need a macOS host for full builds; this host can 
+only do compile-level checks
+```
+
+It fires only *off* Mac — it is what the Windows/WSL box reports, which is where
+these two `⚠` blocks were captured, verbatim, by adding the `ios` target to a
+throwaway copy of `project.yaml` and running `doctor`. (The mid-sentence break
+is Rich's 80-column wrap, reproduced as-is rather than tidied — including the
+trailing space after `can`, which is Rich's and is deliberate here, not stray.
+`cat -A` on the real output shows `…this host can $`. Please don't strip it;
+what is printed here is what you can actually match against.) On darwin it is
+suppressed
+entirely. The gate is a `sys.platform != "darwin"` check in portomatic's
+dotnet-workload check; find it with `grep -n 'darwin' src/portomatic/doctor.py`
+rather than by line number, since §0 clones portomatic unpinned and any line
+quoted here would drift.
 
 Sanity check:
 
@@ -335,8 +407,9 @@ Mirror `Daqifi.Avalonia.Android` exactly — it is the template:
 the build if any head resolves a different Avalonia version, because a split
 graph is silent at compile time and throws `MissingMethodException` at runtime.
 
-Then add the head to `Daqifi.Avalonia.slnx` and to `dotnet.targets` in
-`project.yaml`.
+Then add the head to `Daqifi.Avalonia.slnx` (a committed change). Its
+`dotnet.targets` entry is the `ios` block from §0 — if you added it there, this
+step is already done and needs no second edit.
 
 ### 2.3 Entry point and platform services
 
