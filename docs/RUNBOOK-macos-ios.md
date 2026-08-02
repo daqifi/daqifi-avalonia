@@ -157,9 +157,11 @@ hunting for when it fails to appear:
       this host can only do compile-level checks
 ```
 
-It is gated on `sys.platform != "darwin"` (portomatic `doctor.py:203`), so it
-fires only *off* Mac — it is what the Windows/WSL box reports, which is where
-this block was captured. On darwin it is suppressed entirely.
+It fires only *off* Mac — it is what the Windows/WSL box reports, which is where
+this block was captured. On darwin it is suppressed entirely. The gate is a
+`sys.platform != "darwin"` check in portomatic's dotnet-workload check; find it
+with `grep -n 'darwin' src/portomatic/doctor.py` rather than by line number,
+since §0 clones portomatic unpinned and any line I quoted here would drift.
 
 Sanity check:
 
