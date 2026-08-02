@@ -19,7 +19,12 @@ public class DaqifiSettings
     // elevated production runs, per-user for un-elevated runs. Keeps settings writable
     // (and consistent with the database/logs) instead of failing on an admin-owned file.
     private static readonly string AppDirectory = Daqifi.Desktop.Common.AppDataPaths.DataDirectory;
-    private static readonly string SettingsXmlPath = AppDirectory + "\\DAQifiConfiguration.xml";
+    // Path.Combine, not upstream's `AppDirectory + "\\..."`. A backslash is a legal filename
+    // character on macOS/Linux, so the concatenation does not fail there — it silently creates
+    // a file literally named `DAQiFi\DAQifiConfiguration.xml` NEXT TO the data directory
+    // instead of inside it, splitting settings away from the database and logs. Path.Combine
+    // produces the identical string on Windows, so this is a no-op there.
+    private static readonly string SettingsXmlPath = Path.Combine(AppDirectory, "DAQifiConfiguration.xml");
     #endregion
 
     #region Properties

@@ -28,7 +28,11 @@ public partial class LoggingManager : ObservableObject
     // written to a location the process can actually write (per-user when un-elevated),
     // instead of failing on the admin-owned %ProgramData% file.
     private static string ProfileAppDirectory = Daqifi.Desktop.Common.AppDataPaths.DataDirectory;
-    private static readonly string ProfileSettingsXmlPath = ProfileAppDirectory + "\\DAQifiProfilesConfiguration.xml";
+    // Path.Combine, not upstream's `ProfileAppDirectory + "\\..."` — see the same fix in
+    // DaqifiSettings. On macOS/Linux the backslash is a legal filename character, so the
+    // concatenation silently writes `DAQiFi\DAQifiProfilesConfiguration.xml` beside the data
+    // directory rather than inside it. Identical result on Windows.
+    private static readonly string ProfileSettingsXmlPath = Path.Combine(ProfileAppDirectory, "DAQifiProfilesConfiguration.xml");
     private readonly IDbContextFactory<LoggingContext> _loggingContext;
 
     /// <summary>
