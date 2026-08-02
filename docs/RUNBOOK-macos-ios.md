@@ -141,27 +141,39 @@ this matrix, so until the target exists `doctor` has nothing to say about iOS.
 **On your Mac, having done §0's workload install, the line you want is:**
 
 ```
-[ok] dotnet workload: ios: installed
+✓ dotnet workload: ios: installed
 ```
 
-If you instead get the `warn` form —
-`required by the dotnet target matrix but not installed` — then §0's
-`dotnet workload install ios` did not take. That is a real finding, not
-expected noise; run its fix hint.
+`doctor` marks status with a glyph — `✓` ok, `⚠` warn, `✗` fail, `·` skipped —
+not a word. Grep for the check *name* (`dotnet workload: ios`), never for a
+status token.
+
+If you instead get the `⚠` form, then §0's `dotnet workload install ios` did not
+take. That is a real finding, not expected noise; run the fix hint `doctor`
+prints under it:
+
+```
+⚠ dotnet workload: ios: required by the dotnet target matrix but not installed
+   → dotnet workload install ios
+```
 
 There is a second warning you will **not** see on a Mac, and should not go
 hunting for when it fails to appear:
 
 ```
-[warn] dotnet ios host: iOS targets need a macOS host for full builds;
-      this host can only do compile-level checks
+⚠ dotnet ios host: iOS targets need a macOS host for full builds; this host can 
+only do compile-level checks
 ```
 
 It fires only *off* Mac — it is what the Windows/WSL box reports, which is where
-this block was captured. On darwin it is suppressed entirely. The gate is a
-`sys.platform != "darwin"` check in portomatic's dotnet-workload check; find it
-with `grep -n 'darwin' src/portomatic/doctor.py` rather than by line number,
-since §0 clones portomatic unpinned and any line I quoted here would drift.
+these two `⚠` blocks were captured, verbatim, by adding the `ios` target to a
+throwaway copy of `project.yaml` and running `doctor`. (The wrap mid-sentence is
+Rich's 80-column wrap, reproduced as-is rather than tidied, so what is printed
+here is what you can actually match against.) On darwin it is suppressed
+entirely. The gate is a `sys.platform != "darwin"` check in portomatic's
+dotnet-workload check; find it with `grep -n 'darwin' src/portomatic/doctor.py`
+rather than by line number, since §0 clones portomatic unpinned and any line
+quoted here would drift.
 
 Sanity check:
 
