@@ -102,13 +102,20 @@ path edits" hazard — git already ignores it. That also means it is invisible t
 review: if a portomatic command behaves oddly, this file is the first thing to
 check and the last thing anyone else can see.
 
-> The same applies to §2.2's "add the head to `dotnet.targets`" — that is
-> `.portomatic/project.yaml`, i.e. a **local** edit on your machine only. Adding
-> the iOS head to `Daqifi.Avalonia.slnx` *is* a committed change.
+> The same applies to the `dotnet.targets` edit below — `dotnet.targets` lives
+> in `.portomatic/project.yaml`, so it is a **local** edit on your machine only
+> and no one else will ever see it. Adding the iOS head to
+> `Daqifi.Avalonia.slnx` (§2.2) *is* a committed change.
 
 ### The two target blocks you need
 
-Append these to `dotnet.targets`. Both were validated against portomatic's own
+Append these to `dotnet.targets` now — this is the one place they are written
+out, and §2.2's "add the head to `dotnet.targets`" refers back here rather than
+asking for a second edit. Add the `osx-arm64` block today; the `ios` block only
+matters once you start PART 2, but adding both now costs nothing and arms
+`doctor` to tell you what iOS will need.
+
+Both were validated against portomatic's own
 loader (`portomatic.config.load_project`) rather than written from memory — the
 schema is `extra="forbid"`, so a mistyped key fails loudly instead of being
 silently ignored:
@@ -128,20 +135,31 @@ Desktop targets take a **`rid`**; mobile heads take a **`tfm`** plus their own
 `project`, because a mobile head is a different csproj rather than a different
 RID of the same one — compare the existing `android` entry.
 
-Adding the `ios` target has a side effect worth knowing, because it is how the
-engine tells you what it needs. `doctor`'s workload check is driven off this
-matrix, so it immediately begins reporting:
+Adding the `ios` target is what arms `doctor`'s iOS checks — they are driven off
+this matrix, so until the target exists `doctor` has nothing to say about iOS.
+
+**On your Mac, having done §0's workload install, the line you want is:**
 
 ```
-[warn] dotnet workload: ios: required by the dotnet target matrix but not installed
-      fix: dotnet workload install ios
+[ok] dotnet workload: ios: installed
+```
+
+If you instead get the `warn` form —
+`required by the dotnet target matrix but not installed` — then §0's
+`dotnet workload install ios` did not take. That is a real finding, not
+expected noise; run its fix hint.
+
+There is a second warning you will **not** see on a Mac, and should not go
+hunting for when it fails to appear:
+
+```
 [warn] dotnet ios host: iOS targets need a macOS host for full builds;
       this host can only do compile-level checks
 ```
 
-Both are correct and expected on a fresh machine. The second is not a
-misconfiguration — it is portomatic saying it knows iOS cannot be fully built off
-a Mac.
+It is gated on `sys.platform != "darwin"` (portomatic `doctor.py:203`), so it
+fires only *off* Mac — it is what the Windows/WSL box reports, which is where
+this block was captured. On darwin it is suppressed entirely.
 
 Sanity check:
 
@@ -372,8 +390,9 @@ Mirror `Daqifi.Avalonia.Android` exactly — it is the template:
 the build if any head resolves a different Avalonia version, because a split
 graph is silent at compile time and throws `MissingMethodException` at runtime.
 
-Then add the head to `Daqifi.Avalonia.slnx` and to `dotnet.targets` in
-`project.yaml`.
+Then add the head to `Daqifi.Avalonia.slnx` (a committed change). Its
+`dotnet.targets` entry is the `ios` block from §0 — if you added it there, this
+step is already done and needs no second edit.
 
 ### 2.3 Entry point and platform services
 
