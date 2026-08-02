@@ -11,23 +11,34 @@ are done and shipping.
 
 ## Read this first: what is and is not already done
 
-**Nobody has ever built or run this on a Mac.** Not once. Treat every macOS claim
-below as untested.
+**macOS builds and runs today.** Verified on 2026-08-01 on an Apple-silicon Mac
+with .NET SDK 10.0.203:
 
-**macOS needs no new project — but it is completely unvalidated.**
-`Daqifi.Avalonia.Desktop` declares `osx-x64;osx-arm64` in its
-`RuntimeIdentifiers`. That line is a *declaration of intent* written during the
-shared-project split (`4489f28`); no build has ever exercised it. CI has three
-jobs — `desktop`, `android`, `avalonia-graph` — and **all three run on
-`ubuntu-latest`**. There is no macOS runner. So:
+```
+dotnet build Daqifi.Avalonia.Desktop/Daqifi.Avalonia.Desktop.csproj \
+  -c Release -r osx-arm64 --self-contained false
+→ 0 Error(s), 296 Warning(s), 23s
+→ bin/Release/net10.0/osx-arm64/Daqifi.Avalonia.Desktop: Mach-O 64-bit executable arm64
+```
 
-- The scaffolding you would otherwise write is already there. That is the only
-  part that is done.
-- Whether it compiles for `osx-arm64` is an open question, and there is specific
-  reason to doubt it (see 1.1).
+The app launches, the window renders, and `DAQifiAppLog.log` reports
+`Plot render tick active (first tick fired)`.
 
-Budget: unknown, because the first build has never been attempted. Plan a day,
-but do not be surprised by project-file work.
+**macOS needs no new project.** `Daqifi.Avalonia.Desktop` already declares
+`osx-x64;osx-arm64` in its `RuntimeIdentifiers` — written during the
+shared-project split (`4489f28`) — and that declaration now has a build behind
+it. Note that CI still does not: all three jobs (`desktop`, `android`,
+`avalonia-graph`) run on `ubuntu-latest`, so there is **no macOS runner** and
+nothing stops a macOS regression from landing.
+
+So the remaining macOS work is not "will it compile" — it is:
+
+- **Runtime behaviour under QA** (1.2). Compiling is not rendering; the
+  PlotView and icon checks are the real gate.
+- **Windows-only code paths that degrade rather than crash** (1.3).
+- **A macOS CI job**, so this does not silently rot. Its own ticket.
+
+Budget: less than the day originally planned for bring-up, more than zero for QA.
 
 **iOS is a genuinely new head**, mirroring `Daqifi.Avalonia.Android`. It needs a
 new project, a platform entry point, platform-service registrations, and an
@@ -61,26 +72,39 @@ macOS needs no workload — the Desktop head is plain `net10.0` published to an
 `osx-arm64` RID, not `net10.0-maccatalyst`. Don't install `maccatalyst` unless
 you deliberately decide to add a Catalyst head, which is not in scope here.
 
-### ⚠ Fix the machine-specific paths before running anything
+### ⚠ You have to create `.portomatic/project.yaml` — it is not in the clone
 
-`daqifi-avalonia/.portomatic/project.yaml` was authored on a WSL box and contains
-**absolute Linux paths that are wrong on your Mac**:
+**`.portomatic/project.yaml` is gitignored** (`.gitignore`, under
+*"portomatic local state (map/ and plans/ ARE committed)"*). It is per-machine
+config, so a fresh clone does **not** have it and no `git pull` will produce it.
+`.portomatic/map/`, `plans/`, `suites/` and `sync_state.yaml` **are** committed —
+only `project.yaml` (plus `reports/`, `research/`, `cache/`) is local.
+
+Create it before running any portomatic command. It holds absolute paths to your
+two clones:
 
 ```yaml
-upstream_root: /mnt/c/Users/User/Documents/GitHub/daqifi-desktop      # ← change
-downstream_root: /mnt/c/Users/User/Documents/GitHub/daqifi-avalonia   # ← change
-...
-  - name: android
-    properties:
-      AndroidSdkDirectory: /home/user/android-sdk                      # ← change or drop
+upstream_root: /Users/<you>/GitHub/daqifi-desktop
+downstream_root: /Users/<you>/GitHub/daqifi-avalonia
 ```
 
-Point the first two at your clones. For the android target, either set your own
-SDK path or drop that target from your local runs — you are not building Android.
+Do not copy the values from the Windows box — they are WSL paths
+(`/mnt/c/Users/...`) and mean nothing here. If portomatic ships an init/bootstrap
+command or an example file, prefer that over hand-writing; otherwise run
+`doctor` (below) and let its complaints tell you which keys are missing.
 
-**Do not commit those path edits.** They are machine-specific; changing them in a
-PR breaks the Windows box. If that becomes annoying, raise it — making them
-relative or env-driven is a legitimate improvement, but it is its own change.
+There is also an `android` target carrying an `AndroidSdkDirectory`. Either point
+it at your own SDK or drop the target from your local file — you are not building
+Android on this machine.
+
+**Nothing in this file is ever committed**, so there is no "do not commit the
+path edits" hazard — git already ignores it. That also means it is invisible to
+review: if a portomatic command behaves oddly, this file is the first thing to
+check and the last thing anyone else can see.
+
+> The same applies to §2.2's "add the head to `dotnet.targets`" — that is
+> `.portomatic/project.yaml`, i.e. a **local** edit on your machine only. Adding
+> the iOS head to `Daqifi.Avalonia.slnx` *is* a committed change.
 
 Sanity check:
 
@@ -105,8 +129,10 @@ dotnet build Daqifi.Avalonia.Desktop/Daqifi.Avalonia.Desktop.csproj \
   -c Release -r osx-arm64 --self-contained false
 ```
 
-**Expect project-file friction here.** The Desktop head carries three
-Windows-shaped properties that have never been evaluated on a Mac:
+**This succeeds as-is.** 0 errors, ~23s, producing an arm64 Mach-O executable.
+
+An earlier draft of this runbook predicted friction from three Windows-shaped
+properties on the Desktop head:
 
 ```xml
 <OutputType>WinExe</OutputType>
@@ -114,37 +140,39 @@ Windows-shaped properties that have never been evaluated on a Mac:
 <ApplicationManifest>app.manifest</ApplicationManifest>
 ```
 
-`WinExe` is benign off Windows (it only suppresses the console window there), but
-`ApplicationManifest` is a Win32 side-by-side manifest and `BuiltInComInteropSupport`
-is COM — neither means anything on macOS. I have not verified whether the SDK
-ignores them or errors. If the build fails on one of these, the fix is to make it
-conditional rather than delete it, since Windows still needs it — and condition on
-the **target RID**, not the build host:
+**None of them break the build.** The SDK ignores all three for a non-Windows
+RID — `WinExe` only suppresses the console window on Windows, and the manifest
+and COM properties are simply not consumed. **Do not preemptively make them
+conditional.** There is no bug to fix here, and the RID-conditioned
+`ApplicationManifest` that draft proposed would have been a change with no
+observable effect.
 
-```xml
-<ApplicationManifest Condition="'$(RuntimeIdentifier)' == '' Or $(RuntimeIdentifier.StartsWith('win'))">app.manifest</ApplicationManifest>
-```
+(If you ever *do* need to condition one, condition on the **target RID**
+(`$(RuntimeIdentifier)`), never `$([MSBuild]::IsOSPlatform('Windows'))` — the
+latter tests the build host, which is wrong the moment CI cross-compiles a
+Windows build from `ubuntu-latest`, as this repo's does.)
 
-Do **not** reach for `$([MSBuild]::IsOSPlatform('Windows'))` here. That tests the
-machine doing the building, so it silently does the wrong thing the moment anyone
-cross-compiles a Windows build from CI — and this repo's CI builds everything on
-`ubuntu-latest`, so that is not hypothetical. The empty-RID arm keeps a plain
-`dotnet build` with no `-r` working as it does today.
-
-Do this as its own small PR with a clear message — it is the first real macOS
-change in the repo and deserves to be legible in the history.
-
-> **Trap, guaranteed to bite you.** A build with an explicit `-r` **rewrites every
-> `packages.lock.json` to hold only that RID**, dropping the others. Committing
-> that breaks CI immediately with `NU1004: the project's runtime identifiers have
-> changed`. One such build rewrote 1004 lines across three lock files, and in a
-> diff it looks like harmless churn.
+> **Trap: lock-file churn.** A build with an explicit `-r` rewrites
+> `packages.lock.json` files to reflect that RID. Committing the result can break
+> CI with `NU1004: the project's runtime identifiers have changed`, and in a diff
+> it looks like harmless churn. On Windows this has rewritten 1004 lines across
+> three lock files.
 >
-> After any `-r` build, run `git status`. If a `packages.lock.json` is modified,
-> **revert it — do not stage it.** `dotnet restore` without `-r` (or with
-> `--force-evaluate`) restores the full set. CI also guards this now
-> (`.github/workflows/build.yml`, "Lock files must be unchanged by restore"), so
-> it cannot land silently — but it will waste a CI cycle.
+> On macOS the osx-arm64 build is milder — one file, two lines, *adding* a RID
+> section rather than dropping others:
+>
+> ```diff
+>    third_party/oxyplot-avalonia/OxyPlot.Avalonia/packages.lock.json
+> -    }
+> +    },
+> +    "net10.0/osx-arm64": {}
+> ```
+>
+> Still do not commit it. After any `-r` build run `git status`; if a
+> `packages.lock.json` is modified, **revert it — do not stage it.**
+> `dotnet restore` without `-r` (or with `--force-evaluate`) restores the full
+> set. CI guards this (`.github/workflows/build.yml`, "Lock files must be
+> unchanged by restore"), so it cannot land silently — but it will waste a cycle.
 
 ### 1.2 Run and QA it
 
@@ -169,10 +197,7 @@ because those are the paths the Avalonia 12 migration actually touched:
 fails to apply, `PlotView.OnApplyTemplate` silently no-ops and the plot renders
 **nothing, with no exception**. Confirm you see actual plotted lines.
 
-### 1.3 Windows-only code paths — what I checked, and what I didn't
-
-I read these on the Linux side. Findings are precise where stated; where I could
-not verify, I say so rather than guess.
+### 1.3 Windows-only code paths — what is confirmed, and what is not
 
 **Already guarded correctly — do not go hunting these:**
 
@@ -181,16 +206,40 @@ not verify, I say so rather than guess.
   That is a runtime check, so it covers macOS properly. This threw a
   `DllNotFoundException` on Android once; the fix generalises.
 
-**Guarded, but degrades silently — expect this and log it:**
+**Confirmed on macOS — guarded, but degrades silently:**
 
-- `ConnectionManager`'s constructor (`ConnectionManager.cs:170-182`) builds a
-  `ManagementEventWatcher` (WMI, Windows-only) inside a `try` whose `catch
-  (Exception ex)` only *logs*. On macOS it will throw, be swallowed, and USB
-  hotplug-removal detection is then **dead with no user-visible signal**. The app
-  will not crash — `ConnectionManager` is a static singleton, and an uncaught
-  throw there would be a fatal `TypeInitializationException`, so the catch is
-  load-bearing. Confirm the log line appears and decide whether dead hotplug
-  detection is acceptable for macOS v1 or needs a `DeviceWatcher` implementation.
+- `ConnectionManager`'s constructor (`ConnectionManager.cs:173`) builds a
+  `ManagementEventWatcher` (WMI, Windows-only) inside a `try` whose
+  `catch (Exception ex)` only *logs*. Observed verbatim in
+  `DAQiFi/Logs/DAQifiAppLog.log` on first launch:
+
+  ```
+  LEVEL=ERROR: Failed to initialize ManagementEventWatcher: System.Management
+  currently is only supported for Windows desktop applications.
+  System.PlatformNotSupportedException
+     at System.Management.WqlEventQuery..ctor(String queryOrEventClassName)
+  ```
+
+  The app does not crash — `ConnectionManager` is a static singleton, so an
+  uncaught throw here would be a fatal `TypeInitializationException` and the
+  catch is load-bearing. But USB hotplug-removal detection is **dead on macOS
+  with no user-visible signal**. Decide whether that is acceptable for macOS v1
+  or needs a `DeviceWatcher` implementation (there is already a
+  `Services/DeviceWatcher/` abstraction with `WmiDeviceWatcher` and
+  `NoOpDeviceWatcher` — a macOS watcher belongs there, and `ConnectionManager`
+  should be routed through it rather than constructing WMI directly).
+
+**Fixed in this PR — hardcoded path separators:**
+
+- `DaqifiSettings.cs` and `LoggingManager.cs` built their XML paths as
+  `AppDirectory + "\\DAQifi...xml"`. A backslash is a legal *filename* character
+  on macOS, so this did not fail — it silently created files literally named
+  `DAQiFi\DAQifiConfiguration.xml` and `DAQiFi\DAQifiProfilesConfiguration.xml`
+  **next to** the data directory while the database and logs went correctly
+  *inside* it. Settings and profiles were therefore split away from the rest of
+  the app data. Now `Path.Combine`, which is byte-identical on Windows.
+  If you have already run a pre-fix build, delete the two stray backslash-named
+  files from `~/Library/Application Support/`; settings regenerate at defaults.
 
 **Unverified — check these yourself:**
 
@@ -418,6 +467,15 @@ solid white, so the rerun compared white against white and reported "identical")
 Fixed in #388 via `samefile` identity. Mentioned because if you are ever on an
 older build, that trap is live and silent.
 
+> **The capture harness does not run on your Mac yet.** Both legs of
+> `tools/parity-audit` are pinned to `RuntimeIdentifier=win-x64` and its README
+> requires the *Windows* .NET SDK at `C:\Program Files\dotnet\dotnet.exe`
+> (`WpfCapture` genuinely needs Windows; `AvaloniaCapture` is pinned only because
+> win-x64 Skia natives were the reliable option from WSL). So you can build and
+> run the macOS app, but you cannot produce macOS captures to feed the visual
+> gate without first unpinning `AvaloniaCapture`. That is its own ticket, not
+> something to improvise mid-QA.
+
 ---
 
 ## Where to ask, and what to read first
@@ -436,8 +494,26 @@ Worth reading before you start, for why things are the way they are:
   (closed as invalid) — worth 30 seconds purely as a caution: it was filed on a
   wrong diagnosis. The "leaked device state" was a hardcoded placeholder.
 
-If something in this runbook is wrong, it is more useful to say so than to work
-around it. It was written from the Windows/Linux side by someone who has never
-run this on a Mac. The commands in the portomatic section were executed for real
-against this project; **the macOS and iOS specifics were not, and are the
-least-trustworthy claims in the document.**
+## Confidence, by section
+
+This runbook was drafted from the Windows/Linux side and then partly corrected by
+running it on an Apple-silicon Mac (2026-08-01, .NET SDK 10.0.203). Trust it
+accordingly:
+
+| Section | Status |
+|---|---|
+| portomatic commands | **Executed** against this project |
+| §1.1 macOS build | **Executed** — succeeds; the predicted `ApplicationManifest` friction did not happen |
+| §1.1 lock-file churn | **Reproduced** on macOS (one file, two lines) |
+| §1.3 WMI degradation | **Reproduced** — exact log line quoted |
+| §1.3 path-separator bug | **Found by running it**; fixed in this PR |
+| §1.2 QA checklist | **Not run.** The app launches and the plot tick fires; nothing beyond that is verified — no device, no discovery, no export |
+| §1.3 `System.IO.Ports` on macOS | **Not verified** |
+| PART 2 (iOS) | **Not verified at all.** Written from the Android head by analogy, on a machine with no iOS SDK |
+
+An earlier revision of this document opened by asserting nobody had ever built or
+run this on a Mac. That was wrong — the app log already had a run recorded from
+2026-07-25. Corrected here, and worth noting as a reminder that this runbook's
+weakest claims are the confident ones about untested things.
+
+If something here is wrong, saying so is more useful than working around it.
