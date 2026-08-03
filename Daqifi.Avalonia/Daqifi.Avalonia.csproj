@@ -60,7 +60,7 @@
 			<IncludeAssets>runtime; build; native; contentfiles; analyzers; buildtransitive</IncludeAssets>
 		</PackageReference>
 		<PackageReference Include="Microsoft.Extensions.Http" Version="10.0.10" />
-		<PackageReference Include="NCalcSync" Version="6.4.0" />
+		<PackageReference Include="NCalcSync" Version="7.0.0" />
 		<PackageReference Include="Newtonsoft.Json" Version="13.0.4" />
 		<PackageReference Include="NLog" Version="6.1.4" />
 		<PackageReference Include="Sentry" Version="6.8.0" />

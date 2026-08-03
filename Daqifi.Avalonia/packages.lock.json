@@ -133,11 +133,11 @@
       },
       "NCalcSync": {
         "type": "Direct",
-        "requested": "[6.4.0, )",
-        "resolved": "6.4.0",
-        "contentHash": "yEsGubcMeNIH5Fk/idmcw2EemmLEeREyqvhOCuIGDGjXw6t7QRxLSK1izvHdhatd9AP2OiOzBK/4KJcZgc6uFA==",
+        "requested": "[7.0.0, )",
+        "resolved": "7.0.0",
+        "contentHash": "Z4Q0Omm1FLLtB5RU+gY67TzdqsZPKb2DTJ989eNxtxzJUwNyvOGrfcVYjPSclxjvJwQI52IsG0xtORfu+HQ1Sw==",
         "dependencies": {
-          "NCalc.Core": "6.4.0"
+          "NCalc.Core": "7.0.0"
         }
       },
       "Newtonsoft.Json": {
@@ -249,8 +249,8 @@
       },
       "ExtendedNumerics.BigDecimal": {
         "type": "Transitive",
-        "resolved": "3003.0.0.346",
-        "contentHash": "o6qdyacVFNvDKX6T0sDEdhMKppdCiTwpj22kdgNfQlIviLSAiLqv/i4G/gYL4ZzqBYzR/o3t8wDWCX21Tt/i1A=="
+        "resolved": "3003.2.0.161",
+        "contentHash": "VMTiP6rMaghsAILVw+2W7FzReJH0kuF+YU9/4u110IWtsCWe+5HvzJqWxyknd860zFEbA9N37+qk5IjRLdF5UQ=="
       },
       "Google.Protobuf": {
         "type": "Transitive",
@@ -551,27 +551,27 @@
       },
       "NCalc.Core": {
         "type": "Transitive",
-        "resolved": "6.4.0",
-        "contentHash": "8OfiSnOvgzvXzfK5zEmOaNaus5JIq/ExZxlZvp3prwsKKFuO1YIJqYifnwDIpgpdu77td0eb3gk/qc97k765rQ==",
+        "resolved": "7.0.0",
+        "contentHash": "/M4m1AfSZ67WWbbTfg8BuIG0C94kD7ANSmsJbso4K3AECKWHPuABabiiHLv6TAaQe3OSe29Hr7tc6sEje7h5Lg==",
         "dependencies": {
-          "ExtendedNumerics.BigDecimal": "3003.0.0.346",
-          "Microsoft.Extensions.Logging.Abstractions": "10.0.7",
-          "NCalc.Parser": "6.4.0",
-          "Parlot": "1.5.7"
+          "ExtendedNumerics.BigDecimal": "3003.2.0.161",
+          "Microsoft.Extensions.Logging.Abstractions": "10.0.10",
+          "NCalc.Parser": "7.0.0",
+          "Parlot": "1.5.8"
         }
       },
       "NCalc.Domain": {
         "type": "Transitive",
-        "resolved": "6.4.0",
-        "contentHash": "PVr+iWFMGXsMHOrHrpicymJjB1dpO7J6BYpHXWKnwoBiJ2wpJGckVyi3RLbTJAnPch7F9r+h1x55Xp8uJLNjTA=="
+        "resolved": "7.0.0",
+        "contentHash": "A+NPb3BcUM34H5GAWKOKr87SsREf0H3XG5pzN519MJZf41qne6cloxncK5rcWCPyMTlGS8RM5yNvDUPR8BxRsg=="
       },
       "NCalc.Parser": {
         "type": "Transitive",
-        "resolved": "6.4.0",
-        "contentHash": "6IFg/9Y0YjdFuEF+Ig791AQiLqPhTutLokzDGqLcaq/RvbPIP+PFBY0W7Qg7etFcUwUV3YDtRke7KlOOEpfDDQ==",
+        "resolved": "7.0.0",
+        "contentHash": "JTtEP1sPR0g7/HdIkYWd/U5zYJonCz3yGascteNKzcmrMfwEtNVr4m399OG9FdPyvHSgvKUr/iSVmeUaRhLnbQ==",
         "dependencies": {
-          "NCalc.Domain": "6.4.0",
-          "Parlot": "1.5.7"
+          "NCalc.Domain": "7.0.0",
+          "Parlot": "1.5.8"
         }
       },
       "NetTopologySuite": {
@@ -597,8 +597,8 @@
       },
       "Parlot": {
         "type": "Transitive",
-        "resolved": "1.5.7",
-        "contentHash": "D0PhSypMx1JJVTQUqB8ebwcJxH4NAvdn1d8eKi9lLoNz8c1+8qHw+/Sq5/6HaJFgOaqy1VJBpvYFCIC4I2uvqQ=="
+        "resolved": "1.5.8",
+        "contentHash": "QBFNAMKQPRvBwrXOl6Gp24a2nbhzqJ5X4pe0I1g1RtR4SqoT2ThyE6RwFAOZLcWMQxzo8YC08VmHspPDeOLYWg=="
       },
       "runtime.android-arm.runtime.native.System.IO.Ports": {
         "type": "Transitive",
