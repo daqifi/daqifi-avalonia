@@ -19,6 +19,15 @@ Device discovery, transport, protobuf, and firmware-update logic come from the
 [Daqifi.Core](https://github.com/daqifi/daqifi-core) NuGet package — referenced,
 not ported.
 
+## Docs
+
+- [Runbook — macOS and iOS heads](docs/RUNBOOK-macos-ios.md) — the verified
+  `osx-arm64` and `ios` `dotnet.targets` blocks, and the order to add the last
+  two of the five target platforms. Needs a Mac.
+- [Mobile USB feasibility](docs/mobile-usb-feasibility.md)
+- [UI catalog](https://github.com/daqifi/portomatic/blob/main/docs/ui-catalog-wpf-avalonia.md)
+  (in the engine repo)
+
 ## Status
 
 Green-field scaffold stage. Stubs carry `// @port:` markers and throw
