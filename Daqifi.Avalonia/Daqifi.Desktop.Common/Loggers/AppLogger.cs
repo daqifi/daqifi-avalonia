@@ -26,6 +26,44 @@ public class AppLogger : IAppLogger
     // @port: Daqifi.Desktop.Common.Loggers.AppLogger.Instance
     public static AppLogger Instance { get; } = new();
 
+    /// <summary>
+    /// Finds the Sentry DSN from the first source that has one.
+    /// </summary>
+    /// <remarks>
+    /// Upstream reads only <c>ConfigurationManager.AppSettings</c>, which is an App.config
+    /// mechanism. This repo has no App.config on any head, and Android cannot have one, so
+    /// that lookup returned nothing everywhere and Sentry was silently inert on desktop as
+    /// well as mobile — the package was referenced and the manifest carried its meta-data,
+    /// but <c>SentrySdk.Init</c> was never reached.
+    /// <para>
+    /// Order is deliberate: an explicit App.config or environment value should win over the
+    /// compiled-in default, so a developer or CI run can redirect events away from the
+    /// production project without editing the build.
+    /// </para>
+    /// </remarks>
+    private static string? ResolveSentryDsn()
+    {
+        try
+        {
+            var configured = ConfigurationManager.AppSettings["SentryDsn"];
+            if (!string.IsNullOrWhiteSpace(configured)) { return configured; }
+        }
+        catch
+        {
+            // No App.config, or a platform where the provider cannot initialise at all.
+            // Not an error — it is the normal case on mobile.
+        }
+
+        var fromEnvironment = Environment.GetEnvironmentVariable("DAQIFI_SENTRY_DSN");
+        if (!string.IsNullOrWhiteSpace(fromEnvironment)) { return fromEnvironment; }
+
+        // Baked in at build time from the SentryDsn MSBuild property, so every head gets a
+        // DSN without shipping a config file. Absent property -> no attribute -> disabled.
+        return typeof(AppLogger).Assembly
+            .GetCustomAttributes<AssemblyMetadataAttribute>()
+            .FirstOrDefault(a => a.Key == "SentryDsn")?.Value;
+    }
+
     // @port: Daqifi.Desktop.Common.Loggers.AppLogger.IsRunningInTestEnvironment
     private static bool IsRunningInTestEnvironment()
     {
@@ -92,12 +130,12 @@ public class AppLogger : IAppLogger
 
         // Step 6. Initialize Sentry SDK — explicit CaptureException calls in Error() are the
         // sole capture path; SentryTarget is intentionally omitted to avoid double-reporting.
-        var dsn = ConfigurationManager.AppSettings["SentryDsn"];
+        var dsn = ResolveSentryDsn();
         var version = Assembly.GetEntryAssembly()?.GetName().Version?.ToString() ?? "0.0.0";
 
         if (string.IsNullOrWhiteSpace(dsn))
         {
-            _logger.Warn("SentryDsn not found in AppSettings — Sentry error reporting is disabled");
+            _logger.Warn("No Sentry DSN resolved — Sentry error reporting is disabled");
             return;
         }
 
@@ -107,6 +145,11 @@ public class AppLogger : IAppLogger
             options.Release = version;
             options.AutoSessionTracking = true;
             options.IsGlobalModeEnabled = true;
+            // Explicit, not relying on the SDK default: this app ships to app stores, where
+            // "what is collected" is a declaration we have to make and stand behind. No
+            // usernames, no email, no IP address attached to events. Sentry's server-side
+            // setting scrubs IPs as well; both belt and braces.
+            options.SendDefaultPii = false;
         });
     }
 

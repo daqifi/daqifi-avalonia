@@ -9,6 +9,20 @@
 		<Nullable>enable</Nullable>
 		<ImplicitUsings>enable</ImplicitUsings>
 		<Version>3.3.0</Version>
+		<!-- Sentry DSN, baked into the shared assembly so every head reports crashes without
+		     shipping a config file (Android cannot have an App.config at all, which is why
+		     the upstream ConfigurationManager lookup left Sentry inert on every head here).
+
+		     A DSN is not a secret: it is an ingest endpoint, embedded in every shipped client
+		     and extractable from any binary, which is why the Windows app already commits the
+		     same value in Daqifi.Desktop/App.config. It grants no read access to Sentry data —
+		     the only abuse is sending junk events, which Sentry's rate limits and inbound
+		     filters handle. Same project as the desktop app (org o4511134234640384) so mobile
+		     and desktop crashes land together.
+
+		     Override with -p:SentryDsn=<other> to point a build at a different project, or
+		     -p:SentryDsn= to build with reporting disabled. -->
+		<SentryDsn Condition="'$(SentryDsn)' == ''">https://ad05b308600c8274fe69c60264114e73@o4511134234640384.ingest.us.sentry.io/4511154254512128</SentryDsn>
 		<!-- LibraryImport (keep_awake Windows backend) generates unsafe marshalling stubs -->
 		<AllowUnsafeBlocks>true</AllowUnsafeBlocks>
 		<AvaloniaUseCompiledBindingsByDefault>false</AvaloniaUseCompiledBindingsByDefault>
@@ -64,6 +78,10 @@
 		<PackageReference Include="Newtonsoft.Json" Version="13.0.4" />
 		<PackageReference Include="NLog" Version="6.1.4" />
 		<PackageReference Include="Sentry" Version="6.8.0" />
+		<!-- AppLogger reads this back via AssemblyMetadata at startup (see ResolveSentryDsn).
+		     Overridable per build: -p:SentryDsn= disables reporting entirely, and either an
+		     App.config entry or DAQIFI_SENTRY_DSN takes precedence at run time. -->
+		<AssemblyMetadata Include="SentryDsn" Value="$(SentryDsn)" Condition="'$(SentryDsn)' != ''" />
 		<!-- All-platform native SQLite bundle (upstream committed a win-x64 e_sqlite3.dll) -->
 		<PackageReference Include="SQLitePCLRaw.bundle_e_sqlite3" Version="3.0.4" />
 		<PackageReference Include="System.Configuration.ConfigurationManager" Version="10.0.10" />
