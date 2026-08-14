@@ -15,6 +15,38 @@ namespace Daqifi.Avalonia.Views;
 /// </summary>
 public sealed class LivePlot : Control
 {
+    // Render runs on the 50 ms timer while streaming, so anything constructed inside it is
+    // allocated ~20x/second — and with 16 channels the per-series brush and pen made that ~640
+    // allocations/second of pure churn. These are immutable and shared instead.
+    //
+    // The per-colour caches are plain Dictionaries with no lock: Render is only ever invoked on
+    // the UI thread, so there is no second writer to race with.
+    private static readonly IBrush PlotFill = new SolidColorBrush(Color.FromArgb(0x22, 0xFF, 0xFF, 0xFF));
+    private static readonly IBrush Plate = new SolidColorBrush(Color.FromArgb(0xE0, 0x0E, 0x16, 0x1C));
+    private static readonly IBrush HeaderText = new SolidColorBrush(Color.FromArgb(0xCC, 0xC9, 0xDA, 0xE8));
+    private static readonly Dictionary<uint, IBrush> SeriesBrushes = [];
+    private static readonly Dictionary<uint, Pen> SeriesPens = [];
+
+    private static IBrush BrushFor(uint argb)
+    {
+        if (!SeriesBrushes.TryGetValue(argb, out var brush))
+        {
+            brush = new SolidColorBrush(Color.FromUInt32(argb));
+            SeriesBrushes[argb] = brush;
+        }
+        return brush;
+    }
+
+    private static Pen PenFor(uint argb)
+    {
+        if (!SeriesPens.TryGetValue(argb, out var pen))
+        {
+            pen = new Pen(BrushFor(argb), 1.5);
+            SeriesPens[argb] = pen;
+        }
+        return pen;
+    }
+
     public IReadOnlyList<ChannelSeries>? Series { get; set; }
 
     /// <summary>Total samples appended — a live "is data flowing?" readout.</summary>
@@ -27,9 +59,7 @@ public sealed class LivePlot : Control
     {
         var w = Bounds.Width;
         var h = Bounds.Height;
-        ctx.FillRectangle(
-            new SolidColorBrush(Color.FromArgb(0x22, 0xFF, 0xFF, 0xFF)),
-            new Rect(0, 0, w, h), 8);
+        ctx.FillRectangle(PlotFill, new Rect(0, 0, w, h), 8);
 
         var series = Series;
         if (series == null || series.Count == 0) { return; }
@@ -61,8 +91,7 @@ public sealed class LivePlot : Control
             {
                 var d = snaps[si];
                 if (d.Length < 2) { continue; }
-                var pen = new Pen(
-                    new SolidColorBrush(Color.FromUInt32(series[si].ColorArgb)), 1.5);
+                var pen = PenFor(series[si].ColorArgb);
                 var geo = new StreamGeometry();
                 using (var g = geo.Open())
                 {
@@ -83,15 +112,13 @@ public sealed class LivePlot : Control
         // Without one the text is drawn straight over the waveforms and is unreadable wherever a
         // trace crosses it — at 16 channels that is most of the time (#117). The plate is darker
         // than the plot fill and nearly opaque so any trace colour still reads against it.
-        var plate = new SolidColorBrush(Color.FromArgb(0xE0, 0x0E, 0x16, 0x1C));
-
         // Header: total samples received — the definitive data-flow readout.
         var header = new FormattedText(
             $"{SampleCount:N0} samples", CultureInfo.CurrentCulture,
             FlowDirection.LeftToRight, Typeface.Default, 13,
-            new SolidColorBrush(Color.FromArgb(0xCC, 0xC9, 0xDA, 0xE8)));
+            HeaderText);
         ctx.FillRectangle(
-            plate, new Rect(4, h - 25, header.Width + 10, header.Height + 6), 5);
+            Plate, new Rect(4, h - 25, header.Width + 10, header.Height + 6), 5);
         ctx.DrawText(header, new Point(8, h - 22));
 
         // Legend: channel name + latest value, in the trace's color. Measured in full before
@@ -105,14 +132,14 @@ public sealed class LivePlot : Control
                 : $"{s.Name}: waiting…";
             var text = new FormattedText(
                 label, CultureInfo.CurrentCulture, FlowDirection.LeftToRight,
-                Typeface.Default, 13, new SolidColorBrush(Color.FromUInt32(s.ColorArgb)));
+                Typeface.Default, 13, BrushFor(s.ColorArgb));
             if (text.Width > widest) { widest = text.Width; }
             labels.Add(text);
         }
 
         const double lineHeight = 18.0;
         ctx.FillRectangle(
-            plate,
+            Plate,
             new Rect(4, 2, widest + 10, labels.Count * lineHeight + 8),
             5);
 
