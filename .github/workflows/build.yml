@@ -295,8 +295,17 @@ jobs:
         run: |
           set -euo pipefail
           echo "developer dir: $(xcode-select -p)"
-          xcodebuild -version
-          selected=$(xcodebuild -version | head -1 | awk '{ print $2 }')
+          # Capture ONCE into a variable, then parse the variable. Do not pipe xcodebuild
+          # into `head`: head exits after the first line, xcodebuild takes EPIPE on its
+          # next write, and rather than dying quietly it raises
+          # NSFileHandleOperationException and aborts with 134, which pipefail turns into
+          # a failed job. That is a race — it passed twice here before it bit — which
+          # makes it the worst kind of bug to leave in a gate other people's PRs depend
+          # on. A command substitution drains the pipe fully, so nothing gets EPIPE, and
+          # `awk NR == 1` reads to EOF rather than exiting early the way `head` does.
+          xcode_version=$(xcodebuild -version)
+          echo "${xcode_version}"
+          selected=$(printf '%s\n' "${xcode_version}" | awk 'NR == 1 { print $2 }')
           # major.minor on both sides, because that is the only part
           # _ValidateXcodeVersion compares.
           want=$(printf '%s' "${REQUIRED_XCODE}" | cut -d. -f1,2)
