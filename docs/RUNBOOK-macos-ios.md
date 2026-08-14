@@ -30,9 +30,10 @@ The app launches, the window renders, and `DAQifiAppLog.log` reports
 **macOS needs no new project.** `Daqifi.Avalonia.Desktop` already declares
 `osx-x64;osx-arm64` in its `RuntimeIdentifiers` — written during the
 shared-project split (`4489f28`) — and that declaration now has a build behind
-it. Note that CI still does not: all three jobs (`desktop`, `android`,
-`avalonia-graph`) run on `ubuntu-latest`, so there is **no macOS runner** and
-nothing stops a macOS regression from landing.
+it. Note that CI still does not. There **is** a macOS runner in
+`.github/workflows/build.yml` now — the `ios` job, added in #105 — but it builds
+`Daqifi.Avalonia.iOS`. No job builds the Desktop head for an `osx-*` RID, so
+nothing stops a macOS regression from landing (#88).
 
 So the remaining macOS work is not "will it compile" — it is:
 
@@ -117,7 +118,8 @@ dotnet workload install ios
 >
 > Either way, verify the artifact rather than the exit code: `dotnet workload
 > list` must actually list `ios`. This is the same trap as the one at the bottom
-> of this document, caught in the wild.
+> of this document, caught in the wild. The `ios` CI job makes the same
+> assertion, in its own step, for the same reason.
 
 macOS needs no workload — the Desktop head is plain `net10.0` published to an
 `osx-arm64` RID, not `net10.0-maccatalyst`. Don't install `maccatalyst` unless
@@ -479,8 +481,65 @@ Android's `MainActivity` / `MainApplication` split is the model:
 ### 2.4 Build, deploy, QA
 
 ```bash
-dotnet build Daqifi.Avalonia.iOS/Daqifi.Avalonia.iOS.csproj -c Release
+dotnet build Daqifi.Avalonia.iOS/Daqifi.Avalonia.iOS.csproj \
+  -c Release -r iossimulator-arm64
 ```
+
+Pass the RID. A Release build with no `-r` resolves the **device** RID and then
+wants a signing identity; the simulator RID does not. Then re-read the lock-file
+trap in §1.1 — it applies here with *two* RIDs to lose rather than one, and this
+head is the reason that trap has its own line in the csproj. CI sidesteps it by
+restoring without `-r` and building `--no-restore`, and you can do the same
+locally:
+
+```bash
+dotnet restore Daqifi.Avalonia.iOS/Daqifi.Avalonia.iOS.csproj
+dotnet build Daqifi.Avalonia.iOS/Daqifi.Avalonia.iOS.csproj \
+  -c Release -r iossimulator-arm64 --no-restore
+```
+
+#### The Xcode version pin — decided (#103)
+
+.NET for iOS checks the host Xcode for **exact `major.minor` equality**, not a
+floor (`_ValidateXcodeVersion` in `Xamarin.Shared.Sdk.targets`). A *newer* Xcode
+fails identically to an older one, so upgrading Xcode does not fix the error —
+it causes it:
+
+```
+error : This version of .NET for iOS (26.4.10259) requires Xcode 26.4.
+The current version of Xcode is 26.6. Either install Xcode 26.4, or use a
+different version of .NET for iOS.
+```
+
+**In CI: pin Xcode, and leave the check armed.** The `ios` job asks the SDK which
+Xcode it wants and `xcode-select`s that one out of the runner image, which ships
+every minor of its Xcode major (26.0.1 … 26.6 today). It does **not** pass
+`-p:ValidateXcodeVersion=false`; switching a real compatibility gate off inside
+the one job whose purpose is to be a gate is not a trade worth making.
+
+**Locally: match the Xcode if you can, and flag it deliberately if you cannot.**
+
+```bash
+# what the SDK you have pinned actually wants — evaluation only, no restore needed
+dotnet msbuild Daqifi.Avalonia.iOS/Daqifi.Avalonia.iOS.csproj \
+  -getProperty:_RecommendedXcodeVersion
+
+# if you have that Xcode, point the toolchain at it
+sudo xcode-select -s /Applications/Xcode_<version>.app/Contents/Developer
+```
+
+If you only have a mismatched Xcode — the ordinary case on a machine that also
+does other iOS work — `-p:ValidateXcodeVersion=false` is the escape hatch, and
+it does work: the head builds and runs correctly on Xcode 26.6 against a
+26.4 workload. Use it on the command line, knowingly. It is deliberately **not**
+in the csproj and deliberately not in CI, because there it would be silent, and
+the next mismatch is the one you want to hear about.
+
+**Do not hardcode the version anywhere.** It moves with `global.json`: the
+10.0.2xx band wanted Xcode 26.4, and the pinned 10.0.302 does not — you can read
+that off the committed lock file, whose framework is `net10.0-ios26.5` rather
+than `net10.0-ios26.4`. Both CI and the command above derive it from the SDK for
+exactly this reason.
 
 Device deployment needs an Apple Developer account and a provisioning profile.
 The simulator is fine for UI work but **cannot validate discovery** — the network
@@ -634,7 +693,9 @@ Trust it accordingly:
 | §1.3 path-separator bug | **Found by running it**; fixed in this PR |
 | §1.2 QA checklist | **Not run.** The app launches and the plot tick fires; nothing beyond that is verified — no device, no discovery, no export |
 | §1.3 `System.IO.Ports` on macOS | **Not verified** |
-| PART 2 (iOS) | **Not verified at all.** Written from the Android head by analogy, on a machine with no iOS SDK |
+| §2.2–2.3 iOS head | **Built and run** on the simulator (#101). Written from the Android head by analogy, then corrected by building it |
+| §2.4 Xcode pin | **Reproduced** — the exact-equality failure above is quoted from a real build on Xcode 26.6 |
+| §2.4 iOS QA / device | **Not verified.** No provisioned device, no discovery, no QA list run. CI compiles `iossimulator-arm64` (#105) and nothing more |
 
 An earlier revision of this document opened by asserting nobody had ever built or
 run this on a Mac. That was wrong — the app log already had a run recorded from
