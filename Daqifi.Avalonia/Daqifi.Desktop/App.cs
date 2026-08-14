@@ -232,6 +232,26 @@ public static class App
     {
         if (ServiceProvider is not null) { return; }   // already initialized
 
+        // Crash reporting, before anything below can throw.
+        //
+        // Two separate things, both previously missing on mobile, and each useless without
+        // the other:
+        //
+        // 1. AppLogger.Instance is a lazy static — SentrySdk.Init runs in its constructor, on
+        //    FIRST ACCESS. Nothing on the mobile boot path touched it (the only reference in
+        //    this method sits inside a catch block), so on a healthy start Sentry was never
+        //    initialised at all. The DSN being resolvable (see AppLogger.ResolveSentryDsn) does
+        //    not help if Init is never reached. Touching Instance here is what starts it.
+        //
+        // 2. The desktop path wires these two handlers in Initialize(); mobile never did, so an
+        //    unhandled exception went straight to the platform with nothing capturing it.
+        //
+        // Order matters: initialise the logger first, so the handlers below have somewhere to
+        // report to if the DI/database work that follows throws.
+        AppLogger.Instance.Information("Mobile startup — crash reporting initialised.");
+        AppDomain.CurrentDomain.UnhandledException += OnUnhandledException;
+        Dispatcher.UIThread.UnhandledException += OnDispatcherUnhandledException;
+
         // Whole-body guard: this runs from the mobile bootstrap, so a failure to
         // stand up the DI/SQLite layer must NOT crash the app boot — the Stream
         // tab needs no data layer, and panes that DO need it fall back to a
