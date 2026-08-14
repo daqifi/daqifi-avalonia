@@ -1,3 +1,4 @@
+using System;
 using System.Collections.Generic;
 using System.Globalization;
 using Avalonia;
@@ -133,8 +134,12 @@ public sealed class LivePlot : Control
             $"{SampleCount:N0} points plotted", CultureInfo.CurrentCulture,
             FlowDirection.LeftToRight, Typeface.Default, 13,
             HeaderText);
+        // Clamp to the control. Both plates are sized from measured text, so a long enough label
+        // — and "points plotted" is longer than the "samples" it replaced — would paint past the
+        // right edge on a narrow layout. Nothing local sets ClipToBounds, so it would escape the
+        // plot region rather than being cut off.
         ctx.FillRectangle(
-            Plate, new Rect(4, h - 25, header.Width + 10, header.Height + 6), 5);
+            Plate, new Rect(4, h - 25, Math.Min(header.Width + 10, Math.Max(0, w - 8)), header.Height + 6), 5);
         ctx.DrawText(header, new Point(8, h - 22));
 
         // Legend: channel name + latest value, in the trace's color. Measured in full before
@@ -156,7 +161,7 @@ public sealed class LivePlot : Control
         const double lineHeight = 18.0;
         ctx.FillRectangle(
             Plate,
-            new Rect(4, 2, widest + 10, labels.Count * lineHeight + 8),
+            new Rect(4, 2, Math.Min(widest + 10, Math.Max(0, w - 8)), labels.Count * lineHeight + 8),
             5);
 
         var y0 = 6.0;
