@@ -86,23 +86,34 @@ dotnet workload install ios
 > prefix varies by install method — it prints `Inadequate permissions. Run the
 > command with elevated privileges.` and then **returns success**. It needs
 > `sudo`, and it needs an absolute path, because root's `PATH` will not
-> necessarily contain your dotnet. Find yours, and **look at what it prints**:
+> necessarily contain your dotnet. Find yours — the answer must be an absolute
+> path, i.e. it starts with `/`:
 >
 > ```bash
 > command -v dotnet
 > ```
 >
-> then elevate that exact path:
+> If instead you get an alias or function body — which is what `command -v`
+> prints when `dotnet` is shell-defined rather than a binary — ask the
+> filesystem, which cannot see shell definitions because it is a separate
+> process:
+>
+> ```bash
+> /usr/bin/which dotnet
+> ```
+>
+> Then elevate that exact path:
 >
 > ```bash
 > sudo /the/path/it/printed workload install ios
 > ```
 >
 > Two steps on purpose. Do **not** collapse them into
-> `sudo "$(command -v dotnet)" …` — that runs whatever your `PATH` resolves
-> first as root, sight unseen, which is a bad habit to write into a runbook even
-> where the box is trusted. It also misbehaves when `dotnet` is a shell alias or
-> function, where `command -v` prints a definition rather than a path.
+> `sudo "$(command -v dotnet)" …`. To be precise about why, since the mechanism
+> is easy to get backwards: `sudo` does **not** do the lookup. The substitution
+> runs first, in *your* shell and as *you*, and `sudo` then elevates whatever
+> string it produced. That is exactly the problem — the one thing being run as
+> root is the one thing you never see. Splitting the steps puts it on screen.
 >
 > Either way, verify the artifact rather than the exit code: `dotnet workload
 > list` must actually list `ios`. This is the same trap as the one at the bottom
