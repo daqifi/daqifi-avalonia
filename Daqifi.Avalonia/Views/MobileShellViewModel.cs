@@ -30,9 +30,8 @@ public partial class MobileShellViewModel : ObservableObject, IDisposable
     private AbstractStreamingDevice? _connected;
 
     // Watchdog state — see CheckForSilentStream. Counted in render-timer polls (50 ms each)
-    // rather than elapsed time, so a backgrounded app cannot accumulate silence.
+    // rather than elapsed time, so the threshold tracks how often this code actually runs.
     private const int SilentPollsBeforeStreamDeclaredDead = 160;   // ~8 s
-    private long _lastSampleCount;
     private int _silentPolls;
 
     public ObservableCollection<MobileDeviceItem> Devices { get; } = [];
@@ -404,10 +403,14 @@ public partial class MobileShellViewModel : ObservableObject, IDisposable
     /// enough that a user is not left staring at a dead plot.
     /// </para>
     /// <para>
-    /// Counting polls rather than wall-clock time is deliberate: the render timer does not fire
-    /// while the app is backgrounded, so a backgrounded app cannot accumulate silence and
-    /// false-positive on return. Streaming through a background window is exactly what the
-    /// foreground service now supports, and that must not be mistaken for a dead stream.
+    /// Counting polls rather than wall-clock time is deliberate. The threshold should track how
+    /// often this code actually runs, not how much time passes — a wall-clock deadline would fire
+    /// after any window in which the UI was not being driven, whether or not data was flowing.
+    /// <para>
+    /// NOT yet verified: whether the render timer keeps ticking while the app is backgrounded.
+    /// If it does, a backgrounded stream still delivers samples so the watchdog stays quiet; if it
+    /// does not, no silence accumulates. Both are safe, but the reasoning rests on an untested
+    /// assumption about Avalonia's timer under a stopped activity — see #110.
     /// </para>
     /// </remarks>
     private void CheckForSilentStream(long samplesBefore)
@@ -415,7 +418,6 @@ public partial class MobileShellViewModel : ObservableObject, IDisposable
         if (_totalSamples != samplesBefore)
         {
             _silentPolls = 0;
-            _lastSampleCount = _totalSamples;
             return;
         }
 
@@ -440,7 +442,6 @@ public partial class MobileShellViewModel : ObservableObject, IDisposable
         try { _connected?.StopStreaming(); }
         catch { /* best-effort */ }
         IsStreaming = false;
-        _lastSampleCount = 0;
         _silentPolls = 0;
         if (IsConnected) { Status = "Streaming stopped."; }
     }
@@ -482,7 +483,6 @@ public partial class MobileShellViewModel : ObservableObject, IDisposable
     private void HandleStreamLost()
     {
         IsStreaming = false;
-        _lastSampleCount = 0;
         _silentPolls = 0;
         Status = "Streaming stopped — the device stopped sending data. Reconnect to start again.";
     }
@@ -503,7 +503,6 @@ public partial class MobileShellViewModel : ObservableObject, IDisposable
 
         IsStreaming = false;
         IsConnected = false;
-        _lastSampleCount = 0;
         _silentPolls = 0;
         _connected = null;
 
