@@ -251,6 +251,7 @@ public static class App
         AppLogger.Instance.Information("Mobile startup — crash reporting initialised.");
         AppDomain.CurrentDomain.UnhandledException += OnUnhandledException;
         Dispatcher.UIThread.UnhandledException += OnDispatcherUnhandledException;
+        TaskScheduler.UnobservedTaskException += OnUnobservedTaskException;
 
         // Whole-body guard: this runs from the mobile bootstrap, so a failure to
         // stand up the DI/SQLite layer must NOT crash the app boot — the Stream
