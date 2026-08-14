@@ -17,8 +17,16 @@
 		     lock file to one RID and trip NU1004 on the next — the same trap
 		     Directory.Build.props documents for the Desktop head. Device
 		     (ios-arm64) is listed for the eventual provisioned build; simulator
-		     is what runs today. -->
-		<RuntimeIdentifiers>iossimulator-arm64;iossimulator-x64;ios-arm64</RuntimeIdentifiers>
+		     is what runs today.
+		     iossimulator-x64 is deliberately NOT here. The .NET iOS SDK injects
+		     UIRequiredDeviceCapabilities=arm64 into the built app's Info.plist
+		     and that is not settable from our Info.plist (verified: absent in
+		     source, present in the .app after a clean rebuild), so an x64
+		     simulator RID would be a claim in tension with what the toolchain
+		     actually emits — and one nobody can check, since there is no Intel
+		     Mac to build it on. Add it back off the strength of a real build on
+		     Intel hardware, not on the strength of it looking harmless. -->
+		<RuntimeIdentifiers>iossimulator-arm64;ios-arm64</RuntimeIdentifiers>
 		<!-- REQUIRED for EF Core, not a tuning knob. iOS is aot-only, and EF Core
 		     builds its DbContext factory through System.Linq.Expressions, which
 		     falls back to Reflection.Emit and throws

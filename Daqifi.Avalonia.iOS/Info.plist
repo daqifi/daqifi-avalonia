@@ -11,10 +11,14 @@
 		<integer>1</integer>
 		<integer>2</integer>
 	</array>
-	<key>UIRequiredDeviceCapabilities</key>
-	<array>
-		<string>arm64</string>
-	</array>
+	<!-- Deliberately no UIRequiredDeviceCapabilities here, and declaring one
+	     would be theatre: the .NET iOS SDK injects `arm64` into the built app
+	     regardless of this file. Verified rather than assumed — the key is
+	     absent from this source and present in
+	     bin/Debug/net10.0-ios/iossimulator-arm64/Daqifi.Avalonia.iOS.app/Info.plist
+	     after `rm -rf bin obj` and a full rebuild. It is not settable from here.
+	     That injected arm64 is also why this head no longer claims an
+	     iossimulator-x64 RID — see the csproj. -->
 	<key>UISupportedInterfaceOrientations</key>
 	<array>
 		<string>UIInterfaceOrientationPortrait</string>
