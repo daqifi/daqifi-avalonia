@@ -86,7 +86,7 @@ protocol family.
 
 Questions or problems: daqifi.com/contact
 ```
-`1616 / 4000`
+`1572 / 4000`
 
 ---
 

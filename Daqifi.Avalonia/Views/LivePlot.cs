@@ -126,6 +126,7 @@ public sealed class LivePlot : Control
         // Without one the text is drawn straight over the waveforms and is unreadable wherever a
         // trace crosses it — at 16 channels that is most of the time (#117). The plate is darker
         // than the plot fill and nearly opaque so any trace colour still reads against it.
+
         // Header: points plotted — the definitive "is data flowing?" readout. Deliberately not
         // "samples": see the SampleCount remarks. The plot shows a 20 Hz decimation of the stream.
         var header = new FormattedText(
