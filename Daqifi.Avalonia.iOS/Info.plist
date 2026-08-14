@@ -1,0 +1,47 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
+<plist version="1.0">
+<dict>
+	<key>CFBundleDisplayName</key>
+	<string>DAQiFi</string>
+	<key>CFBundleName</key>
+	<string>DAQiFi</string>
+	<key>UIDeviceFamily</key>
+	<array>
+		<integer>1</integer>
+		<integer>2</integer>
+	</array>
+	<key>UIRequiredDeviceCapabilities</key>
+	<array>
+		<string>arm64</string>
+	</array>
+	<key>UISupportedInterfaceOrientations</key>
+	<array>
+		<string>UIInterfaceOrientationPortrait</string>
+		<string>UIInterfaceOrientationLandscapeLeft</string>
+		<string>UIInterfaceOrientationLandscapeRight</string>
+	</array>
+	<key>UISupportedInterfaceOrientations~ipad</key>
+	<array>
+		<string>UIInterfaceOrientationPortrait</string>
+		<string>UIInterfaceOrientationPortraitUpsideDown</string>
+		<string>UIInterfaceOrientationLandscapeLeft</string>
+		<string>UIInterfaceOrientationLandscapeRight</string>
+	</array>
+	<!-- Empty dict = the system-generated launch screen. Without a launch screen
+	     of some kind iOS letterboxes the app to a legacy screen size, which reads
+	     as a layout bug rather than a missing asset. -->
+	<key>UILaunchScreen</key>
+	<dict/>
+	<!-- DAQiFi discovery is a UDP sweep on port 30303 (WiFiDeviceFinder). iOS
+	     will not deliver those replies until the user grants Local Network
+	     access, and the prompt is only shown if this key is present — an app
+	     missing it fails discovery SILENTLY, which is the exact failure mode the
+	     runbook flags for macOS's firewall prompt. True multicast additionally
+	     needs com.apple.developer.networking.multicast, an Apple-approved
+	     entitlement this head does not yet carry; subnet-directed broadcast is
+	     what is expected to work first. -->
+	<key>NSLocalNetworkUsageDescription</key>
+	<string>DAQiFi discovers Nyquist data-acquisition devices on your local network.</string>
+</dict>
+</plist>
