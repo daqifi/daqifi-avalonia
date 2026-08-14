@@ -62,7 +62,17 @@ cd portomatic
 python3 -m venv .venv && .venv/bin/pip install -e '.[dev,treesitter,visual]'
 ```
 
-Install the .NET 10 SDK. Then, **for the iOS head only**:
+Install the .NET SDK **version pinned in `global.json`** — currently `10.0.302`, with
+`rollForward: disable`, so nothing else will do. That is not fussiness: the SDK's
+bundled runtime version decides `Microsoft.NET.ILLink.Tasks`, an *implicit* package
+reference on the trimming heads which the lock files record. A different SDK therefore
+fails locked-mode restore with `NU1004` before it fails anything you would recognise as
+a real problem. A floating SDK is what took CI down in #107.
+
+Check with `dotnet --version`; if it disagrees with `global.json`, install that exact
+version rather than editing the pin.
+
+Then, **for the iOS head only**:
 
 ```bash
 dotnet workload install ios

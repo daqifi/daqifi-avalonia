@@ -41,9 +41,16 @@ jobs:
     steps:
       - uses: actions/checkout@v4
 
+      # Resolve the SDK from global.json, NOT a floating '10.0.x'.
+      # Microsoft.NET.ILLink.Tasks is an IMPLICIT PackageReference on the trimming heads,
+      # pinned to the SDK's BundledNETCoreAppPackageVersion — its bundled runtime. So the
+      # SDK patch silently decides a package version that the lock files record, which
+      # makes a floating SDK an input to locked mode that nobody controls. '10.0.x'
+      # floated across a whole feature band (to 10.0.400, runtime 10.0.11) and broke
+      # restore with NU1004 on a repo nobody had touched in 12 days. See #107.
       - uses: actions/setup-dotnet@v4
         with:
-          dotnet-version: '10.0.x'
+          global-json-file: global.json
 
       # Fail loudly if the locked-mode gate is NOT actually armed. Without this the
       # whole workflow could go green while restores silently ran unlocked — the
@@ -113,9 +120,12 @@ jobs:
     steps:
       - uses: actions/checkout@v4
 
+      # Same pin as the desktop job — see the comment there, and #107. This job is where
+      # the drift actually bit: the Android head trims, so it carries the implicit
+      # Microsoft.NET.ILLink.Tasks reference whose version the SDK's bundled runtime picks.
       - uses: actions/setup-dotnet@v4
         with:
-          dotnet-version: '10.0.x'
+          global-json-file: global.json
 
       # Not preinstalled with the SDK; the Android SDK itself ships on the runner
       # image and is pointed at by ANDROID_HOME.
