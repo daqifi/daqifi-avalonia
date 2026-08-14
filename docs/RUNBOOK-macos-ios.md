@@ -81,14 +81,15 @@ Then, **for the iOS head only**:
 dotnet workload install ios
 ```
 
-> **This command can fail and still exit 0.** If your dotnet lives somewhere
-> root-owned (`/usr/local/share/dotnet`, which is where the Homebrew cask puts
-> it), the install prints `Inadequate permissions. Run the command with elevated
-> privileges.` and then **returns success**. Re-run it under `sudo` with the
-> absolute path — there is no `/usr/local/bin/dotnet` symlink to rely on:
+> **This command can fail and still exit 0.** If your dotnet sits under a
+> root-owned prefix — the Homebrew cask uses `/usr/local/share/dotnet`, but the
+> prefix varies by install method — it prints `Inadequate permissions. Run the
+> command with elevated privileges.` and then **returns success**. Re-run it
+> under `sudo`, resolving your own dotnet rather than assuming a path, because
+> root's `PATH` will not necessarily contain it:
 >
 > ```bash
-> sudo /usr/local/share/dotnet/dotnet workload install ios
+> sudo "$(command -v dotnet)" workload install ios
 > ```
 >
 > Either way, verify the artifact rather than the exit code: `dotnet workload
