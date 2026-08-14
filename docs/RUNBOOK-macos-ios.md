@@ -487,10 +487,11 @@ dotnet build Daqifi.Avalonia.iOS/Daqifi.Avalonia.iOS.csproj \
 
 Pass the RID. A Release build with no `-r` resolves the **device** RID and then
 wants a signing identity; the simulator RID does not. Then re-read the lock-file
-trap in §1.1 — it applies here with *two* RIDs to lose rather than one, and this
-head is the reason that trap has its own line in the csproj. CI sidesteps it by
-restoring without `-r` and building `--no-restore`, and you can do the same
-locally:
+trap in §1.1, because `-r` is the thing that springs it: this head declares
+`iossimulator-arm64;ios-arm64`, and a restore with `-r iossimulator-arm64`
+rewrites the lock file to hold only that one, dropping `ios-arm64`. The csproj
+says so at the `RuntimeIdentifiers` line. CI sidesteps it by restoring without
+`-r` and building `--no-restore`, and you can do the same locally:
 
 ```bash
 dotnet restore Daqifi.Avalonia.iOS/Daqifi.Avalonia.iOS.csproj
@@ -503,7 +504,8 @@ dotnet build Daqifi.Avalonia.iOS/Daqifi.Avalonia.iOS.csproj \
 .NET for iOS checks the host Xcode for **exact `major.minor` equality**, not a
 floor (`_ValidateXcodeVersion` in `Xamarin.Shared.Sdk.targets`). A *newer* Xcode
 fails identically to an older one, so upgrading Xcode does not fix the error —
-it causes it:
+it causes it. Recorded in #103, from an SDK 10.0.203 machine on Xcode 26.6 (so
+the numbers are that day's, not what you will see under the current pin):
 
 ```
 error : This version of .NET for iOS (26.4.10259) requires Xcode 26.4.
@@ -529,11 +531,11 @@ sudo xcode-select -s /Applications/Xcode_<version>.app/Contents/Developer
 ```
 
 If you only have a mismatched Xcode — the ordinary case on a machine that also
-does other iOS work — `-p:ValidateXcodeVersion=false` is the escape hatch, and
-it does work: the head builds and runs correctly on Xcode 26.6 against a
-26.4 workload. Use it on the command line, knowingly. It is deliberately **not**
-in the csproj and deliberately not in CI, because there it would be silent, and
-the next mismatch is the one you want to hear about.
+does other iOS work — `-p:ValidateXcodeVersion=false` is the escape hatch. #103
+records it working: the head built and ran correctly on Xcode 26.6 against the
+26.4 workload of the day. Use it on the command line, knowingly. It is
+deliberately **not** in the csproj and deliberately not in CI, because there it
+would be silent, and the next mismatch is the one you want to hear about.
 
 **Do not hardcode the version anywhere, and do not infer it.** It moves with
 `global.json`, and nothing else on screen is a reliable proxy for it. Measured:
@@ -701,7 +703,7 @@ Trust it accordingly:
 | §1.2 QA checklist | **Not run.** The app launches and the plot tick fires; nothing beyond that is verified — no device, no discovery, no export |
 | §1.3 `System.IO.Ports` on macOS | **Not verified** |
 | §2.2–2.3 iOS head | **Built and run** on the simulator (#101). Written from the Android head by analogy, then corrected by building it |
-| §2.4 Xcode pin | **Reproduced** — the exact-equality failure above is quoted from a real build on Xcode 26.6 |
+| §2.4 Xcode pin | **Partly executed.** The version derivation was run twice for real — 26.4 under SDK 10.0.203 locally, 26.6 under the pinned 10.0.302 in CI — and CI selects and asserts the Xcode on every run. The mismatch *error* is quoted from #103, not re-reproduced here |
 | §2.4 iOS QA / device | **Not verified.** No provisioned device, no discovery, no QA list run. CI compiles `iossimulator-arm64` (#105) and nothing more |
 
 An earlier revision of this document opened by asserting nobody had ever built or

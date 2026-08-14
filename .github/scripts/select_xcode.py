@@ -162,9 +162,17 @@ def main(argv: list[str]) -> int:
             format_version(version) for version in sorted(installed.values()))
         log(f"FAIL: no installed Xcode is {format_version(wanted)}.x — available: "
             f"{available}. .NET for iOS compares major.minor for EQUALITY, so a newer "
-            "Xcode does not satisfy this. Either the runner image dropped that version, "
-            "or the pinned SDK moved to a workload wanting an Xcode the image does not "
-            "carry yet; see daqifi-avalonia #103 for the options.")
+            "Xcode does NOT satisfy this.")
+        log("")
+        log("The usual cause on CI is the runner image moving to a new macOS major, "
+            "which carries only its own Xcode major. Ways out, best first:")
+        log("  1. pin `runs-on:` to the previous image (e.g. macos-26) until the SDK "
+            "catches up — keeps the compatibility check armed;")
+        log("  2. move global.json to an SDK whose iOS workload wants an Xcode this "
+            "image has, and refresh the lock files;")
+        log("  3. last resort, build with -p:ValidateXcodeVersion=false, accepting that "
+            "the next real toolchain mismatch will be silent.")
+        log("See daqifi-avalonia #103 for why 3 is not the default.")
         return 1
 
     # Highest patch within the matching minor, then path, so the choice is deterministic
