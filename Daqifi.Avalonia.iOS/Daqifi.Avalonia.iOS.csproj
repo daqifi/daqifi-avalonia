@@ -1,0 +1,65 @@
+<Project Sdk="Microsoft.NET.Sdk">
+	<PropertyGroup>
+		<TargetFramework>net10.0-ios</TargetFramework>
+		<!-- Deployment floor, NOT the SDK version. Avalonia.iOS 12.1.1 ships its
+		     lib under net10.0-ios26.0, which pins the SDK it is compiled against;
+		     the app itself still runs back to this minimum. -->
+		<SupportedOSPlatformVersion>13.0</SupportedOSPlatformVersion>
+		<OutputType>Exe</OutputType>
+		<Nullable>enable</Nullable>
+		<ImplicitUsings>enable</ImplicitUsings>
+		<ApplicationId>com.daqifi.avalonia</ApplicationId>
+		<ApplicationVersion>1</ApplicationVersion>
+		<ApplicationDisplayVersion>3.3.0</ApplicationDisplayVersion>
+		<!-- Declared so the lock file carries every RID this head is ever built
+		     for. An iOS build always resolves a RID (there is no RID-less iOS
+		     build), so omitting these would let the first `-r` restore prune the
+		     lock file to one RID and trip NU1004 on the next — the same trap
+		     Directory.Build.props documents for the Desktop head. Device
+		     (ios-arm64) is listed for the eventual provisioned build; simulator
+		     is what runs today.
+		     iossimulator-x64 is deliberately NOT here. The .NET iOS SDK injects
+		     UIRequiredDeviceCapabilities=arm64 into the built app's Info.plist
+		     and that is not settable from our Info.plist (verified: absent in
+		     source, present in the .app after a clean rebuild), so an x64
+		     simulator RID would be a claim in tension with what the toolchain
+		     actually emits — and one nobody can check, since there is no Intel
+		     Mac to build it on. Add it back off the strength of a real build on
+		     Intel hardware, not on the strength of it looking harmless. -->
+		<RuntimeIdentifiers>iossimulator-arm64;ios-arm64</RuntimeIdentifiers>
+		<!-- REQUIRED for EF Core, not a tuning knob. iOS is aot-only, and EF Core
+		     builds its DbContext factory through System.Linq.Expressions, which
+		     falls back to Reflection.Emit and throws
+		         ExecutionEngineException: Attempting to JIT compile method
+		         '...Thunk1_LoggingContext_IReadOnlyList`1_DbSet`1...'
+		         while running in aot-only mode
+		     from App.InitializeMobile (migration) and from
+		     LoggingManager.GetLoggingSessionsSnapshot (the Logged Data pane).
+		     Observed on the simulator before this was set; both now work.
+		     The interpreter costs startup and throughput, so the eventual fix is
+		     an EF compiled model (`dotnet ef dbcontext optimize`) plus AOT-safe
+		     factory registration — until then this is what makes the head run. -->
+		<UseInterpreter>true</UseInterpreter>
+	</PropertyGroup>
+
+	<ItemGroup>
+		<!-- Pinned to the exact version the other heads use. A split Avalonia
+		     graph is silent at compile time and throws MissingMethodException at
+		     runtime; .github/scripts/check_avalonia_versions.py gates it. -->
+		<PackageReference Include="Avalonia.iOS" Version="12.1.1" />
+		<PackageReference Include="Avalonia.Fonts.Inter" Version="12.1.1" />
+	</ItemGroup>
+
+	<ItemGroup>
+		<!-- The whole ported app rides in as a library, exactly as the Android
+		     head takes it. Desktop-only transports (System.IO.Ports,
+		     System.Management) restore their netstandard fallbacks and throw
+		     PlatformNotSupported if touched — mobile is WiFi/TCP only by recorded
+		     divergence (DIV-UI-003).
+		     UndefineProperties: the managed app dll is platform-neutral — letting
+		     the head's iOS RID flow into its build RID-flavors the obj tree and
+		     breaks Avalonia's XamlIl task (AVLN9999). -->
+		<ProjectReference Include="..\Daqifi.Avalonia\Daqifi.Avalonia.csproj"
+		                  UndefineProperties="RuntimeIdentifier;SelfContained" />
+	</ItemGroup>
+</Project>

@@ -12,7 +12,10 @@ are done and shipping.
 ## Read this first: what is and is not already done
 
 **macOS builds and runs today.** Verified on 2026-08-01 on an Apple-silicon Mac
-with .NET SDK 10.0.203:
+with .NET SDK 10.0.203 — **a historical record, from before `global.json` pinned
+the SDK.** Do not install 10.0.203 to reproduce it: with `rollForward: disable`
+that now fails with *"A compatible .NET SDK was not found"* before any build
+runs. Use the pinned SDK from §0; the result below still holds.
 
 ```
 dotnet build Daqifi.Avalonia.Desktop/Daqifi.Avalonia.Desktop.csproj \
@@ -62,11 +65,59 @@ cd portomatic
 python3 -m venv .venv && .venv/bin/pip install -e '.[dev,treesitter,visual]'
 ```
 
-Install the .NET 10 SDK. Then, **for the iOS head only**:
+Install the .NET SDK **version pinned in `global.json`** — currently `10.0.302`, with
+`rollForward: disable`, so nothing else will do. That is not fussiness: the SDK's
+bundled runtime version decides `Microsoft.NET.ILLink.Tasks`, an *implicit* package
+reference on the trimming heads which the lock files record. A different SDK therefore
+fails locked-mode restore with `NU1004` before it fails anything you would recognise as
+a real problem. A floating SDK is what took CI down in #107.
+
+Check with `dotnet --version`; if it disagrees with `global.json`, install that exact
+version rather than editing the pin.
+
+Then, **for the iOS head only**:
 
 ```bash
 dotnet workload install ios
 ```
+
+> **This command can fail and still exit 0.** If your dotnet sits under a
+> root-owned prefix — the Homebrew cask uses `/usr/local/share/dotnet`, but the
+> prefix varies by install method — it prints `Inadequate permissions. Run the
+> command with elevated privileges.` and then **returns success**. It needs
+> `sudo`, and it needs an absolute path, because root's `PATH` will not
+> necessarily contain your dotnet. Find yours — the answer must be an absolute
+> path, i.e. it starts with `/`:
+>
+> ```bash
+> command -v dotnet
+> ```
+>
+> If instead you get an alias or function body — which is what `command -v`
+> prints when `dotnet` is shell-defined rather than a binary — ask the
+> filesystem, which cannot see shell definitions because it is a separate
+> process:
+>
+> ```bash
+> /usr/bin/which dotnet
+> ```
+>
+> Then elevate that exact path:
+>
+> ```bash
+> sudo /the/path/it/printed workload install ios
+> ```
+>
+> Two steps on purpose. Do **not** collapse them into
+> `sudo "$(command -v dotnet)" …`. To be precise about why, since the mechanism
+> is easy to get backwards: `sudo` does **not** do the lookup. The substitution
+> runs first, in *your* shell and as *you*, and `sudo` then elevates whatever
+> string it produced. That is exactly the problem — the one thing being run as
+> root is the one thing you never see. Splitting the steps puts it on screen.
+>
+> Either way, verify the artifact rather than the exit code: `dotnet workload
+> list` must actually list `ios`. This is the same trap as the one at the bottom
+> of this document, caught in the wild.
 
 macOS needs no workload — the Desktop head is plain `net10.0` published to an
 `osx-arm64` RID, not `net10.0-maccatalyst`. Don't install `maccatalyst` unless
@@ -570,8 +621,9 @@ Worth reading before you start, for why things are the way they are:
 ## Confidence, by section
 
 This runbook was drafted from the Windows/Linux side and then partly corrected by
-running it on an Apple-silicon Mac (2026-08-01, .NET SDK 10.0.203). Trust it
-accordingly:
+running it on an Apple-silicon Mac (2026-08-01, .NET SDK 10.0.203 — the SDK of
+the day, before `global.json` pinned it; §0 has the version to actually install).
+Trust it accordingly:
 
 | Section | Status |
 |---|---|
