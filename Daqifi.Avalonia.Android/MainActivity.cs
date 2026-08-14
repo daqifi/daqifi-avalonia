@@ -36,6 +36,33 @@ public class MainActivity : AvaloniaMainActivity
         // Register the USB (OTG) host connector so the mobile shell can offer a
         // "Connect via USB" affordance (experimental — see Usb/AndroidUsbStreamTransport).
         MobileUsbConnector.Current = new Usb.AndroidUsbConnector(this);
+        // Run a foreground service whenever a device is connected, so an acquisition is not
+        // torn down when the app leaves the screen. Attached here rather than in
+        // MainApplication only for consistency with the registrations above; the coordinator
+        // promotes to ApplicationContext and is idempotent across activity recreation.
+        ForegroundServiceCoordinator.Attach(this);
         base.OnCreate(savedInstanceState);
+
+        RequestNotificationPermissionIfNeeded();
+    }
+
+    /// <summary>
+    /// Asks for POST_NOTIFICATIONS on API 33+ so the connected-device notification is visible.
+    /// </summary>
+    /// <remarks>
+    /// Nothing depends on the answer: the foreground service runs and streaming keeps its
+    /// background exemption either way, and a denial only hides the notification. It is
+    /// requested here rather than at connect time because a Service cannot raise a permission
+    /// prompt, and routing one back through the active activity would add lifecycle
+    /// bookkeeping for a prompt the user can ignore with no functional loss.
+    /// </remarks>
+    private void RequestNotificationPermissionIfNeeded()
+    {
+        if (!OperatingSystem.IsAndroidVersionAtLeast(33)) { return; }
+
+        const string permission = global::Android.Manifest.Permission.PostNotifications;
+        if (CheckSelfPermission(permission) == Permission.Granted) { return; }
+
+        RequestPermissions([permission], 0);
     }
 }

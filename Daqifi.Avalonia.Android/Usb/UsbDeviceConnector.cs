@@ -105,7 +105,21 @@ public static class UsbDeviceConnector
             intent.SetPackage(context.PackageName); // keep the broadcast in-app (mutable-PI safety)
 
             // Mutable so the framework can attach EXTRA_DEVICE / EXTRA_PERMISSION_GRANTED.
-            var pendingIntent = PendingIntent.GetBroadcast(context, 0, intent, PendingIntentFlags.Mutable);
+            //
+            // PendingIntentFlags.Mutable is API 31+, and minSdk is 29, so it cannot be passed
+            // unconditionally. Pre-31 needs no flag at all: PendingIntents were mutable by default
+            // there, and the immutable/mutable pair only became meaningful (and one of them
+            // mandatory) in 31. Passing the 31-only bit on 29/30 happens to be harmless — unknown
+            // flag bits are ignored — but relying on that is relying on an accident, and it is the
+            // only CA1416 on a code path that actually runs on Android, so it masks real ones.
+            // From 31 the flag is also MANDATORY — GetBroadcast throws IllegalArgumentException
+            // unless exactly one of Mutable/Immutable is given — so this is not merely a lint fix
+            // on that side. Flags are otherwise left alone: no UpdateCurrent/CancelCurrent, matching
+            // the behaviour this shipped with.
+            var flags = OperatingSystem.IsAndroidVersionAtLeast(31)
+                ? PendingIntentFlags.Mutable
+                : default;
+            var pendingIntent = PendingIntent.GetBroadcast(context, 0, intent, flags);
             manager.RequestPermission(device, pendingIntent);
 
             using (cancellationToken.Register(() => completion.TrySetResult(false)))

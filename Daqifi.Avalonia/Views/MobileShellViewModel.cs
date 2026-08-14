@@ -1,4 +1,5 @@
 using System.Collections.ObjectModel;
+using System.ComponentModel;
 using System.Net;
 using Avalonia.Threading;
 using CommunityToolkit.Mvvm.ComponentModel;
@@ -6,6 +7,7 @@ using CommunityToolkit.Mvvm.Input;
 using Daqifi.Avalonia.Services;
 using Daqifi.Desktop;
 using Daqifi.Desktop.Channel;
+using Daqifi.Desktop.Common.Loggers;
 using Daqifi.Desktop.Device;
 using Daqifi.Desktop.Device.WiFiDevice;
 using ChannelType = Daqifi.Core.Channel.ChannelType;
@@ -26,6 +28,11 @@ public partial class MobileShellViewModel : ObservableObject, IDisposable
     // transport connected — a WiFi DaqifiStreamingDevice OR a USB UsbStreamingDevice
     // (both extend AbstractStreamingDevice, which carries the whole streaming API).
     private AbstractStreamingDevice? _connected;
+
+    // Watchdog state — see CheckForSilentStream. Counted in render-timer polls (50 ms each)
+    // rather than elapsed time, so the threshold tracks how often this code actually runs.
+    private const int SilentPollsBeforeStreamDeclaredDead = 160;   // ~8 s
+    private int _silentPolls;
 
     public ObservableCollection<MobileDeviceItem> Devices { get; } = [];
 
@@ -246,12 +253,18 @@ public partial class MobileShellViewModel : ObservableObject, IDisposable
         var previous = _connected;
         if (previous != null && !ReferenceEquals(previous, device))
         {
+            previous.PropertyChanged -= OnConnectedDevicePropertyChanged;
             try { ConnectionManager.Instance.UnregisterConnectedDevice(previous); } catch { /* best-effort */ }
             // Disconnect off the UI thread — a wedged transport must not stall the UI
             // (matches Dispose's teardown).
             Task.Run(() => { try { previous.Disconnect(); } catch { /* best-effort */ } });
         }
         _connected = device;
+        // Follow the device's own state instead of trusting the snapshot taken when streaming
+        // started. Without this the shell keeps reporting a live stream after the socket dies,
+        // because IsStreaming/Status below are set once and never revisited (#99).
+        device.PropertyChanged -= OnConnectedDevicePropertyChanged;
+        device.PropertyChanged += OnConnectedDevicePropertyChanged;
         // Publish into the shared registry so the projected panes (Storage / Channels)
         // observe this device. Best-effort + idempotent (a USB device the connector
         // already registered is a no-op here).
@@ -352,10 +365,13 @@ public partial class MobileShellViewModel : ObservableObject, IDisposable
     {
         var device = _connected;
         if (device == null || !IsStreaming) { return; }
+        var samplesBefore = _totalSamples;
+        var monitored = 0;
         foreach (var channel in device.DataChannels)
         {
             if (channel.Type != ChannelType.Analog || channel.IsOutput) { continue; }
             if (!channel.IsActive) { continue; }
+            monitored++;
             var sample = channel.ActiveSample;
             if (sample == null) { continue; }
             if (!_seriesByName.TryGetValue(channel.Name, out var series)) { continue; }
@@ -368,6 +384,78 @@ public partial class MobileShellViewModel : ObservableObject, IDisposable
             series.Append(sample.Value);
             _totalSamples++;
         }
+
+        // Only judge silence when there is something whose silence would mean anything. If no
+        // active analog channel is being polled, _totalSamples cannot advance no matter how
+        // healthy the transport is, and the watchdog would tear down a working connection — the
+        // exact false-positive this design was supposed to avoid. Reset rather than merely skip,
+        // so a stretch of unmonitored polls cannot bank silence toward a later trip.
+        if (monitored > 0)
+        {
+            CheckForSilentStream(samplesBefore);
+        }
+        else
+        {
+            _silentPolls = 0;
+        }
+    }
+
+    /// <summary>
+    /// Declares the stream dead after a run of polls that produced no new samples.
+    /// </summary>
+    /// <remarks>
+    /// Defence in depth behind the device-level signal, for the case Core cannot see. A TCP socket
+    /// whose peer vanished without a FIN or RST stays "connected" locally until a write fails or
+    /// keepalive expires, so no transport error is ever raised and
+    /// <c>ConnectionStatus.Lost</c> never arrives — the app would sit reporting a live stream over a
+    /// frozen plot indefinitely (#99).
+    /// <para>
+    /// Silence is unambiguous here because the device streams continuously once started: the lowest
+    /// selectable rate still delivers samples far more often than this threshold. The poll runs on
+    /// the 50 ms render timer, so the window below is about eight seconds — comfortably longer than
+    /// any legitimate gap (a Wi-Fi hiccup, a GC pause, the app being briefly descheduled), and short
+    /// enough that a user is not left staring at a dead plot.
+    /// </para>
+    /// <para>
+    /// Counting polls rather than wall-clock time is deliberate. The threshold should track how
+    /// often this code actually runs, not how much time passes — a wall-clock deadline would fire
+    /// after any window in which the UI was not being driven, whether or not data was flowing.
+    /// <para>
+    /// The render timer <b>does</b> keep firing while the app is backgrounded — measured, ticks
+    /// 1.000 s apart with no gap across a 45 s background window (#113). So this watchdog is armed
+    /// during background too, and that is the behaviour we want:
+    /// </para>
+    /// <list type="bullet">
+    /// <item>the foreground service keeps the socket alive, samples keep arriving, and the
+    /// watchdog stays quiet — verified at 347 samples/s through 180 s with the device asleep;</item>
+    /// <item>if the stream dies anyway (an OEM kills the service, the AP drops), samples stop and
+    /// the watchdog tears the dead connection down. The user returns to "Tap Scan to reconnect"
+    /// rather than a frozen plot, which is the whole point.</item>
+    /// </list>
+    /// </para>
+    /// </remarks>
+    private void CheckForSilentStream(long samplesBefore)
+    {
+        if (_totalSamples != samplesBefore)
+        {
+            _silentPolls = 0;
+            return;
+        }
+
+        _silentPolls++;
+        if (_silentPolls < SilentPollsBeforeStreamDeclaredDead) { return; }
+
+        _silentPolls = 0;
+        AppLogger.Instance.Warning(
+            $"No samples arrived for {SilentPollsBeforeStreamDeclaredDead} consecutive polls while " +
+            "streaming; treating the connection as dead.");
+
+        // Drop the connection, not just the stream. A device that has been told to stream at
+        // 10 Hz or more and delivers nothing for eight seconds is not usefully connected, and the
+        // transport underneath cannot be restarted (#99) — offering "Start streaming" on it would
+        // just fail silently and re-arm this watchdog. Returning to the device list gives the user
+        // the one action that does work: scan and reconnect, which builds a fresh transport.
+        HandleConnectionLost();
     }
 
     private void StopStream()
@@ -375,7 +463,78 @@ public partial class MobileShellViewModel : ObservableObject, IDisposable
         try { _connected?.StopStreaming(); }
         catch { /* best-effort */ }
         IsStreaming = false;
+        _silentPolls = 0;
         if (IsConnected) { Status = "Streaming stopped."; }
+    }
+
+    /// <summary>
+    /// Mirrors the connected device's own state into the shell.
+    /// </summary>
+    /// <remarks>
+    /// The shell used to snapshot <see cref="IsStreaming"/> once when streaming started and never
+    /// look again, so a socket that died underneath it left the UI reporting a live stream over a
+    /// frozen plot (#99). The device is the authority on both flags; this keeps the shell in step.
+    /// Raised on the UI thread by <c>AbstractStreamingDevice</c>, which marshals on our behalf.
+    /// </remarks>
+    private void OnConnectedDevicePropertyChanged(object? sender, PropertyChangedEventArgs e)
+    {
+        if (!ReferenceEquals(sender, _connected)) { return; }
+
+        switch (e.PropertyName)
+        {
+            case nameof(AbstractStreamingDevice.IsStreaming):
+                if (IsStreaming && _connected is { IsStreaming: false })
+                {
+                    HandleStreamLost();
+                }
+                break;
+
+            case nameof(AbstractStreamingDevice.IsConnected):
+                if (IsConnected && _connected is { IsConnected: false })
+                {
+                    HandleConnectionLost();
+                }
+                break;
+        }
+    }
+
+    /// <summary>
+    /// The stream stopped without the user asking. Stop plotting and say so.
+    /// </summary>
+    private void HandleStreamLost()
+    {
+        IsStreaming = false;
+        _silentPolls = 0;
+        Status = "Streaming stopped — the device stopped sending data. Reconnect to start again.";
+    }
+
+    /// <summary>
+    /// The device dropped. Return the shell to the device-list state so the user has an obvious
+    /// route back, rather than leaving a connected-looking screen wired to nothing.
+    /// </summary>
+    /// <remarks>
+    /// The device is unregistered and torn down because a lost transport cannot be reused —
+    /// restarting the stream on it produces no data (#99). A fresh scan-and-connect builds a new
+    /// transport, which does work.
+    /// </remarks>
+    private void HandleConnectionLost()
+    {
+        var lost = _connected;
+        var name = lost?.Name ?? "device";
+
+        IsStreaming = false;
+        IsConnected = false;
+        _silentPolls = 0;
+        _connected = null;
+
+        if (lost != null)
+        {
+            lost.PropertyChanged -= OnConnectedDevicePropertyChanged;
+            try { ConnectionManager.Instance.UnregisterConnectedDevice(lost); } catch { /* best-effort */ }
+            Task.Run(() => { try { lost.Disconnect(); } catch { /* best-effort */ } });
+        }
+
+        Status = $"Lost connection to {name}. Tap Scan to reconnect.";
     }
 
     public void Dispose()
@@ -387,6 +546,7 @@ public partial class MobileShellViewModel : ObservableObject, IDisposable
         IsConnected = false;
         if (connected != null)
         {
+            connected.PropertyChanged -= OnConnectedDevicePropertyChanged;
             try { ConnectionManager.Instance.UnregisterConnectedDevice(connected); }
             catch { /* bridge is best-effort */ }
             Task.Run(() =>
