@@ -481,23 +481,31 @@ Android's `MainActivity` / `MainApplication` split is the model:
 ### 2.4 Build, deploy, QA
 
 ```bash
-dotnet build Daqifi.Avalonia.iOS/Daqifi.Avalonia.iOS.csproj \
-  -c Release -r iossimulator-arm64
-```
-
-Pass the RID. A Release build with no `-r` resolves the **device** RID and then
-wants a signing identity; the simulator RID does not. Then re-read the lock-file
-trap in §1.1, because `-r` is the thing that springs it: this head declares
-`iossimulator-arm64;ios-arm64`, and a restore with `-r iossimulator-arm64`
-rewrites the lock file to hold only that one, dropping `ios-arm64`. The csproj
-says so at the `RuntimeIdentifiers` line. CI sidesteps it by restoring without
-`-r` and building `--no-restore`, and you can do the same locally:
-
-```bash
 dotnet restore Daqifi.Avalonia.iOS/Daqifi.Avalonia.iOS.csproj
 dotnet build Daqifi.Avalonia.iOS/Daqifi.Avalonia.iOS.csproj \
   -c Release -r iossimulator-arm64 --no-restore
 ```
+
+Two commands, not one, and both flags are load-bearing.
+
+**`-r iossimulator-arm64`** — a Release build with no RID resolves the **device**
+RID and then wants a signing identity. The simulator does not.
+
+**`--no-restore`, with the RID-less restore ahead of it** — because `-r` springs
+the lock-file trap from §1.1, and it springs it from **`build`**, not only from
+`restore`. `dotnet build` restores implicitly unless told not to, so
+
+```bash
+dotnet build Daqifi.Avalonia.iOS/Daqifi.Avalonia.iOS.csproj \
+  -c Release -r iossimulator-arm64          # ← rewrites the lock file
+```
+
+prunes this head's `packages.lock.json` to `iossimulator-arm64` alone, dropping
+`ios-arm64`, exactly as an explicit `dotnet restore -r` would — and the csproj
+declares both RIDs at its `RuntimeIdentifiers` line precisely so that loss is
+detectable. Restoring without `-r` first and then building against those assets
+is what CI does, for this reason. If you do run a bare `-r` build anyway, check
+`git status` afterwards and **revert** the lock file rather than staging it.
 
 #### The Xcode version pin — decided (#103)
 
