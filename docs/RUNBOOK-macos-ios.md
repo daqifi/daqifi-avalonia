@@ -12,7 +12,10 @@ are done and shipping.
 ## Read this first: what is and is not already done
 
 **macOS builds and runs today.** Verified on 2026-08-01 on an Apple-silicon Mac
-with .NET SDK 10.0.203:
+with .NET SDK 10.0.203 — **a historical record, from before `global.json` pinned
+the SDK.** Do not install 10.0.203 to reproduce it: with `rollForward: disable`
+that now fails with *"A compatible .NET SDK was not found"* before any build
+runs. Use the pinned SDK from §0; the result below still holds.
 
 ```
 dotnet build Daqifi.Avalonia.Desktop/Daqifi.Avalonia.Desktop.csproj \
@@ -77,6 +80,20 @@ Then, **for the iOS head only**:
 ```bash
 dotnet workload install ios
 ```
+
+> **This command can fail and still exit 0.** If your dotnet lives somewhere
+> root-owned (`/usr/local/share/dotnet`, which is where the Homebrew cask puts
+> it), the install prints `Inadequate permissions. Run the command with elevated
+> privileges.` and then **returns success**. Re-run it under `sudo` with the
+> absolute path — there is no `/usr/local/bin/dotnet` symlink to rely on:
+>
+> ```bash
+> sudo /usr/local/share/dotnet/dotnet workload install ios
+> ```
+>
+> Either way, verify the artifact rather than the exit code: `dotnet workload
+> list` must actually list `ios`. This is the same trap as the one at the bottom
+> of this document, caught in the wild.
 
 macOS needs no workload — the Desktop head is plain `net10.0` published to an
 `osx-arm64` RID, not `net10.0-maccatalyst`. Don't install `maccatalyst` unless
@@ -580,8 +597,9 @@ Worth reading before you start, for why things are the way they are:
 ## Confidence, by section
 
 This runbook was drafted from the Windows/Linux side and then partly corrected by
-running it on an Apple-silicon Mac (2026-08-01, .NET SDK 10.0.203). Trust it
-accordingly:
+running it on an Apple-silicon Mac (2026-08-01, .NET SDK 10.0.203 — the SDK of
+the day, before `global.json` pinned it; §0 has the version to actually install).
+Trust it accordingly:
 
 | Section | Status |
 |---|---|
