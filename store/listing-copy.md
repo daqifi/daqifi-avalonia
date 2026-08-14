@@ -57,7 +57,6 @@ DISCOVER AND CONNECT
 • Or join the device's own DAQiFi-XXXX access point and connect directly,
   with no router involved
 • Manual IP entry for fixed-address setups
-• Works with more than one device at a time
 
 CONFIGURE YOUR CHANNELS
 • Enable and disable analog input channels individually
@@ -162,6 +161,10 @@ Two further claims were softened rather than removed, because they are plausible
 verified on this build:
 
 - **Pinch and drag to zoom the time axis** — dropped. Not tested on the mobile plot.
+- **"Works with more than one device at a time"** — REMOVED, it is false. `MobileShellViewModel`
+  holds a single `_connected` device and `AdoptConnectedDevice` disconnects the previous one when
+  a new device is adopted. The claim came from the native app, which did support it. Do not
+  restore this line unless the mobile shell is changed to hold multiple devices.
 - **"Recordings land in your Documents folder"** — replaced with "Export to a location you
   choose", because export goes through a file picker rather than writing to a fixed folder.
 
