@@ -407,10 +407,17 @@ public partial class MobileShellViewModel : ObservableObject, IDisposable
     /// often this code actually runs, not how much time passes — a wall-clock deadline would fire
     /// after any window in which the UI was not being driven, whether or not data was flowing.
     /// <para>
-    /// NOT yet verified: whether the render timer keeps ticking while the app is backgrounded.
-    /// If it does, a backgrounded stream still delivers samples so the watchdog stays quiet; if it
-    /// does not, no silence accumulates. Both are safe, but the reasoning rests on an untested
-    /// assumption about Avalonia's timer under a stopped activity — see #113.
+    /// The render timer <b>does</b> keep firing while the app is backgrounded — measured, ticks
+    /// 1.000 s apart with no gap across a 45 s background window (#113). So this watchdog is armed
+    /// during background too, and that is the behaviour we want:
+    /// </para>
+    /// <list type="bullet">
+    /// <item>the foreground service keeps the socket alive, samples keep arriving, and the
+    /// watchdog stays quiet — verified at 347 samples/s through 180 s with the device asleep;</item>
+    /// <item>if the stream dies anyway (an OEM kills the service, the AP drops), samples stop and
+    /// the watchdog tears the dead connection down. The user returns to "Tap Scan to reconnect"
+    /// rather than a frozen plot, which is the whole point.</item>
+    /// </list>
     /// </para>
     /// </remarks>
     private void CheckForSilentStream(long samplesBefore)
