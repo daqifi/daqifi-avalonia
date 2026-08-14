@@ -64,6 +64,17 @@
 	  app (alias daqifi-upload, 4096-bit RSA, valid to 2053), backed up to the
 	  DAQiFi "Android App Signing" folder on the TrueNAS share. Losing it is
 	  only recoverable because the first upload enrols in Play App Signing.
+
+	  Its certificate SHA-256 — compare against this if a build's provenance is
+	  ever in doubt:
+	    6E:49:CF:0A:61:DC:50:FD:82:BA:13:34:AA:CD:40:F5:6F:D6:04:80:C4:6E:03:1D:E4:83:9D:AE:77:C4:87:5B
+
+	  NOTE on the certificate DN: it reads "L=Colorado Springs", which is wrong —
+	  the registered address is Golden, CO. It was guessed when the key was
+	  generated and never checked. Harmless: the DN is free text, is not shown to
+	  users, and Google does not validate it, so it is NOT worth rotating a key
+	  over. Use "L=Golden, ST=Colorado" if a replacement upload key is ever
+	  generated (which Play App Signing permits without disturbing the listing).
 	-->
 	<PropertyGroup Condition="'$(Configuration)' == 'Release' And '$(AndroidSigningKeyStore)' != ''">
 		<AndroidKeyStore>true</AndroidKeyStore>
