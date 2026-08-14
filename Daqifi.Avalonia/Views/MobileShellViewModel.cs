@@ -425,8 +425,14 @@ public partial class MobileShellViewModel : ObservableObject, IDisposable
         _silentPolls = 0;
         AppLogger.Instance.Warning(
             $"No samples arrived for {SilentPollsBeforeStreamDeclaredDead} consecutive polls while " +
-            "streaming; treating the stream as dead.");
-        HandleStreamLost();
+            "streaming; treating the connection as dead.");
+
+        // Drop the connection, not just the stream. A device that has been told to stream at
+        // 10 Hz or more and delivers nothing for eight seconds is not usefully connected, and the
+        // transport underneath cannot be restarted (#99) — offering "Start streaming" on it would
+        // just fail silently and re-arm this watchdog. Returning to the device list gives the user
+        // the one action that does work: scan and reconnect, which builds a fresh transport.
+        HandleConnectionLost();
     }
 
     private void StopStream()

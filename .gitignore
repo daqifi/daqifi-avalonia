@@ -26,3 +26,10 @@ publish*/
 *.p12
 *.pfx
 keystore.properties
+
+# Google Play service-account keys. The upload script (tools/play/publish.py) takes a
+# path to one; it belongs outside the repo. A leaked key can publish releases to the
+# store under our developer account, so these must never be committed.
+play-service-account*.json
+service-account*.json
+*-play-api-*.json
