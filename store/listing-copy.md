@@ -100,8 +100,11 @@ Questions or problems: daqifi.com/contact
 | `screenshot-01-live-plot.png` | **Hero shot.** Three analog inputs streaming at 100 Hz, phase-staggered sine waves, live voltage readouts. |
 | `screenshot-02-live-plot-detail.png` | Same view a few seconds later — more cycles on screen, shows the plot filling with history. |
 | `screenshot-03-channel-config.png` | Channel selection and sample-rate configuration. |
+| `screenshot-04-discovery.png` | Scan result — a Nyquist found on the network, ready to tap and connect. |
 
-All screenshots are 1080x2160 — exactly **2:1**, which is Play's cap for phone screenshots. Raw
+Four are supplied because Play requires **at least 4 phone screenshots, minimum 1080 px on each
+side**, to be eligible for promotion. All are 1080x2160 — exactly **2:1**, which is Play's cap for
+phone screenshots, and 1080 on the short side. Raw
 captures off the bench A16 are 1080x2340 (2.17:1) and are rejected unless cropped; the status bar
 and gesture-nav bar are trimmed to reach the ratio, which is also conventional for store shots.
 
