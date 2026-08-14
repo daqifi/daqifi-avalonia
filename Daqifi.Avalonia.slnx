@@ -2,4 +2,5 @@
   <Project Path="Daqifi.Avalonia/Daqifi.Avalonia.csproj" />
   <Project Path="Daqifi.Avalonia.Desktop/Daqifi.Avalonia.Desktop.csproj" />
   <Project Path="Daqifi.Avalonia.Android/Daqifi.Avalonia.Android.csproj" />
+  <Project Path="Daqifi.Avalonia.iOS/Daqifi.Avalonia.iOS.csproj" />
 </Solution>
