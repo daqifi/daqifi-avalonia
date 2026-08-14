@@ -2,6 +2,7 @@ using System.ComponentModel;
 using Android.Content;
 using Android.OS;
 using Daqifi.Desktop;
+using Daqifi.Desktop.Device;
 
 namespace Daqifi.Avalonia.Android;
 
@@ -46,6 +47,24 @@ internal static class ForegroundServiceCoordinator
         Sync();
     }
 
+    /// <summary>
+    /// Re-syncs when a device's own <c>IsConnected</c> flips.
+    /// </summary>
+    /// <remarks>
+    /// The list-change subscription alone is not enough. <see cref="Sync"/> decides from each
+    /// device's <c>IsConnected</c>, but <c>ConnectedDevices</c> only notifies on add/remove — so a
+    /// device that drops while still listed (Core reports <c>ConnectionStatus.Lost</c>, and the
+    /// owner has not torn it down yet, or never does) changed nothing this class was watching.
+    /// The service and its Wi-Fi lock would then stay up indefinitely with no device attached:
+    /// a battery drain plus an ongoing notification the user cannot dismiss.
+    /// </remarks>
+    private static void OnDevicePropertyChanged(object? sender, PropertyChangedEventArgs e)
+    {
+        if (e.PropertyName != nameof(IStreamingDevice.IsConnected)) { return; }
+
+        Sync();
+    }
+
     private static void Sync()
     {
         var context = _context;
@@ -53,10 +72,17 @@ internal static class ForegroundServiceCoordinator
 
         // Count what is actually connected rather than merely listed: a device mid-teardown
         // can still be in the collection.
+        //
+        // Re-subscribing here (rather than only on add) keeps the per-device hooks in step with
+        // the current list without tracking membership separately: -= on a handler that is not
+        // attached is a documented no-op, and += after it cannot double-subscribe.
         var connected = 0;
         foreach (var device in ConnectionManager.Instance.ConnectedDevices)
         {
-            if (device is { IsConnected: true }) { connected++; }
+            if (device is null) { continue; }
+            device.PropertyChanged -= OnDevicePropertyChanged;
+            device.PropertyChanged += OnDevicePropertyChanged;
+            if (device.IsConnected) { connected++; }
         }
 
         if (connected == 0)

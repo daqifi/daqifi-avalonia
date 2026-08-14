@@ -32,8 +32,23 @@ DAQIFI_KEYSTORE_PASS="$(<"$PWFILE")"
   -p:AndroidSdkDirectory="$SDK" \
   -p:AndroidSigningKeyStore="$KEYSTORE"
 
-AAB=$(find Daqifi.Avalonia.Android/bin/Release -name "*-Signed.aab" | head -1)
-[[ -n "$AAB" ]] || { echo "Build finished but produced no signed .aab" >&2; exit 1; }
+# Require EXACTLY one signed bundle. `find … | head -1` picks by filesystem traversal order,
+# so a stale artifact from an earlier build silently wins — and the thing selected here is what
+# gets uploaded to Play. This is not hypothetical: during the first release both a stale
+# `bin/Release/net10.0-android/` tree (from before the TFM was pinned) and an old debug-signed
+# artifact sat alongside the real one, and `head -1` chose between them by luck.
+mapfile -t AABS < <(find Daqifi.Avalonia.Android/bin/Release -name "*-Signed.aab" | sort)
+if [[ ${#AABS[@]} -eq 0 ]]; then
+  echo "Build finished but produced no signed .aab" >&2
+  exit 1
+fi
+if [[ ${#AABS[@]} -gt 1 ]]; then
+  echo "Refusing to guess: ${#AABS[@]} signed bundles under bin/Release —" >&2
+  printf '  %s\n' "${AABS[@]}" >&2
+  echo "Delete the stale ones (or 'dotnet clean') and re-run, so the upload is unambiguous." >&2
+  exit 1
+fi
+AAB="${AABS[0]}"
 
 echo
 echo "Artifact: $AAB"
