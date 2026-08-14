@@ -84,13 +84,25 @@ dotnet workload install ios
 > **This command can fail and still exit 0.** If your dotnet sits under a
 > root-owned prefix — the Homebrew cask uses `/usr/local/share/dotnet`, but the
 > prefix varies by install method — it prints `Inadequate permissions. Run the
-> command with elevated privileges.` and then **returns success**. Re-run it
-> under `sudo`, resolving your own dotnet rather than assuming a path, because
-> root's `PATH` will not necessarily contain it:
+> command with elevated privileges.` and then **returns success**. It needs
+> `sudo`, and it needs an absolute path, because root's `PATH` will not
+> necessarily contain your dotnet. Find yours, and **look at what it prints**:
 >
 > ```bash
-> sudo "$(command -v dotnet)" workload install ios
+> command -v dotnet
 > ```
+>
+> then elevate that exact path:
+>
+> ```bash
+> sudo /the/path/it/printed workload install ios
+> ```
+>
+> Two steps on purpose. Do **not** collapse them into
+> `sudo "$(command -v dotnet)" …` — that runs whatever your `PATH` resolves
+> first as root, sight unseen, which is a bad habit to write into a runbook even
+> where the box is trusted. It also misbehaves when `dotnet` is a shell alias or
+> function, where `command -v` prints a definition rather than a path.
 >
 > Either way, verify the artifact rather than the exit code: `dotnet workload
 > list` must actually list `ios`. This is the same trap as the one at the bottom
