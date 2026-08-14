@@ -49,7 +49,21 @@ public sealed class LivePlot : Control
 
     public IReadOnlyList<ChannelSeries>? Series { get; set; }
 
-    /// <summary>Total samples appended — a live "is data flowing?" readout.</summary>
+    /// <summary>
+    /// Points appended to the plot — a live "is data flowing?" readout.
+    /// </summary>
+    /// <remarks>
+    /// This is NOT the number of samples acquired, and the label says so. The view-model appends
+    /// at most one point per channel per render tick (20 Hz), so at 16 channels / 100 Hz the
+    /// device delivers ~1,600 samples/s while this counts ~320 — about a fifth. Calling it
+    /// "samples" on a data-acquisition app implied an acquisition total it was never measuring.
+    /// <para>
+    /// Recorded data is unaffected: logging runs off the per-frame device message
+    /// (AbstractStreamingDevice.DispatchDeviceMessage), not off this poll, so a CSV export holds
+    /// every sample. Only the live view is decimated. Counting the real total, and min/max
+    /// decimation so transients survive, are tracked in #120.
+    /// </para>
+    /// </remarks>
     public long SampleCount { get; set; }
 
     /// <summary>Request a redraw (called from the view's render timer).</summary>
@@ -112,9 +126,10 @@ public sealed class LivePlot : Control
         // Without one the text is drawn straight over the waveforms and is unreadable wherever a
         // trace crosses it — at 16 channels that is most of the time (#117). The plate is darker
         // than the plot fill and nearly opaque so any trace colour still reads against it.
-        // Header: total samples received — the definitive data-flow readout.
+        // Header: points plotted — the definitive "is data flowing?" readout. Deliberately not
+        // "samples": see the SampleCount remarks. The plot shows a 20 Hz decimation of the stream.
         var header = new FormattedText(
-            $"{SampleCount:N0} samples", CultureInfo.CurrentCulture,
+            $"{SampleCount:N0} points plotted", CultureInfo.CurrentCulture,
             FlowDirection.LeftToRight, Typeface.Default, 13,
             HeaderText);
         ctx.FillRectangle(
