@@ -535,11 +535,18 @@ it does work: the head builds and runs correctly on Xcode 26.6 against a
 in the csproj and deliberately not in CI, because there it would be silent, and
 the next mismatch is the one you want to hear about.
 
-**Do not hardcode the version anywhere.** It moves with `global.json`: the
-10.0.2xx band wanted Xcode 26.4, and the pinned 10.0.302 does not — you can read
-that off the committed lock file, whose framework is `net10.0-ios26.5` rather
-than `net10.0-ios26.4`. Both CI and the command above derive it from the SDK for
-exactly this reason.
+**Do not hardcode the version anywhere, and do not infer it.** It moves with
+`global.json`, and nothing else on screen is a reliable proxy for it. Measured:
+
+| SDK | iOS workload manifest | Xcode it actually wants |
+|---|---|---|
+| 10.0.203 | `26.4.10259` | 26.4 |
+| 10.0.302 (pinned) | `26.5.10315` | **26.6** |
+
+The manifest number is an *iOS* version, and the lock file's `net10.0-ios26.5`
+framework is that same iOS version — neither is the Xcode version, and under the
+current pin they differ from it. #103 quotes 26.4 throughout because that is what
+the SDK of the day wanted; it is no longer the answer. Ask the SDK.
 
 Device deployment needs an Apple Developer account and a provisioning profile.
 The simulator is fine for UI work but **cannot validate discovery** — the network

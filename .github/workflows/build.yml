@@ -183,8 +183,7 @@ jobs:
           # Same glob as the desktop job, not the single concrete path: for one
           # file upload-artifact strips the tree to its least common ancestor, so
           # the concrete path would arrive as a bare project.assets.json with no
-          # project to attribute a failure to — and would collide under
-          # merge-multiple with any other job that did the same.
+          # project to attribute a failure to.
           path: '**/obj/project.assets.json'
           if-no-files-found: error
 
@@ -263,10 +262,14 @@ jobs:
       # workload asks for. The macOS image carries every minor of its Xcode major
       # (26.0.1 … 26.6 today), so the second is a one-line xcode-select.
       #
-      # The version is READ FROM THE SDK, never written here. It moves with the SDK pin:
-      # the 10.0.2xx band wanted Xcode 26.4, and the pinned 10.0.302 does not — visible
-      # in the committed lock file, whose framework reads net10.0-ios26.5. A literal in
-      # this file would have been stale before it was committed.
+      # The version is READ FROM THE SDK, never written here, because it tracks the SDK
+      # pin and tracks nothing else you could infer it from. Under 10.0.203 the answer was
+      # Xcode 26.4; under the pinned 10.0.302 the iOS workload manifest is 26.5.10315 and
+      # the Xcode it asks for is 26.6. Those two disagree on purpose — the manifest's 26.5
+      # is an iOS version, and the lock file's net10.0-ios26.5 framework is that same
+      # number, not an Xcode one. So every literal that looked plausible while writing
+      # this (#103's 26.4, the manifest's 26.5, the lock file's 26.5) is wrong. Ask the
+      # SDK; it is the only thing that knows.
       - name: Pin Xcode to the version the iOS workload requires
         run: |
           set -euo pipefail
@@ -374,11 +377,19 @@ jobs:
     steps:
       - uses: actions/checkout@v4
 
+      # One directory PER ARTIFACT (which is what omitting merge-multiple gets you),
+      # not all three flattened into one. Every head restores the shared library and
+      # the vendored OxyPlot, so all three artifacts contain
+      # Daqifi.Avalonia/obj/project.assets.json at the same relative path — merged, they
+      # overwrite each other and whichever job's extraction landed last is the only one
+      # the gate ever sees. That is the exact failure this check exists to prevent, one
+      # level up: a split between two heads in a shared project is invisible if only one
+      # head's copy survives. It also makes the paths in a failure message say WHICH head
+      # (graphs/assets-ios/... rather than graphs/...).
       - name: Download dependency graphs
         uses: actions/download-artifact@v4
         with:
           path: graphs
-          merge-multiple: true
 
       # Run the guard's own tests before trusting its verdict. Its value is entirely in
       # FAILING on a split graph; a guard that silently only ever passes reads as coverage
