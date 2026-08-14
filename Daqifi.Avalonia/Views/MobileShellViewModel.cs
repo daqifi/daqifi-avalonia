@@ -410,7 +410,7 @@ public partial class MobileShellViewModel : ObservableObject, IDisposable
     /// NOT yet verified: whether the render timer keeps ticking while the app is backgrounded.
     /// If it does, a backgrounded stream still delivers samples so the watchdog stays quiet; if it
     /// does not, no silence accumulates. Both are safe, but the reasoning rests on an untested
-    /// assumption about Avalonia's timer under a stopped activity — see #110.
+    /// assumption about Avalonia's timer under a stopped activity — see #113.
     /// </para>
     /// </remarks>
     private void CheckForSilentStream(long samplesBefore)
