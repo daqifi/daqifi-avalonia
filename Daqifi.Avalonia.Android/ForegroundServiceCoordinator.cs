@@ -1,3 +1,4 @@
+using System.Linq;
 using System.ComponentModel;
 using Android.Content;
 using Android.OS;
@@ -70,14 +71,19 @@ internal static class ForegroundServiceCoordinator
         var context = _context;
         if (context is null) { return; }
 
-        // Count what is actually connected rather than merely listed: a device mid-teardown
-        // can still be in the collection.
-        //
-        // Re-subscribing here (rather than only on add) keeps the per-device hooks in step with
-        // the current list without tracking membership separately: -= on a handler that is not
-        // attached is a documented no-op, and += after it cannot double-subscribe.
+        // Snapshot before iterating. ConnectedDevices is a plain List<> that ConnectionManager
+        // mutates on whatever thread drives connect/disconnect, so enumerating it live can throw
+        // "Collection was modified" mid-loop. The window was always there; driving Sync off each
+        // device's IsConnected makes it run far more often, which widens it enough to close now.
+        var devices = ConnectionManager.Instance.ConnectedDevices.ToArray();
+
+        // Count what is actually connected rather than merely listed: a device mid-teardown can
+        // still be in the collection. Re-subscribing per pass (rather than only on add) keeps the
+        // per-device hooks in step with the current list without tracking membership separately:
+        // -= on a handler that is not attached is a documented no-op, so the pair cannot
+        // double-subscribe.
         var connected = 0;
-        foreach (var device in ConnectionManager.Instance.ConnectedDevices)
+        foreach (var device in devices)
         {
             if (device is null) { continue; }
             device.PropertyChanged -= OnDevicePropertyChanged;

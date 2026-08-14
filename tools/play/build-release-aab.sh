@@ -52,11 +52,18 @@ AAB="${AABS[0]}"
 
 echo
 echo "Artifact: $AAB"
-echo "Signing certificate:"
-if unzip -p "$AAB" 'META-INF/*.RSA' 2>/dev/null | keytool -printcert 2>/dev/null | grep -E "^Owner:"; then
-  :
-else
-  echo "  (could not read certificate — verify manually before uploading)" >&2
+# Fail rather than warn. This script exists to stop a debug-signed bundle reaching Play, where
+# the first upload permanently fixes the upload certificate — a warning printed above a 300-line
+# build log is not a control, it is a hope. Unreadable is also a failure: if the certificate
+# cannot be checked, the one guarantee this script offers has not been established.
+OWNER=$(unzip -p "$AAB" 'META-INF/*.RSA' 2>/dev/null | keytool -printcert 2>/dev/null | grep -m1 '^Owner:')
+if [[ -z "$OWNER" ]]; then
+  echo "Could not read the signing certificate from $AAB — refusing to vouch for it." >&2
+  exit 1
 fi
-echo
-echo "If the Owner above says 'CN=Android Debug', DO NOT UPLOAD IT."
+if [[ "$OWNER" == *"CN=Android Debug"* ]]; then
+  echo "REFUSING: $AAB is DEBUG-signed ($OWNER)." >&2
+  echo "Uploading it would permanently set Play's upload certificate to a throwaway key." >&2
+  exit 1
+fi
+echo "Signing certificate: $OWNER"

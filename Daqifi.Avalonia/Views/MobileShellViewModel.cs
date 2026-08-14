@@ -366,10 +366,12 @@ public partial class MobileShellViewModel : ObservableObject, IDisposable
         var device = _connected;
         if (device == null || !IsStreaming) { return; }
         var samplesBefore = _totalSamples;
+        var monitored = 0;
         foreach (var channel in device.DataChannels)
         {
             if (channel.Type != ChannelType.Analog || channel.IsOutput) { continue; }
             if (!channel.IsActive) { continue; }
+            monitored++;
             var sample = channel.ActiveSample;
             if (sample == null) { continue; }
             if (!_seriesByName.TryGetValue(channel.Name, out var series)) { continue; }
@@ -383,7 +385,19 @@ public partial class MobileShellViewModel : ObservableObject, IDisposable
             _totalSamples++;
         }
 
-        CheckForSilentStream(samplesBefore);
+        // Only judge silence when there is something whose silence would mean anything. If no
+        // active analog channel is being polled, _totalSamples cannot advance no matter how
+        // healthy the transport is, and the watchdog would tear down a working connection — the
+        // exact false-positive this design was supposed to avoid. Reset rather than merely skip,
+        // so a stretch of unmonitored polls cannot bank silence toward a later trip.
+        if (monitored > 0)
+        {
+            CheckForSilentStream(samplesBefore);
+        }
+        else
+        {
+            _silentPolls = 0;
+        }
     }
 
     /// <summary>

@@ -30,9 +30,10 @@ namespace Daqifi.Avalonia.Android;
 /// A process with a running foreground service is exempt from that restriction.
 /// </para>
 /// <para>
-/// This service does NOT address a socket that dies for other reasons — the app currently
-/// fails to notice any mid-stream transport loss and keeps claiming to stream. That is
-/// tracked separately as #99 and is not something a foreground service can fix.
+/// This service does NOT address a socket that dies for other reasons; noticing that is a
+/// separate concern, handled by the transport-loss propagation and data-arrival watchdog
+/// added for #99. Keeping the two apart matters — a foreground service cannot detect a dead
+/// socket, and a watchdog cannot stop the platform killing a healthy one.
 /// </para>
 /// </remarks>
 [Service(Exported = false, ForegroundServiceType = ForegroundService.TypeConnectedDevice)]
@@ -67,6 +68,16 @@ internal sealed class StreamingForegroundService : Service
             // vulnerable to the background teardown described above, so this is worth
             // a log line even though it is not fatal.
             Log.Error(LogTag, $"startForeground failed; streaming will not survive backgrounding: {ex.Message}");
+
+            // Stop, do not limp on. The coordinator reaches us via StartForegroundService, and
+            // from Android 8 the system REQUIRES a service started that way to call
+            // startForeground within ~5 s or it kills the app with a
+            // ForegroundServiceDidNotStartInTimeException. Staying alive unpromoted therefore
+            // trades a lost background exemption for a guaranteed crash. Stopping keeps the
+            // connection working — it just loses the exemption, which is the degradation the
+            // catch was always meant to accept.
+            StopSelf(startId);
+            return StartCommandResult.NotSticky;
         }
 
         AcquireWifiLock();
