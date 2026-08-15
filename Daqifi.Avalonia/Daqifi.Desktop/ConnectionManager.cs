@@ -326,12 +326,27 @@ public partial class ConnectionManager : ObservableObject
         if (device is null || ConnectedDevices.Contains(device)) { return; }
         ConnectedDevices.Add(device);
         OnPropertyChanged(nameof(ConnectedDevices));
+
+        // Same enrichment Connect() applies. This is the path MOBILE connects through, and
+        // without it every Sentry event from Android arrived with no device model, serial or
+        // firmware attached — the desktop's crash reports carry all three, so mobile reports
+        // were strictly harder to act on for no reason other than which method was called.
+        var connectionType = device.ConnectionType == ConnectionType.Usb ? "usb" : "wifi";
+        AppLogger.Instance.SetDeviceContext(
+            device.DevicePartNumber,
+            device.DeviceSerialNo,
+            device.DeviceVersion,
+            connectionType,
+            device.DataChannels?.Count(c => c.IsActive) ?? 0);
+        AppLogger.Instance.AddBreadcrumb(
+            "device", $"Device connected: {device.Name} (S/N: {device.DeviceSerialNo}) via {connectionType}");
     }
 
     public void UnregisterConnectedDevice(IStreamingDevice device)
     {
         if (device is null || !ConnectedDevices.Remove(device)) { return; }
         OnPropertyChanged(nameof(ConnectedDevices));
+        AppLogger.Instance.AddBreadcrumb("device", $"Device unregistered: {device.Name}");
     }
 
     // @port: Daqifi.Desktop.ConnectionManager.Reboot

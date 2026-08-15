@@ -150,6 +150,21 @@ public class AppLogger : IAppLogger
             // usernames, no email, no IP address attached to events. Sentry's server-side
             // setting scrubs IPs as well; both belt and braces.
             options.SendDefaultPii = false;
+            // Persist envelopes to disk so an event survives having nowhere to send it.
+            //
+            // This is not a nicety on mobile: a DAQiFi is usually reached over its own soft-AP
+            // (SSID "DAQiFi-xxxx", 192.168.1.1), and joining it takes the phone OFF the internet
+            // for the whole session. Measured on a Galaxy A16 mid-stream: 100% packet loss to
+            // 8.8.8.8. Without a cache directory the SDK holds events in memory only, so they
+            // die with the process — a probe captured mid-stream never reached Sentry at all,
+            // taking its breadcrumb trail with it, which is precisely the activity this app
+            // exists for. With one, the same probe landed on disk and was delivered on the next
+            // run once the phone was back on a routable network.
+            options.CacheDirectoryPath = AppDataPaths.SentryCacheDirectory;
+            // Bounded: this runs during Init on the UI thread at startup. A phone still on the
+            // soft-AP must not trade a hang for a lost report; the backlog simply waits for the
+            // run after that.
+            options.InitCacheFlushTimeout = TimeSpan.FromSeconds(3);
         });
     }
 
