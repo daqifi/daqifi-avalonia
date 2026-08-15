@@ -347,6 +347,25 @@ public partial class ConnectionManager : ObservableObject
         if (device is null || !ConnectedDevices.Remove(device)) { return; }
         OnPropertyChanged(nameof(ConnectedDevices));
         AppLogger.Instance.AddBreadcrumb("device", $"Device unregistered: {device.Name}");
+
+        // Mirror Disconnect()'s teardown. Sentry scope tags are global, so leaving them set
+        // would tag every later event with a device that is no longer connected — mobile
+        // tears down through here rather than Disconnect(), so a crash after a drop would
+        // have named the dead device's model and serial. Wrong context is worse than none.
+        if (ConnectedDevices.Count == 0)
+        {
+            AppLogger.Instance.ClearDeviceContext();
+        }
+        else
+        {
+            var remaining = ConnectedDevices[^1];
+            AppLogger.Instance.SetDeviceContext(
+                remaining.DevicePartNumber,
+                remaining.DeviceSerialNo,
+                remaining.DeviceVersion,
+                remaining.ConnectionType == ConnectionType.Usb ? "usb" : "wifi",
+                remaining.DataChannels?.Count(c => c.IsActive) ?? 0);
+        }
     }
 
     // @port: Daqifi.Desktop.ConnectionManager.Reboot

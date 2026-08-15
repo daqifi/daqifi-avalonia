@@ -161,10 +161,15 @@ public class AppLogger : IAppLogger
             // exists for. With one, the same probe landed on disk and was delivered on the next
             // run once the phone was back on a routable network.
             options.CacheDirectoryPath = AppDataPaths.SentryCacheDirectory;
-            // Bounded: this runs during Init on the UI thread at startup. A phone still on the
-            // soft-AP must not trade a hang for a lost report; the backlog simply waits for the
-            // run after that.
-            options.InitCacheFlushTimeout = TimeSpan.FromSeconds(3);
+            // Explicit rather than implicit, and deliberately NOT raised above the SDK's own
+            // default (measured: 1s in Sentry 6.8.0). This blocks Init on the UI thread at
+            // startup, and the phone is offline for exactly the sessions that fill the cache,
+            // so a longer window buys nothing but startup latency — on Android it walks toward
+            // the 5s ANR threshold. A backlog that misses this window just goes out on the next
+            // run; the envelopes are on disk, which is the whole point.
+            options.InitCacheFlushTimeout = TimeSpan.FromSeconds(1);
+            // The cache is bounded by MaxCacheItems (measured: 30 by default), so a phone that
+            // stays offline discards oldest-first rather than growing without limit.
         });
     }
 
