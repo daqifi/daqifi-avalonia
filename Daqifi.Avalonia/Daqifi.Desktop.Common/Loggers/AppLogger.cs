@@ -139,7 +139,30 @@ public class AppLogger : IAppLogger
             return;
         }
 
-        _sentryDisposable = SentrySdk.Init(options =>
+        // Init is guarded because it now writes to the filesystem, and this constructor runs
+        // inside a static readonly initializer. SentrySdk.Init does not catch: it builds the
+        // caching transport, which calls CreateDirectory on CacheDirectoryPath unguarded. An
+        // unwritable directory — a locked-down %ProgramData% ACL on an elevated desktop run, an
+        // Android storage failure — would therefore escape the constructor, and the CLR would
+        // wrap it as TypeInitializationException and poison the type for the life of the
+        // process. Every later AppLogger.Instance access would throw, taking NLog file logging
+        // down with it, and on mobile the first touch happens in InitializeMobile() BEFORE the
+        // global exception handlers are installed, so the app would die at launch with no trail
+        // at all. Degrade the way the missing-DSN path above already does: no Sentry, but the
+        // logger still works.
+        try
+        {
+            _sentryDisposable = InitializeSentry(dsn, version);
+        }
+        catch (Exception ex)
+        {
+            _sentryDisposable = null;
+            _logger.Warn(ex, "Sentry initialisation failed — error reporting is disabled, logging continues");
+        }
+    }
+
+    private static IDisposable InitializeSentry(string dsn, string version) =>
+        SentrySdk.Init(options =>
         {
             options.Dsn = dsn;
             options.Release = version;
@@ -161,17 +184,17 @@ public class AppLogger : IAppLogger
             // exists for. With one, the same probe landed on disk and was delivered on the next
             // run once the phone was back on a routable network.
             options.CacheDirectoryPath = AppDataPaths.SentryCacheDirectory;
-            // Explicit rather than implicit, and deliberately NOT raised above the SDK's own
-            // default (measured: 1s in Sentry 6.8.0). This blocks Init on the UI thread at
-            // startup, and the phone is offline for exactly the sessions that fill the cache,
-            // so a longer window buys nothing but startup latency — on Android it walks toward
-            // the 5s ANR threshold. A backlog that misses this window just goes out on the next
-            // run; the envelopes are on disk, which is the whole point.
-            options.InitCacheFlushTimeout = TimeSpan.FromSeconds(1);
+            // Zero, not the SDK's 1s default: any positive value makes Init block the calling
+            // thread on a flush attempt, and it waits out the FULL timeout when there is no
+            // route — which is exactly the state of a phone still on the soft-AP with a backlog
+            // pending. That is the UI thread during cold start, so the cost lands on precisely
+            // the sessions this cache exists to serve, on every launch. Zero skips the wait and
+            // leaves delivery to the background worker; the envelopes are already durable on
+            // disk, so nothing is lost by not waiting for them.
+            options.InitCacheFlushTimeout = TimeSpan.Zero;
             // The cache is bounded by MaxCacheItems (measured: 30 by default), so a phone that
             // stays offline discards oldest-first rather than growing without limit.
         });
-    }
 
     #region Logger Methods
     // @port: Daqifi.Desktop.Common.Loggers.AppLogger.Information

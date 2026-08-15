@@ -268,7 +268,7 @@ public partial class ConnectionManager : ObservableObject
                 device.DeviceSerialNo,
                 device.DeviceVersion,
                 connectionType,
-                device.DataChannels?.Count(c => c.IsActive) ?? 0);
+                ActiveChannelCount(device));
             AppLogger.Instance.AddBreadcrumb("device", $"Device connected: {device.Name} (S/N: {device.DeviceSerialNo}) via {connectionType}");
         }
         catch (Exception ex)
@@ -303,7 +303,7 @@ public partial class ConnectionManager : ObservableObject
                     remaining.DeviceSerialNo,
                     remaining.DeviceVersion,
                     remainingType,
-                    remaining.DataChannels?.Count(c => c.IsActive) ?? 0);
+                    ActiveChannelCount(remaining));
             }
         }
         catch (Exception ex)
@@ -337,10 +337,20 @@ public partial class ConnectionManager : ObservableObject
             device.DeviceSerialNo,
             device.DeviceVersion,
             connectionType,
-            device.DataChannels?.Count(c => c.IsActive) ?? 0);
+            ActiveChannelCount(device));
         AppLogger.Instance.AddBreadcrumb(
             "device", $"Device connected: {device.Name} (S/N: {device.DeviceSerialNo}) via {connectionType}");
     }
+
+    /// <summary>
+    /// The channel count reported to Sentry as <c>daqifi.active_channels</c>. Single definition
+    /// on purpose: the tag is set from several places (connect, unregister, stream start), and
+    /// if they disagreed the tag would silently mean different things depending on which fired
+    /// last. Counts every active channel on the device, not just the analog ones a given screen
+    /// happens to be streaming.
+    /// </summary>
+    internal static int ActiveChannelCount(IStreamingDevice device) =>
+        device.DataChannels?.Count(c => c.IsActive) ?? 0;
 
     public void UnregisterConnectedDevice(IStreamingDevice device)
     {
@@ -364,7 +374,7 @@ public partial class ConnectionManager : ObservableObject
                 remaining.DeviceSerialNo,
                 remaining.DeviceVersion,
                 remaining.ConnectionType == ConnectionType.Usb ? "usb" : "wifi",
-                remaining.DataChannels?.Count(c => c.IsActive) ?? 0);
+                ActiveChannelCount(remaining));
         }
     }
 
