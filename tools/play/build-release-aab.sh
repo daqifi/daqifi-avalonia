@@ -28,6 +28,13 @@ PROJ="Daqifi.Avalonia.Android/Daqifi.Avalonia.Android.csproj"
 export DAQIFI_KEYSTORE_PASS
 DAQIFI_KEYSTORE_PASS="$(<"$PWFILE")"
 
+# Marker for the freshness check below. Anything the build does not regenerate will be older
+# than this. Removed via trap rather than a hand-placed rm: the script can exit at several points
+# between here and the check (build failure, ambiguous bundle, bad certificate), and each early
+# exit would otherwise leak a temp file.
+STAMP=$(mktemp)
+trap 'rm -f "$STAMP"' EXIT
+
 "$DOTNET" build "$PROJ" -c Release \
   -p:AndroidSdkDirectory="$SDK" \
   -p:AndroidSigningKeyStore="$KEYSTORE"
@@ -50,6 +57,17 @@ if [[ ${#AABS[@]} -gt 1 ]]; then
 fi
 AAB="${AABS[0]}"
 
+# Refuse a stale artifact. The build succeeding does NOT guarantee it produced a new bundle — an
+# up-to-date incremental build is a successful no-op, and the previous run's .aab is still sitting
+# at the same path. Every other check here would pass on it: it is signed with the right key and
+# there is exactly one. This is precisely how versionCode 1 nearly went to production carrying a
+# 13-commit-old build, so the freshness of the thing being uploaded is checked, not assumed.
+if [[ ! "$AAB" -nt "$STAMP" ]]; then
+  echo "REFUSING: $AAB is older than this build — the build did not regenerate it." >&2
+  echo "Run 'dotnet clean' (or delete bin/Release) and try again." >&2
+  exit 1
+fi
+
 echo
 echo "Artifact: $AAB"
 # Fail rather than warn. This script exists to stop a debug-signed bundle reaching Play, where
@@ -67,3 +85,24 @@ if [[ "$OWNER" == *"CN=Android Debug"* ]]; then
   exit 1
 fi
 echo "Signing certificate: $OWNER"
+
+# Print the versionCode. Play shows this number and not a commit, so it is the only identifier
+# shared between what is built here and what appears on a track — say it out loud at build time
+# rather than leaving the operator to infer it. Record it against the commit in
+# tools/play/README.md after uploading.
+# NOTE: a SINGLE -getProperty returns the bare value ("2"); it only emits JSON when several
+# properties are requested. Parsing the JSON form here silently produced an empty string.
+#
+# stderr is NOT discarded, and a value that is not a plain integer is fatal. Printing
+# "versionCode: unknown" and carrying on would defeat the entire reason this line exists — the
+# number is the only identifier shared between this artifact and a Play track, and a release tool
+# that shrugs when it cannot establish that is the same silent-degradation shape that let
+# versionCode 1 drift 13 commits behind unnoticed.
+VC=$("$DOTNET" msbuild "$PROJ" -getProperty:ApplicationVersion -p:AndroidSdkDirectory="$SDK" | tr -d '[:space:]')
+if [[ ! "$VC" =~ ^[0-9]+$ ]]; then
+  echo "Could not determine the versionCode (got '${VC}') — refusing to hand over an" >&2
+  echo "artifact whose identity cannot be recorded." >&2
+  exit 1
+fi
+echo "versionCode:         $VC"
+echo "built from commit:   $(git rev-parse --short HEAD 2>/dev/null || echo unknown)"
