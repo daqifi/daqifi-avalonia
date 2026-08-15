@@ -122,6 +122,11 @@ generator on the inputs would be. Nothing about the UI is mocked.
 Set the pattern back to `0` when finished; a bench device left in test mode returns synthetic data
 to whoever picks it up next.
 
+**Regenerated after the "samples" → "points plotted" relabel (#120).** The readout in the plot is a
+count of points drawn, not samples acquired — the plot decimates the stream to 20 Hz — so the old
+screenshots showed a label the app no longer uses. Screens 03 and 04 are byte-identical to the
+previous set: the crop removes the status bar, and neither screen has other time-varying content.
+
 ---
 
 ## Notes for whoever pastes this
