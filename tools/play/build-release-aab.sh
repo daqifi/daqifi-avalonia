@@ -29,8 +29,11 @@ export DAQIFI_KEYSTORE_PASS
 DAQIFI_KEYSTORE_PASS="$(<"$PWFILE")"
 
 # Marker for the freshness check below. Anything the build does not regenerate will be older
-# than this.
+# than this. Removed via trap rather than a hand-placed rm: the script can exit at several points
+# between here and the check (build failure, ambiguous bundle, bad certificate), and each early
+# exit would otherwise leak a temp file.
 STAMP=$(mktemp)
+trap 'rm -f "$STAMP"' EXIT
 
 "$DOTNET" build "$PROJ" -c Release \
   -p:AndroidSdkDirectory="$SDK" \
@@ -62,10 +65,8 @@ AAB="${AABS[0]}"
 if [[ ! "$AAB" -nt "$STAMP" ]]; then
   echo "REFUSING: $AAB is older than this build — the build did not regenerate it." >&2
   echo "Run 'dotnet clean' (or delete bin/Release) and try again." >&2
-  rm -f "$STAMP"
   exit 1
 fi
-rm -f "$STAMP"
 
 echo
 echo "Artifact: $AAB"
@@ -91,6 +92,17 @@ echo "Signing certificate: $OWNER"
 # tools/play/README.md after uploading.
 # NOTE: a SINGLE -getProperty returns the bare value ("2"); it only emits JSON when several
 # properties are requested. Parsing the JSON form here silently produced an empty string.
-VC=$("$DOTNET" msbuild "$PROJ" -getProperty:ApplicationVersion -p:AndroidSdkDirectory="$SDK" 2>/dev/null | tr -d '[:space:]')
-echo "versionCode:         ${VC:-unknown}"
+#
+# stderr is NOT discarded, and a value that is not a plain integer is fatal. Printing
+# "versionCode: unknown" and carrying on would defeat the entire reason this line exists — the
+# number is the only identifier shared between this artifact and a Play track, and a release tool
+# that shrugs when it cannot establish that is the same silent-degradation shape that let
+# versionCode 1 drift 13 commits behind unnoticed.
+VC=$("$DOTNET" msbuild "$PROJ" -getProperty:ApplicationVersion -p:AndroidSdkDirectory="$SDK" | tr -d '[:space:]')
+if [[ ! "$VC" =~ ^[0-9]+$ ]]; then
+  echo "Could not determine the versionCode (got '${VC}') — refusing to hand over an" >&2
+  echo "artifact whose identity cannot be recorded." >&2
+  exit 1
+fi
+echo "versionCode:         $VC"
 echo "built from commit:   $(git rev-parse --short HEAD 2>/dev/null || echo unknown)"
