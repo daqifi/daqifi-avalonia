@@ -331,15 +331,34 @@ public partial class ConnectionManager : ObservableObject
         // without it every Sentry event from Android arrived with no device model, serial or
         // firmware attached — the desktop's crash reports carry all three, so mobile reports
         // were strictly harder to act on for no reason other than which method was called.
-        var connectionType = device.ConnectionType == ConnectionType.Usb ? "usb" : "wifi";
-        AppLogger.Instance.SetDeviceContext(
-            device.DevicePartNumber,
-            device.DeviceSerialNo,
-            device.DeviceVersion,
-            connectionType,
-            ActiveChannelCount(device));
-        AppLogger.Instance.AddBreadcrumb(
-            "device", $"Device connected: {device.Name} (S/N: {device.DeviceSerialNo}) via {connectionType}");
+        EnrichTelemetry(() =>
+        {
+            var connectionType = device.ConnectionType == ConnectionType.Usb ? "usb" : "wifi";
+            AppLogger.Instance.SetDeviceContext(
+                device.DevicePartNumber,
+                device.DeviceSerialNo,
+                device.DeviceVersion,
+                connectionType,
+                ActiveChannelCount(device));
+            AppLogger.Instance.AddBreadcrumb(
+                "device", $"Device connected: {device.Name} (S/N: {device.DeviceSerialNo}) via {connectionType}");
+        });
+    }
+
+    /// <summary>
+    /// Runs Sentry enrichment so nothing it throws can escape into the device flow. Telemetry is
+    /// not load-bearing: an exception here unwinds into UsbDeviceConnector's catch, which tears
+    /// the device down and reports a SUCCESSFUL connect as a failure (audit #ec1ca58).
+    /// <para>
+    /// The catch is silent on purpose. The likeliest failure is AppLogger.Instance itself failing
+    /// to construct (issue #127) — reporting that through AppLogger would throw again, which is
+    /// exactly the trap this guard exists to avoid.
+    /// </para>
+    /// </summary>
+    private static void EnrichTelemetry(Action enrich)
+    {
+        try { enrich(); }
+        catch { /* telemetry must never break a connect or a teardown */ }
     }
 
     /// <summary>
@@ -379,26 +398,29 @@ public partial class ConnectionManager : ObservableObject
     {
         if (device is null || !ConnectedDevices.Remove(device)) { return; }
         OnPropertyChanged(nameof(ConnectedDevices));
-        AppLogger.Instance.AddBreadcrumb("device", $"Device unregistered: {device.Name}");
+        EnrichTelemetry(() =>
+        {
+            AppLogger.Instance.AddBreadcrumb("device", $"Device unregistered: {device.Name}");
 
-        // Mirror Disconnect()'s teardown. Sentry scope tags are global, so leaving them set
-        // would tag every later event with a device that is no longer connected — mobile
-        // tears down through here rather than Disconnect(), so a crash after a drop would
-        // have named the dead device's model and serial. Wrong context is worse than none.
-        if (ConnectedDevices.Count == 0)
-        {
-            AppLogger.Instance.ClearDeviceContext();
-        }
-        else
-        {
-            var remaining = ConnectedDevices[^1];
-            AppLogger.Instance.SetDeviceContext(
-                remaining.DevicePartNumber,
-                remaining.DeviceSerialNo,
-                remaining.DeviceVersion,
-                remaining.ConnectionType == ConnectionType.Usb ? "usb" : "wifi",
-                ActiveChannelCount(remaining));
-        }
+            // Mirror Disconnect()'s teardown. Sentry scope tags are global, so leaving them set
+            // would tag every later event with a device that is no longer connected — mobile
+            // tears down through here rather than Disconnect(), so a crash after a drop would
+            // have named the dead device's model and serial. Wrong context is worse than none.
+            if (ConnectedDevices.Count == 0)
+            {
+                AppLogger.Instance.ClearDeviceContext();
+            }
+            else
+            {
+                var remaining = ConnectedDevices[^1];
+                AppLogger.Instance.SetDeviceContext(
+                    remaining.DevicePartNumber,
+                    remaining.DeviceSerialNo,
+                    remaining.DeviceVersion,
+                    remaining.ConnectionType == ConnectionType.Usb ? "usb" : "wifi",
+                    ActiveChannelCount(remaining));
+            }
+        });
     }
 
     // @port: Daqifi.Desktop.ConnectionManager.Reboot
