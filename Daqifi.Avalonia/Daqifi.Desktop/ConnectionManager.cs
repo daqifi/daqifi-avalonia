@@ -358,11 +358,18 @@ public partial class ConnectionManager : ObservableObject
         // tags this call exists to clear — and it would escape into callers, only some of which
         // wrap the unregister in a best-effort catch. A wrong channel count on one event is not
         // worth any of that.
+        // Catch broadly on purpose. "Collection was modified" is only the tidiest way this
+        // fails: List<T> writes _items, _size and _version without a barrier, so a read racing
+        // AddRange's Grow can index past the end (IndexOutOfRangeException), and one landing
+        // inside Clear's Array.Clear can hand the predicate a null channel (NullReferenceException)
+        // — on ARM, which is every Android install. Narrowing to InvalidOperationException would
+        // let those escape RegisterConnectedDevice into UsbDeviceConnector's outer catch, which
+        // tears the device down and reports a SUCCESSFUL connect as a failure (audit #ec1ca58).
         try
         {
             return device.DataChannels?.Count(c => c.IsActive) ?? 0;
         }
-        catch (InvalidOperationException)
+        catch (Exception)
         {
             return 0;
         }
