@@ -383,9 +383,13 @@ public partial class MobileShellViewModel : ObservableObject, IDisposable
             // Refresh the Sentry device context: the tags were set at connect time, when no
             // channel was enabled yet, so daqifi.active_channels reported 0 on events raised
             // mid-stream (observed on DAQIFI-DESKTOP-21).
+            // Count through ConnectionManager's helper, not analog.Count. The two agree today
+            // (AddChannel marks exactly these active), but the tag is set from three paths and
+            // must mean one thing regardless of which fired last.
             AppLogger.Instance.SetDeviceContext(
                 device.DevicePartNumber, device.DeviceSerialNo, device.DeviceVersion,
-                device.ConnectionType == ConnectionType.Usb ? "usb" : "wifi", analog.Count);
+                device.ConnectionType == ConnectionType.Usb ? "usb" : "wifi",
+                ConnectionManager.ActiveChannelCount(device));
         }
         Status = IsStreaming
             ? $"Streaming {analog.Count} channel(s) @ {SampleRate} Hz"
