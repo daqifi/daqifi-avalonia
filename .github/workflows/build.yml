@@ -183,26 +183,222 @@ jobs:
           # Same glob as the desktop job, not the single concrete path: for one
           # file upload-artifact strips the tree to its least common ancestor, so
           # the concrete path would arrive as a bare project.assets.json with no
-          # project to attribute a failure to — and would collide under
-          # merge-multiple with any other job that did the same.
+          # project to attribute a failure to.
+          path: '**/obj/project.assets.json'
+          if-no-files-found: error
+
+  ios:
+    name: iOS head
+    # The only job here that is not ubuntu, and it has no choice: iOS cannot
+    # cross-compile from Linux. Until this existed the iOS head was in
+    # Daqifi.Avalonia.slnx and in nobody's build — a change that broke it landed green
+    # (#105).
+    #
+    # This repo is private, so macOS minutes bill at 10x Linux. That is the cost of the
+    # job and it is deliberate: the alternative on offer was a path filter, and a gate
+    # that only runs when someone remembers to touch the right directory is not a gate.
+    # If the bill ever argues otherwise, narrow it on evidence, not on the assumption
+    # that shared-library changes cannot break a platform head — that assumption is
+    # exactly what #88 records going wrong on macOS.
+    #
+    # 'latest' rather than a pinned image, unlike everything else in this repo, because
+    # the thing that actually has to line up is the image's Xcode MAJOR against the one
+    # the pinned SDK's workload wants, and a stale pin does not help with that — an
+    # image carries only one Xcode major. When the label moves and the majors diverge,
+    # the Xcode step below says so by name instead of failing 200 lines into a build.
+    runs-on: macos-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      # Same pin as the other two jobs — see the comment on the desktop job, and #107.
+      # It matters more here than anywhere: the SDK band also decides which iOS workload
+      # is installed below, and therefore which Xcode this job has to select.
+      - uses: actions/setup-dotnet@v4
+        with:
+          global-json-file: global.json
+
+      # Mirrors the android job's workload step. Not preinstalled with the SDK, and
+      # setup-dotnet installs into its own prefix, so whatever the runner image ships
+      # under /usr/local/share/dotnet is not what runs here.
+      - name: Install the iOS workload
+        run: |
+          set -euo pipefail
+          dotnet workload install ios 2>&1 | tee "${RUNNER_TEMP}/workload-install.log"
+          # This command has been seen to print a permissions error and STILL EXIT 0
+          # (docs/RUNBOOK-macos-ios.md §0, caught on a real Mac). The build then fails
+          # much later with something that reads like a project problem. Name it here.
+          if grep -qi 'inadequate permissions' "${RUNNER_TEMP}/workload-install.log"; then
+            echo "::error::'dotnet workload install ios' reported inadequate permissions" \
+                 "and exited 0 anyway. The workload is NOT installed. dotnet lives at" \
+                 "$(command -v dotnet) on this runner; if that prefix is root-owned the" \
+                 "install needs elevation."
+            exit 1
+          fi
+
+      # Verify the ARTIFACT, not the exit code — the standing rule in
+      # docs/RUNBOOK-macos-ios.md, and the specific trap the step above exists for. The
+      # android job asserts its SDK is present the same way before using it.
+      - name: Verify the iOS workload is installed
+        run: |
+          set -euo pipefail
+          dotnet workload list
+          if ! dotnet workload list | awk '$1 == "ios" { found = 1 } END { exit !found }'; then
+            echo "::error::'dotnet workload list' does not list 'ios'. The workload" \
+                 "install did not take, whatever it exited with."
+            exit 1
+          fi
+          echo "iOS workload present"
+
+      # Run the selector's own tests before trusting it, exactly as avalonia-graph does
+      # with its guard. Its value is in REFUSING when the image has no matching Xcode;
+      # a selector that only ever succeeds would silently pick the wrong one.
+      - name: Self-test the Xcode selector
+        run: python3 .github/scripts/test_select_xcode.py
+
+      # #103. .NET for iOS compares the host Xcode for EXACT major.minor equality, so a
+      # newer Xcode fails just like an older one and upgrading is not a fix. The two ways
+      # out are -p:ValidateXcodeVersion=false, which switches off a real compatibility
+      # gate inside the job whose whole purpose is to be one, or selecting the Xcode the
+      # workload asks for. The macOS image carries every minor of its Xcode major
+      # (26.0.1 … 26.6 today), so the second is a one-line xcode-select.
+      #
+      # The version is READ FROM THE SDK, never written here, because it tracks the SDK
+      # pin and tracks nothing else you could infer it from. Under 10.0.203 the answer was
+      # Xcode 26.4; under the pinned 10.0.302 the iOS workload manifest is 26.5.10315 and
+      # the Xcode it asks for is 26.6. Those two disagree on purpose — the manifest's 26.5
+      # is an iOS version, and the lock file's net10.0-ios26.5 framework is that same
+      # number, not an Xcode one. So every literal that looked plausible while writing
+      # this (#103's 26.4, the manifest's 26.5, the lock file's 26.5) is wrong. Ask the
+      # SDK; it is the only thing that knows.
+      - name: Pin Xcode to the version the iOS workload requires
+        run: |
+          set -euo pipefail
+          # _RecommendedXcodeVersion is SDK-internal (hence the underscore) but it is the
+          # property _ValidateXcodeVersion itself compares against, so it is the only
+          # answer that cannot disagree with the check it is meant to satisfy. Evaluated,
+          # not built — this needs no restore.
+          required=$(dotnet msbuild Daqifi.Avalonia.iOS/Daqifi.Avalonia.iOS.csproj \
+            -getProperty:_RecommendedXcodeVersion | tr -d '[:space:]')
+          if [ -z "${required}" ]; then
+            echo "::error::_RecommendedXcodeVersion evaluated empty. The iOS SDK pack" \
+                 "either is not installed or has renamed the property; it is defined in" \
+                 "packs/Microsoft.iOS.Sdk.*/targets/Microsoft.iOS.Sdk.Versions.props."
+            exit 1
+          fi
+          echo "REQUIRED_XCODE=${required}" >> "$GITHUB_ENV"
+          developer=$(python3 .github/scripts/select_xcode.py "${required}")
+          sudo xcode-select -s "${developer}"
+
+      # Same rule as the workload step: assert what the toolchain will actually see,
+      # rather than trusting that xcode-select did what it was told.
+      - name: Verify the selected Xcode
+        run: |
+          set -euo pipefail
+          echo "developer dir: $(xcode-select -p)"
+          # Capture ONCE into a variable, then parse the variable. Do not pipe xcodebuild
+          # into `head`: head exits after the first line, xcodebuild takes EPIPE on its
+          # next write, and rather than dying quietly it raises
+          # NSFileHandleOperationException and aborts with 134, which pipefail turns into
+          # a failed job. That is a race — it passed twice here before it bit — which
+          # makes it the worst kind of bug to leave in a gate other people's PRs depend
+          # on. A command substitution drains the pipe fully, so nothing gets EPIPE, and
+          # `awk NR == 1` reads to EOF rather than exiting early the way `head` does.
+          xcode_version=$(xcodebuild -version)
+          echo "${xcode_version}"
+          selected=$(printf '%s\n' "${xcode_version}" | awk 'NR == 1 { print $2 }')
+          # major.minor on both sides, because that is the only part
+          # _ValidateXcodeVersion compares.
+          want=$(printf '%s' "${REQUIRED_XCODE}" | cut -d. -f1,2)
+          got=$(printf '%s' "${selected}" | cut -d. -f1,2)
+          if [ "${got}" != "${want}" ]; then
+            echo "::error::Xcode ${selected} is selected but the iOS workload wants" \
+                 "${REQUIRED_XCODE}. The build would fail in _ValidateXcodeVersion."
+            exit 1
+          fi
+          echo "Xcode ${selected} matches the workload's ${REQUIRED_XCODE}"
+
+      # No -r here, deliberately, and this is the head with the most to lose by it: an
+      # explicit RID restore REWRITES the lock file to hold only that RID (#85,
+      # Directory.Build.props), and this project declares two — iossimulator-arm64 and
+      # ios-arm64. The RID arrives at BUILD time instead, against the per-RID assets a
+      # RID-less restore has already produced for every declared RuntimeIdentifier.
+      - name: Restore
+        run: dotnet restore Daqifi.Avalonia.iOS/Daqifi.Avalonia.iOS.csproj
+
+      # Same guard as the other two jobs.
+      - name: Lock files must be unchanged by restore
+        run: |
+          set -euo pipefail
+          if ! git diff --quiet -- '**/packages.lock.json'; then
+            echo "::error::restore modified a committed lock file — it was not in the state a" \
+                 "clean restore produces. Most often this is a lock file committed from a" \
+                 "'-r <rid>' build, which prunes the other RIDs. Re-restore without that flag" \
+                 "(or force-evaluate) and commit the result."
+            git diff --stat -- '**/packages.lock.json'
+            exit 1
+          fi
+          echo "lock files unchanged by restore"
+
+      # Simulator, not device. ios-arm64 needs an Apple signing identity and a
+      # provisioning profile, which a hosted runner does not have; iossimulator-arm64
+      # compiles the same managed code and runs the same trimmer, which is the coverage
+      # this job exists for. The device RID stays covered by restore and by the lock file.
+      #
+      # --no-restore is load-bearing, not a speed-up: it is what keeps the -r above out
+      # of restore, and therefore out of the lock file.
+      - name: Build
+        run: |
+          dotnet build Daqifi.Avalonia.iOS/Daqifi.Avalonia.iOS.csproj \
+            -c Release -r iossimulator-arm64 --no-restore
+
+      # A second look, because this is the ONLY job that passes -r at all. The check
+      # after restore cannot see a lock file rewritten by the build, and the whole point
+      # of the --no-restore above is a claim about the build's effect on that file.
+      - name: Lock files must be unchanged by the RID build
+        run: |
+          set -euo pipefail
+          if ! git diff --quiet -- '**/packages.lock.json'; then
+            echo "::error::the -r build rewrote a lock file, which means it restored" \
+                 "despite --no-restore. Whatever caused that, do not commit the result:" \
+                 "a RID-pruned lock file fails the next run with NU1004."
+            git diff --stat -- '**/packages.lock.json'
+            exit 1
+          fi
+          echo "lock files unchanged by the RID build"
+
+      - name: Upload dependency graph
+        uses: actions/upload-artifact@v4
+        with:
+          name: assets-ios
+          # Same glob and same reasoning as the other two jobs.
           path: '**/obj/project.assets.json'
           if-no-files-found: error
 
   avalonia-graph:
     name: Avalonia version lockstep
     runs-on: ubuntu-latest
-    # Runs only once both heads have resolved, because the check that matters most
+    # Runs only once every head has resolved, because the check that matters most
     # — the same package resolving to different versions in different heads — is
-    # invisible when looking at any single project.
-    needs: [desktop, android]
+    # invisible when looking at any single project. iOS is in this list because it pins
+    # Avalonia.iOS by hand; a head whose graph nobody uploads is a head this gate does
+    # not actually cover.
+    needs: [desktop, android, ios]
     steps:
       - uses: actions/checkout@v4
 
+      # One directory PER ARTIFACT (which is what omitting merge-multiple gets you),
+      # not all three flattened into one. Every head restores the shared library and
+      # the vendored OxyPlot, so all three artifacts contain
+      # Daqifi.Avalonia/obj/project.assets.json at the same relative path — merged, they
+      # overwrite each other and whichever job's extraction landed last is the only one
+      # the gate ever sees. That is the exact failure this check exists to prevent, one
+      # level up: a split between two heads in a shared project is invisible if only one
+      # head's copy survives. It also makes the paths in a failure message say WHICH head
+      # (graphs/assets-ios/... rather than graphs/...).
       - name: Download dependency graphs
         uses: actions/download-artifact@v4
         with:
           path: graphs
-          merge-multiple: true
 
       # Run the guard's own tests before trusting its verdict. Its value is entirely in
       # FAILING on a split graph; a guard that silently only ever passes reads as coverage
