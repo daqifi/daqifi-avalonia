@@ -349,8 +349,24 @@ public partial class ConnectionManager : ObservableObject
     /// last. Counts every active channel on the device, not just the analog ones a given screen
     /// happens to be streaming.
     /// </summary>
-    internal static int ActiveChannelCount(IStreamingDevice device) =>
-        device.DataChannels?.Count(c => c.IsActive) ?? 0;
+    internal static int ActiveChannelCount(IStreamingDevice device)
+    {
+        // Never let telemetry break teardown. DataChannels is a plain List<IChannel> that Core's
+        // background events rebuild wholesale (Clear + AddRange in RefreshChannels), so counting
+        // it from the UI thread can throw "collection was modified". That throw would land after
+        // the device was removed but before the context was set, stranding precisely the stale
+        // tags this call exists to clear — and it would escape into callers, only some of which
+        // wrap the unregister in a best-effort catch. A wrong channel count on one event is not
+        // worth any of that.
+        try
+        {
+            return device.DataChannels?.Count(c => c.IsActive) ?? 0;
+        }
+        catch (InvalidOperationException)
+        {
+            return 0;
+        }
+    }
 
     public void UnregisterConnectedDevice(IStreamingDevice device)
     {
