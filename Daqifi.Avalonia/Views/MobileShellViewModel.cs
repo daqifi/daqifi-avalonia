@@ -11,6 +11,9 @@ using Daqifi.Desktop.Common.Loggers;
 using Daqifi.Desktop.Device;
 using Daqifi.Desktop.Device.WiFiDevice;
 using ChannelType = Daqifi.Core.Channel.ChannelType;
+// Disambiguates our logger's level enum from the Sentry.BreadcrumbLevel that the
+// Sentry package brings into scope globally.
+using BreadcrumbLevel = Daqifi.Desktop.Common.Loggers.BreadcrumbLevel;
 
 namespace Daqifi.Avalonia.Views;
 
@@ -101,21 +104,29 @@ public partial class MobileShellViewModel : ObservableObject, IDisposable
     private void SelectAllChannels()
     {
         foreach (var c in Channels) { c.IsSelected = true; }
+        AppLogger.Instance.AddBreadcrumb("ui", $"Tapped Select all — {Channels.Count} channel(s)");
     }
 
     [RelayCommand]
     private void SelectNoChannels()
     {
         foreach (var c in Channels) { c.IsSelected = false; }
+        AppLogger.Instance.AddBreadcrumb("ui", "Tapped Select none");
     }
 
     [RelayCommand]
     private void Scan()
     {
-        if (IsScanning) { StopScan(); return; }
+        if (IsScanning)
+        {
+            AppLogger.Instance.AddBreadcrumb("ui", "Tapped Scan again — stopping discovery");
+            StopScan();
+            return;
+        }
         Devices.Clear();
         Status = "Scanning (UDP 30303)…";
         IsScanning = true;
+        AppLogger.Instance.AddBreadcrumb("ui", "Tapped Scan — discovery started");
 
         _cts = new CancellationTokenSource();
         var token = _cts.Token;
@@ -151,6 +162,7 @@ public partial class MobileShellViewModel : ObservableObject, IDisposable
         Status = Devices.Count == 0
             ? "Scan stopped — no devices found."
             : $"Scan stopped — {Devices.Count} device(s).";
+        AppLogger.Instance.AddBreadcrumb("discovery", $"Discovery stopped — {Devices.Count} device(s) found");
     }
 
     private void OnDeviceFound(DiscoveredDevice device)
@@ -195,6 +207,7 @@ public partial class MobileShellViewModel : ObservableObject, IDisposable
     private async Task ConnectUsb()
     {
         Status = "Connecting via USB…";
+        AppLogger.Instance.AddBreadcrumb("ui", "Tapped Connect via USB");
         var result = await MobileUsbConnector.ConnectAsync();
         if (result.Device != null)
         {
@@ -217,6 +230,7 @@ public partial class MobileShellViewModel : ObservableObject, IDisposable
     private async Task ConnectCoreAsync(string label, Func<DaqifiStreamingDevice> factory)
     {
         Status = $"Connecting to {label}…";
+        AppLogger.Instance.AddBreadcrumb("ui", $"Tapped Connect — {label}");
         try
         {
             // Do NOT tear down the current connection before the new one succeeds:
@@ -233,11 +247,15 @@ public partial class MobileShellViewModel : ObservableObject, IDisposable
             }
             else
             {
+                AppLogger.Instance.AddBreadcrumb(
+                    "device", $"Connect refused by {label}", BreadcrumbLevel.Warning);
                 Status = $"Connect to {label} failed — see device log.";
             }
         }
         catch (Exception ex)
         {
+            AppLogger.Instance.AddBreadcrumb(
+                "device", $"Connect to {label} threw: {ex.GetType().Name}", BreadcrumbLevel.Error);
             Status = $"Connect failed: {ex.Message}";
         }
     }
@@ -293,7 +311,12 @@ public partial class MobileShellViewModel : ObservableObject, IDisposable
     {
         var device = _connected;
         if (device == null) { return; }
-        if (IsStreaming) { StopStream(); return; }
+        if (IsStreaming)
+        {
+            AppLogger.Instance.AddBreadcrumb("ui", "Tapped Stop streaming");
+            StopStream();
+            return;
+        }
 
         // Enable the analog INPUT channels the user selected (AddChannel sends
         // the EnableAdcChannels SCPI + marks it active), wire a rolling series
@@ -309,6 +332,9 @@ public partial class MobileShellViewModel : ObservableObject, IDisposable
             Status = "Select at least one channel to stream.";
             return;
         }
+
+        AppLogger.Instance.AddBreadcrumb(
+            "ui", $"Tapped Start streaming — {analog.Count} channel(s) at {SampleRate} Hz");
 
         // Power the acquisition subsystem before streaming — the documented
         // DAQiFi handshake (POWer:STATe 1 + channel enable + STR:START).
@@ -345,11 +371,26 @@ public partial class MobileShellViewModel : ObservableObject, IDisposable
         }
         catch (Exception ex)
         {
+            AppLogger.Instance.AddBreadcrumb(
+                "streaming", $"Start streaming failed: {ex.GetType().Name}", BreadcrumbLevel.Error);
             Status = $"Start streaming failed: {ex.Message}";
             StopStream();
             return;
         }
         IsStreaming = device.IsStreaming;
+        if (IsStreaming)
+        {
+            // Refresh the Sentry device context: the tags were set at connect time, when no
+            // channel was enabled yet, so daqifi.active_channels reported 0 on events raised
+            // mid-stream (observed on DAQIFI-DESKTOP-21).
+            // Count through ConnectionManager's helper, not analog.Count. The two agree today
+            // (AddChannel marks exactly these active), but the tag is set from three paths and
+            // must mean one thing regardless of which fired last.
+            AppLogger.Instance.SetDeviceContext(
+                device.DevicePartNumber, device.DeviceSerialNo, device.DeviceVersion,
+                device.ConnectionType == ConnectionType.Usb ? "usb" : "wifi",
+                ConnectionManager.ActiveChannelCount(device));
+        }
         Status = IsStreaming
             ? $"Streaming {analog.Count} channel(s) @ {SampleRate} Hz"
             : "Device did not enter streaming.";
@@ -505,6 +546,8 @@ public partial class MobileShellViewModel : ObservableObject, IDisposable
     {
         IsStreaming = false;
         _silentPolls = 0;
+        AppLogger.Instance.AddBreadcrumb(
+            "streaming", "Stream lost — device stopped sending data", BreadcrumbLevel.Warning);
         Status = "Streaming stopped — the device stopped sending data. Reconnect to start again.";
     }
 
@@ -534,6 +577,8 @@ public partial class MobileShellViewModel : ObservableObject, IDisposable
             Task.Run(() => { try { lost.Disconnect(); } catch { /* best-effort */ } });
         }
 
+        AppLogger.Instance.AddBreadcrumb(
+            "device", $"Connection lost: {name}", BreadcrumbLevel.Error);
         Status = $"Lost connection to {name}. Tap Scan to reconnect.";
     }
 

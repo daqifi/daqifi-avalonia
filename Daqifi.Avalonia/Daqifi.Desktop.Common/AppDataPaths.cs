@@ -114,6 +114,12 @@ public static class AppDataPaths
     // @port: Daqifi.Desktop.Common.AppDataPaths.LogDirectory
     public static string LogDirectory { get; } = Path.Combine(DataDirectory, "Logs");
 
+    /// <summary>
+    /// Directory where Sentry buffers undelivered event envelopes. Kept under the same root as
+    /// the logs so a support bundle picks up both. Sentry creates it on demand.
+    /// </summary>
+    public static string SentryCacheDirectory { get; } = Path.Combine(DataDirectory, "SentryCache");
+
     // @port: Daqifi.Desktop.Common.AppDataPaths.ResolveTestExportPath
     private static string? ResolveTestExportPath()
     {
