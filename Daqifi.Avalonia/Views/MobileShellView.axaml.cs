@@ -36,6 +36,10 @@ public partial class MobileShellView : UserControl
         // the 100 Hz sample rate so the UI thread isn't flooded.
         Plot.Series = _viewModel.Series;
         _renderTimer = new DispatcherTimer { Interval = TimeSpan.FromMilliseconds(50) };
+        // NOTE (#113): this timer keeps firing at its full rate while the Android activity is
+        // stopped — measured on a Galaxy A16 / Android 16, ticks exactly 1.000 s apart with no gap
+        // across a 45 s background window. It is NOT suspended with the activity. The stream
+        // watchdog in MobileShellViewModel depends on knowing this.
         _renderTimer.Tick += (_, _) =>
         {
             if (_viewModel.IsStreaming)

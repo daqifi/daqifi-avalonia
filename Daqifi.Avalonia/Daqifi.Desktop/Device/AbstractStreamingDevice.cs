@@ -581,10 +581,49 @@ public abstract partial class AbstractStreamingDevice : ObservableObject, IStrea
     /// IsConnected-derived binding or command would read stale until an unrelated signal (issue #3).
     /// Marshals through <see cref="RaiseIsConnectedChanged"/> because Core raises this from its
     /// transport thread.
+    /// <para>
+    /// It also clears <see cref="IsStreaming"/> when the connection is lost. Core sets
+    /// <c>ConnectionStatus.Lost</c> from its transport's status for an UNEXPECTED drop only — an
+    /// intentional <c>Disconnect()</c> is suppressed on Core's side — so this is the authoritative
+    /// signal that a stream has died underneath us. Without it the flag stays true forever and the
+    /// app goes on claiming to stream from a dead socket (#99): the sample counter freezes while
+    /// the UI still reads "Streaming N channel(s)", which is worse than an error because nothing
+    /// tells the user to reconnect.
+    /// </para>
     /// </summary>
     private void OnCoreStatusChanged(object? sender, DeviceStatusEventArgs e)
     {
+        if (e.Status == ConnectionStatus.Lost)
+        {
+            OnConnectionLost();
+        }
+
         RaiseIsConnectedChanged();
+    }
+
+    /// <summary>
+    /// Marks the device as no longer streaming after the transport dropped underneath it.
+    /// </summary>
+    /// <remarks>
+    /// Deliberately does NOT call <see cref="StopStreaming"/>. That sends a stop command down the
+    /// very transport that has just died, and on a wedged socket the write can block — this runs on
+    /// Core's transport thread, so blocking here stalls Core. The flag and its notification are all
+    /// that is needed; the transport is already gone, and teardown belongs to whoever owns the
+    /// device lifetime.
+    /// </remarks>
+    private void OnConnectionLost()
+    {
+        if (!IsStreaming) { return; }
+
+        IsStreaming = false;
+
+        AppLogger.Instance.Warning(
+            $"Connection to {Name} was lost while streaming. The device stopped sending data " +
+            "and the stream has been marked inactive.");
+
+        // Same marshalling rationale as RaiseIsConnectedChanged: raised from Core's transport
+        // thread, and consumed by bindings.
+        RaisePropertyChangedOnUiThread(nameof(IsStreaming));
     }
 
     /// <summary>
@@ -610,17 +649,24 @@ public abstract partial class AbstractStreamingDevice : ObservableObject, IStrea
     /// if the dispatcher is gone there is nothing left bound to update.
     /// </para>
     /// </remarks>
-    private void RaiseIsConnectedChanged()
+    private void RaiseIsConnectedChanged() => RaisePropertyChangedOnUiThread(nameof(IsConnected));
+
+    /// <summary>
+    /// Raises a property-change notification on the UI thread, tolerating a dispatcher that is
+    /// shutting down. See <see cref="RaiseIsConnectedChanged"/> for the full rationale — it applies
+    /// unchanged to every property raised from a Core transport callback.
+    /// </summary>
+    private void RaisePropertyChangedOnUiThread(string propertyName)
     {
         if (Dispatcher.UIThread.CheckAccess())
         {
-            OnPropertyChanged(nameof(IsConnected));
+            OnPropertyChanged(propertyName);
             return;
         }
 
         try
         {
-            Dispatcher.UIThread.Post(() => OnPropertyChanged(nameof(IsConnected)));
+            Dispatcher.UIThread.Post(() => OnPropertyChanged(propertyName));
         }
         catch (Exception)
         {

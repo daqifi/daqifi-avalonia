@@ -5,8 +5,34 @@
 	<uses-permission android:name="android.permission.ACCESS_NETWORK_STATE" />
 	<uses-permission android:name="android.permission.ACCESS_WIFI_STATE" />
 	<!-- Required to hold a WifiManager MulticastLock — without it Android
-	     power-save-filters incoming UDP broadcast and discovery finds nothing. -->
+	     power-save-filters incoming UDP broadcast and discovery finds nothing.
+	     It does double duty: FOREGROUND_SERVICE_CONNECTED_DEVICE below is only
+	     grantable to an app holding one of a fixed set of transport permissions,
+	     and this is the one we already have. -->
 	<uses-permission android:name="android.permission.CHANGE_WIFI_MULTICAST_STATE" />
+
+	<!-- Streaming must keep a TCP socket to the Nyquist open while the app is off
+	     screen. Without a foreground service the platform tears that socket down
+	     partway through a background window and it never recovers (see the
+	     measurements in StreamingForegroundService). The service is declared in
+	     code via [Service(ForegroundServiceType = ...)] on that class rather than
+	     hand-written here, for the same reason the USB intent-filter is: a service
+	     element must name the mangled crc64 Java name, which drifts on SDK bumps.
+
+	     POST_NOTIFICATIONS is needed from API 33 for the ongoing notification to be
+	     visible. Denying it does not stop the service or the streaming exemption —
+	     it only hides the notification. -->
+	<uses-permission android:name="android.permission.FOREGROUND_SERVICE" />
+	<uses-permission android:name="android.permission.FOREGROUND_SERVICE_CONNECTED_DEVICE" />
+	<uses-permission android:name="android.permission.POST_NOTIFICATIONS" />
+
+	<!-- Required by WifiManager.createWifiLock, which the streaming service uses to keep
+	     the radio associated to the Nyquist soft AP. Without it acquire() throws
+	     SecurityException ("Neither user nor current process has WAKE_LOCK") and the lock
+	     silently does nothing — `dumpsys wifi` then reports zero high-perf locks acquired
+	     while the app appears to be running fine. Normal permission: granted at install,
+	     no runtime prompt and no Play declaration form. -->
+	<uses-permission android:name="android.permission.WAKE_LOCK" />
 
 	<!-- EXPERIMENTAL phone->DAQiFi USB (OTG) host path (docs/mobile-usb-feasibility.md).
 	     Additive + isolated: does not affect the WiFi/TCP path. required="false" so the

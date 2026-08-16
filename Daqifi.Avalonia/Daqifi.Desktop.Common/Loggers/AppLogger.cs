@@ -26,6 +26,44 @@ public class AppLogger : IAppLogger
     // @port: Daqifi.Desktop.Common.Loggers.AppLogger.Instance
     public static AppLogger Instance { get; } = new();
 
+    /// <summary>
+    /// Finds the Sentry DSN from the first source that has one.
+    /// </summary>
+    /// <remarks>
+    /// Upstream reads only <c>ConfigurationManager.AppSettings</c>, which is an App.config
+    /// mechanism. This repo has no App.config on any head, and Android cannot have one, so
+    /// that lookup returned nothing everywhere and Sentry was silently inert on desktop as
+    /// well as mobile — the package was referenced and the manifest carried its meta-data,
+    /// but <c>SentrySdk.Init</c> was never reached.
+    /// <para>
+    /// Order is deliberate: an explicit App.config or environment value should win over the
+    /// compiled-in default, so a developer or CI run can redirect events away from the
+    /// production project without editing the build.
+    /// </para>
+    /// </remarks>
+    private static string? ResolveSentryDsn()
+    {
+        try
+        {
+            var configured = ConfigurationManager.AppSettings["SentryDsn"];
+            if (!string.IsNullOrWhiteSpace(configured)) { return configured; }
+        }
+        catch
+        {
+            // No App.config, or a platform where the provider cannot initialise at all.
+            // Not an error — it is the normal case on mobile.
+        }
+
+        var fromEnvironment = Environment.GetEnvironmentVariable("DAQIFI_SENTRY_DSN");
+        if (!string.IsNullOrWhiteSpace(fromEnvironment)) { return fromEnvironment; }
+
+        // Baked in at build time from the SentryDsn MSBuild property, so every head gets a
+        // DSN without shipping a config file. Absent property -> no attribute -> disabled.
+        return typeof(AppLogger).Assembly
+            .GetCustomAttributes<AssemblyMetadataAttribute>()
+            .FirstOrDefault(a => a.Key == "SentryDsn")?.Value;
+    }
+
     // @port: Daqifi.Desktop.Common.Loggers.AppLogger.IsRunningInTestEnvironment
     private static bool IsRunningInTestEnvironment()
     {
@@ -92,23 +130,71 @@ public class AppLogger : IAppLogger
 
         // Step 6. Initialize Sentry SDK — explicit CaptureException calls in Error() are the
         // sole capture path; SentryTarget is intentionally omitted to avoid double-reporting.
-        var dsn = ConfigurationManager.AppSettings["SentryDsn"];
+        var dsn = ResolveSentryDsn();
         var version = Assembly.GetEntryAssembly()?.GetName().Version?.ToString() ?? "0.0.0";
 
         if (string.IsNullOrWhiteSpace(dsn))
         {
-            _logger.Warn("SentryDsn not found in AppSettings — Sentry error reporting is disabled");
+            _logger.Warn("No Sentry DSN resolved — Sentry error reporting is disabled");
             return;
         }
 
-        _sentryDisposable = SentrySdk.Init(options =>
+        // Init is guarded because it now writes to the filesystem, and this constructor runs
+        // inside a static readonly initializer. SentrySdk.Init does not catch: it builds the
+        // caching transport, which calls CreateDirectory on CacheDirectoryPath unguarded. An
+        // unwritable directory — a locked-down %ProgramData% ACL on an elevated desktop run, an
+        // Android storage failure — would therefore escape the constructor, and the CLR would
+        // wrap it as TypeInitializationException and poison the type for the life of the
+        // process. Every later AppLogger.Instance access would throw, taking NLog file logging
+        // down with it, and on mobile the first touch happens in InitializeMobile() BEFORE the
+        // global exception handlers are installed, so the app would die at launch with no trail
+        // at all. Degrade the way the missing-DSN path above already does: no Sentry, but the
+        // logger still works.
+        try
+        {
+            _sentryDisposable = InitializeSentry(dsn, version);
+        }
+        catch (Exception ex)
+        {
+            _sentryDisposable = null;
+            _logger.Warn(ex, "Sentry initialisation failed — error reporting is disabled, logging continues");
+        }
+    }
+
+    private static IDisposable InitializeSentry(string dsn, string version) =>
+        SentrySdk.Init(options =>
         {
             options.Dsn = dsn;
             options.Release = version;
             options.AutoSessionTracking = true;
             options.IsGlobalModeEnabled = true;
+            // Explicit, not relying on the SDK default: this app ships to app stores, where
+            // "what is collected" is a declaration we have to make and stand behind. No
+            // usernames, no email, no IP address attached to events. Sentry's server-side
+            // setting scrubs IPs as well; both belt and braces.
+            options.SendDefaultPii = false;
+            // Persist envelopes to disk so an event survives having nowhere to send it.
+            //
+            // This is not a nicety on mobile: a DAQiFi is usually reached over its own soft-AP
+            // (SSID "DAQiFi-xxxx", 192.168.1.1), and joining it takes the phone OFF the internet
+            // for the whole session. Measured on a Galaxy A16 mid-stream: 100% packet loss to
+            // 8.8.8.8. Without a cache directory the SDK holds events in memory only, so they
+            // die with the process — a probe captured mid-stream never reached Sentry at all,
+            // taking its breadcrumb trail with it, which is precisely the activity this app
+            // exists for. With one, the same probe landed on disk and was delivered on the next
+            // run once the phone was back on a routable network.
+            options.CacheDirectoryPath = AppDataPaths.SentryCacheDirectory;
+            // Zero, not the SDK's 1s default: any positive value makes Init block the calling
+            // thread on a flush attempt, and it waits out the FULL timeout when there is no
+            // route — which is exactly the state of a phone still on the soft-AP with a backlog
+            // pending. That is the UI thread during cold start, so the cost lands on precisely
+            // the sessions this cache exists to serve, on every launch. Zero skips the wait and
+            // leaves delivery to the background worker; the envelopes are already durable on
+            // disk, so nothing is lost by not waiting for them.
+            options.InitCacheFlushTimeout = TimeSpan.Zero;
+            // The cache is bounded by MaxCacheItems (measured: 30 by default), so a phone that
+            // stays offline discards oldest-first rather than growing without limit.
         });
-    }
 
     #region Logger Methods
     // @port: Daqifi.Desktop.Common.Loggers.AppLogger.Information

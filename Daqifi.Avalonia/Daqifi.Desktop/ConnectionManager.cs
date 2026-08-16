@@ -268,7 +268,7 @@ public partial class ConnectionManager : ObservableObject
                 device.DeviceSerialNo,
                 device.DeviceVersion,
                 connectionType,
-                device.DataChannels?.Count(c => c.IsActive) ?? 0);
+                ActiveChannelCount(device));
             AppLogger.Instance.AddBreadcrumb("device", $"Device connected: {device.Name} (S/N: {device.DeviceSerialNo}) via {connectionType}");
         }
         catch (Exception ex)
@@ -303,7 +303,7 @@ public partial class ConnectionManager : ObservableObject
                     remaining.DeviceSerialNo,
                     remaining.DeviceVersion,
                     remainingType,
-                    remaining.DataChannels?.Count(c => c.IsActive) ?? 0);
+                    ActiveChannelCount(remaining));
             }
         }
         catch (Exception ex)
@@ -326,12 +326,101 @@ public partial class ConnectionManager : ObservableObject
         if (device is null || ConnectedDevices.Contains(device)) { return; }
         ConnectedDevices.Add(device);
         OnPropertyChanged(nameof(ConnectedDevices));
+
+        // Same enrichment Connect() applies. This is the path MOBILE connects through, and
+        // without it every Sentry event from Android arrived with no device model, serial or
+        // firmware attached — the desktop's crash reports carry all three, so mobile reports
+        // were strictly harder to act on for no reason other than which method was called.
+        EnrichTelemetry(() =>
+        {
+            var connectionType = device.ConnectionType == ConnectionType.Usb ? "usb" : "wifi";
+            AppLogger.Instance.SetDeviceContext(
+                device.DevicePartNumber,
+                device.DeviceSerialNo,
+                device.DeviceVersion,
+                connectionType,
+                ActiveChannelCount(device));
+            AppLogger.Instance.AddBreadcrumb(
+                "device", $"Device connected: {device.Name} (S/N: {device.DeviceSerialNo}) via {connectionType}");
+        });
+    }
+
+    /// <summary>
+    /// Runs Sentry enrichment so nothing it throws can escape into the device flow. Telemetry is
+    /// not load-bearing: an exception here unwinds into UsbDeviceConnector's catch, which tears
+    /// the device down and reports a SUCCESSFUL connect as a failure (audit #ec1ca58).
+    /// <para>
+    /// The catch is silent on purpose. The likeliest failure is AppLogger.Instance itself failing
+    /// to construct (issue #127) — reporting that through AppLogger would throw again, which is
+    /// exactly the trap this guard exists to avoid.
+    /// </para>
+    /// </summary>
+    private static void EnrichTelemetry(Action enrich)
+    {
+        try { enrich(); }
+        catch { /* telemetry must never break a connect or a teardown */ }
+    }
+
+    /// <summary>
+    /// The channel count reported to Sentry as <c>daqifi.active_channels</c>. Single definition
+    /// on purpose: the tag is set from several places (connect, unregister, stream start), and
+    /// if they disagreed the tag would silently mean different things depending on which fired
+    /// last. Counts every active channel on the device, not just the analog ones a given screen
+    /// happens to be streaming.
+    /// </summary>
+    internal static int ActiveChannelCount(IStreamingDevice device)
+    {
+        // Never let telemetry break teardown. DataChannels is a plain List<IChannel> that Core's
+        // background events rebuild wholesale (Clear + AddRange in RefreshChannels), so counting
+        // it from the UI thread can throw "collection was modified". That throw would land after
+        // the device was removed but before the context was set, stranding precisely the stale
+        // tags this call exists to clear — and it would escape into callers, only some of which
+        // wrap the unregister in a best-effort catch. A wrong channel count on one event is not
+        // worth any of that.
+        // Catch broadly on purpose. "Collection was modified" is only the tidiest way this
+        // fails: List<T> writes _items, _size and _version without a barrier, so a read racing
+        // AddRange's Grow can index past the end (IndexOutOfRangeException), and one landing
+        // inside Clear's Array.Clear can hand the predicate a null channel (NullReferenceException)
+        // — on ARM, which is every Android install. Narrowing to InvalidOperationException would
+        // let those escape RegisterConnectedDevice into UsbDeviceConnector's outer catch, which
+        // tears the device down and reports a SUCCESSFUL connect as a failure (audit #ec1ca58).
+        try
+        {
+            return device.DataChannels?.Count(c => c.IsActive) ?? 0;
+        }
+        catch (Exception)
+        {
+            return 0;
+        }
     }
 
     public void UnregisterConnectedDevice(IStreamingDevice device)
     {
         if (device is null || !ConnectedDevices.Remove(device)) { return; }
         OnPropertyChanged(nameof(ConnectedDevices));
+        EnrichTelemetry(() =>
+        {
+            AppLogger.Instance.AddBreadcrumb("device", $"Device unregistered: {device.Name}");
+
+            // Mirror Disconnect()'s teardown. Sentry scope tags are global, so leaving them set
+            // would tag every later event with a device that is no longer connected — mobile
+            // tears down through here rather than Disconnect(), so a crash after a drop would
+            // have named the dead device's model and serial. Wrong context is worse than none.
+            if (ConnectedDevices.Count == 0)
+            {
+                AppLogger.Instance.ClearDeviceContext();
+            }
+            else
+            {
+                var remaining = ConnectedDevices[^1];
+                AppLogger.Instance.SetDeviceContext(
+                    remaining.DevicePartNumber,
+                    remaining.DeviceSerialNo,
+                    remaining.DeviceVersion,
+                    remaining.ConnectionType == ConnectionType.Usb ? "usb" : "wifi",
+                    ActiveChannelCount(remaining));
+            }
+        });
     }
 
     // @port: Daqifi.Desktop.ConnectionManager.Reboot

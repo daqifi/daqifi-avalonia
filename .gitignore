@@ -15,3 +15,21 @@ artifacts/
 # agent tooling (regenerate via portomatic's install-skill-pack.sh)
 .claude/
 publish*/
+
+# Signing material. The release keystore lives outside the repo and its
+# passwords are read from the environment (see the signing block in
+# Daqifi.Avalonia.Android.csproj), so nothing here should ever be committed.
+# These patterns exist so an accidental copy into the tree cannot be staged:
+# an upload key in git history means rotating the key with Play support.
+*.jks
+*.keystore
+*.p12
+*.pfx
+keystore.properties
+
+# Google Play service-account keys. The upload script (tools/play/publish.py) takes a
+# path to one; it belongs outside the repo. A leaked key can publish releases to the
+# store under our developer account, so these must never be committed.
+play-service-account*.json
+service-account*.json
+*-play-api-*.json

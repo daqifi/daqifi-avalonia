@@ -70,6 +70,13 @@ public static class App
     public static bool IsStarted { get; private set; }
 
     /// <summary>
+    /// Whether <see cref="InitializeMobile"/> has already attached the global exception handlers.
+    /// Tracked apart from <see cref="ServiceProvider"/> because a failed initialisation leaves
+    /// that null and permits a re-entry that would double-subscribe them.
+    /// </summary>
+    private static bool _mobileCrashHandlersInstalled;
+
+    /// <summary>
     /// Indicates the application was launched in unattended/test mode (environment variable
     /// <c>DAQIFI_TEST_MODE=1</c>). In this mode modal dialogs are suppressed so UI automation
     /// can drive the app without prompts. Defaults to <c>false</c> for normal launches.
@@ -231,6 +238,35 @@ public static class App
     public static void InitializeMobile()
     {
         if (ServiceProvider is not null) { return; }   // already initialized
+
+        // Crash reporting, before anything below can throw.
+        //
+        // Two separate things, both previously missing on mobile, and each useless without
+        // the other:
+        //
+        // 1. AppLogger.Instance is a lazy static — SentrySdk.Init runs in its constructor, on
+        //    FIRST ACCESS. Nothing on the mobile boot path touched it (the only reference in
+        //    this method sits inside a catch block), so on a healthy start Sentry was never
+        //    initialised at all. The DSN being resolvable (see AppLogger.ResolveSentryDsn) does
+        //    not help if Init is never reached. Touching Instance here is what starts it.
+        //
+        // 2. The desktop path wires these two handlers in Initialize(); mobile never did, so an
+        //    unhandled exception went straight to the platform with nothing capturing it.
+        //
+        // Order matters: initialise the logger first, so the handlers below have somewhere to
+        // report to if the DI/database work that follows throws.
+        // Guarded separately from ServiceProvider. The early-return above only fires once
+        // initialisation SUCCEEDED; if the DI/database work below throws, ServiceProvider stays
+        // null and a later call re-enters this method — attaching a second copy of every handler,
+        // so one crash would be logged twice and reported to Sentry twice.
+        if (!_mobileCrashHandlersInstalled)
+        {
+            AppLogger.Instance.Information("Mobile startup — crash reporting initialised.");
+            AppDomain.CurrentDomain.UnhandledException += OnUnhandledException;
+            Dispatcher.UIThread.UnhandledException += OnDispatcherUnhandledException;
+            TaskScheduler.UnobservedTaskException += OnUnobservedTaskException;
+            _mobileCrashHandlersInstalled = true;
+        }
 
         // Whole-body guard: this runs from the mobile bootstrap, so a failure to
         // stand up the DI/SQLite layer must NOT crash the app boot — the Stream

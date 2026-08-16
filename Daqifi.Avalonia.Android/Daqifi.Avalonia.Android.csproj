@@ -1,16 +1,90 @@
 <Project Sdk="Microsoft.NET.Sdk">
 	<PropertyGroup>
-		<TargetFramework>net10.0-android</TargetFramework>
-		<SupportedOSPlatformVersion>23</SupportedOSPlatformVersion>
+		<!-- The API level is pinned in the TFM, not left to the workload default.
+		     Play requires a new app to target API 35 today and API 36 from
+		     2026-08-31, and targetSdkVersion is derived from this. The bare
+		     `net10.0-android` moniker happens to resolve to 36.0 on the current
+		     workload, but that is an implicit default that moves when the
+		     workload is bumped — pinning makes a drop below Play's floor a
+		     build-visible change rather than a rejected upload. -->
+		<TargetFramework>net10.0-android36.0</TargetFramework>
+		<!-- minSdk 29, matching the native daqifi-android app. Android 10 is
+		     the floor where the permission model this app depends on stops
+		     needing legacy branches; below it every Bluetooth/location/
+		     PendingIntent path needs a separate pre-31 route and a device to
+		     test it on. -->
+		<SupportedOSPlatformVersion>29</SupportedOSPlatformVersion>
 		<OutputType>Exe</OutputType>
 		<Nullable>enable</Nullable>
 		<ImplicitUsings>enable</ImplicitUsings>
-		<ApplicationId>com.daqifi.avalonia</ApplicationId>
-		<ApplicationVersion>1</ApplicationVersion>
+		<!-- Permanent from the first Play upload: it cannot be changed later
+		     without abandoning the listing, its reviews and its install base.
+		     Deliberately platform- and framework-neutral — an iOS head is
+		     planned, and this same reverse-DNS id is valid as an Apple bundle
+		     id, so both stores share one namespace. The previous
+		     `com.daqifi.avalonia` named the UI framework, an internal detail
+		     with no business in a public id. -->
+		<ApplicationId>com.daqifi.app</ApplicationId>
+		<!-- Every Play upload needs a unique, increasing versionCode. 1 is already consumed by
+		     the first internal-testing upload, which was built from 91338e4 — before the Sentry
+		     initialisation fix and every Qodo-found defect landed. That build must not be
+		     promoted to production; see the release note in tools/play/README.md. -->
+		<ApplicationVersion>2</ApplicationVersion>
 		<ApplicationDisplayVersion>3.3.0</ApplicationDisplayVersion>
-		<!-- apk (not aab) while the head is dev-loop only — installable via
-		     plain `adb install`; store packaging flips this to aab. -->
-		<AndroidPackageFormat>apk</AndroidPackageFormat>
+		<!-- Debug stays apk so the dev loop remains a plain `adb install`.
+		     Release produces the aab Play requires for new apps. Note an aab
+		     is not directly installable — to put a Release build on a device,
+		     either override with -p:AndroidPackageFormat=apk or run the bundle
+		     through bundletool. A Debug apk additionally needs
+		     -p:EmbedAssembliesIntoApk=true to be sideloadable, because Fast
+		     Deployment otherwise ships it without embedded assemblies. -->
+		<AndroidPackageFormat Condition="'$(Configuration)' == 'Debug'">apk</AndroidPackageFormat>
+		<AndroidPackageFormat Condition="'$(Configuration)' != 'Debug'">aab</AndroidPackageFormat>
+	</PropertyGroup>
+
+	<!--
+	  Release signing for the Play upload.
+
+	  No secret lives in this file. The keystore path is supplied per machine,
+	  and both passwords go through .NET Android's `env:` indirection, which
+	  makes the SDK read the named environment variable at signing time. That
+	  keeps the password out of the repo, out of `ps` output, and out of shell
+	  history — passing -p:AndroidSigningStorePass=<literal> would leak it into
+	  all three.
+
+	  Signing engages only when a keystore is actually supplied, so a plain
+	  Release build still succeeds unsigned. That is what CI does: it builds
+	  the head to prove it compiles, with no access to the key.
+
+	      export DAQIFI_KEYSTORE_PASS="$(< ~/keystores/.daqifi-upload.pw)"
+	      dotnet build Daqifi.Avalonia.Android/Daqifi.Avalonia.Android.csproj \
+	        -c Release \
+	        -p:AndroidSigningKeyStore="$HOME/keystores/daqifi-upload.jks"
+
+	  If the key password differs from the store password, add
+	  -p:AndroidSigningKeyPass=env:DAQIFI_KEY_PASS and export that too.
+
+	  The keystore is the one already created for the native daqifi-android
+	  app (alias daqifi-upload, 4096-bit RSA, valid to 2053), backed up to the
+	  DAQiFi "Android App Signing" folder on the TrueNAS share. Losing it is
+	  only recoverable because the first upload enrols in Play App Signing.
+
+	  Its certificate SHA-256 — compare against this if a build's provenance is
+	  ever in doubt:
+	    6E:49:CF:0A:61:DC:50:FD:82:BA:13:34:AA:CD:40:F5:6F:D6:04:80:C4:6E:03:1D:E4:83:9D:AE:77:C4:87:5B
+
+	  NOTE on the certificate DN: it reads "L=Colorado Springs", which is wrong —
+	  the registered address is Golden, CO. It was guessed when the key was
+	  generated and never checked. Harmless: the DN is free text, is not shown to
+	  users, and Google does not validate it, so it is NOT worth rotating a key
+	  over. Use "L=Golden, ST=Colorado" if a replacement upload key is ever
+	  generated (which Play App Signing permits without disturbing the listing).
+	-->
+	<PropertyGroup Condition="'$(Configuration)' == 'Release' And '$(AndroidSigningKeyStore)' != ''">
+		<AndroidKeyStore>true</AndroidKeyStore>
+		<AndroidSigningKeyAlias Condition="'$(AndroidSigningKeyAlias)' == ''">daqifi-upload</AndroidSigningKeyAlias>
+		<AndroidSigningStorePass Condition="'$(AndroidSigningStorePass)' == ''">env:DAQIFI_KEYSTORE_PASS</AndroidSigningStorePass>
+		<AndroidSigningKeyPass Condition="'$(AndroidSigningKeyPass)' == ''">env:DAQIFI_KEYSTORE_PASS</AndroidSigningKeyPass>
 	</PropertyGroup>
 
 	<ItemGroup>
