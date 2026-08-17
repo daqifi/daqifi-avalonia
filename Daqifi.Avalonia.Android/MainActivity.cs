@@ -14,6 +14,17 @@ namespace Daqifi.Avalonia.Android;
     Theme = "@style/MyTheme.NoActionBar",
     Icon = "@drawable/icon",
     MainLauncher = true,
+    // SingleTask, not the "standard" default: Avalonia's single-view lifetime owns ONE MainView
+    // instance for the process, so a second activity instance builds a second
+    // EmbeddableControlRoot that tries to adopt the MainView still parented to the first. That
+    // throws InvalidOperationException ("already has a visual parent") on the UI thread and takes
+    // the app down — reproduced on a Galaxy A16 / Android 16 by launching a second instance.
+    //
+    // The default allowed exactly that, and this app hands Android two ways to ask for it: the
+    // launcher icon and the streaming foreground-service notification, whose content intent
+    // targets this activity. SingleTask makes the "one instance" assumption Avalonia already
+    // makes structurally true, so no caller can violate it by passing the wrong intent flags.
+    LaunchMode = LaunchMode.SingleTask,
     ConfigurationChanges = ConfigChanges.Orientation | ConfigChanges.ScreenSize | ConfigChanges.UiMode)]
 // Avalonia 12: AvaloniaMainActivity is non-generic and no longer carries the builder hooks —
 // the app type and CustomizeAppBuilder moved to AvaloniaAndroidApplication<TApp>. See MainApplication.
