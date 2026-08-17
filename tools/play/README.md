@@ -99,3 +99,4 @@ question this file exists because of.
 |---|---|---|---|
 | 1 | `91338e4` | — | superseded 2026-08-16; Sentry inert, pre-review defects. **Never promote.** |
 | 2 | `8117d38` | internal | 2026-08-16. First build with working crash reporting: breadcrumb trail, device context, offline envelope cache. |
+| 3 | _(pending)_ | | supersedes 2 — fixes the crash-on-launch a second activity instance caused (DAQIFI-DESKTOP-1Y). |

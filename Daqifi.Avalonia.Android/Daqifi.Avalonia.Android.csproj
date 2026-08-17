@@ -29,7 +29,7 @@
 		     the first internal-testing upload, which was built from 91338e4 — before the Sentry
 		     initialisation fix and every Qodo-found defect landed. That build must not be
 		     promoted to production; see the release note in tools/play/README.md. -->
-		<ApplicationVersion>2</ApplicationVersion>
+		<ApplicationVersion>3</ApplicationVersion>
 		<ApplicationDisplayVersion>3.3.0</ApplicationDisplayVersion>
 		<!-- Debug stays apk so the dev loop remains a plain `adb install`.
 		     Release produces the aab Play requires for new apps. Note an aab
