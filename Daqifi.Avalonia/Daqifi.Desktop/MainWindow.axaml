@@ -8,6 +8,7 @@
         xmlns:converters="using:Daqifi.Desktop.Converters"
         xmlns:service="using:Daqifi.Desktop.DialogService"
         service:DialogService.IsRegisteredView="True"
+        Icon="avares://Daqifi.Avalonia/Daqifi.Desktop/Images/AppIcon.ico"
         Height="{Binding Height, Mode=TwoWay}"
         Width="{Binding Width, Mode=TwoWay}"
         MinWidth="720"

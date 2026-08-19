@@ -1,0 +1,6 @@
+<?xml version="1.0" encoding="utf-8"?>
+<!-- Flat white: the icon's ground is white by design, so this is a colour
+     resource rather than five identical PNGs. -->
+<resources>
+    <color name="ic_launcher_background">#FFFFFFFF</color>
+</resources>

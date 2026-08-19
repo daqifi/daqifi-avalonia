@@ -44,5 +44,5 @@
 	     hand-declared here by MainActivity's mangled Java name (which drifts on SDK bumps
 	     and would break the launcher). device_filter.xml is kept ready for that step. -->
 	<uses-feature android:name="android.hardware.usb.host" android:required="false" />
-	<application android:label="DAQiFi" android:icon="@drawable/icon" />
+	<application android:label="DAQiFi" android:icon="@mipmap/ic_launcher" />
 </manifest>
