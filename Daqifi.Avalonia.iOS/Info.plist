@@ -47,5 +47,8 @@
 	     what is expected to work first. -->
 	<key>NSLocalNetworkUsageDescription</key>
 	<string>DAQiFi discovers Nyquist data-acquisition devices on your local network.</string>
+	<!-- App icon asset catalogue (generated — see daqifi-design-tokens). -->
+	<key>XSAppIconAssets</key>
+	<string>Assets.xcassets/AppIcon.appiconset</string>
 </dict>
 </plist>

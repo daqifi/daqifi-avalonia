@@ -1,0 +1,11 @@
+<?xml version="1.0" encoding="utf-8"?>
+<!-- Adaptive icon (API 26+). The launcher masks these layers to whatever shape
+     the device uses, so the foreground deliberately carries the traces mark
+     rather than the full DAQiFi lockup: a wordmark this wide has its ends
+     clipped by a round mask. The full lockup is the Play listing icon instead.
+     Source of truth: daqifi-design-tokens/assets/app-icons. -->
+<adaptive-icon xmlns:android="http://schemas.android.com/apk/res/android">
+    <background android:drawable="@color/ic_launcher_background" />
+    <foreground android:drawable="@mipmap/ic_launcher_foreground" />
+    <monochrome android:drawable="@mipmap/ic_launcher_monochrome" />
+</adaptive-icon>

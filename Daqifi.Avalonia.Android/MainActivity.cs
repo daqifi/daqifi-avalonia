@@ -12,7 +12,7 @@ namespace Daqifi.Avalonia.Android;
 [Activity(
     Label = "DAQiFi",
     Theme = "@style/MyTheme.NoActionBar",
-    Icon = "@drawable/icon",
+    Icon = "@mipmap/ic_launcher",
     MainLauncher = true,
     // SingleTask, not the "standard" default: Avalonia's single-view lifetime owns ONE MainView
     // instance for the process, so a second activity instance builds a second
