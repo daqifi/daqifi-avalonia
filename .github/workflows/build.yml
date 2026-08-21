@@ -366,6 +366,45 @@ jobs:
           fi
           echo "lock files unchanged by the RID build"
 
+      # The icon is the ONLY thing in this head that a green build does not
+      # prove. actool is driven from the @(ImageAsset) item group, so an
+      # Assets.xcassets that is present on disk but not in that group is simply
+      # never compiled — no warning, no error, exit 0, and an app with a blank
+      # icon. That is unobservable from Linux, where every other check in this
+      # repo runs, which is exactly why it is asserted here.
+      #
+      # Assets.car is actool's output and only exists if actool ran. Asserting
+      # the .app is a real bundle first keeps a rename or an output-path change
+      # from being reported as a missing icon.
+      - name: iOS app bundle must contain a compiled asset catalogue
+        run: |
+          set -euo pipefail
+          app=$(find Daqifi.Avalonia.iOS/bin/Release -maxdepth 3 -type d -name '*.app' -print -quit)
+          if [ -z "${app}" ]; then
+            echo "::error::no .app bundle under Daqifi.Avalonia.iOS/bin/Release. The build" \
+                 "output moved; this check needs updating, and the icon is unverified."
+            exit 1
+          fi
+          echo "bundle: ${app}"
+          if [ ! -f "${app}/Assets.car" ]; then
+            echo "::error::${app} has no Assets.car, so actool never compiled" \
+                 "Assets.xcassets. The app would install with a blank icon. Check that" \
+                 "Assets.xcassets/**/*.png AND **/Contents.json are both <ImageAsset>" \
+                 "in Daqifi.Avalonia.iOS.csproj — listing them as <None> causes exactly this."
+            ls -la "${app}"
+            exit 1
+          fi
+          echo "Assets.car present ($(wc -c < "${app}/Assets.car") bytes)"
+          # Name the icon too: a catalogue can compile while carrying no AppIcon at
+          # all, which fails App Store submission rather than the build.
+          if ! plutil -p "${app}/Info.plist" | grep -q CFBundleIcon; then
+            echo "::error::actool ran but wrote no CFBundleIcon* key into Info.plist," \
+                 "so the catalogue contains no AppIcon set. Check XSAppIconAssets in" \
+                 "Info.plist names an appiconset that exists."
+            exit 1
+          fi
+          plutil -p "${app}/Info.plist" | grep -A6 CFBundleIcon
+
       - name: Upload dependency graph
         uses: actions/upload-artifact@v4
         with:
