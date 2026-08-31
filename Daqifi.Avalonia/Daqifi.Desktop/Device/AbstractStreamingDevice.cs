@@ -1193,6 +1193,19 @@ public abstract partial class AbstractStreamingDevice : ObservableObject, IStrea
     /// <see cref="FeatureNotSupportedException"/>.
     /// </remarks>
     /// <exception cref="DeviceNotConnectedException">Thrown when no device is connected.</exception>
+    /// <exception cref="SdCardListIncompleteException">
+    /// Thrown by Core when the listing did not arrive in full, which is what makes an EMPTY result
+    /// here trustworthy: it now means the device answered and had nothing to report, rather than
+    /// "the reply may simply never have come". This method used to corroborate every empty listing
+    /// with a second round-trip (<c>GetSdCardStorageAsync</c>), because Core's list parser read "no
+    /// error lines and no content lines" as an empty directory and so could not tell an unreachable
+    /// device from a card with nothing on it — a distinction that stopped being cosmetic once SD
+    /// moved onto WiFi (issue #1), where a dead or congested link produces exactly that shape. That
+    /// only narrowed the ambiguity, since a later reply says nothing about whether the listing
+    /// itself was complete. Core 1.7.0 closed it properly with an end-of-listing terminator
+    /// (daqifi-core#396), so the round-trip is gone and this exception is the answer instead;
+    /// <see cref="ViewModels.SdCardFailureClassifier"/> reports it as reconnect guidance.
+    /// </exception>
     // @port: Daqifi.Desktop.Device.AbstractStreamingDevice.RefreshSdCardFiles
     public void RefreshSdCardFiles()
     {
@@ -1200,32 +1213,6 @@ public abstract partial class AbstractStreamingDevice : ObservableObject, IStrea
 
         var coreDevice = GetConnectedCoreDevice(CoreDeviceForSd);
         var files = Task.Run(() => coreDevice.GetSdCardFilesAsync()).GetAwaiter().GetResult();
-
-        // An EMPTY result is ambiguous and must be corroborated before it is shown as "SD card OK,
-        // no files". Core's text exchange returns the lines it collected when its response window
-        // elapses rather than throwing, and its list parser reads "no error lines and no content
-        // lines" as an empty directory — so a device that never answered is indistinguishable from
-        // one with nothing on its card. Over USB that barely mattered (an unplug faults the serial
-        // transport and Core throws), but issue #1 puts SD on WiFi, where a silently dead or merely
-        // congested link produces exactly this shape and the user would be told the card is fine
-        // and empty while their files sit on an unreachable device.
-        //
-        // The storage query is the best corroborating signal available here: unlike the list, its
-        // parser cannot read a missing reply as success, so it throws when nothing comes back. Let
-        // that exception propagate — callers already route SD failures through
-        // SdCardFailureClassifier, which reports it correctly. A round-trip is spent only on the
-        // empty-list path.
-        //
-        // This NARROWS the ambiguity, it does not remove it: a successful storage query proves the
-        // device answered a LATER request, not that the listing itself was complete, so a LIST that
-        // was lost or truncated while the link then recovered still reads as an empty card. Only
-        // Core can close that gap — it is the layer that knows a reply never arrived — and it is
-        // filed as daqifi-core#396. Accepted here as the strict improvement over reporting every
-        // unreachable device as a healthy empty card.
-        if (files.Count == 0)
-        {
-            Task.Run(() => coreDevice.GetSdCardStorageAsync()).GetAwaiter().GetResult();
-        }
 
         UpdateSdCardFiles(MapSdCardFiles(files));
     }
