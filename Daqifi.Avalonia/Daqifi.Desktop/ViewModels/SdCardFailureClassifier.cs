@@ -135,6 +135,32 @@ public static class SdCardFailureClassifier
                 // so per-file rather than card-wide — a batch skips it and keeps going.
                 IsCardUnavailable: false),
 
+            // The listing did not arrive in full: the device never answered the file-list query,
+            // or stopped answering part-way through it. Core 1.7.0 can finally tell that apart
+            // from a healthy empty card — it appends a SYSTem:ERRor? terminator to the same text
+            // exchange and reads the firmware's own end-of-listing marker, so "the reply arrived
+            // whole" is a fact rather than an inference (daqifi-core#396).
+            //
+            // Until that landed this app had no type to match, so RefreshSdCardFiles spent a
+            // second round-trip (GetSdCardStorageAsync) on every empty listing to prove the device
+            // was answering at all. That only narrowed the ambiguity — a later reply says nothing
+            // about whether the listing itself was complete — and it is gone now that Core answers
+            // the question directly. This arm is what replaces it.
+            //
+            // MUST precede the SdCardOperationException arm below: this type derives from it, and
+            // the base arm would hand a connection problem the "card may be corrupt, try
+            // reformatting" guidance.
+            //
+            // Card-wide, like the other transport-loss arms: an unfinished listing is a statement
+            // about the link or the device, not about any one file, so a batch import stops instead
+            // of re-failing every remaining file through the same dead link.
+            SdCardListIncompleteException => new SdCardFailure(
+                State: SdCardState.Error,
+                StatusMessage: "The device did not finish listing the SD card.",
+                Guidance: TRANSPORT_GONE_GUIDANCE,
+                IsExpectedDeviceCondition: true,
+                IsCardUnavailable: true),
+
             SdCardOperationException operation => new SdCardFailure(
                 State: SdCardState.Error,
                 StatusMessage: operation.LastScpiError ?? operation.Message,
