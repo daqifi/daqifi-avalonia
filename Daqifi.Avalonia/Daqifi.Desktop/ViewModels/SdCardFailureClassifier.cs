@@ -85,26 +85,6 @@ public static class SdCardFailureClassifier
         "The connection to the device was lost. Reconnect and try again.";
     #endregion
 
-    #region Private Methods
-    /// <summary>
-    /// Whether an untyped <see cref="InvalidOperationException"/> is one of Core's own
-    /// connectivity guards rather than a genuine defect.
-    /// </summary>
-    /// <remarks>
-    /// Deliberately narrow — it matches only the phrases Core actually uses for "the device is
-    /// gone", so any other <see cref="InvalidOperationException"/> (a real programming error) keeps
-    /// the Error path. Our own SD_UNAVAILABLE_MESSAGE is intentionally NOT matched: "this device
-    /// has no SD support" is a different condition with different guidance, and misreporting it as
-    /// a lost connection would send the user to reconnect a perfectly healthy device.
-    /// </remarks>
-    private static bool IsCoreDisconnectGuard(InvalidOperationException ex)
-    {
-        var message = ex.Message;
-        return message.Contains("Device is not connected", StringComparison.OrdinalIgnoreCase)
-            || message.Contains("disposing or disconnecting", StringComparison.OrdinalIgnoreCase);
-    }
-    #endregion
-
     #region Public Methods
     /// <summary>
     /// Classifies an exception thrown by an SD card refresh, download, or import.
@@ -216,19 +196,23 @@ public static class SdCardFailureClassifier
                 IsExpectedDeviceCondition: true,
                 IsCardUnavailable: true),
 
-            // Core does NOT use its typed transport exception for its own up-front connectivity
-            // guards: every SD entry point opens with a plain
-            // InvalidOperationException("Device is not connected."), and the text path adds
-            // "…disposing or disconnecting" variants. Matching only the typed exception above
-            // therefore still routed an ordinary disconnect to the default arm — an Error and a
-            // Sentry issue for the user pressing Disconnect mid-refresh, which is the exact
+            // Core's own up-front connectivity guards, as distinct from the transport error above:
+            // the device was already known to be gone when the call was made, rather than the link
+            // dying under an operation already in flight. Same user-facing outcome — an ordinary
+            // disconnect mid-refresh must not raise an Error and a Sentry issue, which is the exact
             // false-positive this classifier exists to prevent.
             //
-            // Message matching is fragile and we know it (the T6 lesson: prefer types). It is used
-            // here only because Core exposes no type to match. Filed upstream (daqifi-core#395) to
-            // give these guards a typed exception; retire this arm when that lands.
-            InvalidOperationException invalidOperation
-                when IsCoreDisconnectGuard(invalidOperation) => new SdCardFailure(
+            // Matched by TYPE since Core 1.7.0 (daqifi-core#395). This arm used to match exception
+            // MESSAGES — "Device is not connected" and "…disposing or disconnecting" — because Core
+            // threw a plain InvalidOperationException from these guards and exposed no type to match.
+            // It now throws DeviceNotConnectedException from ConnectionGuard.EnsureConnected and from
+            // both TextExchangeEngine sites, so the string matching is gone.
+            //
+            // Note this type derives from InvalidOperationException, so it must stay ABOVE any
+            // broader InvalidOperationException arm. Core still throws plain ones for genuinely
+            // different conditions (SD logging over LAN, a download already in flight, double
+            // enumeration of a parse stream); those keep the default Error path, as before.
+            DeviceNotConnectedException => new SdCardFailure(
                 State: SdCardState.Error,
                 StatusMessage: "The connection to the device was lost.",
                 Guidance: TRANSPORT_GONE_GUIDANCE,

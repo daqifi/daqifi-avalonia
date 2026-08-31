@@ -84,7 +84,6 @@ public abstract partial class AbstractStreamingDevice : ObservableObject, IStrea
 
     private const string SD_UNAVAILABLE_MESSAGE = "Core SD card operations are not available for this device.";
     private const string STREAMING_UNAVAILABLE_MESSAGE = "Core live streaming operations are not available for this device.";
-    private const string NOT_CONNECTED_MESSAGE = "Device is not connected.";
 
     /// <summary>
     /// Max length for a friendly device name, matching firmware's
@@ -1253,6 +1252,33 @@ public abstract partial class AbstractStreamingDevice : ObservableObject, IStrea
     }
 
     /// <summary>
+    /// The core device for an operation that requires a live connection, or
+    /// <see cref="DeviceNotConnectedException"/> if there is none.
+    /// </summary>
+    /// <remarks>
+    /// Distinct from <see cref="GetCoreDevice"/>, and the difference is the exception TYPE rather
+    /// than its wording. "There is no connected device" is an ordinary, expected condition — the
+    /// user pressed Disconnect, or unplugged the board — and <see cref="ViewModels.SdCardFailureClassifier"/>
+    /// must be able to tell it apart from a defect so it reports a Warning rather than an Error and
+    /// a Sentry issue. It used to tell them apart by matching this message as a STRING, which is
+    /// why the message lived in a constant here; Core 1.7.0 gave its own guards
+    /// <see cref="DeviceNotConnectedException"/> (daqifi-core#395), so throwing the same type from
+    /// the app's guards lets that matching be deleted outright.
+    /// <para>
+    /// The "…not available for this device" cases deliberately keep <see cref="GetCoreDevice"/> and
+    /// its untyped exception: a device with no SD or streaming support is a different condition with
+    /// different guidance, and classifying it as a lost connection would send the user off to
+    /// reconnect a perfectly healthy device.
+    /// </para>
+    /// </remarks>
+    private static CoreStreamingDevice GetConnectedCoreDevice(CoreStreamingDevice? coreDevice)
+    {
+        // Message omitted deliberately: the type's own default is "Device is not connected.",
+        // so there is one copy of that sentence and it lives in Core.
+        return coreDevice ?? throw new DeviceNotConnectedException();
+    }
+
+    /// <summary>
     /// Downloads an SD card log file from the connected device to a local temp path.
     /// </summary>
     /// <param name="fileName">The name of the file on the SD card.</param>
@@ -1959,7 +1985,7 @@ public abstract partial class AbstractStreamingDevice : ObservableObject, IStrea
     // @port: Daqifi.Desktop.Device.AbstractStreamingDevice.UpdateNetworkConfiguration
     public async Task UpdateNetworkConfiguration()
     {
-        var coreDevice = GetCoreDevice(CoreDeviceForNetworkConfiguration, NOT_CONNECTED_MESSAGE);
+        var coreDevice = GetConnectedCoreDevice(CoreDeviceForNetworkConfiguration);
 
         var restoreSdInterface = ConnectionType == ConnectionType.Usb && Mode == DeviceMode.LogToDevice;
 
@@ -2012,7 +2038,7 @@ public abstract partial class AbstractStreamingDevice : ObservableObject, IStrea
     // @port: Daqifi.Desktop.Device.AbstractStreamingDevice.PrepareSdInterface
     private void PrepareSdInterface()
     {
-        var coreDevice = GetCoreDevice(CoreDeviceForNetworkConfiguration, NOT_CONNECTED_MESSAGE);
+        var coreDevice = GetConnectedCoreDevice(CoreDeviceForNetworkConfiguration);
         coreDevice.PrepareSdInterface();
 
         if (ConnectionType == ConnectionType.Usb)
@@ -2027,7 +2053,7 @@ public abstract partial class AbstractStreamingDevice : ObservableObject, IStrea
     // @port: Daqifi.Desktop.Device.AbstractStreamingDevice.PrepareLanInterface
     private void PrepareLanInterface()
     {
-        var coreDevice = GetCoreDevice(CoreDeviceForNetworkConfiguration, NOT_CONNECTED_MESSAGE);
+        var coreDevice = GetConnectedCoreDevice(CoreDeviceForNetworkConfiguration);
         coreDevice.PrepareLanInterface();
 
         if (ConnectionType == ConnectionType.Usb)
