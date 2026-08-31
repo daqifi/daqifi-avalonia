@@ -1,0 +1,63 @@
+name: Dependabot claims check
+
+# Assert a Dependabot PR actually made every bump its description claims.
+#
+# PR #130 announced `Daqifi.Core` 1.3.0 -> 1.7.0 in its body and never changed the
+# version in the csproj — ten of its fourteen announced updates were missing from
+# the diff, under the title "Bump the minor-and-patch group with 14 updates". A
+# reviewer reading that body comes away believing Core moved, which is worse than
+# no PR at all: the PR is the thing that would otherwise have said the dependency
+# was stale. Nothing here checked, so nobody knew.
+#
+# Runs ONLY on Dependabot's own PRs. On anyone else's the guard has no claims to
+# verify and correctly refuses to report success, so gating on the author keeps
+# that from reading as a failure on every human PR.
+#
+# The token here is read-only by construction: Dependabot-triggered `pull_request`
+# events get a restricted GITHUB_TOKEN, and the body comes from the event payload
+# rather than an API call, so this job needs no permissions beyond reading the
+# checkout. The body is UNTRUSTED input (it embeds upstream release notes) and is
+# passed through an environment variable into a file — never interpolated into a
+# shell command.
+#
+# Background: .github/dependency-updates/README.md, and #132.
+
+on:
+  pull_request:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: dependabot-claims-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  claims:
+    name: Claimed bumps are actually applied
+    if: github.event.pull_request.user.login == 'dependabot[bot]'
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      # Run the guard's own tests before trusting its verdict. Its value is
+      # entirely in FAILING on a PR that over-claims; a guard that silently only
+      # ever passes reads as coverage while providing none.
+      - name: Self-test the guard
+        run: python3 .github/scripts/test_check_dependabot_claims.py
+
+      - name: Check the PR description against the manifests
+        env:
+          # Quoted expansion into a file, never into a command line: the body is
+          # attacker-influenced (it embeds release notes from upstream projects).
+          PR_BODY: ${{ github.event.pull_request.body }}
+        run: |
+          set -euo pipefail
+          printf '%s' "$PR_BODY" > "$RUNNER_TEMP/pr-body.md"
+          if [ ! -s "$RUNNER_TEMP/pr-body.md" ]; then
+            echo "::error::The pull request description is empty, so there is" \
+                 "nothing to verify the diff against."
+            exit 1
+          fi
+          python3 .github/scripts/check_dependabot_claims.py \
+            --body-file "$RUNNER_TEMP/pr-body.md" --glob

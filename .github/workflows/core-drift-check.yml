@@ -1,0 +1,177 @@
+name: Core drift check
+
+# Weekly check that the pinned Daqifi.Core matches the latest release on nuget.org,
+# filing ONE rolling issue while it does not.
+#
+# Daqifi.Core is the package this app wraps, and its drift was invisible for five
+# weeks. Dependabot DID open bumps — #93 to 1.4.0, #95 to 1.5.0 — but its grouped
+# PR titles never named Core, so neither read as a Core update in a PR list. It
+# then auto-closed #95 on 2026-08-17 with no replacement, and for the next two
+# weeks nothing said anything at all while 1.6.0 and 1.7.0 shipped. #130 finally
+# announced 1.3.0 -> 1.7.0 in its body and did not apply it.
+#
+# The point of this job is that it does not depend on Dependabot. Dependabot can
+# open nothing, close its own PR, or open one that lies; this compares the
+# committed pin against nuget.org and says so either way. dependabot-claims-check
+# is the other half — it catches the PR that lies. This one catches the missing PR.
+#
+# Scheduled AFTER Dependabot's own weekly run (Mondays 06:00 America/Los_Angeles,
+# i.e. 13:00 or 14:00 UTC depending on DST) so a week's report reflects whatever
+# Dependabot did or did not do that morning.
+#
+# Background: .github/dependency-updates/README.md, and #132.
+
+on:
+  schedule:
+    - cron: '0 16 * * 1'      # Mondays 16:00 UTC
+  workflow_dispatch:
+
+permissions:
+  contents: read
+  issues: write
+
+concurrency:
+  group: core-drift
+  cancel-in-progress: false
+
+env:
+  DRIFT_LABEL: core-drift
+  # Identifies the single rolling issue in its body, so a run can never edit or
+  # close some other issue that happens to carry the label.
+  DRIFT_MARKER: core-drift-report
+  CORE_REPO: daqifi/daqifi-core
+
+jobs:
+  drift:
+    name: Daqifi.Core pin vs nuget.org
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      # Run the guard's own tests before trusting its verdict. Its value is
+      # entirely in FAILING while the pin is stale; a watcher that silently only
+      # ever passes turns a weekly green into false reassurance, which is the very
+      # belief that let 1.3.0 sit for five weeks.
+      - name: Self-test the guard
+        run: python3 .github/scripts/test_check_core_drift.py
+
+      - name: Compare the pin against nuget.org
+        id: drift
+        run: |
+          set -euo pipefail
+          set +e
+          python3 .github/scripts/check_core_drift.py --glob | tee "$RUNNER_TEMP/drift.txt"
+          status=${PIPESTATUS[0]}
+          set -e
+          case "$status" in
+            0) echo "behind=false" >> "$GITHUB_OUTPUT" ;;
+            1) echo "behind=true"  >> "$GITHUB_OUTPUT" ;;
+            # Exit 2 means the check could not run — the pin was not found, or
+            # nuget.org was unreadable. Fail the job rather than reporting "not
+            # behind", which is the silence this whole workflow exists to break.
+            *) echo "::error::check_core_drift.py could not run (exit $status)."
+               exit 1 ;;
+          esac
+
+      - name: Build the report body
+        if: steps.drift.outputs.behind == 'true'
+        id: body
+        env:
+          PINNED: ${{ steps.drift.outputs.pinned }}
+          LATEST: ${{ steps.drift.outputs.latest }}
+          MANIFEST: ${{ steps.drift.outputs.manifest }}
+          BEHIND_BY: ${{ steps.drift.outputs.behind_by }}
+          MISSED: ${{ steps.drift.outputs.missed }}
+        run: |
+          set -euo pipefail
+          BODY_FILE="$RUNNER_TEMP/drift.md"
+          {
+            echo "## \`Daqifi.Core\` is $BEHIND_BY release(s) behind"
+            echo
+            echo "- **Pinned:** \`$PINNED\` in \`$MANIFEST\`"
+            echo "- **Latest stable on nuget.org:** \`$LATEST\`"
+            echo
+            echo "### Not taken up"
+            echo
+            # Versions come from nuget.org's own index and are validated by the
+            # script as numeric-only, so there is nothing here to sanitize.
+            printf '%s' "$MISSED" | tr ',' '\n' | while read -r v || [ -n "$v" ]; do
+              [ -n "$v" ] || continue
+              printf -- '- [ ] [%s](https://github.com/%s/releases/tag/v%s)\n' \
+                "$v" "$CORE_REPO" "$v"
+            done
+            echo
+            echo "### How to take these up"
+            echo
+            echo "> Run the \`avalonia-core-update\` path: read the release span, verify each claim against Core's source at the tag, bump the pin, adapt what no longer compiles, and retire any local workaround Core now owns."
+            echo
+            echo "This issue is refreshed weekly and closes itself once the pin catches up. It exists because Dependabot is not a reliable signal for this package: its grouped PR titles never name \`Daqifi.Core\`, it has auto-closed a Core bump without opening a replacement, and it has announced a Core bump in a PR body that the diff never made. See \`.github/dependency-updates/README.md\`."
+            echo
+            echo "<sub>Auto-filed by \`.github/workflows/core-drift-check.yml\`. <!-- ${DRIFT_MARKER} --></sub>"
+          } > "$BODY_FILE"
+          echo "body_file=$BODY_FILE" >> "$GITHUB_OUTPUT"
+
+      # Unconditional: the lookup below filters by this label on BOTH paths, and
+      # listing by a label that does not exist yet is an error, not an empty list.
+      - name: Ensure the label exists
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          gh label create "$DRIFT_LABEL" \
+            --repo "$GITHUB_REPOSITORY" \
+            --color B60205 \
+            --description "Daqifi.Core pin is behind its latest release" 2>/dev/null || true
+
+      - name: Find the rolling issue
+        id: find
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          set -euo pipefail
+          # Match the hidden body marker, not just the label: the label may be
+          # applied by hand to other issues, and editing or closing the wrong one
+          # would be worse than filing a duplicate. --limit well above gh's
+          # default of 30 so a long-lived report cannot fall off the page.
+          FOUND=""
+          for n in $(gh issue list --repo "$GITHUB_REPOSITORY" --state open \
+            --label "$DRIFT_LABEL" --limit 200 --json number --jq '.[].number'); do
+            if gh issue view "$n" --repo "$GITHUB_REPOSITORY" --json body --jq '.body' \
+               | grep -q "$DRIFT_MARKER"; then
+              FOUND="$n"
+              break
+            fi
+          done
+          echo "issue_number=$FOUND" >> "$GITHUB_OUTPUT"
+          echo "Existing report issue: ${FOUND:-none}"
+
+      - name: File or refresh the report
+        if: steps.drift.outputs.behind == 'true'
+        env:
+          GH_TOKEN: ${{ github.token }}
+          BODY_FILE: ${{ steps.body.outputs.body_file }}
+          EXISTING: ${{ steps.find.outputs.issue_number }}
+          LATEST: ${{ steps.drift.outputs.latest }}
+          PINNED: ${{ steps.drift.outputs.pinned }}
+        run: |
+          set -euo pipefail
+          TITLE="Daqifi.Core pin is behind — ${PINNED} < ${LATEST}"
+          if [ -n "$EXISTING" ]; then
+            gh issue edit "$EXISTING" --repo "$GITHUB_REPOSITORY" \
+              --title "$TITLE" --body-file "$BODY_FILE"
+            echo "Refreshed #$EXISTING"
+          else
+            URL="$(gh issue create --repo "$GITHUB_REPOSITORY" --title "$TITLE" \
+              --label "$DRIFT_LABEL" --body-file "$BODY_FILE")"
+            echo "Filed $URL"
+          fi
+
+      - name: Close the report once the pin catches up
+        if: steps.drift.outputs.behind == 'false' && steps.find.outputs.issue_number != ''
+        env:
+          GH_TOKEN: ${{ github.token }}
+          EXISTING: ${{ steps.find.outputs.issue_number }}
+          PINNED: ${{ steps.drift.outputs.pinned }}
+        run: |
+          set -euo pipefail
+          gh issue close "$EXISTING" --repo "$GITHUB_REPOSITORY" \
+            --comment "\`Daqifi.Core\` is pinned at \`${PINNED}\`, the latest stable release. Closing; this will reopen as a new issue the next time the pin falls behind."

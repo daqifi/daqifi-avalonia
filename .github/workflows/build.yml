@@ -35,6 +35,39 @@ env:
   DOTNET_CLI_TELEMETRY_OPTOUT: 'true'
 
 jobs:
+  # The .github/scripts guards are only worth anything if they still work, and two
+  # of them are invoked NOWHERE on a normal PR: check_dependabot_claims.py runs
+  # only on Dependabot's own pull requests, and check_core_drift.py only on a
+  # weekly schedule. A change that broke either would sit undetected until the next
+  # Dependabot PR or the next Monday — and both guards exist precisely because
+  # nobody was watching. This job runs every self-test on every push and PR, so a
+  # broken guard fails here instead of going quiet where it matters.
+  #
+  # The other two are ALSO invoked in place, next to the step whose verdict they
+  # gate. That duplication is deliberate: this job proves the guard works, the
+  # in-place run proves it works on the runner that is about to trust it.
+  scripts:
+    name: CI script self-tests
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Run every guard's self-test
+        run: |
+          set -euo pipefail
+          mapfile -t tests < <(find .github/scripts -name 'test_*.py' | sort)
+          # A silent empty sweep would report success without running anything —
+          # the same failure shape the guards themselves are written to avoid.
+          if [ "${#tests[@]}" -eq 0 ]; then
+            echo "::error::No .github/scripts/test_*.py found — nothing was run."
+            exit 1
+          fi
+          for test in "${tests[@]}"; do
+            echo "::group::${test}"
+            python3 "${test}"
+            echo "::endgroup::"
+          done
+
   desktop:
     name: Library + Desktop head + capture harness
     runs-on: ubuntu-latest
