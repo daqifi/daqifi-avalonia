@@ -1,6 +1,7 @@
 using Daqifi.Core.Communication.Transport; // TransportNotConnectedException (typed link-loss)
 using Daqifi.Core.Device; // FeatureNotSupportedException (firmware feature gating, Core ADR 0001)
 using Daqifi.Core.Device.SdCard;
+using Daqifi.Desktop.Device; // SdOperationBlockedException (the app's own quiescence guard)
 using Daqifi.Desktop.Loggers;
 
 namespace Daqifi.Desktop.ViewModels;
@@ -83,6 +84,14 @@ public static class SdCardFailureClassifier
     /// <summary>Guidance when the link died out from under an in-flight SD operation.</summary>
     internal const string TRANSPORT_GONE_GUIDANCE =
         "The connection to the device was lost. Reconnect and try again.";
+
+    /// <summary>Guidance for an SD operation refused because the device is streaming.</summary>
+    internal const string STOP_STREAMING_GUIDANCE =
+        "The device is streaming. Stop streaming to work with files on its SD card.";
+
+    /// <summary>Guidance for an SD operation refused because the device is logging to its card.</summary>
+    internal const string STOP_SD_LOGGING_GUIDANCE =
+        "The device is logging to its SD card. Stop logging to work with the files on it.";
     #endregion
 
     #region Public Methods
@@ -242,6 +251,33 @@ public static class SdCardFailureClassifier
                 State: SdCardState.Error,
                 StatusMessage: "The connection to the device was lost.",
                 Guidance: TRANSPORT_GONE_GUIDANCE,
+                IsExpectedDeviceCondition: true,
+                IsCardUnavailable: true),
+
+            // The app's OWN quiescence guard: an SD file operation was attempted while the device
+            // was streaming or logging to its card. Ordinary and self-inflicted in the harmless
+            // sense — the Device Logs pane fires a refresh the moment a device is selected, so
+            // simply opening it mid-stream lands here without the user asking for anything.
+            //
+            // Untyped, this fell through to the default arm below and was reported as an app
+            // defect: an Error, a Sentry issue, and "check the device connection and try again"
+            // over a connection that was fine, directly contradicting the status line right above
+            // it (issue #146). Typing the guard is the same fix applied to the connectivity guards
+            // in #133/#134 — an app-owned condition the classifier can only recognise if the app
+            // gives it a type.
+            //
+            // Card-wide: the device is busy, which has nothing to do with any one file, so a batch
+            // import stops rather than re-failing every remaining file against the same guard.
+            //
+            // Note this derives from InvalidOperationException, as DeviceNotConnectedException
+            // above does. Neither derives from the other, so their relative order is free; both
+            // must stay above any broader InvalidOperationException arm, should one ever be added.
+            SdOperationBlockedException blocked => new SdCardFailure(
+                State: SdCardState.Error,
+                StatusMessage: blocked.Message,
+                Guidance: blocked.Reason == SdOperationBlockedReason.SdCardLogging
+                    ? STOP_SD_LOGGING_GUIDANCE
+                    : STOP_STREAMING_GUIDANCE,
                 IsExpectedDeviceCondition: true,
                 IsCardUnavailable: true),
 
