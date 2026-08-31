@@ -105,6 +105,14 @@ public class AppLogger : IAppLogger
         // elevated production runs, per-user for un-elevated runs (test harness / non-admin
         // Debug). Keeping logs and the database in the same root avoids dropping logs when
         // the machine-wide store is admin-owned and the process is not elevated.
+        //
+        // This is the first thing in the whole app to touch AppDataPaths, and it does so from
+        // inside a static readonly initializer, so AppDataPaths' own initialization MUST be
+        // total: anything it throws arrives here as a TypeInitializationException and poisons
+        // AppLogger for the life of the process — no file logging, and the global exception
+        // handlers rethrowing on their own logging call. A bad DAQIFI_DATA_DIR did exactly that
+        // (#127); AppDataPaths now parks that diagnostic in DataDirectoryFault and App.Initialize
+        // raises it from a real call site. Keep it that way: resolving these paths must not throw.
         fileTarget.FileName = Path.Combine(AppDataPaths.LogDirectory, "DAQifiAppLog.log");
         fileTarget.Layout = "${longdate} LEVEL=${level:upperCase=true}: ${message}${newline} (${stacktrace}) ${exception:format=tostring} ${newline}";
         fileTarget.KeepFileOpen = false;

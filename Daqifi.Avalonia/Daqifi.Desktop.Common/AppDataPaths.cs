@@ -48,6 +48,13 @@ public static class AppDataPaths
     // @port: Daqifi.Desktop.Common.AppDataPaths.IsElevated
     public static bool IsElevated { get; } = ComputeIsElevated();
 
+    // Resolved ONCE, into a private field declared BEFORE the two properties that project it,
+    // because static field initializers (auto-property initializers included) run in textual
+    // order. An explicit static constructor would NOT work here: the compiler emits every field
+    // initializer ahead of the cctor body, so LogDirectory below would be built from an unassigned
+    // DataDirectory.
+    private static readonly (string Directory, Exception? Fault) ResolvedDataDirectory = ResolveDataDirectory();
+
     /// <summary>
     /// Root DAQiFi data directory for the current elevation/test context. Honors an explicit
     /// <c>DAQIFI_DATA_DIR</c> override (absolute-ised) when set; otherwise per-user when the
@@ -57,13 +64,60 @@ public static class AppDataPaths
     /// <c>DAQiFiDatabase.db</c>. Mirrors <see cref="TestExportPath"/>: a one-liner the harness
     /// sets on the child process, impossible to trigger accidentally in production (the variable
     /// is never set there).
+    /// <para>
+    /// When an override IS set but unusable this is the quarantine directory, not the default
+    /// store, and <see cref="DataDirectoryFault"/> holds the reason — see
+    /// <see cref="ThrowIfDataDirectoryUnusable"/> for how that failure is still made loud.
+    /// </para>
     /// </summary>
     // @port: Daqifi.Desktop.Common.AppDataPaths.DataDirectory
-    public static string DataDirectory { get; } = ResolveDataDirectory();
+    public static string DataDirectory { get; } = ResolvedDataDirectory.Directory;
+
+    /// <summary>
+    /// Why <c>DAQIFI_DATA_DIR</c> could not be used, or <c>null</c> when the override is absent
+    /// or usable. Parked here rather than thrown, so that resolving these paths CANNOT fail.
+    /// </summary>
+    /// <remarks>
+    /// This type's initialization has to be total. Every member here is a static initializer, so
+    /// anything that escapes becomes a <see cref="TypeInitializationException"/> and the CLR
+    /// permanently poisons <c>AppDataPaths</c> — and with it every type that reads it from its own
+    /// static initializer, which is most of the app's roots: <c>AppLogger.Instance</c>,
+    /// <c>App.DatabasePath</c>, <c>DaqifiSettings</c>, <c>LoggingManager</c>. <c>AppLogger</c> was
+    /// the one that mattered, because it is what everything else reports failures through: a bad
+    /// override took ALL file logging down for the life of the process, and the global exception
+    /// handlers then rethrew on their own logging call, so the app died with no trail anywhere
+    /// (#127). The loud failure the override promises is delivered by
+    /// <see cref="ThrowIfDataDirectoryUnusable"/> instead, from a real call site at startup where
+    /// a working logger can record it.
+    /// </remarks>
+    public static Exception? DataDirectoryFault { get; } = ResolvedDataDirectory.Fault;
+
+    /// <summary>
+    /// Throws <see cref="DataDirectoryFault"/> if <c>DAQIFI_DATA_DIR</c> was set to something
+    /// unusable; does nothing otherwise. This is where a misconfigured override fails CLOSED —
+    /// call it once, early in startup, before any data-directory-backed work.
+    /// </summary>
+    /// <exception cref="InvalidOperationException">
+    /// <c>DAQIFI_DATA_DIR</c> is set and could not be used as a writable data directory. The
+    /// message names the variable and the offending value; the inner exception carries the
+    /// underlying filesystem error.
+    /// </exception>
+    public static void ThrowIfDataDirectoryUnusable()
+    {
+        if (DataDirectoryFault is { } fault)
+        {
+            // The parked instance itself, NOT a wrapper around it: it was never thrown, so there
+            // is no stack to lose, and `throw` stamps this call site onto it. Wrapping instead
+            // would print the same actionable sentence twice — once on the wrapper, once on the
+            // inner — for no added information.
+            throw fault;
+        }
+    }
 
     // Downstream addition (no upstream counterpart): resolves the data root, preferring the
-    // DAQIFI_DATA_DIR override before falling back to the elevation/test-mode default.
-    private static string ResolveDataDirectory()
+    // DAQIFI_DATA_DIR override before falling back to the elevation/test-mode default. Returns
+    // the failure instead of throwing it — see DataDirectoryFault for why this must not throw.
+    private static (string Directory, Exception? Fault) ResolveDataDirectory()
     {
         var overrideDir = Environment.GetEnvironmentVariable("DAQIFI_DATA_DIR");
         if (!string.IsNullOrWhiteSpace(overrideDir))
@@ -93,21 +147,47 @@ public static class AppDataPaths
                 // is best-effort cleanup. A transient delete failure must NOT abort startup (nor is a
                 // leftover dotfile in a throwaway/override dir worth crashing over), so swallow it.
                 try { File.Delete(probe); } catch { /* best-effort cleanup */ }
-                return resolved;
+                return (resolved, null);
             }
             catch (Exception ex)
             {
-                throw new InvalidOperationException(
+                return (QuarantineDirectory(), new InvalidOperationException(
                     $"DAQIFI_DATA_DIR is set to '{overrideDir}', which could not be used as a " +
-                    "writable application data directory. Set it to a writable directory path, or unset it.", ex);
+                    "writable application data directory. Set it to a writable directory path, or unset it.", ex));
             }
         }
 
-        return Path.Combine(
+        // No override: the default store, and nothing here can fail. GetFolderPath takes a
+        // compile-time-valid enum and Path.Combine no longer rejects characters, so the
+        // no-override path performs no filesystem work and cannot throw — App.Initialize /
+        // InitializeMobile still create the directory, exactly as before.
+        return (Path.Combine(
             Environment.GetFolderPath(IsTestMode || !IsElevated
                 ? Environment.SpecialFolder.LocalApplicationData
                 : Environment.SpecialFolder.CommonApplicationData),
-            "DAQiFi");
+            "DAQiFi"), null);
+    }
+
+    // Where a run is pointed when DAQIFI_DATA_DIR is set but unusable. Deliberately NOT the
+    // default store: the override exists to keep a test/tooling boot away from the developer's
+    // real DAQiFiDatabase.db, so a broken one must not quietly land back on it — the name says
+    // what happened, and ThrowIfDataDirectoryUnusable is about to refuse the run anyway. Nothing
+    // is created here; this only has to be a usable NAME, so that the logger reporting the
+    // refusal has somewhere to write. NLog creates it on demand (FileTarget.CreateDirs) and
+    // swallows its own target failures, so even an unwritable temp root degrades rather than
+    // reintroducing the throw this whole method exists to avoid.
+    private static string QuarantineDirectory()
+    {
+        try
+        {
+            return Path.Combine(Path.GetTempPath(), "DAQiFi-invalid-DAQIFI_DATA_DIR");
+        }
+        catch
+        {
+            // GetTempPath is the only call above that can fail (a TMPDIR/%TEMP% the runtime
+            // cannot resolve). Fall back to the app's own directory rather than throwing.
+            return Path.Combine(AppContext.BaseDirectory, "DAQiFi-invalid-DAQIFI_DATA_DIR");
+        }
     }
 
     /// <summary>Directory where application logs are written.</summary>
