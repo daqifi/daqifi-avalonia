@@ -54,8 +54,14 @@ PACKAGE_REF = re.compile(r"<PackageReference\b[^>]*>")
 ATTR = re.compile(r"""(\w+)\s*=\s*["']([^"']*)["']""")
 
 
-def pinned_version(paths: list[str], package: str) -> tuple[str | None, str | None]:
-    """Return (version, manifest) for the first manifest pinning `package`."""
+def pinned_versions(paths: list[str], package: str) -> dict[str, str]:
+    """Map manifest -> pinned version for every project pinning `package`.
+
+    Every project, not the first one found: two projects can pin the same package
+    at different versions, and reporting whichever happened to be read first would
+    understate the drift — the repo is only as current as its OLDEST pin.
+    """
+    found: dict[str, str] = {}
     for path in paths:
         with open(path, encoding="utf-8") as handle:
             text = handle.read()
@@ -63,8 +69,8 @@ def pinned_version(paths: list[str], package: str) -> tuple[str | None, str | No
             attrs = dict(ATTR.findall(tag))
             version = attrs.get("Version")
             if attrs.get("Include") == package and version and "$(" not in version:
-                return version, path
-    return None, None
+                found[path] = version
+    return found
 
 
 def sort_key(version: str) -> tuple[int, ...]:
@@ -124,17 +130,34 @@ def main(argv: list[str]) -> int:
         paths = args
 
     try:
-        pinned, manifest = pinned_version(paths, package)
+        found = pinned_versions(paths, package)
     except OSError as exc:
         print(f"FAIL: cannot read a manifest: {exc}")
         return 2
 
-    if pinned is None:
+    if not found:
         # 2, not 0: "no pin found" and "the pin is current" must never look alike.
         # A rename or a glob that stopped matching would otherwise read as healthy.
         print(f"FAIL: no manifest pins {package} at a literal version. "
               f"Searched: {', '.join(paths)}")
         return 2
+
+    try:
+        manifest = min(found, key=lambda path: sort_key(found[path]))
+    except ValueError:
+        detail = "; ".join(f"{v} in {p}" for p, v in sorted(found.items()))
+        print(f"FAIL: {package} is pinned at a version that cannot be ordered "
+              f"({detail}).")
+        return 2
+    pinned = found[manifest]
+
+    if len(set(found.values())) > 1:
+        # Projects disagreeing about the version is its own problem, and drift is
+        # measured from the oldest of them — catching up the newest would leave
+        # the repo just as far behind.
+        detail = "; ".join(f"{v} in {p}" for p, v in sorted(found.items()))
+        print(f"NOTE: {package} is pinned at more than one version — {detail}. "
+              f"Reporting drift from the oldest ({pinned}).")
 
     if index_url is None:
         index_url = INDEX_URL.format(lower=package.lower())

@@ -120,6 +120,27 @@ def main() -> int:
         check("GITHUB_OUTPUT carries the missed releases",
               True, "missed=1.4.0,1.5.0,1.6.0,1.7.0,1.9.0,1.10.0" in written)
 
+        # Two projects pinning the same package at different versions: the repo is
+        # only as current as its OLDEST pin, so reporting whichever manifest was
+        # read first would understate the drift — potentially all the way to
+        # "up to date" while a second project sits four releases back.
+        second = os.path.join(tmp, "other.csproj")
+        write(proj, CSPROJ.format(core="1.10.0"))
+        write(second, CSPROJ.format(core="1.4.0"))
+        result = run(proj, second, capture=True)
+        check("disagreeing pins report drift from the oldest", 1,
+              result.returncode)
+        check("the oldest pin is the one reported",
+              True, "pinned 1.4.0" in result.stdout)
+        check("disagreeing pins are called out",
+              True, "more than one version" in result.stdout)
+        # Reversing the order must not change the verdict.
+        check("manifest order does not change the verdict", 1,
+              run(second, proj))
+
+        write(proj, CSPROJ.format(core="1.3.0"))
+        os.remove(second)
+
         # A package nothing pins must NEVER look like a package that is current —
         # a rename or a glob that stopped matching would otherwise read as healthy
         # forever, which is the exact silence this whole check exists to break.
