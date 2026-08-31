@@ -45,15 +45,18 @@ being reconstructed by hand each time.)
 
 ## Setup
 
-The workflow needs exactly one secret:
+**None.** The workflow needs no secret and no variable.
 
-- **Secret `UPSTREAM_SYNC_TOKEN`** — a token that can *read* `daqifi-desktop` (a
-  fine-grained PAT with `Contents: read` on `daqifi/daqifi-desktop`, or a GitHub App
-  installation token). The default `GITHUB_TOKEN` is scoped to this repo only and cannot
-  read another repo, so the upstream checkout needs this. The checkout uses
-  `persist-credentials: false` so the token is not left behind in `.git/config`. Issue
-  creation on *this* repo uses the built-in `GITHUB_TOKEN` (`issues: write`) — no extra
-  scope needed there.
+`daqifi-desktop` is public, so the built-in `GITHUB_TOKEN` reads it — a token is
+scoped to its own repo for *writes* and for *private* reads, not for reading public
+content. Do not add a `token:` to the upstream checkout: an unset secret resolves to
+the empty string and overrides `actions/checkout`'s own default, which fails the step
+outright. If upstream ever goes private, use `actions/create-github-app-token` rather
+than a user PAT.
+
+Issue creation on this repo uses the same built-in token (`issues: write`). The
+upstream checkout passes `persist-credentials: false`, so nothing is left behind in
+`.upstream/.git/config`.
 
 Phase 2 (triage) needs **no** CI secret or variable — it happens in your local gated
 Claude Code session against the labelled digest issue (see above).
