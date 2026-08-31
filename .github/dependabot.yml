@@ -2,6 +2,28 @@ version: 2
 
 updates:
   - package-ecosystem: nuget
+    # READ THIS BEFORE MERGING A DEPENDABOT PR THAT TOUCHES /Daqifi.Avalonia.
+    # It needs a lock-file commit that Dependabot cannot supply, and this is NOT
+    # the workload problem described below — it hits every head, including ones
+    # whose own pins nothing touched. Four of the five app lock files reach their
+    # packages through a ProjectReference to Daqifi.Avalonia and record its FULL
+    # transitive closure, and Dependabot rewrites the lock file only in the
+    # directory whose manifest it edited. So a one-line bump in Daqifi.Avalonia
+    # leaves four lock files stale, and the locked-mode restore in
+    # Directory.Build.props fails those heads with NU1004. Not a forecast: #130
+    # and #96 are red on exactly this now, and check_avalonia_versions.py cannot
+    # catch it because avalonia-graph is SKIPPED when the heads it needs fail.
+    # The fix is one command committed onto the branch:
+    #
+    #     .github/scripts/refresh_lock_files.sh
+    #
+    # This is most PRs — 23 of the 28 packages managed here live in that
+    # directory. A PR confined to a leaf head (Avalonia.Desktop,
+    # Avalonia.Android, Avalonia.Headless, Avalonia.Skia, Avalonia.HarfBuzz)
+    # stales nothing downstream and needs no refresh. See "Why a Dependabot PR
+    # that touches /Daqifi.Avalonia needs a lock-file commit" in
+    # .github/dependency-updates/README.md.
+    #
     # Explicit list rather than "/" so three directories stay out of scope:
     #   third_party/oxyplot-avalonia — vendored fork; its Avalonia/OxyPlot.Core
     #     versions are pinned to the app's on purpose (see its VENDORED.md).

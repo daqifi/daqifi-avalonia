@@ -96,7 +96,10 @@ Three deliberate choices:
   *other* directories' lock files recording the old transitive version (#93 changed
   only `Daqifi.Avalonia/`), and failing on that would reject good PRs. This cannot
   hide the #130 case: there the lock file recorded `Daqifi.Core` at 1.3.0 right
-  alongside the csproj, because the bump landed nowhere.
+  alongside the csproj, because the bump landed nowhere. "Legitimate" here means the
+  PR is honest about what it changed — those stale sibling lock files still fail the
+  build, which is a different problem with a different fix: see "Why a Dependabot PR
+  that touches `/Daqifi.Avalonia` needs a lock-file commit" below.
 
 It is also one-directional: it asserts every claim was applied, not that every
 change was claimed, because Dependabot legitimately touches things the body never
@@ -152,6 +155,12 @@ Every self-test in `.github/scripts` also runs on every push and PR via the
 `scripts` job in `build.yml` — without it, these two guards would only be exercised
 on a Dependabot PR or on a Monday, and a regression could sit unnoticed for a week.
 
+`refresh_lock_files.sh` is not a guard — it is a remedy, and the only shell script
+here — but it follows the same shape for the same reason: its refusals are the part
+that matters, so `test_refresh_lock_files.py` drives it with a stub `dotnet` and
+asserts it exits 2 without writing. That test is picked up by the same `scripts` job,
+which globs `test_*.py` regardless of what the thing under test is written in.
+
 ## Why the iOS head stays out of `directories`
 
 `/Daqifi.Avalonia.iOS` is not in `dependabot.yml`'s `directories`. That began as an
@@ -192,15 +201,117 @@ Watched instead by guard 4 above.
 ### The same exposure, on a head that IS managed
 
 `/Daqifi.Avalonia.Android` is in `directories`, and its lock file is subject to that
-same `LockFileUpdater` failure — its TFM rescues discovery, not the restore. It has
-never bitten because both of its packages have sat at the latest 12.1.1 since
-2026-07-30, so Dependabot has had nothing to open. The next Android-head update will
-arrive as a PR with a stale `Daqifi.Avalonia.Android/packages.lock.json`. Not fixed
-here: it wants a decision between documenting the manual lock-file refresh and
-dropping that head from `directories` the way the iOS head is dropped.
+same `LockFileUpdater` failure — its TFM rescues discovery, not the restore. So a bump
+to one of its own two pins would arrive with a bumped csproj and a stale
+`Daqifi.Avalonia.Android/packages.lock.json`, and nothing would say so but a line in
+the updater log. Both of those packages have sat at 12.1.1 since 2026-07-30, so
+Dependabot has had nothing to open.
+
+That has never bitten **on its own**. It has never been the reason the Android head is
+red either, because a much broader version of the same problem gets there first — see
+the next section, which is also where the decision this section used to defer now
+lives.
+
+## Why a Dependabot PR that touches `/Daqifi.Avalonia` needs a lock-file commit
+
+Not just the Android one, and not because of a workload. Any Dependabot PR that bumps
+a package in the shared library arrives red and cannot merge without a lock-file commit
+— and that is 23 of the 28 packages this repo manages, including every one whose name
+does not start with `Avalonia.`.
+
+Six `packages.lock.json` files are committed. Five belong to the app's own projects
+(the vendored `third_party/oxyplot-avalonia` carries the sixth and is not affected by
+any of this), and four of those five reach their packages through a `ProjectReference`
+to `Daqifi.Avalonia`. A lock file records the full transitive closure, so the shared
+library's dependencies are written into all five — `Sentry`, for one, is `Direct` in
+`Daqifi.Avalonia/packages.lock.json` and `Transitive` in the Desktop, Android, iOS and
+`AvaloniaCapture` files. So is every other package the library pins.
+
+Dependabot rewrites the lock file **only in the directory whose manifest it edited**.
+A one-line bump in `Daqifi.Avalonia/Daqifi.Avalonia.csproj` therefore invalidates five
+lock files and refreshes one, and `RestoreLockedMode` fails the other four:
+
+```
+error NU1004: The project references daqifi.avalonia whose dependencies has changed.
+The packages lock file is inconsistent with the project dependencies so restore can't
+be run in locked mode.
+```
+
+This is the current state of the repo, not a forecast. [#96] is the clean case — one
+`NCalcSync` bump, nothing else wrong, `NU1004` on both heads it builds. [#130] fails
+the same way on the Android and iOS heads (it also has an unrelated `NU1605`:
+`EFCore.BulkExtensions.Sqlite` pulls `Microsoft.EntityFrameworkCore.Relational` 10.0.11
+against a 10.0.10 pin, which no lock refresh will fix). Both PRs' diffs show the shape:
+two files, both under `Daqifi.Avalonia/`.
+
+Reproduced on the pinned SDK by doing exactly what Dependabot does — bump `Sentry`
+6.8.0 → 6.9.0 in the shared library, refresh only its own lock file, then restore each
+head in locked mode. All four fail `NU1004`; running the script below makes all four
+pass.
+
+**`check_avalonia_versions.py` is not a safety net for this.** The `avalonia-graph` job
+`needs: [desktop, android, ios]`, so when those fail `NU1004` it is **SKIPPED** — which
+is what the checks on [#130] show. It is a real gate against a split graph and it
+cannot fire on a Dependabot PR, because on a Dependabot PR it never runs.
+
+**Which PRs escape.** `Daqifi.Avalonia` is the only managed project with dependents;
+the Desktop, Android, iOS and `AvaloniaCapture` heads are leaves. So a PR confined to a
+leaf — the five packages that live nowhere else, `Avalonia.Desktop`, `Avalonia.Android`,
+`Avalonia.Headless`, `Avalonia.Skia`, `Avalonia.HarfBuzz` — stales no other lock file
+and needs no refresh. Two caveats: an Android-head-only PR fails a *different* way (the
+workload problem above leaves its own lock file stale), and a leaf PR that moves an
+Avalonia package in one head and not another is exactly what `check_avalonia_versions.py`
+is for — which does run there, because those jobs get far enough to upload a graph.
+
+### The remedy
+
+```bash
+.github/scripts/refresh_lock_files.sh
+```
+
+Run it and commit the result onto the Dependabot branch. It refuses to do a partial
+job: it checks for the pinned SDK and for both the `android` and `ios` workloads first
+and exits 2 naming what is missing, rather than leaving one head stale and looking
+finished. In practice that means a Mac with `dotnet workload install android ios`.
+`test_refresh_lock_files.py` drives it with a stub `dotnet` to hold it to that.
+
+It iterates projects rather than restoring `Daqifi.Avalonia.slnx`, because
+`tools/parity-audit/AvaloniaCapture` is not in the solution and a solution-level restore
+would silently miss it. It never passes `-r`, which would prune the lock file to a
+single RID (see the warning at the top of `Directory.Build.props`).
+
+Its first run also normalises one line in four lock files: the vendored project's key
+`Oxyplot.Avalonia` becomes `oxyplot.avalonia`. That is the pinned SDK's own output, not
+churn — `Daqifi.Avalonia.iOS/packages.lock.json` already carries the lowercase form
+because it was regenerated on 10.0.302 in `d905541`, while the other four still hold
+what an older SDK wrote.
+
+### Why `/Daqifi.Avalonia.Android` stays in `directories`
+
+The alternative considered was dropping it the way the iOS head is dropped, and
+covering it with `check_avalonia_versions.py`. That was rejected on the evidence above:
+
+- It would fix nothing. The Android head's `NU1004` comes from the `ProjectReference`
+  closure, not from `Avalonia.Android` or `Avalonia.Fonts.Inter`. The proof is the iOS
+  head, which is *already* out of `directories` and fails identically on [#130].
+- The guard offered as cover does not run on the PRs in question, per above.
+- It would cost the only automated watch on those two pins.
+
+So the Android head stays managed, its workload exposure is recorded rather than
+worked around, and the lock-file refresh is a documented manual step on every PR
+that touches the shared library.
+
+### The real fix, not done here
+
+A workflow that runs the refresh script on `dependabot[bot]` PRs and pushes the result,
+so a Dependabot PR arrives green. It needs write access to the PR branch and a macOS
+runner for the iOS head, which bills at 10× — a decision worth making deliberately
+rather than smuggling into this change. Tracked against [#132], which is about exactly
+this class of silent Dependabot failure.
 
 [#93]: https://github.com/daqifi/daqifi-avalonia/pull/93
 [#95]: https://github.com/daqifi/daqifi-avalonia/pull/95
+[#96]: https://github.com/daqifi/daqifi-avalonia/pull/96
 [#130]: https://github.com/daqifi/daqifi-avalonia/pull/130
 [#131]: https://github.com/daqifi/daqifi-avalonia/pull/131
 [#132]: https://github.com/daqifi/daqifi-avalonia/issues/132
