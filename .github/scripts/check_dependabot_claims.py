@@ -187,7 +187,9 @@ def lockfile_versions(text: str) -> dict[str, set[str]]:
         if not isinstance(entry, dict):
             continue
         for name, detail in entry.items():
-            resolved = (detail or {}).get("resolved") if isinstance(detail, dict) else None
+            if not isinstance(detail, dict):
+                continue
+            resolved = detail.get("resolved")
             if resolved:
                 pins.setdefault(name, set()).add(resolved)
     return pins
