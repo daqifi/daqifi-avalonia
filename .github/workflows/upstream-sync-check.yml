@@ -51,11 +51,16 @@ jobs:
         with:
           repository: ${{ env.UPSTREAM_REPO }}
           ref: ${{ env.UPSTREAM_BRANCH }}
-          token: ${{ secrets.UPSTREAM_SYNC_TOKEN }}
           path: .upstream
           fetch-depth: 0
-          # Do NOT leave the PAT in .upstream/.git/config after the fetch — history
-          # reads below need no credential, and a persisted token is exfiltratable.
+          # No `token:` on purpose: daqifi-desktop is public, which the built-in
+          # GITHUB_TOKEN can read. Adding one is worse than redundant — an
+          # unset secret resolves to the empty string and overrides checkout's
+          # own default. If upstream ever goes private, use
+          # actions/create-github-app-token, not a user PAT.
+          #
+          # Do NOT leave the credential in .upstream/.git/config after the fetch —
+          # history reads below need none, and a persisted token is exfiltratable.
           persist-credentials: false
 
       - name: Compute the commit delta since the watermark
