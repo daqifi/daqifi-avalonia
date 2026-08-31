@@ -27,3 +27,16 @@ updates:
         update-types:
           - minor
           - patch
+        # Daqifi.Core is the package this app wraps, and it is the one dependency whose
+        # updates a human always wants to see by name. Inside the group it was invisible:
+        # a grouped PR is titled "Bump the minor-and-patch group with N updates" (or, for
+        # small groups, after whichever member sorts first), so Core never appeared in a
+        # PR title even when the PR did bump it. #93 carried 1.3.0 -> 1.4.0 and #95 carried
+        # 1.3.0 -> 1.5.0; both read as Avalonia/SQLite chores and were auto-closed unread,
+        # and #130 went further and announced 1.3.0 -> 1.7.0 in its body while never
+        # touching the csproj. Ungrouped, Core gets its own "Bump Daqifi.Core from X to Y"
+        # PR every time, which cannot be mistaken for someone else's chore and cannot be
+        # dropped from a group whose other members moved. See .github/dependency-updates/
+        # README.md for the full history, and #132.
+        exclude-patterns:
+          - "Daqifi.Core"
