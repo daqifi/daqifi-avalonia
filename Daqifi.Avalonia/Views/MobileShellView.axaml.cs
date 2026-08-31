@@ -1,7 +1,7 @@
 using System;
-using System.Reflection;
 using Avalonia.Controls;
 using Avalonia.Threading;
+using Daqifi.Desktop.Common;
 
 namespace Daqifi.Avalonia.Views;
 
@@ -14,19 +14,16 @@ public partial class MobileShellView : UserControl
     {
         InitializeComponent();
         DataContext = _viewModel;
-        var informational = Assembly.GetExecutingAssembly()
-            .GetCustomAttribute<AssemblyInformationalVersionAttribute>()
-            ?.InformationalVersion ?? "dev";
+        // Resolved by AppVersion, which is also what the Sentry release is now built from (#126),
+        // so the version a user reads off this screen and the version a crash report is tagged
+        // with cannot disagree.
+        //
         // InformationalVersion carries "+<full-sha>". Show a clean "vX.Y.Z" to users (matches the
         // desktop "DAQIFI VX.Y.Z" — a git SHA is dev noise, not user-facing content, #13). Debug
         // builds keep the short SHA appended to aid on-device build verification.
-        var plus = informational.IndexOf('+');
-        var semver = plus >= 0 ? informational[..plus] : informational;
+        var semver = AppVersion.Semantic ?? "dev";
 #if DEBUG
-        // Append up to the first 7 chars of the +<sha> build metadata (git SHAs are
-        // >= 7 chars; tolerate shorter/absent metadata without an off-by-one or throw).
-        var suffix = plus >= 0 ? informational[(plus + 1)..] : "";
-        var sha = suffix.Length > 0 ? $" ({suffix[..Math.Min(7, suffix.Length)]})" : "";
+        var sha = AppVersion.ShortBuildMetadata is { } metadata ? $" ({metadata})" : "";
 #else
         var sha = "";
 #endif

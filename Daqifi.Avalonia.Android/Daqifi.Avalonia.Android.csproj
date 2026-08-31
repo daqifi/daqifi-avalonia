@@ -30,7 +30,10 @@
 		     initialisation fix and every Qodo-found defect landed. That build must not be
 		     promoted to production; see the release note in tools/play/README.md. -->
 		<ApplicationVersion>4</ApplicationVersion>
-		<ApplicationDisplayVersion>3.3.0</ApplicationDisplayVersion>
+		<!-- android:versionName. From Directory.Build.props, the single place the app's version
+		     is declared, so the store version and the version a crash is tagged with in Sentry
+		     cannot drift apart (#126). -->
+		<ApplicationDisplayVersion>$(DaqifiAppVersion)</ApplicationDisplayVersion>
 		<!-- Debug stays apk so the dev loop remains a plain `adb install`.
 		     Release produces the aab Play requires for new apps. Note an aab
 		     is not directly installable — to put a Release build on a device,

@@ -4,7 +4,8 @@
 		<TargetFramework>net10.0</TargetFramework>
 		<Nullable>enable</Nullable>
 		<ImplicitUsings>enable</ImplicitUsings>
-		<Version>3.3.0</Version>
+		<!-- From Directory.Build.props, the single place the app's version is declared. -->
+		<Version>$(DaqifiAppVersion)</Version>
 		<!-- COM interop for the desktop windowing backend (upstream WinExe setting). -->
 		<BuiltInComInteropSupport>true</BuiltInComInteropSupport>
 		<ApplicationManifest>app.manifest</ApplicationManifest>
