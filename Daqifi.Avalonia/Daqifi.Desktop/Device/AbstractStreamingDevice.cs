@@ -82,8 +82,6 @@ public abstract partial class AbstractStreamingDevice : ObservableObject, IStrea
     /// </summary>
     private const uint DEFAULT_TIMESTAMP_FREQUENCY = 50_000_000;
 
-    private const string SD_UNAVAILABLE_MESSAGE = "Core SD card operations are not available for this device.";
-    private const string STREAMING_UNAVAILABLE_MESSAGE = "Core live streaming operations are not available for this device.";
 
     /// <summary>
     /// Max length for a friendly device name, matching firmware's
@@ -1137,7 +1135,7 @@ public abstract partial class AbstractStreamingDevice : ObservableObject, IStrea
                 ? ScpiMessageProducer.EnableDioPorts()
                 : ScpiMessageProducer.DisableDioPorts());
 
-            var coreDevice = GetCoreDevice(CoreDeviceForSd, SD_UNAVAILABLE_MESSAGE);
+            var coreDevice = GetConnectedCoreDevice(CoreDeviceForSd);
             coreDevice.StreamingFrequency = StreamingFrequency;
 
             // The Core package resumes StartSdCardLoggingAsync continuations on the caller's
@@ -1168,7 +1166,7 @@ public abstract partial class AbstractStreamingDevice : ObservableObject, IStrea
 
         try
         {
-            var coreDevice = GetCoreDevice(CoreDeviceForSd, SD_UNAVAILABLE_MESSAGE);
+            var coreDevice = GetConnectedCoreDevice(CoreDeviceForSd);
             coreDevice.StopSdCardLoggingAsync().GetAwaiter().GetResult();
 
             IsLoggingToSdCard = false;
@@ -1189,17 +1187,18 @@ public abstract partial class AbstractStreamingDevice : ObservableObject, IStrea
     /// </summary>
     /// <remarks>
     /// Transport-agnostic (issue #1): SD file access works over USB and WiFi/TCP alike — the
-    /// firmware serves the SD reply on whichever link issued the request. Availability is gated
-    /// by <see cref="CoreDeviceForSd"/> (null on devices without SD support → SD_UNAVAILABLE),
-    /// not by connection type.
+    /// firmware serves the SD reply on whichever link issued the request. Not gated by connection
+    /// type; <see cref="CoreDeviceForSd"/> is null only while disconnected. Whether the connected
+    /// device can actually serve SD is Core's call, and it says so with
+    /// <see cref="FeatureNotSupportedException"/>.
     /// </remarks>
-    /// <exception cref="InvalidOperationException">Thrown when SD operations cannot be performed on this device.</exception>
+    /// <exception cref="DeviceNotConnectedException">Thrown when no device is connected.</exception>
     // @port: Daqifi.Desktop.Device.AbstractStreamingDevice.RefreshSdCardFiles
     public void RefreshSdCardFiles()
     {
         EnsureSdOperationsQuiesced();
 
-        var coreDevice = GetCoreDevice(CoreDeviceForSd, SD_UNAVAILABLE_MESSAGE);
+        var coreDevice = GetConnectedCoreDevice(CoreDeviceForSd);
         var files = Task.Run(() => coreDevice.GetSdCardFilesAsync()).GetAwaiter().GetResult();
 
         // An EMPTY result is ambiguous and must be corroborated before it is shown as "SD card OK,
@@ -1242,33 +1241,34 @@ public abstract partial class AbstractStreamingDevice : ObservableObject, IStrea
     }
 
     /// <summary>
-    /// Returns the given Core device, or throws <see cref="InvalidOperationException"/> with
-    /// <paramref name="unavailableMessage"/> when the operation is not available.
-    /// </summary>
-    // @port: Daqifi.Desktop.Device.AbstractStreamingDevice.GetCoreDevice
-    private static CoreStreamingDevice GetCoreDevice(CoreStreamingDevice? coreDevice, string unavailableMessage)
-    {
-        return coreDevice ?? throw new InvalidOperationException(unavailableMessage);
-    }
-
-    /// <summary>
     /// The core device for an operation that requires a live connection, or
     /// <see cref="DeviceNotConnectedException"/> if there is none.
     /// </summary>
     /// <remarks>
-    /// Distinct from <see cref="GetCoreDevice"/>, and the difference is the exception TYPE rather
-    /// than its wording. "There is no connected device" is an ordinary, expected condition — the
-    /// user pressed Disconnect, or unplugged the board — and <see cref="ViewModels.SdCardFailureClassifier"/>
+    /// "There is no connected device" is an ordinary, expected condition — the user pressed
+    /// Disconnect, or unplugged the board — and <see cref="ViewModels.SdCardFailureClassifier"/>
     /// must be able to tell it apart from a defect so it reports a Warning rather than an Error and
-    /// a Sentry issue. It used to tell them apart by matching this message as a STRING, which is
-    /// why the message lived in a constant here; Core 1.7.0 gave its own guards
-    /// <see cref="DeviceNotConnectedException"/> (daqifi-core#395), so throwing the same type from
-    /// the app's guards lets that matching be deleted outright.
+    /// a Sentry issue. It used to tell them apart by matching the message as a STRING; Core 1.7.0
+    /// gave its own guards <see cref="DeviceNotConnectedException"/> (daqifi-core#395), so throwing
+    /// the same type from the app's guards let that matching be deleted outright.
     /// <para>
-    /// The "…not available for this device" cases deliberately keep <see cref="GetCoreDevice"/> and
-    /// its untyped exception: a device with no SD or streaming support is a different condition with
-    /// different guidance, and classifying it as a lost connection would send the user off to
-    /// reconnect a perfectly healthy device.
+    /// This is the ONLY guard over the <c>CoreDeviceFor…</c> properties, because a null there has
+    /// only ever had one meaning: <see cref="CoreDevice"/> is null, i.e. nothing is connected.
+    /// A sibling helper used to throw "Core SD card / live streaming operations are not available
+    /// for this device" instead, on the theory that some device type would leave
+    /// <see cref="CoreDeviceForSd"/> at its <c>null</c> base default — but every concrete device
+    /// (USB, serial, WiFi) overrides it to <see cref="CoreDevice"/>, so that branch was
+    /// unreachable and the message it carried was always wrong. Reporting it told a user with a
+    /// perfectly capable board that their hardware lacked the feature, and — being untyped — it
+    /// reached the classifier's default arm and filed a Sentry issue for pressing Disconnect
+    /// (issue #134).
+    /// </para>
+    /// <para>
+    /// A device that genuinely cannot do SD is a real condition, but it is not this one and it is
+    /// not decided here: Core merges the connected device's own capability report and throws
+    /// <see cref="FeatureNotSupportedException"/>, which the classifier already handles with
+    /// firmware-specific guidance. That answer needs a connected device to come from, which is
+    /// exactly what this guard has established by the time it returns.
     /// </para>
     /// </remarks>
     private static CoreStreamingDevice GetConnectedCoreDevice(CoreStreamingDevice? coreDevice)
@@ -1293,7 +1293,7 @@ public abstract partial class AbstractStreamingDevice : ObservableObject, IStrea
     {
         EnsureSdOperationsQuiesced();
 
-        var coreDevice = GetCoreDevice(CoreDeviceForSd, SD_UNAVAILABLE_MESSAGE);
+        var coreDevice = GetConnectedCoreDevice(CoreDeviceForSd);
         return await coreDevice.DownloadSdCardFileAsync(fileName, progress, ct);
     }
 
@@ -1308,7 +1308,7 @@ public abstract partial class AbstractStreamingDevice : ObservableObject, IStrea
     {
         EnsureSdOperationsQuiesced();
 
-        var coreDevice = GetCoreDevice(CoreDeviceForSd, SD_UNAVAILABLE_MESSAGE);
+        var coreDevice = GetConnectedCoreDevice(CoreDeviceForSd);
         await coreDevice.DeleteSdCardFileAsync(fileName, ct);
     }
 
@@ -1383,7 +1383,7 @@ public abstract partial class AbstractStreamingDevice : ObservableObject, IStrea
             throw new InvalidOperationException("Cannot initialize streaming while in LogToDevice mode");
         }
 
-        var coreStreamingDevice = GetCoreDevice(CoreDeviceForStreaming, STREAMING_UNAVAILABLE_MESSAGE);
+        var coreStreamingDevice = GetConnectedCoreDevice(CoreDeviceForStreaming);
         coreStreamingDevice.StreamingFrequency = StreamingFrequency;
 
         // A session must never anchor its time axis on prior-session data (issue #573).
@@ -1428,7 +1428,7 @@ public abstract partial class AbstractStreamingDevice : ObservableObject, IStrea
             }
         }
 
-        var coreStreamingDevice = GetCoreDevice(CoreDeviceForStreaming, STREAMING_UNAVAILABLE_MESSAGE);
+        var coreStreamingDevice = GetConnectedCoreDevice(CoreDeviceForStreaming);
         coreStreamingDevice.StopStreaming();
         IsStreaming = coreStreamingDevice.IsStreaming;
         AppLogger.AddBreadcrumb("streaming", "Streaming stopped");

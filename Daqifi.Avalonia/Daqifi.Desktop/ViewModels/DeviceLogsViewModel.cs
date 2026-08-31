@@ -120,7 +120,7 @@ public partial class DeviceLogsViewModel : ObservableObject
     // Gate on "device supports SD + connected" (issue #1's own prescription), NOT connection type
     // alone: IsConnected must be checked because a device can drop mid-session (silently over
     // WiFi) while still selected — a non-null-but-disconnected Core would otherwise pass the
-    // GetCoreDevice null-guard and run SD ops against a dead transport.
+    // GetConnectedCoreDevice null-guard and run SD ops against a dead transport.
     // Capture SelectedDevice into the pattern local `device` so it is read exactly once — the
     // observable property is nullable and could flip to null between two reads under
     // selection/disconnect reentrancy (Qodo "SelectedDevice double-read race").
