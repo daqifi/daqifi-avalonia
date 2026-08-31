@@ -9,6 +9,9 @@ using Daqifi.Core.Communication.Messages;
 using CoreConnectionStatus = Daqifi.Core.Device.ConnectionStatus;
 using CoreDeviceStatusEventArgs = Daqifi.Core.Device.DeviceStatusEventArgs;
 using CoreMessageReceivedEventArgs = Daqifi.Core.Device.MessageReceivedEventArgs;
+using CoreChannelsPopulatedEventArgs = Daqifi.Core.Device.ChannelsPopulatedEventArgs;
+using CoreDeviceErrorEventArgs = Daqifi.Core.Device.DeviceErrorEventArgs;
+using CoreDeviceMetadata = Daqifi.Core.Device.DeviceMetadata;
 using CoreStreamingDevice = Daqifi.Core.Device.IStreamingDevice;
 
 namespace Daqifi.Desktop.Device.Firmware;
@@ -199,4 +202,99 @@ public sealed class BootloaderSessionStreamingDeviceAdapter : CoreStreamingDevic
     public void LoadVoltagePrecision()
     {
     }
+
+    // -----------------------------------------------------------------------------
+    // Members Core added to IDevice/IStreamingDevice after 1.3.0: async connect and
+    // disconnect plus IAsyncDisposable, device metadata, the channel collection and
+    // its snapshot, the ChannelsPopulated and ErrorOccurred events (Core 1.5.0), and
+    // the nine confirming calibration commands on IConfirmingDeviceAdministration.
+    //
+    // These carry no `// @port:` markers on purpose: they are downstream-only. Upstream
+    // daqifi-desktop is still on Core 1.4.0 and its copy of this adapter does not have
+    // them, so there is no upstream symbol to link back to.
+    //
+    // None of them is on a live path. The only Core code ever handed this adapter is
+    // WifiModuleUpdater (via FirmwareUpdateCoordinator), and at v1.7.0 that touches
+    // exactly Name, IsConnected, IsStreaming, Send, StopStreaming and Disconnect.
+    // -----------------------------------------------------------------------------
+
+    private readonly CoreDeviceMetadata _metadata = new();
+
+    /// <summary>Empty metadata: a bootloader session never runs the SCPI init that populates it.</summary>
+    public CoreDeviceMetadata Metadata => _metadata;
+
+    /// <summary>Always empty: this adapter does not enumerate or configure channels.</summary>
+    public IReadOnlyList<IChannel> Channels => [];
+
+    /// <inheritdoc cref="Channels" />
+    public IReadOnlyList<IChannel> GetChannelsSnapshot() => [];
+
+    // Declared to satisfy the interface and never raised — there is no channel
+    // enumeration and no transport of this adapter's own that could fail. The
+    // suppression is deliberately scoped to these two events rather than the file.
+#pragma warning disable CS0067 // The event is never used
+    public event EventHandler<CoreChannelsPopulatedEventArgs>? ChannelsPopulated;
+
+    public event EventHandler<CoreDeviceErrorEventArgs>? ErrorOccurred;
+#pragma warning restore CS0067
+
+    public Task ConnectAsync(CancellationToken cancellationToken = default)
+    {
+        cancellationToken.ThrowIfCancellationRequested();
+        Connect();
+        return Task.CompletedTask;
+    }
+
+    public Task DisconnectAsync(CancellationToken cancellationToken = default)
+    {
+        cancellationToken.ThrowIfCancellationRequested();
+        Disconnect();
+        return Task.CompletedTask;
+    }
+
+    public ValueTask DisposeAsync()
+    {
+        Disconnect();
+        return ValueTask.CompletedTask;
+    }
+
+    // The confirming calibration twins THROW where their void counterparts above no-op,
+    // and the difference is the point of the two shapes. Core's own comment on
+    // IStreamingDevice explains it: the void command is fire-and-forget, so a device that
+    // refuses it is indistinguishable from one that carried it out, whereas the confirming
+    // twin reads the device's SCPI error queue back and only returns if the device
+    // accepted. Returning a completed Task here would assert exactly the confirmation this
+    // adapter can never obtain — a device in firmware-update mode answers no SCPI at all.
+    // A loud NotSupportedException is the honest answer, and it is unreachable today.
+    private static Task RefuseConfirmation(string command) =>
+        throw new NotSupportedException(
+            $"{command} cannot be confirmed on a bootloader session: the device is in " +
+            "firmware-update mode and answers no SCPI, so its acceptance cannot be read back.");
+
+    public Task SaveAdcCalibrationAsync(CancellationToken cancellationToken = default) =>
+        RefuseConfirmation(nameof(SaveAdcCalibrationAsync));
+
+    public Task LoadAdcCalibrationAsync(CancellationToken cancellationToken = default) =>
+        RefuseConfirmation(nameof(LoadAdcCalibrationAsync));
+
+    public Task SetAdcCalibrationSlopeAsync(int channelNumber, double calM, CancellationToken cancellationToken = default) =>
+        RefuseConfirmation(nameof(SetAdcCalibrationSlopeAsync));
+
+    public Task SetAdcCalibrationOffsetAsync(int channelNumber, double calB, CancellationToken cancellationToken = default) =>
+        RefuseConfirmation(nameof(SetAdcCalibrationOffsetAsync));
+
+    public Task SaveFactoryAdcCalibrationAsync(CancellationToken cancellationToken = default) =>
+        RefuseConfirmation(nameof(SaveFactoryAdcCalibrationAsync));
+
+    public Task LoadFactoryAdcCalibrationAsync(CancellationToken cancellationToken = default) =>
+        RefuseConfirmation(nameof(LoadFactoryAdcCalibrationAsync));
+
+    public Task UseAdcCalibrationAsync(int bank, CancellationToken cancellationToken = default) =>
+        RefuseConfirmation(nameof(UseAdcCalibrationAsync));
+
+    public Task SaveVoltagePrecisionAsync(CancellationToken cancellationToken = default) =>
+        RefuseConfirmation(nameof(SaveVoltagePrecisionAsync));
+
+    public Task LoadVoltagePrecisionAsync(CancellationToken cancellationToken = default) =>
+        RefuseConfirmation(nameof(LoadVoltagePrecisionAsync));
 }
