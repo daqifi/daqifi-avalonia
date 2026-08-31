@@ -16,16 +16,25 @@ strength of exactly that. See .github/dependency-updates/README.md and #132.
 
 The check is deliberately one-directional. It asserts every CLAIM was applied; it
 does not assert every applied change was claimed, because Dependabot legitimately
-touches files a body never mentions (lock files, transitive pins).
+touches things a body never mentions.
+
+Both .csproj PackageReference pins and packages.lock.json resolved versions count
+as evidence a bump landed. Lock files matter because a transitive-only update — a
+security bump to something no csproj names — moves the lock file and nothing else,
+and demanding a csproj change would fail exactly the PRs it is most costly to
+block. It does not weaken the check: in #130 the lock file still recorded
+`Daqifi.Core` at 1.3.0 alongside the csproj, because the bump landed nowhere.
 
 Usage:
-    check_dependabot_claims.py --body-file <file> <project.csproj> [...]
+    check_dependabot_claims.py --body-file <file> <manifest> [...]
     check_dependabot_claims.py --body-file <file> --glob   # discover under cwd
+
+A manifest is a .csproj or a packages.lock.json.
 
 Exit codes are distinct on purpose, so a caller can tell a real violation apart
 from a broken invocation:
 
-    0  every claim in the body is reflected in a manifest
+    0  every claim in the body is reflected in a manifest or lock file
     1  a genuine violation: a claimed bump was not applied
     2  the check could not run: bad arguments, an unreadable body or manifest, no
        manifests, or a body with no parseable claims (which means either this is
@@ -36,6 +45,7 @@ from a broken invocation:
 from __future__ import annotations
 
 import glob
+import json
 import os
 import re
 import sys
@@ -87,12 +97,9 @@ def claims(body: str) -> list[tuple[str, str, str]]:
     return found
 
 
-def pinned_versions(manifest_path: str) -> dict[str, str]:
-    """Map package name -> pinned version for one project file."""
-    with open(manifest_path, encoding="utf-8") as handle:
-        text = handle.read()
-
-    pins: dict[str, str] = {}
+def csproj_versions(text: str) -> dict[str, set[str]]:
+    """Map package name -> pinned versions declared in one project file."""
+    pins: dict[str, set[str]] = {}
     for tag in PACKAGE_REF.findall(text):
         attrs = dict(ATTR.findall(tag))
         name = attrs.get("Include")
@@ -104,8 +111,35 @@ def pinned_versions(manifest_path: str) -> dict[str, str]:
         # those projects are out of Dependabot's scope anyway.
         if "$(" in version:
             continue
-        pins[name] = version
+        pins.setdefault(name, set()).add(version)
     return pins
+
+
+def lockfile_versions(text: str) -> dict[str, set[str]]:
+    """Map package name -> resolved versions recorded in a packages.lock.json.
+
+    One package can appear under several target frameworks at different resolved
+    versions, so every one is kept — a claim is satisfied by any of them.
+    """
+    payload = json.loads(text)
+    pins: dict[str, set[str]] = {}
+    for entry in (payload.get("dependencies") or {}).values():
+        if not isinstance(entry, dict):
+            continue
+        for name, detail in entry.items():
+            resolved = (detail or {}).get("resolved") if isinstance(detail, dict) else None
+            if resolved:
+                pins.setdefault(name, set()).add(resolved)
+    return pins
+
+
+def manifest_versions(manifest_path: str) -> dict[str, set[str]]:
+    """Map package name -> versions recorded by one .csproj or lock file."""
+    with open(manifest_path, encoding="utf-8") as handle:
+        text = handle.read()
+    if os.path.basename(manifest_path) == "packages.lock.json":
+        return lockfile_versions(text)
+    return csproj_versions(text)
 
 
 def main(argv: list[str]) -> int:
@@ -132,32 +166,37 @@ def main(argv: list[str]) -> int:
             print("FAIL: --glob discovers the manifests itself; do not also "
                   "pass paths.")
             return 2
-        paths = sorted(p for p in glob.glob("**/*.csproj", recursive=True)
-                       if "obj" + os.sep not in p and "bin" + os.sep not in p)
+        paths = sorted(
+            p for pattern in ("**/*.csproj", "**/packages.lock.json")
+            for p in glob.glob(pattern, recursive=True)
+            if "obj" + os.sep not in p and "bin" + os.sep not in p)
         if not paths:
-            print("FAIL: --glob matched no .csproj — nothing was checked.")
+            print("FAIL: --glob matched no .csproj or packages.lock.json — "
+                  "nothing was checked.")
             return 2
     elif rest:
         paths = rest
     else:
-        print("FAIL: no manifests given. Pass .csproj paths or --glob.")
+        print("FAIL: no manifests given. Pass .csproj / packages.lock.json "
+              "paths, or --glob.")
         return 2
 
     # package -> version -> [manifests]
     pins: dict[str, dict[str, list[str]]] = {}
     for path in paths:
         try:
-            found = pinned_versions(path)
-        except OSError as exc:
+            found = manifest_versions(path)
+        except (OSError, json.JSONDecodeError) as exc:
             # 2, not 1: an unreadable manifest is a tooling problem, and a caller
             # must be able to tell that apart from "the PR really did lie".
             print(f"FAIL: cannot read {path}: {exc}")
             return 2
-        for name, version in found.items():
-            pins.setdefault(name, {}).setdefault(version, []).append(path)
+        for name, versions in found.items():
+            for version in versions:
+                pins.setdefault(name, {}).setdefault(version, []).append(path)
 
     if not pins:
-        print("FAIL: no PackageReference with a literal version in any manifest.")
+        print("FAIL: no package version found in any manifest or lock file.")
         return 2
 
     stated = claims(body)
@@ -178,9 +217,9 @@ def main(argv: list[str]) -> int:
         versions = pins.get(name)
         if versions is None:
             failures.append(
-                f"{name}: the body claims {old} -> {new}, but no manifest pins "
-                f"{name} at all. Either the package was removed or the claim is "
-                "about a project outside this check's inputs.")
+                f"{name}: the body claims {old} -> {new}, but no manifest or "
+                f"lock file records {name} at all. Either the package was removed "
+                "or the claim is about a project outside this check's inputs.")
             continue
         if new in versions:
             print(f"  [ok] {name} {old} -> {new}")
@@ -189,9 +228,10 @@ def main(argv: list[str]) -> int:
             f"{ver} in {', '.join(sorted(paths_))}"
             for ver, paths_ in sorted(versions.items()))
         failures.append(
-            f"{name}: the body claims {old} -> {new}, but the manifests still "
-            f"pin {where}. The PR announces a bump it did not make — do not "
-            "read its description as evidence the dependency moved.")
+            f"{name}: the body claims {old} -> {new}, but the manifests and "
+            f"lock files still record {where}. The PR announces a bump it did "
+            "not make — do not read its description as evidence the dependency "
+            "moved.")
 
     if failures:
         print()
@@ -199,7 +239,7 @@ def main(argv: list[str]) -> int:
             print(f"FAIL: {failure}")
         return 1
 
-    print("\nOK: every bump the description claims is applied in a manifest.")
+    print("\nOK: every bump the description claims is applied.")
     return 0
 
 

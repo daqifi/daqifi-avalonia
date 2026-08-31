@@ -71,14 +71,21 @@ close its own PR, and can still open one that over-claims.
 
 `.github/workflows/dependabot-claims-check.yml`, on every Dependabot PR. Parses the
 `Updated X from A to B.` claims out of the body and fails if any claimed version is
-not actually pinned in a `.csproj`.
+recorded neither in a `.csproj` nor in a `packages.lock.json`.
 
 Fix for failure 3. Verified against every Dependabot PR in this repo's history: it
 passes #93, #95 and #96, and fails #130 on all ten unapplied claims.
 
-It is one-directional on purpose — it asserts every claim was applied, not that
-every change was claimed, because Dependabot legitimately touches files the body
-never mentions (lock files, transitive pins).
+Two deliberate choices:
+
+- **Lock files count as evidence.** A transitive-only update — a security bump to
+  something no csproj names — moves the lock file and nothing else, and demanding a
+  csproj change would fail exactly the PRs it is most costly to block. This does not
+  weaken the check: in #130 the lock file recorded `Daqifi.Core` at 1.3.0 right
+  alongside the csproj, because the bump landed nowhere.
+- **It is one-directional.** It asserts every claim was applied, not that every
+  change was claimed, because Dependabot legitimately touches things the body never
+  mentions. The reverse check would fire on every PR.
 
 ### 3. `check_core_drift.py` — the pin versus nuget.org, weekly
 

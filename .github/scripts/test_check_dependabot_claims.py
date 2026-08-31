@@ -14,6 +14,7 @@ Exits 0 if every case behaves, 1 otherwise.
 
 from __future__ import annotations
 
+import json
 import os
 import subprocess
 import sys
@@ -44,6 +45,20 @@ VENDORED_CSPROJ = """<Project Sdk="Microsoft.NET.Sdk">
   </ItemGroup>
 </Project>
 """
+
+
+def lockfile(**resolved: str) -> str:
+    """A packages.lock.json in the shape this repo's restores actually write."""
+    return json.dumps({
+        "version": 1,
+        "dependencies": {
+            "net10.0": {
+                name: {"type": "Transitive", "resolved": version,
+                       "contentHash": "x"}
+                for name, version in resolved.items()
+            }
+        },
+    })
 
 
 def body(*claims: str, notes: str = "") -> str:
@@ -178,6 +193,34 @@ def main() -> int:
         check("property-valued pins alone is an input error", 2, run(vendored))
         check("property-valued pins alongside real ones are skipped",
               0, run(proj, vendored))
+
+        # A transitive-only update — a security bump to something no csproj names —
+        # moves the lock file and nothing else. Demanding a csproj change would
+        # fail exactly the PRs it is most costly to block.
+        lock = os.path.join(tmp, "packages.lock.json")
+        write(lock, lockfile(**{"System.Text.Json": "10.0.11"}))
+        write(body_path, body(
+            "Updated [System.Text.Json](https://github.com/dotnet/dotnet) "
+            "from 10.0.10 to 10.0.11."))
+        check("a lock-file-only bump satisfies a claim", 0, run(proj, lock))
+
+        # ...and the lock file must not become a way to pass while the bump landed
+        # nowhere. In #130 the lock file recorded Daqifi.Core 1.3.0 right alongside
+        # the csproj, because nothing had moved.
+        write(lock, lockfile(**{"Daqifi.Core": "1.3.0"}))
+        write(proj, CSPROJ.format(**{**applied, "core": "1.3.0"}))
+        write(body_path, body(
+            "Updated [Daqifi.Core](https://github.com/daqifi/daqifi-core) "
+            "from 1.3.0 to 1.7.0."))
+        check("a stale lock file does not satisfy a claim", 1, run(proj, lock))
+
+        write(lock, "not json")
+        check("a malformed lock file is an input error", 2, run(proj, lock))
+
+        write(proj, CSPROJ.format(**applied))
+        write(body_path, body(
+            "Updated [Sentry](https://github.com/getsentry/sentry-dotnet) "
+            "from 6.8.0 to 6.9.0."))
 
         check("missing manifest is an input error", 2,
               run(os.path.join(tmp, "nope.csproj")))
