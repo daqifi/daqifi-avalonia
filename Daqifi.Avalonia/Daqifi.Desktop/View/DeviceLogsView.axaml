@@ -322,6 +322,35 @@
                 </Button>
             </StackPanel>
 
+            <!-- Empty state: device busy (streaming / SD logging). Deliberately NOT the red error
+                 panel: the card is healthy and the condition clears as soon as the user stops what
+                 the device is doing (issue #146). -->
+            <StackPanel VerticalAlignment="Center"
+                        HorizontalAlignment="Center"
+                        IsVisible="{Binding HasSdCardBusy}">
+                <i:Icon Value="mdi-information-outline"
+                        FontSize="40"
+                        Foreground="{StaticResource TextSecondary}"
+                        Opacity="0.8"
+                        HorizontalAlignment="Center"
+                        Margin="0,0,0,12"/>
+                <TextBlock Text="DEVICE BUSY"
+                           FontSize="11"
+                           FontWeight="Bold"
+                           Foreground="{StaticResource TextSecondary}"
+                           HorizontalAlignment="Center"
+                           Margin="0,0,0,6"/>
+                <TextBlock Text="{Binding SdCardErrorGuidance}"
+                           FontSize="13"
+                           FontWeight="Light"
+                           Foreground="{StaticResource TextPrimary}"
+                           HorizontalAlignment="Center"
+                           TextWrapping="Wrap"
+                           TextAlignment="Center"
+                           MaxWidth="320"
+                           Margin="0,0,0,16"/>
+            </StackPanel>
+
             <!-- Empty state: SD card error -->
             <StackPanel VerticalAlignment="Center"
                         HorizontalAlignment="Center"

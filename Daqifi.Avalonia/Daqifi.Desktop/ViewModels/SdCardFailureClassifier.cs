@@ -273,7 +273,11 @@ public static class SdCardFailureClassifier
             // above does. Neither derives from the other, so their relative order is free; both
             // must stay above any broader InvalidOperationException arm, should one ever be added.
             SdOperationBlockedException blocked => new SdCardFailure(
-                State: SdCardState.Error,
+                // Busy, not Error: the card is healthy and the condition clears the moment the user
+                // stops what the device is doing. Painting the red "SD CARD ERROR" panel over that
+                // is the same misreport as filing a Sentry issue for it (Qodo "Busy still shown as
+                // error").
+                State: SdCardState.Busy,
                 StatusMessage: blocked.Message,
                 Guidance: blocked.Reason == SdOperationBlockedReason.SdCardLogging
                     ? STOP_SD_LOGGING_GUIDANCE
