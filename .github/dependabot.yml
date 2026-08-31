@@ -2,11 +2,40 @@ version: 2
 
 updates:
   - package-ecosystem: nuget
-    # Explicit list rather than "/" so two directories stay out of scope:
+    # Explicit list rather than "/" so three directories stay out of scope:
     #   third_party/oxyplot-avalonia — vendored fork; its Avalonia/OxyPlot.Core
     #     versions are pinned to the app's on purpose (see its VENDORED.md).
     #   tools/parity-audit/WpfCapture — ProjectReferences ../../../../daqifi-desktop,
     #     which lives outside this repo, so Dependabot can't restore it.
+    #   Daqifi.Avalonia.iOS — Dependabot's updater image installs SDKs and NO
+    #     workloads (see nuget/Dockerfile in dependabot/dependabot-core), and this
+    #     head targets net10.0-ios. That stops the updater twice over; both were
+    #     reproduced against the SDK 10.0.302 this repo pins, using a workload the
+    #     test machine lacks:
+    #       * DISCOVERY — dependabot-core's DependencyDiscovery.props sets
+    #         DesignTimeBuild=true, which suppresses the NETSDK1147 the missing
+    #         workload would raise, and TargetPlatformVersion=0.0. A TFM that does
+    #         not spell its platform version out then fails NU1012, "Platform
+    #         version is not present for one or more target frameworks".
+    #         net10.0-ios does not spell it out — the workload supplies 26.5, which
+    #         is why packages.lock.json here is keyed net10.0-ios26.5 while the
+    #         csproj just says net10.0-ios.
+    #       * LOCK FILE — LockFileUpdater.cs runs a plain `dotnet restore
+    #         --force-evaluate` with no DesignTimeBuild, so NETSDK1147 fires there
+    #         no matter what the TFM says. It logs the failure and returns instead
+    #         of aborting the update, so the visible result would be a PR carrying
+    #         a bumped csproj and an untouched packages.lock.json — NU1004 under
+    #         the locked-mode restore in Directory.Build.props, every time.
+    #     Pinning this head's TFM to net10.0-ios26.5 (the shape the Android head
+    #     uses) clears the first stop and not the second, so it is not the fix it
+    #     looks like.
+    #     What covers this head instead: .github/scripts/check_avalonia_versions.py
+    #     runs over every head's uploaded graph and FAILS the build when they
+    #     split, so an iOS head left behind by a bump landing elsewhere is loud
+    #     rather than silent. That holds only while every package here is
+    #     Avalonia-prefixed (today: Avalonia.iOS, Avalonia.Fonts.Inter). A
+    #     non-Avalonia package added to this head falls outside that guard — bump
+    #     it by hand, and record it here.
     directories:
       - /Daqifi.Avalonia
       - /Daqifi.Avalonia.Desktop
