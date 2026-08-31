@@ -94,6 +94,19 @@
           </StackPanel>
         </Border>
 
+        <!-- Device busy (streaming / SD logging) — neutral, not the red error card (issue #146). -->
+        <Border IsVisible="{Binding HasSdCardBusy}"
+                Background="{DynamicResource SurfaceRaised}"
+                BorderBrush="{DynamicResource TextSecondary}" BorderThickness="1"
+                CornerRadius="8" Padding="16,14">
+          <StackPanel Spacing="10">
+            <TextBlock Text="Device busy" FontWeight="SemiBold" FontSize="{DynamicResource FontSizeBody}"
+                       Foreground="{DynamicResource TextSecondary}" />
+            <TextBlock Text="{Binding SdCardErrorGuidance}" TextWrapping="Wrap"
+                       FontSize="{DynamicResource FontSizeCaption}" Foreground="{DynamicResource TextPrimary}" />
+          </StackPanel>
+        </Border>
+
         <!-- SD card error -->
         <Border IsVisible="{Binding HasSdCardError}"
                 Background="{DynamicResource SurfaceRaised}"

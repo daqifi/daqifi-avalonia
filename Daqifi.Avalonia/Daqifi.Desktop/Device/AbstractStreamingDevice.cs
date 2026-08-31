@@ -1311,19 +1311,30 @@ public abstract partial class AbstractStreamingDevice : ObservableObject, IStrea
             .ToList();
     }
 
+    /// <summary>
+    /// Refuses an SD card file operation while the device is busy streaming or logging to its card.
+    /// </summary>
+    /// <remarks>
+    /// Throws <see cref="SdOperationBlockedException"/> rather than a bare
+    /// <see cref="InvalidOperationException"/> so
+    /// <see cref="ViewModels.SdCardFailureClassifier"/> can recognise this for what it is. Being
+    /// busy is an ordinary condition with an obvious remedy, but untyped it reached the
+    /// classifier's default arm and was reported as an app defect — an Error and a Sentry issue,
+    /// advising the user to check a connection that was never the problem (issue #146). The new
+    /// type still derives from <see cref="InvalidOperationException"/>, so the exception contract
+    /// documented on the three guarded operations is unchanged.
+    /// </remarks>
     // @port: Daqifi.Desktop.Device.AbstractStreamingDevice.EnsureSdOperationsQuiesced
     private void EnsureSdOperationsQuiesced()
     {
         if (IsLoggingToSdCard)
         {
-            throw new InvalidOperationException(
-                "Cannot perform SD card file operations while logging to the SD card. Stop logging first.");
+            throw new SdOperationBlockedException(SdOperationBlockedReason.SdCardLogging);
         }
 
         if (IsStreaming)
         {
-            throw new InvalidOperationException(
-                "Cannot perform SD card file operations while streaming. Stop streaming first.");
+            throw new SdOperationBlockedException(SdOperationBlockedReason.Streaming);
         }
     }
 

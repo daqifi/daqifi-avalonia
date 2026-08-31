@@ -37,7 +37,14 @@ public enum SdCardState
     /// <summary>No SD card is installed in the device.</summary>
     NotPresent,
     /// <summary>SD card is present but an error occurred accessing it.</summary>
-    Error
+    Error,
+    /// <summary>
+    /// The card is fine, but the device is busy doing something that rules out file access —
+    /// streaming, or logging to the card. Distinct from <see cref="Error"/> on purpose: painting the
+    /// red "SD CARD ERROR" panel over an ordinary, self-clearing condition is the same mistake as
+    /// filing a Sentry issue for it, one layer up (issue #146).
+    /// </summary>
+    Busy
 }
 
 // @port: Daqifi.Desktop.ViewModels.DeviceLogsViewModel
@@ -70,11 +77,13 @@ public partial class DeviceLogsViewModel : ObservableObject
     [NotifyPropertyChangedFor(nameof(HasFiles))]
     [NotifyPropertyChangedFor(nameof(HasSdCardNotPresent))]
     [NotifyPropertyChangedFor(nameof(HasSdCardError))]
+    [NotifyPropertyChangedFor(nameof(HasSdCardBusy))]
     [NotifyPropertyChangedFor(nameof(SdCardStatusLine))]
     private SdCardState _sdCardState = SdCardState.Unknown;
 
     [ObservableProperty]
     [NotifyPropertyChangedFor(nameof(HasSdCardError))]
+    [NotifyPropertyChangedFor(nameof(HasSdCardBusy))]
     [NotifyPropertyChangedFor(nameof(SdCardStatusLine))]
     private string _sdCardErrorMessage = string.Empty;
 
@@ -144,6 +153,13 @@ public partial class DeviceLogsViewModel : ObservableObject
     // @port: Daqifi.Desktop.ViewModels.DeviceLogsViewModel.HasSdCardError
     public bool HasSdCardError => CanAccessSdCard && SdCardState == SdCardState.Error;
 
+    /// <summary>
+    /// True when the card could not be read because the device is busy streaming or logging.
+    /// Drives a neutral "device busy" panel rather than the red error one — the card is healthy and
+    /// the user only has to stop what the device is doing (issue #146).
+    /// </summary>
+    public bool HasSdCardBusy => CanAccessSdCard && SdCardState == SdCardState.Busy;
+
     // @port: Daqifi.Desktop.ViewModels.DeviceLogsViewModel.ConnectionTypeMessage
     // Kept consistent with CanAccessSdCard: a selected-but-disconnected device reports the drop
     // rather than a misleading "SD Card Access Available" (Qodo "Report disconnected devices
@@ -170,6 +186,8 @@ public partial class DeviceLogsViewModel : ObservableObject
         SdCardState.NotPresent => " · No SD card installed",
         SdCardState.Error =>
             $" · SD card error{(!string.IsNullOrEmpty(SdCardErrorMessage) ? $": {SdCardErrorMessage}" : string.Empty)}",
+        // No "error" wording here: the card is fine and the guidance panel carries the detail.
+        SdCardState.Busy => " · SD card unavailable while the device is busy",
         _ => string.Empty
     };
 
@@ -387,6 +405,7 @@ public partial class DeviceLogsViewModel : ObservableObject
         OnPropertyChanged(nameof(HasNoFiles));
         OnPropertyChanged(nameof(HasSdCardNotPresent));
         OnPropertyChanged(nameof(HasSdCardError));
+        OnPropertyChanged(nameof(HasSdCardBusy));
         OnPropertyChanged(nameof(HasFiles));
         OnPropertyChanged(nameof(ConnectionTypeMessage));
         // SdCardStatusLine is now gated on CanAccessSdCard too, so re-raise it when the gate
