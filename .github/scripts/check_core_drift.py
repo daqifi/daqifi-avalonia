@@ -54,14 +54,17 @@ PACKAGE_REF = re.compile(r"<PackageReference\b[^>]*>")
 ATTR = re.compile(r"""(\w+)\s*=\s*["']([^"']*)["']""")
 
 
-def pinned_versions(paths: list[str], package: str) -> dict[str, str]:
-    """Map manifest -> pinned version for every project pinning `package`.
+def pinned_versions(paths: list[str], package: str) -> list[tuple[str, str]]:
+    """Every (version, manifest) pinning `package`, in the order encountered.
 
-    Every project, not the first one found: two projects can pin the same package
-    at different versions, and reporting whichever happened to be read first would
-    understate the drift — the repo is only as current as its OLDEST pin.
+    EVERY reference, not one per project and not the first found. Two projects can
+    pin the same package at different versions, and a single project can reference
+    it more than once — conditional ItemGroups for different frameworks or RIDs are
+    an ordinary MSBuild shape. Keeping only one per file would let a newer
+    reference hide an older one in the same project, and the caller measures drift
+    from the OLDEST pin, so a discarded version is a silently understated report.
     """
-    found: dict[str, str] = {}
+    found: list[tuple[str, str]] = []
     for path in paths:
         with open(path, encoding="utf-8") as handle:
             text = handle.read()
@@ -69,7 +72,7 @@ def pinned_versions(paths: list[str], package: str) -> dict[str, str]:
             attrs = dict(ATTR.findall(tag))
             version = attrs.get("Version")
             if attrs.get("Include") == package and version and "$(" not in version:
-                found[path] = version
+                found.append((version, path))
     return found
 
 
@@ -143,19 +146,21 @@ def main(argv: list[str]) -> int:
         return 2
 
     try:
-        manifest = min(found, key=lambda path: sort_key(found[path]))
+        # Sorted, not min(): ties on version must resolve to the same manifest on
+        # every run, or the reported file would depend on filesystem order.
+        pinned, manifest = sorted(found, key=lambda pair: (sort_key(pair[0]),
+                                                          pair[1]))[0]
     except ValueError:
-        detail = "; ".join(f"{v} in {p}" for p, v in sorted(found.items()))
+        detail = "; ".join(f"{v} in {p}" for v, p in sorted(found))
         print(f"FAIL: {package} is pinned at a version that cannot be ordered "
               f"({detail}).")
         return 2
-    pinned = found[manifest]
 
-    if len(set(found.values())) > 1:
-        # Projects disagreeing about the version is its own problem, and drift is
-        # measured from the oldest of them — catching up the newest would leave
+    if len({version for version, _ in found}) > 1:
+        # References disagreeing about the version is its own problem, and drift
+        # is measured from the oldest of them — catching up the newest would leave
         # the repo just as far behind.
-        detail = "; ".join(f"{v} in {p}" for p, v in sorted(found.items()))
+        detail = "; ".join(f"{v} in {p}" for v, p in sorted(found))
         print(f"NOTE: {package} is pinned at more than one version — {detail}. "
               f"Reporting drift from the oldest ({pinned}).")
 

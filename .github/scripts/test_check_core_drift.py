@@ -32,6 +32,19 @@ CSPROJ = """<Project Sdk="Microsoft.NET.Sdk">
 </Project>
 """
 
+# One project referencing the package twice — conditional ItemGroups per framework
+# or RID are an ordinary MSBuild shape, and both orderings must give the same
+# answer or the verdict depends on which reference happens to be read last.
+DUPLICATE_CSPROJ = """<Project Sdk="Microsoft.NET.Sdk">
+  <ItemGroup Condition="'$(TargetFramework)' == 'net10.0'">
+    <PackageReference Include="Daqifi.Core" Version="{first}" />
+  </ItemGroup>
+  <ItemGroup Condition="'$(TargetFramework)' == 'net9.0'">
+    <PackageReference Include="Daqifi.Core" Version="{second}" />
+  </ItemGroup>
+</Project>
+"""
+
 NO_CORE_CSPROJ = """<Project Sdk="Microsoft.NET.Sdk">
   <ItemGroup>
     <PackageReference Include="Avalonia" Version="$(AvaloniaVersion)" />
@@ -140,6 +153,27 @@ def main() -> int:
 
         write(proj, CSPROJ.format(core="1.3.0"))
         os.remove(second)
+
+        # Two references to the package in ONE project: keeping one version per
+        # file would let the newer reference overwrite the older, and the check
+        # would then report the repo current while a framework-conditional pin sat
+        # four releases back.
+        dupe = os.path.join(tmp, "dupe.csproj")
+        write(dupe, DUPLICATE_CSPROJ.format(first="1.10.0", second="1.4.0"))
+        result = run(dupe, capture=True)
+        check("a duplicate reference in one project is not lost", 1,
+              result.returncode)
+        check("the older duplicate is the one reported",
+              True, "pinned 1.4.0" in result.stdout)
+
+        # ...and the same file with the references the other way round.
+        write(dupe, DUPLICATE_CSPROJ.format(first="1.4.0", second="1.10.0"))
+        result = run(dupe, capture=True)
+        check("reference order within a project does not change the verdict", 1,
+              result.returncode)
+        check("the older duplicate is still the one reported",
+              True, "pinned 1.4.0" in result.stdout)
+        os.remove(dupe)
 
         # A package nothing pins must NEVER look like a package that is current —
         # a rename or a glob that stopped matching would otherwise read as healthy
