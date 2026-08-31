@@ -7,9 +7,9 @@ using Daqifi.Desktop.Common.Loggers;
 using Daqifi.Desktop.Device;
 using Daqifi.Desktop.Device.SerialDevice;
 using Daqifi.Desktop.Logger;
+using Daqifi.Desktop.Services.DeviceWatcher;
 using System.ComponentModel;
 using System.IO.Ports;
-using System.Management;
 using CommunityToolkit.Mvvm.ComponentModel;
 using Avalonia.Threading;
 using DeviceIdentity = Daqifi.Core.Device.DeviceIdentity;
@@ -20,7 +20,12 @@ namespace Daqifi.Desktop;
 public partial class ConnectionManager : ObservableObject
 {
     #region Private Variables
-    private readonly ManagementEventWatcher _deviceRemovedWatcher;
+    // The ONE watcher instance the device_watcher mechanism allows; the backend behind it is
+    // chosen per platform (WMI on Windows, serial-port polling on macOS/Linux, no-op elsewhere).
+    // Rooted by the singleton and never stopped, matching the lifetime the WMI watcher it replaces
+    // already had: it must observe removals for as long as the app can hold a device, which is the
+    // whole process lifetime.
+    private readonly IDeviceWatcher _deviceWatcher;
     #endregion
 
     #region Properties
@@ -167,24 +172,64 @@ public partial class ConnectionManager : ObservableObject
     {
         ConnectedDevices = new List<IStreamingDevice>();
 
+        // Upstream constructed the WMI watcher inline here, which threw PlatformNotSupportedException
+        // on every non-Windows head and left USB-removal detection dead (issue #90). The backend is
+        // now chosen per platform behind IDeviceWatcher; macOS and Linux get a real, working one.
+        //
+        // The catch stays load-bearing: this runs from a static field initializer, so an escaping
+        // exception would surface as a fatal TypeInitializationException at first access of Instance.
+        // Backend selection is inside it for that reason. What changes is that the degradation no
+        // longer ends here — it is recorded and shown to the user (see the property below).
+        IDeviceWatcher? watcher = null;
         try
         {
-            // EventType 3 is Device Removal
-            var deviceRemovedQuery = new WqlEventQuery("SELECT * FROM Win32_DeviceChangeEvent WHERE EventType = 3");
+            watcher = DeviceWatcherFactory.Create();
+            watcher.DeviceRemoved += (sender, eventArgs) => CheckIfSerialDeviceWasRemoved();
+            watcher.Start();
+            _deviceWatcher = watcher;
 
-            _deviceRemovedWatcher = new ManagementEventWatcher(deviceRemovedQuery);
-            _deviceRemovedWatcher.EventArrived += (sender, eventArgs) => CheckIfSerialDeviceWasRemoved();
-            _deviceRemovedWatcher.Start();
+            // Which backend a machine picked is the first thing to check when a support report says
+            // "unplugging did nothing", so record it rather than leaving it to be inferred.
+            AppLogger.Instance.Information(
+                "USB hotplug detection backend: " + _deviceWatcher.GetType().Name);
         }
         catch (Exception ex)
         {
-            AppLogger.Instance.Error(ex, "Failed to initialize ManagementEventWatcher: " + ex.Message);
-        }
+            // A backend that could not be built or started is replaced by the one that is
+            // guaranteed inert, so every later use of the field is unconditional.
+            _deviceWatcher = watcher ?? new NoOpDeviceWatcher();
 
+            // Only a platform that actually has USB serial has something to lose here: a mobile
+            // head has no serial transport, so a watcher that never runs is not a user-facing
+            // degradation there and must not raise a notification the user cannot act on.
+            if (DeviceWatcherFactory.PlatformSupportsSerialHotplug)
+            {
+                HotplugDetectionUnavailableMessage = HotplugUnavailableUserMessage;
+            }
+
+            AppLogger.Instance.Error(ex, "Failed to start the USB hotplug watcher: " + ex.Message);
+        }
     }
 
     // @port: Daqifi.Desktop.ConnectionManager.Instance
     public static ConnectionManager Instance => instance;
+
+    /// <summary>
+    /// Wording shown to the user when USB hotplug-removal detection is not running. Says what the
+    /// user will actually see happen, not which watcher failed.
+    /// </summary>
+    private const string HotplugUnavailableUserMessage =
+        "Automatic USB disconnect detection is not available on this system. " +
+        "If you unplug a connected device, the app will keep showing it as connected until you " +
+        "disconnect it yourself.";
+
+    /// <summary>
+    /// Null when USB hotplug-removal detection is working, or when the platform has no serial
+    /// hardware to detect (the mobile heads, which are WiFi/TCP only). Non-null when this platform
+    /// DOES have USB serial but the watcher is not running — the user needs to know that unplugging
+    /// a device will go unnoticed rather than being left to infer it (issue #90).
+    /// </summary>
+    public string? HotplugDetectionUnavailableMessage { get; }
 
     #endregion
 

@@ -331,12 +331,11 @@ fails to apply, `PlotView.OnApplyTemplate` silently no-ops and the plot renders
   That is a runtime check, so it covers macOS properly. This threw a
   `DllNotFoundException` on Android once; the fix generalises.
 
-**Confirmed on macOS — guarded, but degrades silently:**
+**Was confirmed on macOS, now fixed (issue #90) — USB hotplug detection:**
 
-- `ConnectionManager`'s constructor (`ConnectionManager.cs:173`) builds a
-  `ManagementEventWatcher` (WMI, Windows-only) inside a `try` whose
-  `catch (Exception ex)` only *logs*. Observed verbatim in
-  `DAQiFi/Logs/DAQifiAppLog.log` on first launch:
+- `ConnectionManager`'s constructor used to build a `ManagementEventWatcher`
+  (WMI, Windows-only) inside a `try` whose `catch (Exception ex)` only *logged*,
+  so first launch on macOS produced this in `DAQiFi/Logs/DAQifiAppLog.log`:
 
   ```
   LEVEL=ERROR: Failed to initialize ManagementEventWatcher: System.Management
@@ -345,14 +344,17 @@ fails to apply, `PlotView.OnApplyTemplate` silently no-ops and the plot renders
      at System.Management.WqlEventQuery..ctor(String queryOrEventClassName)
   ```
 
-  The app does not crash — `ConnectionManager` is a static singleton, so an
-  uncaught throw here would be a fatal `TypeInitializationException` and the
-  catch is load-bearing. But USB hotplug-removal detection is **dead on macOS
-  with no user-visible signal**. Decide whether that is acceptable for macOS v1
-  or needs a `DeviceWatcher` implementation (there is already a
-  `Services/DeviceWatcher/` abstraction with `WmiDeviceWatcher` and
-  `NoOpDeviceWatcher` — a macOS watcher belongs there, and `ConnectionManager`
-  should be routed through it rather than constructing WMI directly).
+  and USB hotplug-removal detection was dead on macOS with no user-visible
+  signal. `ConnectionManager` now goes through `Services/DeviceWatcher/`:
+  `DeviceWatcherFactory.Create()` returns `WmiDeviceWatcher` on Windows,
+  `SerialPortPollingDeviceWatcher` on macOS/Linux (it samples
+  `SerialPort.GetPortNames()` once a second and raises `DeviceRemoved` when the
+  port set shrinks), and `NoOpDeviceWatcher` on the mobile heads, which have no
+  serial transport to watch. **Expect no `PlatformNotSupportedException` at
+  startup on any head.** If the watcher ever fails to start on a platform that
+  does have USB serial, `ConnectionManager.HotplugDetectionUnavailableMessage`
+  becomes non-null and the main view model raises a standing notification, so
+  the degradation is visible rather than log-only.
 
 **Fixed in this PR — hardcoded path separators:**
 
