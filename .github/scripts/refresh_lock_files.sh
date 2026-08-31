@@ -31,12 +31,26 @@
 #                      top of Directory.Build.props). Daqifi.Avalonia declares six and
 #                      the iOS head two; pruning them breaks the next CI run.
 #
+# ON LOCKED MODE
+#
+# --force-evaluate is what overrides RestoreLockedMode, so this works unchanged with
+# CI=true set (which Directory.Build.props turns locked mode on for). NuGet's own
+# NU1004 text says as much — "Disable the RestoreLockedMode MSBuild property or pass an
+# explicit --force-evaluate option to run restore to update the lock file" — and it is
+# verified: with CI=true and RestoreLockedMode evaluating true, a plain restore of a
+# stale head fails NU1004 while the same restore with --force-evaluate regenerates it.
+#
 # EXIT CODES, matching .github/scripts/check_avalonia_versions.py
 #
 #   0  every lock file was regenerated
-#   2  the refresh could not run — wrong SDK, or a missing workload. Nothing is
-#      written in that case, because a PARTIAL refresh is worse than none: it looks
-#      like the job was done and leaves the untouched head failing NU1004 anyway.
+#   1  a restore failed — the graph itself does not resolve (an NU1605 downgrade, say).
+#      Every lock file is rolled back to its pre-run state first; fix the conflict and
+#      re-run.
+#   2  the refresh could not run — wrong SDK, or a missing workload.
+#
+# NOTHING IS LEFT HALF-WRITTEN in either failure case, deliberately. A partial refresh
+# is worse than none: it looks like the job was done, reads as an ordinary refresh diff,
+# and leaves the head it never reached failing NU1004 anyway.
 #
 set -euo pipefail
 
@@ -115,9 +129,52 @@ if [ "${#missing[@]}" -ne 0 ]; then
 fi
 echo "workloads present: android, ios"
 
+# Snapshot every lock file before the first restore. Restores run one project at a
+# time, so a failure on the fourth leaves the first three already rewritten — the exact
+# partial refresh the preflight above refuses to produce, arriving by a different door
+# and looking like an ordinary refresh diff on the way out.
+#
+# The snapshot is of the WORKING TREE, not of HEAD. On a Dependabot branch the shared
+# library's lock file is already legitimately modified; rolling back to HEAD would
+# discard Dependabot's own work along with ours.
+snapshot=$(mktemp -d)
+trap 'rm -rf "${snapshot}"' EXIT
+
+lock_of() { echo "$(dirname "$1")/packages.lock.json"; }
+
+index=0
+for project in "${PROJECTS[@]}"; do
+  lock=$(lock_of "${project}")
+  [ -f "${lock}" ] && cp "${lock}" "${snapshot}/${index}"
+  index=$((index + 1))
+done
+
+rollback() {
+  local index=0 project lock
+  for project in "${PROJECTS[@]}"; do
+    lock=$(lock_of "${project}")
+    if [ -f "${snapshot}/${index}" ]; then
+      cp "${snapshot}/${index}" "${lock}"
+    elif [ -f "${lock}" ]; then
+      # No snapshot means the file did not exist before this run, so a rollback has to
+      # remove it rather than leave a lock file nobody committed.
+      rm -f "${lock}"
+    fi
+    index=$((index + 1))
+  done
+}
+
 for project in "${PROJECTS[@]}"; do
   echo "==> ${project}"
-  "${DOTNET_BIN}" restore "${project}" --force-evaluate
+  if ! "${DOTNET_BIN}" restore "${project}" --force-evaluate; then
+    rollback
+    echo >&2
+    echo "FAIL: restore of ${project} failed. Every lock file has been rolled back to" >&2
+    echo "      its pre-run state, so nothing here is half-refreshed." >&2
+    echo "      This is a real dependency problem, not a toolchain one — read the NU" >&2
+    echo "      error above, fix the pin, and re-run." >&2
+    exit 1
+  fi
 done
 
 echo

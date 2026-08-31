@@ -269,11 +269,29 @@ is for — which does run there, because those jobs get far enough to upload a g
 .github/scripts/refresh_lock_files.sh
 ```
 
-Run it and commit the result onto the Dependabot branch. It refuses to do a partial
-job: it checks for the pinned SDK and for both the `android` and `ios` workloads first
-and exits 2 naming what is missing, rather than leaving one head stale and looking
-finished. In practice that means a Mac with `dotnet workload install android ios`.
-`test_refresh_lock_files.py` drives it with a stub `dotnet` to hold it to that.
+Run it and commit the result onto the Dependabot branch. It will not leave a partial
+refresh behind, by either route:
+
+- **Before it starts**, it checks for the pinned SDK and for both the `android` and
+  `ios` workloads, and exits 2 naming what is missing. In practice that means a Mac
+  with `dotnet workload install android ios`.
+- **Once it starts**, it snapshots every lock file, and a restore that fails partway —
+  a genuine `NU1605` conflict, say — rolls all of them back and exits 1. Otherwise the
+  projects restored before the failure would keep their new lock files, which is the
+  same half-refreshed set arriving by a different door and looking like an ordinary
+  diff on the way out. The snapshot is of the working tree, not `HEAD`, so Dependabot's
+  own lock-file edit survives the rollback.
+
+`test_refresh_lock_files.py` holds it to both with a stub `dotnet`: four refusal cases,
+plus a stub that mutates lock files and fails on the third restore. That group carries a
+control case whose stub never fails, because a rollback test whose stub never wrote
+anything would pass without proving anything.
+
+Locked mode is not in the way: `--force-evaluate` is what overrides `RestoreLockedMode`,
+which is what NuGet's own `NU1004` text tells you to reach for. Verified with `CI=true`
+and `RestoreLockedMode` evaluating `true` — a plain restore of a stale head fails
+`NU1004`, and the same restore with `--force-evaluate` regenerates it. So the script
+works as-is inside a workflow, should the automation below ever get built.
 
 It iterates projects rather than restoring `Daqifi.Avalonia.slnx`, because
 `tools/parity-audit/AvaloniaCapture` is not in the solution and a solution-level restore
