@@ -114,8 +114,22 @@ public static class App
         // initializer, so the misconfiguration took all file logging down with it and the three
         // handlers just wired above rethrew on their own logging call, leaving no trail anywhere
         // (#127). AppDataPaths now parks that diagnostic instead of throwing it, so by the time we
-        // reach this line the logger is alive and OnUnhandledException can record why the app is
-        // refusing to start before the process ends.
+        // reach this line the logger is alive and can record why the app is refusing to start.
+        //
+        // Written to the log EXPLICITLY, not left to the handlers above. They only fire for an
+        // exception that reaches the runtime unhandled, and the one caller that actually sets this
+        // variable — the parity-audit capture harness — wraps its whole app boot in a try/catch, so
+        // the throw below is caught synchronously and no handler ever sees it. Logging first is
+        // what puts the diagnostic in DAQifiAppLog.log on both paths. On the uncaught path this
+        // does mean OnUnhandledException logs it a second time (and raises a second Sentry event);
+        // that duplicate is a fair price for a dev-only misconfiguration that would otherwise leave
+        // the tooling path with no file trail at all — which is the whole bug being fixed.
+        if (AppDataPaths.DataDirectoryFault is { } dataDirectoryFault)
+        {
+            AppLogger.Instance.Error(dataDirectoryFault,
+                "Refusing to start: the DAQIFI_DATA_DIR override is unusable");
+        }
+
         AppDataPaths.ThrowIfDataDirectoryUnusable();
 
         if (IsTestMode)
