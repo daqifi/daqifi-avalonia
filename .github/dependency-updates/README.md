@@ -76,16 +76,30 @@ recorded neither in a `.csproj` nor in a `packages.lock.json`.
 Fix for failure 3. Verified against every Dependabot PR in this repo's history: it
 passes #93, #95 and #96, and fails #130 on all ten unapplied claims.
 
-Two deliberate choices:
+Three deliberate choices:
 
-- **Lock files count as evidence.** A transitive-only update — a security bump to
-  something no csproj names — moves the lock file and nothing else, and demanding a
-  csproj change would fail exactly the PRs it is most costly to block. This does not
-  weaken the check: in #130 the lock file recorded `Daqifi.Core` at 1.3.0 right
+- **Every project that pins the package is checked, not just one.**
+  `Avalonia.Fonts.Inter` is pinned by three projects here, so a grouped
+  multi-directory PR that moved one and left another behind would otherwise pass on
+  the strength of the one it did move.
+- **"Every project" means every project Dependabot manages** — the `directories`
+  list in `dependabot.yml`, read at check time. This matters in both directions: the
+  iOS head is not in that list, so its pins drift on purpose and must not fail a PR
+  that could never have touched them; and if the list later grows, the check grows
+  with it instead of silently keeping the old scope. A config it cannot read is exit
+  2, not a silently widened scope.
+- **Lock files are evidence, never grounds for failure.** A transitive-only update —
+  the shape a security bump takes — moves a lock file and nothing else, so a claim
+  about a package no in-scope project pins is satisfied by a lock-file resolution.
+  They cannot fail a claim, because a legitimate single-directory PR leaves the
+  *other* directories' lock files recording the old transitive version (#93 changed
+  only `Daqifi.Avalonia/`), and failing on that would reject good PRs. This cannot
+  hide the #130 case: there the lock file recorded `Daqifi.Core` at 1.3.0 right
   alongside the csproj, because the bump landed nowhere.
-- **It is one-directional.** It asserts every claim was applied, not that every
-  change was claimed, because Dependabot legitimately touches things the body never
-  mentions. The reverse check would fire on every PR.
+
+It is also one-directional: it asserts every claim was applied, not that every
+change was claimed, because Dependabot legitimately touches things the body never
+mentions. The reverse check would fire on every PR.
 
 ### 3. `check_core_drift.py` — the pin versus nuget.org, weekly
 

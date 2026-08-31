@@ -18,18 +18,31 @@ The check is deliberately one-directional. It asserts every CLAIM was applied; i
 does not assert every applied change was claimed, because Dependabot legitimately
 touches things a body never mentions.
 
-Both .csproj PackageReference pins and packages.lock.json resolved versions count
-as evidence a bump landed. Lock files matter because a transitive-only update — a
-security bump to something no csproj names — moves the lock file and nothing else,
-and demanding a csproj change would fail exactly the PRs it is most costly to
-block. It does not weaken the check: in #130 the lock file still recorded
-`Daqifi.Core` at 1.3.0 alongside the csproj, because the bump landed nowhere.
+A claim is checked against EVERY .csproj that pins the package, not just one:
+`Avalonia.Fonts.Inter` is pinned by three projects here, and a grouped
+multi-directory PR that moved one and left another behind would otherwise pass on
+the strength of the one it did move.
+
+"Every .csproj" means every one Dependabot actually manages — the `directories`
+list in .github/dependabot.yml. Scoping to that matters in both directions. The
+iOS head is not in the list, so its pins drift on purpose and must not fail a PR
+that could never have touched them; and if the list later grows, this check grows
+with it rather than silently keeping the old scope.
+
+Lock files are evidence ONLY for a package no in-scope .csproj pins — a
+transitive-only update, the shape a security bump takes, which moves a lock file
+and nothing else. They are never used to fail a claim, because a legitimate
+single-directory PR leaves the OTHER directories' lock files recording the old
+transitive version (#93 changed only Daqifi.Avalonia/), and failing on that would
+reject good PRs. Lock files could not hide the #130 case anyway: there the lock
+file recorded `Daqifi.Core` at 1.3.0 right alongside the csproj.
 
 Usage:
     check_dependabot_claims.py --body-file <file> <manifest> [...]
     check_dependabot_claims.py --body-file <file> --glob   # discover under cwd
 
-A manifest is a .csproj or a packages.lock.json.
+A manifest is a .csproj or a packages.lock.json. Explicit paths are taken as
+already in scope; --glob discovers them and applies the dependabot.yml scope.
 
 Exit codes are distinct on purpose, so a caller can tell a real violation apart
 from a broken invocation:
@@ -37,9 +50,9 @@ from a broken invocation:
     0  every claim in the body is reflected in a manifest or lock file
     1  a genuine violation: a claimed bump was not applied
     2  the check could not run: bad arguments, an unreadable body or manifest, no
-       manifests, or a body with no parseable claims (which means either this is
-       not a Dependabot PR or the parser below has gone stale — both are reasons
-       to stop, not to report success)
+       manifests, no readable dependabot.yml scope, or a body with no parseable
+       claims (which means either this is not a Dependabot PR or the parser below
+       has gone stale — both are reasons to stop, not to report success)
 """
 
 from __future__ import annotations
@@ -72,6 +85,53 @@ CLAIM = re.compile(
 # carries PrivateAssets/IncludeAssets, so its tag does not self-close).
 PACKAGE_REF = re.compile(r"<PackageReference\b[^>]*>")
 ATTR = re.compile(r"""(\w+)\s*=\s*["']([^"']*)["']""")
+
+DEFAULT_CONFIG = os.path.join(".github", "dependabot.yml")
+DIRECTORIES_KEY = re.compile(r"^directories\s*:")
+DIRECTORY_KEY = re.compile(r"""^directory\s*:\s*["']?([^"'#]+)""")
+LIST_ITEM = re.compile(r"""^-\s*["']?([^"'#]+)""")
+
+
+def managed_directories(config_path: str) -> list[str]:
+    """Repo-relative directories Dependabot is configured to update.
+
+    A deliberately small parser rather than a YAML dependency: this reads one
+    well-known key out of one file we control, and PyYAML is not guaranteed on
+    every runner. '/' (the whole repo) normalises to '', which matches everything.
+    """
+    directories: list[str] = []
+    in_list = False
+    with open(config_path, encoding="utf-8") as handle:
+        for raw in handle:
+            stripped = raw.strip()
+            if not stripped or stripped.startswith("#"):
+                continue
+            if DIRECTORIES_KEY.match(stripped):
+                in_list = True
+                continue
+            singular = DIRECTORY_KEY.match(stripped)
+            if singular:
+                directories.append(singular.group(1).strip())
+                in_list = False
+                continue
+            if in_list:
+                item = LIST_ITEM.match(stripped)
+                if item:
+                    directories.append(item.group(1).strip())
+                    continue
+                in_list = False
+    return [d.strip().strip("/") for d in directories]
+
+
+def in_scope(path: str, directories: list[str]) -> bool:
+    """Is this manifest inside a directory Dependabot manages?"""
+    normalised = os.path.normpath(path).replace(os.sep, "/")
+    for directory in directories:
+        if not directory:  # '/' — the whole repository
+            return True
+        if normalised == directory or normalised.startswith(directory + "/"):
+            return True
+    return False
 
 
 def claims(body: str) -> list[tuple[str, str, str]]:
@@ -147,12 +207,22 @@ def main(argv: list[str]) -> int:
         print(__doc__)
         return 2
 
-    body_index = argv.index("--body-file")
-    if body_index + 1 >= len(argv):
+    args = argv[1:]
+    config_path = DEFAULT_CONFIG
+    if "--dependabot-config" in args:
+        i = args.index("--dependabot-config")
+        if i + 1 >= len(args):
+            print("FAIL: --dependabot-config needs a path.")
+            return 2
+        config_path = args[i + 1]
+        del args[i:i + 2]
+
+    body_index = args.index("--body-file")
+    if body_index + 1 >= len(args):
         print("FAIL: --body-file needs a path.")
         return 2
-    body_path = argv[body_index + 1]
-    rest = argv[1:body_index] + argv[body_index + 2:]
+    body_path = args[body_index + 1]
+    rest = args[:body_index] + args[body_index + 2:]
 
     try:
         with open(body_path, encoding="utf-8") as handle:
@@ -166,14 +236,29 @@ def main(argv: list[str]) -> int:
             print("FAIL: --glob discovers the manifests itself; do not also "
                   "pass paths.")
             return 2
+        try:
+            directories = managed_directories(config_path)
+        except OSError as exc:
+            print(f"FAIL: cannot read {config_path}: {exc}")
+            return 2
+        if not directories:
+            # Without a scope this would check the whole repo, including heads
+            # Dependabot cannot touch — turning every Avalonia bump into a false
+            # failure on the unmanaged iOS head.
+            print(f"FAIL: {config_path} lists no `directories` to scope the "
+                  "check to.")
+            return 2
         paths = sorted(
             p for pattern in ("**/*.csproj", "**/packages.lock.json")
             for p in glob.glob(pattern, recursive=True)
-            if "obj" + os.sep not in p and "bin" + os.sep not in p)
+            if "obj" + os.sep not in p and "bin" + os.sep not in p
+            and in_scope(p, directories))
         if not paths:
-            print("FAIL: --glob matched no .csproj or packages.lock.json — "
-                  "nothing was checked.")
+            print(f"FAIL: --glob matched no .csproj or packages.lock.json in "
+                  f"the directories {config_path} manages "
+                  f"({', '.join(directories)}) — nothing was checked.")
             return 2
+        print(f"Scope from {config_path}: {', '.join(directories)}")
     elif rest:
         paths = rest
     else:
@@ -181,8 +266,12 @@ def main(argv: list[str]) -> int:
               "paths, or --glob.")
         return 2
 
-    # package -> version -> [manifests]
+    # package -> version -> [manifests]. Project pins and lock-file resolutions
+    # are kept apart because they answer different questions: a project pin is
+    # what the PR was supposed to change, a lock resolution is only evidence that
+    # SOMETHING moved.
     pins: dict[str, dict[str, list[str]]] = {}
+    resolved: dict[str, set[str]] = {}
     for path in paths:
         try:
             found = manifest_versions(path)
@@ -191,11 +280,15 @@ def main(argv: list[str]) -> int:
             # must be able to tell that apart from "the PR really did lie".
             print(f"FAIL: cannot read {path}: {exc}")
             return 2
+        is_lock = os.path.basename(path) == "packages.lock.json"
         for name, versions in found.items():
             for version in versions:
-                pins.setdefault(name, {}).setdefault(version, []).append(path)
+                if is_lock:
+                    resolved.setdefault(name, set()).add(version)
+                else:
+                    pins.setdefault(name, {}).setdefault(version, []).append(path)
 
-    if not pins:
+    if not pins and not resolved:
         print("FAIL: no package version found in any manifest or lock file.")
         return 2
 
@@ -213,24 +306,40 @@ def main(argv: list[str]) -> int:
 
     failures: list[str] = []
     print(f"Checked {len(paths)} manifest(s) against {len(stated)} claim(s):")
-    for name, old, new in stated:
-        versions = pins.get(name)
-        if versions is None:
+    for name, old_version, new_version in stated:
+        declared = pins.get(name)
+
+        if declared is None:
+            # No in-scope project pins it. Either it is transitive — where the
+            # lock file is the only place the bump can show — or the claim is
+            # about something this repo does not have.
+            if new_version in resolved.get(name, set()):
+                print(f"  [ok] {name} {old_version} -> {new_version} "
+                      "(transitive; recorded in a lock file)")
+                continue
             failures.append(
-                f"{name}: the body claims {old} -> {new}, but no manifest or "
-                f"lock file records {name} at all. Either the package was removed "
-                "or the claim is about a project outside this check's inputs.")
+                f"{name}: the body claims {old_version} -> {new_version}, but no "
+                f"in-scope project pins {name} and no lock file resolves it to "
+                f"{new_version}. Either the package was removed or the claim is "
+                "about a project outside this check's scope.")
             continue
-        if new in versions:
-            print(f"  [ok] {name} {old} -> {new}")
+
+        # Every project that pins it must be at the claimed version. Checking
+        # only that SOME project reached it lets a grouped multi-directory PR
+        # move one head and leave another stale — `Avalonia.Fonts.Inter` is
+        # pinned by three projects here, so that is a real input shape.
+        stale = {version: files for version, files in declared.items()
+                 if version != new_version}
+        if not stale:
+            print(f"  [ok] {name} {old_version} -> {new_version}")
             continue
         where = "; ".join(
-            f"{ver} in {', '.join(sorted(paths_))}"
-            for ver, paths_ in sorted(versions.items()))
+            f"{version} in {', '.join(sorted(files))}"
+            for version, files in sorted(stale.items()))
         failures.append(
-            f"{name}: the body claims {old} -> {new}, but the manifests and "
-            f"lock files still record {where}. The PR announces a bump it did "
-            "not make — do not read its description as evidence the dependency "
+            f"{name}: the body claims {old_version} -> {new_version}, but "
+            f"{where}. The PR announces a bump it did not make everywhere it "
+            "said — do not read its description as evidence the dependency "
             "moved.")
 
     if failures:

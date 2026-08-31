@@ -8,6 +8,10 @@ coverage — so the failure paths are what this exercises, not just the happy on
 The headline case is REAL: PR #130's body announced `Daqifi.Core` 1.3.0 -> 1.7.0
 while its csproj still said 1.3.0. That shape is reproduced verbatim below.
 
+The second half builds a miniature repo on disk, because the --glob path carries
+its own logic worth breaking: which projects are in Dependabot's scope, and
+whether one project reaching the new version can cover for another that did not.
+
 Run directly (`python3 test_check_dependabot_claims.py`); no test framework needed.
 Exits 0 if every case behaves, 1 otherwise.
 """
@@ -238,6 +242,96 @@ def main() -> int:
             [sys.executable, GUARD, proj],
             capture_output=True, text=True).returncode
         check("omitting --body-file is an input error", 2, no_flag)
+
+    # ---- --glob: Dependabot's own scope, and per-project strictness ---------
+    #
+    # A miniature repo: two managed projects pinning the same package, plus one
+    # OUTSIDE dependabot.yml's directories — the shape of the real iOS head.
+    with tempfile.TemporaryDirectory() as repo:
+        def put(rel: str, text: str) -> None:
+            path = os.path.join(repo, rel)
+            os.makedirs(os.path.dirname(path), exist_ok=True)
+            with open(path, "w", encoding="utf-8") as handle:
+                handle.write(text)
+
+        body_path = os.path.join(repo, "body.md")
+
+        def run_glob(*extra: str) -> subprocess.CompletedProcess:
+            return subprocess.run(
+                [sys.executable, GUARD, "--body-file", body_path, "--glob",
+                 *extra],
+                capture_output=True, text=True, cwd=repo)
+
+        def shared(version: str) -> str:
+            return ("<Project><ItemGroup><PackageReference "
+                    f'Include="Avalonia.Fonts.Inter" Version="{version}" />'
+                    "</ItemGroup></Project>")
+
+        put(".github/dependabot.yml", "\n".join([
+            "version: 2",
+            "updates:",
+            "  - package-ecosystem: nuget",
+            "    # /App.iOS is deliberately absent",
+            "    directories:",
+            "      - /App",
+            "      - /App.Android",
+            "    schedule:",
+            "      interval: weekly",
+        ]) + "\n")
+        put("body.md", "Updated [Avalonia.Fonts.Inter](https://example.invalid)"
+                       " from 12.1.1 to 12.1.2.\n")
+
+        put("App/App.csproj", shared("12.1.2"))
+        put("App.Android/App.Android.csproj", shared("12.1.2"))
+        put("App.iOS/App.iOS.csproj", shared("12.1.1"))
+
+        result = run_glob()
+        check("--glob: every managed project updated passes", 0,
+              result.returncode)
+        # The unmanaged head pins the OLD version and must not fail the PR —
+        # Dependabot could not have touched it.
+        check("--glob: an out-of-scope project is not checked",
+              False, "App.iOS" in result.stdout)
+
+        # THE QODO CASE: one managed project moved, the other did not. Accepting
+        # a claim because SOME project reached the version would pass this.
+        put("App.Android/App.Android.csproj", shared("12.1.1"))
+        result = run_glob()
+        check("--glob: a stale managed project fails the claim", 1,
+              result.returncode)
+        check("--glob: the failure names the stale project",
+              True, "App.Android/App.Android.csproj" in result.stdout)
+
+        put("App.Android/App.Android.csproj", shared("12.1.2"))
+
+        # A scope that cannot be read would otherwise silently widen to the whole
+        # repo, turning the unmanaged head into a false failure on every PR.
+        check("--glob: a missing dependabot.yml is an input error", 2,
+              run_glob("--dependabot-config",
+                       os.path.join(repo, "nope.yml")).returncode)
+
+        put(".github/empty.yml", "version: 2\nupdates: []\n")
+        check("--glob: a config with no directories is an input error", 2,
+              run_glob("--dependabot-config",
+                       os.path.join(repo, ".github/empty.yml")).returncode)
+
+        # `directory: /` (the singular form, whole repo) must scope to everything,
+        # including the head that has no dependabot entry of its own.
+        put(".github/root.yml", "\n".join([
+            "version: 2",
+            "updates:",
+            "  - package-ecosystem: nuget",
+            "    directory: /",
+            "    schedule:",
+            "      interval: weekly",
+        ]) + "\n")
+        put("App.iOS/App.iOS.csproj", shared("12.1.1"))
+        result = run_glob("--dependabot-config",
+                          os.path.join(repo, ".github/root.yml"))
+        check("--glob: `directory: /` covers the whole repo", 1,
+              result.returncode)
+        check("--glob: root scope reaches the previously excluded project",
+              True, "App.iOS/App.iOS.csproj" in result.stdout)
 
     if failures:
         print(f"\n{len(failures)} case(s) failed: {', '.join(failures)}")
