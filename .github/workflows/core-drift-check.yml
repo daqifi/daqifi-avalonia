@@ -175,3 +175,173 @@ jobs:
           set -euo pipefail
           gh issue close "$EXISTING" --repo "$GITHUB_REPOSITORY" \
             --comment "\`Daqifi.Core\` is pinned at \`${PINNED}\`, the latest stable release. Closing; this will reopen as a new issue the next time the pin falls behind."
+
+  # The same watcher, pointed at the one head Dependabot cannot reach.
+  #
+  # /Daqifi.Avalonia.iOS is deliberately NOT in dependabot.yml's `directories`,
+  # and .github/dependabot.yml records the two independent reasons: Dependabot's
+  # updater image installs no .NET workloads, so discovery of a net10.0-ios TFM
+  # fails NU1012, and LockFileUpdater's plain `dotnet restore --force-evaluate`
+  # fails NETSDK1147 whatever the TFM says. Nothing will ever open a PR for these
+  # pins. That is a decision, not an oversight — but a decision still needs a
+  # signal, or it decays into exactly the silence #132 was about.
+  #
+  # check_avalonia_versions.py does already catch an iOS head left behind: the
+  # heads' graphs split and the build goes red. It catches it LATE, though —
+  # after a full macOS iOS build, and only once someone has already opened the
+  # bump that moved the other heads. This fires first, on a schedule, naming the
+  # file to edit, so the hand bump can ride along with that PR instead of being
+  # discovered as its red build.
+  #
+  # Scoped to the iOS csproj by explicit path rather than --glob: the other heads
+  # are Dependabot's job, and measuring across all of them would let a report
+  # titled "the iOS head is behind" actually be about a managed head.
+  ios-pins:
+    name: iOS head ${{ matrix.package }} vs nuget.org
+    runs-on: ubuntu-latest
+    strategy:
+      # Both pins move together and both reports are wanted; one failing must not
+      # cancel the other's.
+      fail-fast: false
+      matrix:
+        package: [Avalonia.iOS, Avalonia.Fonts.Inter]
+    env:
+      DRIFT_LABEL: ios-pin-drift
+      # Per package, so the two reports can never edit or close each other.
+      DRIFT_MARKER: ios-pin-drift-${{ matrix.package }}
+      MANIFEST: Daqifi.Avalonia.iOS/Daqifi.Avalonia.iOS.csproj
+    steps:
+      - uses: actions/checkout@v4
+
+      # Same reasoning as the Core job: a watcher that can only ever pass reads as
+      # coverage while providing none.
+      - name: Self-test the guard
+        run: python3 .github/scripts/test_check_core_drift.py
+
+      - name: Compare the iOS head's pin against nuget.org
+        id: drift
+        run: |
+          set -euo pipefail
+          set +e
+          python3 .github/scripts/check_core_drift.py \
+            --package "${{ matrix.package }}" "$MANIFEST" | tee "$RUNNER_TEMP/drift.txt"
+          status=${PIPESTATUS[0]}
+          set -e
+          case "$status" in
+            0) echo "behind=false" >> "$GITHUB_OUTPUT" ;;
+            1) echo "behind=true"  >> "$GITHUB_OUTPUT" ;;
+            # Exit 2 is "the check could not run" — the pin was renamed or removed,
+            # or nuget.org was unreadable. Fail rather than report "not behind":
+            # a head nobody updates and nothing watches is the whole problem.
+            *) echo "::error::check_core_drift.py could not run for ${{ matrix.package }} (exit $status)."
+               exit 1 ;;
+          esac
+
+      - name: Build the report body
+        if: steps.drift.outputs.behind == 'true'
+        id: body
+        env:
+          PACKAGE: ${{ matrix.package }}
+          PINNED: ${{ steps.drift.outputs.pinned }}
+          LATEST: ${{ steps.drift.outputs.latest }}
+          BEHIND_BY: ${{ steps.drift.outputs.behind_by }}
+          MISSED: ${{ steps.drift.outputs.missed }}
+        run: |
+          set -euo pipefail
+          BODY_FILE="$RUNNER_TEMP/drift.md"
+          {
+            echo "## \`$PACKAGE\` in the iOS head is $BEHIND_BY release(s) behind"
+            echo
+            echo "- **Pinned:** \`$PINNED\` in \`$MANIFEST\`"
+            echo "- **Latest stable on nuget.org:** \`$LATEST\`"
+            echo
+            echo "### Not taken up"
+            echo
+            # Versions come from nuget.org's own index and the script validates
+            # them as numeric-only, so there is nothing here to sanitize. Linked to
+            # the nuget.org package page rather than a GitHub release tag, because
+            # the package page is guaranteed to exist for every version listed.
+            printf '%s' "$MISSED" | tr ',' '\n' | while read -r v || [ -n "$v" ]; do
+              [ -n "$v" ] || continue
+              printf -- '- [ ] [%s](https://www.nuget.org/packages/%s/%s)\n' \
+                "$v" "$PACKAGE" "$v"
+            done
+            echo
+            echo "### How to take these up"
+            echo
+            echo "Bump the pin in \`$MANIFEST\` by hand to whatever version the other heads are on, then refresh \`Daqifi.Avalonia.iOS/packages.lock.json\` with a restore. **Dependabot will never do this for you** — the iOS head is outside \`directories\` in \`.github/dependabot.yml\`, and the comment there records the two reasons its updater cannot handle a \`net10.0-ios\` project."
+            echo
+            echo "Land it with the PR that moves the other heads, not after: \`.github/scripts/check_avalonia_versions.py\` fails the build when the heads' Avalonia graphs disagree, so a bump that leaves this head behind is a red build on somebody else's PR."
+            echo
+            echo "This issue is refreshed weekly and closes itself once the pin catches up."
+            echo
+            echo "<sub>Auto-filed by \`.github/workflows/core-drift-check.yml\`. <!-- ${DRIFT_MARKER} --></sub>"
+          } > "$BODY_FILE"
+          echo "body_file=$BODY_FILE" >> "$GITHUB_OUTPUT"
+
+      # Unconditional, for the same reason as the Core job: the lookup below
+      # filters by this label on BOTH paths, and listing by a label that does not
+      # exist yet is an error rather than an empty list.
+      - name: Ensure the label exists
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          gh label create "$DRIFT_LABEL" \
+            --repo "$GITHUB_REPOSITORY" \
+            --color B60205 \
+            --description "An iOS-head pin is behind its latest release" 2>/dev/null || true
+
+      - name: Find the rolling issue
+        id: find
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          set -euo pipefail
+          # Match the hidden body marker, not just the label: the label may be
+          # applied by hand, and the two packages share it, so the label alone
+          # cannot tell this package's report from the other's.
+          FOUND=""
+          for n in $(gh issue list --repo "$GITHUB_REPOSITORY" --state open \
+            --label "$DRIFT_LABEL" --limit 200 --json number --jq '.[].number'); do
+            if gh issue view "$n" --repo "$GITHUB_REPOSITORY" --json body --jq '.body' \
+               | grep -q "$DRIFT_MARKER"; then
+              FOUND="$n"
+              break
+            fi
+          done
+          echo "issue_number=$FOUND" >> "$GITHUB_OUTPUT"
+          echo "Existing report issue: ${FOUND:-none}"
+
+      - name: File or refresh the report
+        if: steps.drift.outputs.behind == 'true'
+        env:
+          GH_TOKEN: ${{ github.token }}
+          BODY_FILE: ${{ steps.body.outputs.body_file }}
+          EXISTING: ${{ steps.find.outputs.issue_number }}
+          PACKAGE: ${{ matrix.package }}
+          LATEST: ${{ steps.drift.outputs.latest }}
+          PINNED: ${{ steps.drift.outputs.pinned }}
+        run: |
+          set -euo pipefail
+          TITLE="iOS head: ${PACKAGE} pin is behind — ${PINNED} < ${LATEST}"
+          if [ -n "$EXISTING" ]; then
+            gh issue edit "$EXISTING" --repo "$GITHUB_REPOSITORY" \
+              --title "$TITLE" --body-file "$BODY_FILE"
+            echo "Refreshed #$EXISTING"
+          else
+            URL="$(gh issue create --repo "$GITHUB_REPOSITORY" --title "$TITLE" \
+              --label "$DRIFT_LABEL" --body-file "$BODY_FILE")"
+            echo "Filed $URL"
+          fi
+
+      - name: Close the report once the pin catches up
+        if: steps.drift.outputs.behind == 'false' && steps.find.outputs.issue_number != ''
+        env:
+          GH_TOKEN: ${{ github.token }}
+          EXISTING: ${{ steps.find.outputs.issue_number }}
+          PACKAGE: ${{ matrix.package }}
+          PINNED: ${{ steps.drift.outputs.pinned }}
+        run: |
+          set -euo pipefail
+          gh issue close "$EXISTING" --repo "$GITHUB_REPOSITORY" \
+            --comment "The iOS head pins \`${PACKAGE}\` at \`${PINNED}\`, the latest stable release. Closing; this will reopen as a new issue the next time the pin falls behind."

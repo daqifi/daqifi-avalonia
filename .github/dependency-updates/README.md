@@ -56,7 +56,8 @@ that visible instead of silent.
 
 ## What now catches it
 
-Three changes, each covering a failure the others do not.
+Four changes. The first three each cover a failure the others do not; the fourth
+covers the one head none of them can reach.
 
 ### 1. `Daqifi.Core` is excluded from the `minor-and-patch` group
 
@@ -112,6 +113,24 @@ Fix for failure 2, and the backstop for everything else: it does not depend on
 Dependabot having done anything. Dependabot can open nothing, close its own PR, or
 open one that lies, and this still reports the truth.
 
+### 4. `check_core_drift.py` again, pointed at the iOS head
+
+Same workflow, second job. `/Daqifi.Avalonia.iOS` is outside Dependabot's reach —
+see below — so nothing will ever open a PR for its `Avalonia.iOS` and
+`Avalonia.Fonts.Inter` pins. The job compares both against nuget.org weekly and
+files its own rolling issue naming the file to edit.
+
+The script needed no changes for this: it already takes `--package` and explicit
+manifest paths. The job passes the iOS csproj by path rather than using `--glob`,
+so a report titled *"the iOS head is behind"* can only ever be about the iOS head.
+
+This is a second line, not the first. `check_avalonia_versions.py` already fails the
+build when the heads' Avalonia graphs split, which is exactly what an un-bumped iOS
+head causes. But it fires after a full macOS iOS build and only once someone has
+already opened the bump that moved the other heads — so the first person to learn is
+whoever is debugging a red build on a Dependabot PR. This fires earlier, on a
+schedule, and says which file to edit.
+
 ## Conventions these follow
 
 Both guards are ordinary `.github/scripts` Python with a `test_*.py` beside them,
@@ -133,14 +152,52 @@ Every self-test in `.github/scripts` also runs on every push and PR via the
 `scripts` job in `build.yml` — without it, these two guards would only be exercised
 on a Dependabot PR or on a Monday, and a regression could sit unnoticed for a week.
 
-## Known gap
+## Why the iOS head stays out of `directories`
 
-`/Daqifi.Avalonia.iOS` is not in `dependabot.yml`'s `directories`, so the iOS head's
-`Avalonia.iOS` and `Avalonia.Fonts.Inter` pins are unmanaged and will drift behind
-the other heads. The config's comment enumerates two deliberate exclusions and the
-iOS head is not one of them — it was added after the Dependabot config was written.
-Adding it needs a check that Dependabot's updater can restore a `net10.0-ios`
-project at all, which is why it is not fixed here.
+`/Daqifi.Avalonia.iOS` is not in `dependabot.yml`'s `directories`. That began as an
+oversight — the head was added after the Dependabot config was written, and the
+config's comment enumerated two deliberate exclusions without it. Adding it was
+tried, and it does not work; the comment there now records the exclusion as
+deliberate and says why.
+
+Dependabot's NuGet updater image installs .NET SDKs and **no workloads** (see
+`nuget/Dockerfile` in `dependabot/dependabot-core`), and this head targets
+`net10.0-ios`. That stops the updater twice, independently. Both were reproduced
+against SDK 10.0.302 — the version `global.json` pins — using a workload the test
+machine lacks:
+
+| Stage | What Dependabot runs | Result with no workload |
+| --- | --- | --- |
+| Discovery | `DependencyDiscovery.props` sets `DesignTimeBuild=true` and `TargetPlatformVersion=0.0` | `NU1012` — the TFM does not spell its platform version out |
+| Lock file | `LockFileUpdater.cs` runs a plain `dotnet restore --force-evaluate` | `NETSDK1147` — no `DesignTimeBuild` there, so nothing suppresses it |
+
+`DesignTimeBuild=true` genuinely does suppress `NETSDK1147` during discovery — the
+SDK's `_CheckForMissingWorkload` target is conditioned on it — which is why the
+Android head clears that first stop: `net10.0-android36.0` carries its platform
+version in the TFM, so it never hits `NU1012`. `net10.0-ios` does not carry one; the
+workload supplies `26.5`, which is why `packages.lock.json` here is keyed
+`net10.0-ios26.5` while the csproj says only `net10.0-ios`.
+
+Two things follow, both worth knowing before anyone tries this again:
+
+- **Pinning the iOS TFM to `net10.0-ios26.5` is not the fix it looks like.** It
+  clears the discovery stop and leaves the lock-file one exactly where it was.
+- **The failure would not even be a failed job.** `LockFileUpdater` logs its error
+  and returns rather than aborting the update, so adding the directory would produce
+  a weekly PR carrying a bumped csproj and an untouched lock file — `NU1004` under
+  the locked-mode restore in `Directory.Build.props`.
+
+Watched instead by guard 4 above.
+
+### The same exposure, on a head that IS managed
+
+`/Daqifi.Avalonia.Android` is in `directories`, and its lock file is subject to that
+same `LockFileUpdater` failure — its TFM rescues discovery, not the restore. It has
+never bitten because both of its packages have sat at the latest 12.1.1 since
+2026-07-30, so Dependabot has had nothing to open. The next Android-head update will
+arrive as a PR with a stale `Daqifi.Avalonia.Android/packages.lock.json`. Not fixed
+here: it wants a decision between documenting the manual lock-file refresh and
+dropping that head from `directories` the way the iOS head is dropped.
 
 [#93]: https://github.com/daqifi/daqifi-avalonia/pull/93
 [#95]: https://github.com/daqifi/daqifi-avalonia/pull/95
