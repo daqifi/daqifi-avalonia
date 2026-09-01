@@ -57,6 +57,33 @@
     go stale on that repo's package bumps, with no PR here able to refresh it. Five of the six
     projects carry lock files; that one is the deliberate exception.
   -->
+  <!--
+    The application's marketing version, in ONE place.
+
+    Four projects need it and each used to spell "3.3.0" out for itself: the shared library
+    (<Version>, which is what the in-app version text and the Sentry release are read from — see
+    Daqifi.Desktop.Common.AppVersion), the Desktop head (<Version>), and the store display
+    versions on the Android and iOS heads (<ApplicationDisplayVersion>, which becomes
+    android:versionName and CFBundleShortVersionString respectively).
+
+    Four hand-maintained copies of a number that must agree is a silent-drift hazard, and drift
+    here has a specific cost: the version a crash is tagged with in Sentry comes from the shared
+    library, while the version a user reports comes from the store listing. If those two ever
+    disagree, every triage conversation starts from a false premise (#126 is what that looks
+    like in practice). Bump this one property to cut a release.
+
+    Deliberately NOT single-sourced here: the per-store build numbers (<ApplicationVersion> —
+    Android versionCode, iOS CFBundleVersion). Those are per-store counters on their own
+    schedule; Play requires a unique increasing code for every upload, including re-uploads of
+    an unchanged marketing version, so tying them together would be wrong.
+
+    NOTE: third_party/oxyplot-avalonia has its own Directory.Build.props and does not inherit
+    this file. That is correct — a vendored library keeps its own upstream version.
+  -->
+  <PropertyGroup>
+    <DaqifiAppVersion>3.3.0</DaqifiAppVersion>
+  </PropertyGroup>
+
   <PropertyGroup>
     <RestorePackagesWithLockFile>true</RestorePackagesWithLockFile>
     <!-- Fail on drift in automated builds, stay permissive for local development. `CI` is set by

@@ -382,10 +382,47 @@ symbols:
     notes: null
     backlog_id: null
     last_synced_sha: null
-divergences: []
+divergences:
+- id: DIV-COM-001
+  upstream_path: Daqifi.Desktop.Common/Loggers/AppLogger.cs
+  downstream_path: Daqifi.Avalonia/Daqifi.Desktop.Common/Loggers/AppLogger.cs
+  upstream_symbol: Daqifi.Desktop.Common.Loggers.AppLogger
+  downstream_symbol: Daqifi.Desktop.Common.Loggers.AppLogger
+  kind: behavioral
+  rationale: >
+    Sentry release resolution. Upstream reads
+    `Assembly.GetEntryAssembly()?.GetName().Version?.ToString() ?? "0.0.0"`, which is sound in a
+    single-head WPF app where the entry assembly is always the app. It does not survive the
+    crossing: this port has three heads, so the entry assembly is the platform head and the
+    answer varies per head. On Android there is no managed entry assembly at all (the process
+    starts through JNI, so GetEntryAssembly() returns null) and every mobile event was tagged
+    with the literal fallback release "0.0.0" — confirmed by an event captured on hardware.
+    iOS and desktop each yielded "3.3.0.0", which is the right number in the wrong shape (the
+    stores list "3.3.0") and carries no commit. The port resolves the version from the shared
+    assembly instead, via the downstream-only Daqifi.Desktop.Common.AppVersion, and leaves
+    options.Release unset rather than sending a placeholder when it cannot be resolved. See #126.
+  accepted_at: '2026-08-31'
 backlog: []
 hal_pairs: []
 mechanisms: []
-downstream_only: []
-downstream_only_files: []
+downstream_only:
+- downstream:
+    kind: class
+    qualified: Daqifi.Desktop.Common.AppVersion
+    file: Daqifi.Avalonia/Daqifi.Desktop.Common/AppVersion.cs
+  rationale: >
+    One place to resolve the running app's own version, across three heads. Upstream has no
+    counterpart because a single WPF head can just ask for the entry assembly; here that answer
+    is null on Android and a per-head accident elsewhere (DIV-COM-001, #126). Read by the Sentry
+    initialisation and by the mobile shell's version label, so the two cannot disagree.
+  notes: null
+  members: []
+  added_at: '2026-08-31'
+downstream_only_files:
+- downstream: Daqifi.Avalonia/Daqifi.Desktop.Common/AppVersion.cs
+  rationale: >
+    Downstream-only version resolver; no upstream Daqifi.Desktop.Common counterpart. Pairs with
+    the Daqifi.Desktop.Common.AppVersion downstream_only symbol entry above.
+  notes: null
+  added_at: '2026-08-31'
 updated_at: '2026-07-13T19:44:20.865846Z'
