@@ -43,10 +43,15 @@
 	</PropertyGroup>
 
 	<ItemGroup>
-		<!-- The test project reaches one internal member: LoggingManager's test-only constructor,
-		     which takes the context factory instead of resolving it from App.ServiceProvider (there
-		     is no App in a test process). Upstream does the same thing for the same reason. This is
-		     the only assembly that can see internals here, and it is never shipped. -->
+		<!-- The test project reaches internals that are deliberately not part of any public
+		     surface: LoggingManager's test-only constructor, which takes the context factory
+		     instead of resolving it from App.ServiceProvider (there is no App in a test process),
+		     and AbstractStreamingDevice.AdoptDeviceChannelSet plus the IsConnectionFatal /
+		     IsTransportDisconnectedError classifiers, which are wiring inside the Connect()
+		     template rather than extension points transports may call, yet decide whether a
+		     connection is reported as successful. Widening any of them to public or protected to
+		     make them testable would be a worse trade than this line. This is the only assembly
+		     that can see internals here, and it is never shipped. -->
 		<InternalsVisibleTo Include="Daqifi.Avalonia.Tests" />
 	</ItemGroup>
 
