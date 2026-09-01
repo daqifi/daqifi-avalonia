@@ -790,7 +790,7 @@ public partial class ConnectionManager : ObservableObject
     /// <param name="reason">User-facing sentence naming the device and what happened.</param>
     private void TearDownDroppedDevice(IStreamingDevice device, string reason)
     {
-        foreach (var channel in device.DataChannels?.ToList() ?? [])
+        foreach (var channel in SnapshotChannels(device))
         {
             UnsubscribeChannel(channel);
         }
@@ -799,6 +799,36 @@ public partial class ConnectionManager : ObservableObject
 
         LastDisconnectReason = reason;
         NotifyConnection = true;
+    }
+
+    /// <summary>
+    /// Takes a stable copy of a device's channels for teardown, and never throws.
+    /// </summary>
+    /// <remarks>
+    /// <c>DataChannels</c> is a plain <c>List</c> that Core's background events rebuild wholesale
+    /// (<c>Clear</c> + <c>AddRange</c>), so copying it can throw — "collection was modified" is only
+    /// the tidiest way: a read racing <c>AddRange</c>'s grow can index past the end, and one landing
+    /// inside <c>Clear</c> can hand back a null element. This is the same hazard
+    /// <see cref="ActiveChannelCount"/> guards, and it matters more here: this runs inside an action
+    /// posted to the dispatcher, so an escaping exception would take the whole teardown with it and
+    /// leave the device connected — the exact state being fixed — with nothing to catch it.
+    /// Disconnecting the device is the half that must happen, so a failed snapshot logs and lets it
+    /// proceed rather than aborting.
+    /// </remarks>
+    private static List<IChannel> SnapshotChannels(IStreamingDevice device)
+    {
+        try
+        {
+            return device.DataChannels?.ToList() ?? [];
+        }
+        catch (Exception ex)
+        {
+            AppLogger.Instance.Warning(
+                ex,
+                $"Could not read the channel list of {device.DeviceDisplayName} while tearing it " +
+                "down after a dropped connection; disconnecting it anyway.");
+            return [];
+        }
     }
 
     /// <summary>
