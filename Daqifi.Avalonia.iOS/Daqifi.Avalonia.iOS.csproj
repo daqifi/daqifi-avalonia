@@ -36,18 +36,37 @@
 		     generates code at runtime, and without an interpreter the data layer
 		     does not work at all.
 
-		     What the old setting cost, measured on this head after deleting bin and
-		     obj (Release, iossimulator-arm64):
-		         all           app binary  6.7 MB   .app 103 MB
-		         this list     app binary 35.5 MB   .app 136 MB
-		                       (+ 5.6 MB aot-instances.aotdata.arm64)
-		     A 6.7 MB binary is the tell: under "all" there is essentially no AOT
+		     What the old setting cost, measured after deleting bin and obj each
+		     time (Release, iossimulator-arm64):
+		         UseInterpreter=true    binary  2.0 MB  .app  53 MB  trimmed
+		         this list              binary 35.5 MB  .app 136 MB  NOT trimmed
+		                                (+ 5.6 MB aot-instances.aotdata.arm64)
+		         -p:MtouchInterpreter=all
+		                                binary  6.7 MB  .app 103 MB  NOT trimmed
+		     The third row is the isolation experiment, and the only fair comparison
+		     for the AOT cost alone: 6.7 MB vs 35.5 MB of app binary, ~33 MB. A
+		     6.7 MB binary is the tell that under "all" there is essentially no AOT
 		     code in the app AT ALL. Avalonia's render loop, OxyPlot and our stream
 		     handling were all being interpreted to keep one library working, on a
 		     head whose main job is rendering a 16-channel stream at 100 Hz. Naming
-		     assemblies buys that back for everything unnamed; it costs ~33 MB of
-		     bundle, which is the trade being made deliberately here. The extra
-		     aot-instances file is generic-instance dedup, which
+		     assemblies buys that back for everything unnamed.
+
+		     But rows 1 and 2 are what actually changed on disk, and that is +83 MB
+		     on the simulator, because setting this property IN THE PROJECT also
+		     turns the simulator trimmer off. Xamarin.Shared.Sdk.Trimming.props
+		     ("_DefaultLinkMode=None when MtouchInterpreter != ''") is injected via
+		     CustomAfterDirectoryBuildTargets and therefore runs BEFORE
+		     Xamarin.Shared.props turns UseInterpreter into MtouchInterpreter=all —
+		     so the old head trimmed (SdkOnly) despite interpreting everything, and
+		     this one does not. A -p: on the command line is a global property and
+		     IS visible there, which is why row 3 behaves like row 2. That is also
+		     the ENTIRE reason this head's warning count fell from 1248 to 293:
+		     TrimMode=copy sets SuppressTrimAnalysisWarnings=true. Nothing was
+		     fixed. Device builds are SdkOnly either way, so the shipping config is
+		     still trimmed and CI (simulator-only) no longer covers that; see
+		     docs/RUNBOOK-macos-ios.md before "fixing" either number.
+
+		     The extra aot-instances file is generic-instance dedup, which
 		     Xamarin.Shared.Sdk.targets enables for every value EXCEPT "all".
 
 		     Why the list is these five: they are the assemblies that build and

@@ -596,30 +596,53 @@ The head sets `MtouchInterpreter` to a list of five EF assemblies. It used to se
 property set to `all` (`Xamarin.Shared.props`: *"Accept 'UseInterpreter' as an
 alternative for 'MtouchInterpreter'"*), i.e. **interpret the entire app**.
 
-What that cost, measured on this head with `dotnet build -c Release
--r iossimulator-arm64` after deleting `bin/` and `obj/`:
+What that cost, measured with `dotnet build -c Release -r iossimulator-arm64`
+after deleting `bin/` and `obj/` each time. Read the first two rows as the two
+heads people actually build, and the third as the isolation experiment:
 
-| `MtouchInterpreter` | app binary | `.app` | build |
-|---|---|---|---|
-| `all` (what `UseInterpreter=true` means) | 6.7 MB | 103 MB | ~10 s |
-| the five EF assemblies | 35.5 MB + 5.6 MB deduped generics | 136 MB | ~120 s |
+| config | app binary | `.app` | dlls in bundle | trimmed? | warnings |
+|---|---|---|---|---|---|
+| `UseInterpreter=true` in the csproj (what the head shipped) | 2.0 MB | 53 MB | 34 MB | yes, `SdkOnly` | 1248 |
+| the five EF assemblies (today) | 35.5 MB + 5.6 MB deduped generics | 136 MB | 79 MB | **no**, `None` | 293 |
+| `-p:MtouchInterpreter=all` on the command line | 6.7 MB | 103 MB | 79 MB | no, `None` | 293 |
 
-The 6.7 MB binary is the tell: under `all` there is essentially **no AOT code in
-the app at all** — Avalonia's render loop, OxyPlot and our stream handling were
-all running interpreted to keep one library working. Naming assemblies buys that
-back for everything unnamed, and costs ~33 MB of bundle. Take the trade knowingly
-if you ever change it.
+The 6.7 MB binary in row 3 is the tell: under `all` there is essentially **no AOT
+code in the app at all** — Avalonia's render loop, OxyPlot and our stream handling
+were all running interpreted to keep one library working. Naming assemblies buys
+that back for everything unnamed. Rows 2 and 3 differ only in the interpreter
+scope, so **the AOT code itself costs ~33 MB**; rows 1 and 2 are what actually
+changed on disk, and that is **+83 MB on the simulator**, because the switch also
+turns the trimmer off there. Take the trade knowingly if you ever change it.
+
+**Read that table with the evaluation-order trap below in hand — it is the reason
+rows 1 and 3 are not the same build, even though they are the same value.**
 
 Two side effects of the same SDK property, worth knowing before you read a diff:
 
-- **Trimming is OFF on the simulator whenever the interpreter is enabled at all**
-  (`Xamarin.Shared.Sdk.Trimming.props` sets `_DefaultLinkMode=None` when
-  `MtouchInterpreter != ''`). Both settings above are in that state, so the
-  bundled `Avalonia.Base.dll` is byte-identical to the one in the NuGet cache.
-  This is also why the iOS head reports ~1 build warning rather than the ~1,240
-  `IL2xxx` trim warnings a no-interpreter build produces. A jump to four figures
-  in the iOS warning count means the interpreter got turned off, not that
-  something regressed.
+- **Trimming is off on the simulator when `MtouchInterpreter` is set *as a project
+  property*, and that is a change from what the head used to do.**
+  `Xamarin.Shared.Sdk.Trimming.props` sets `_DefaultLinkMode=None` when
+  `MtouchInterpreter != ''` — but it is injected through
+  `CustomAfterDirectoryBuildTargets`, so it is evaluated **before**
+  `Xamarin.Shared.props` translates `UseInterpreter=true` into
+  `MtouchInterpreter=all`. So the old head was trimmed (`SdkOnly` → `TrimMode
+  partial`) even though it interpreted everything, and today's head is not
+  (`None` → `TrimMode copy` → `SuppressTrimAnalysisWarnings=true`). Verify with
+  `dotnet msbuild Daqifi.Avalonia.iOS/Daqifi.Avalonia.iOS.csproj -getProperty:_LinkMode
+  -p:Configuration=Release -p:RuntimeIdentifier=iossimulator-arm64`, and note that a
+  `-p:MtouchInterpreter=...` on the command line is a *global* property that IS
+  visible to that file — which is why row 3 above trims like row 2, not like row 1.
+  Two consequences:
+  - The `~1,240` `IL2xxx` warnings are simply **suppressed**, not fixed. That is
+    the whole of the 1248 → 293 drop in the iOS head's warning count. It is not a
+    cleanup, and nothing was cleaned up.
+  - The **`iOS head` CI job no longer runs the trimmer** — its comment in
+    `build.yml` says it does, because it used to. Device builds (`ios-arm64`) are
+    still `SdkOnly` in both configs, so the shipping configuration is trimmed and
+    CI now exercises none of that. Put `<MtouchLink>SdkOnly</MtouchLink>` in the
+    head to get it back, and expect the four-figure warning count to come back
+    with it; do not do it without re-running the app, since the SDK's own default
+    is to stop trimming once the interpreter is on.
 - Dedup of generic instances is enabled for any value **except** the literal
   `all`, which is where `aot-instances.aotdata.arm64` comes from.
 

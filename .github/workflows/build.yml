@@ -644,8 +644,17 @@ jobs:
 
       # Simulator, not device. ios-arm64 needs an Apple signing identity and a
       # provisioning profile, which a hosted runner does not have; iossimulator-arm64
-      # compiles the same managed code and runs the same trimmer, which is the coverage
-      # this job exists for. The device RID stays covered by restore and by the lock file.
+      # compiles the same managed code, which is the coverage this job exists for. The
+      # device RID stays covered by restore and by the lock file.
+      #
+      # It no longer runs the same TRIMMER, and that is a real gap rather than a
+      # detail: the head sets MtouchInterpreter as a project property, and
+      # Xamarin.Shared.Sdk.Trimming.props answers that with _LinkMode=None on the
+      # SIMULATOR only (device stays SdkOnly). So the shipping configuration is
+      # trimmed and nothing in CI trims. It used to, by accident — UseInterpreter is
+      # translated to MtouchInterpreter too late for that file to see it. Getting it
+      # back is <MtouchLink>SdkOnly</MtouchLink> in the head plus ~1,240 IL2xxx
+      # warnings; see docs/RUNBOOK-macos-ios.md, and #102.
       #
       # --no-restore is load-bearing, not a speed-up: it is what keeps the -r above out
       # of restore, and therefore out of the lock file.
