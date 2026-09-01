@@ -391,43 +391,50 @@ public partial class MobileShellViewModel : ObservableObject, IDisposable
         _silentPolls = 0;
         BeginCountingSamples();
 
-        // Deselecting a channel between two streams did not actually turn it off. Stopping the
-        // stream clears each channel's sample but not its ACTIVATION, and AddChannel ORs into
-        // the enable mask built from whatever is already active — so streaming AI0+AI1, stopping,
-        // deselecting AI1 and restarting left AI1 enabled on the device. It kept being acquired
-        // and logged with no trace on the plot to show for it. Make the device's active
-        // analog-input set match the selection before enabling anything. Snapshot the list: this
-        // is a write loop over the collection it is reading.
-        foreach (var channel in device.DataChannels.ToList())
-        {
-            if (channel.Type != ChannelType.Analog || channel.IsOutput) { continue; }
-            if (!channel.IsActive || selected.Contains(channel.Name)) { continue; }
-            device.RemoveChannel(channel);
-        }
-
-        var i = 0;
-        foreach (var channel in analog)
-        {
-            device.AddChannel(channel);
-            var s = new ChannelSeries(channel.Name, Palette[i % Palette.Length], 600);
-            Series.Add(s);
-            _seriesByName[channel.Name] = s;
-            i++;
-        }
-
-        // Count every channel the device will actually stream — driven off IsActive, not off the
-        // selection or off which channels got a series. Those three agree after the loops above,
-        // and this keeps the readout true to its label even if they ever stop agreeing: whatever
-        // the device streams is what "samples acquired" has to count. Subscribed BEFORE
-        // InitializeStreaming so no sample can arrive uncounted.
-        foreach (var channel in device.DataChannels)
-        {
-            if (channel.Type != ChannelType.Analog || channel.IsOutput || !channel.IsActive) { continue; }
-            CountSamplesFrom(channel);
-        }
-
+        // Everything that arms the device is inside one try, so a failure anywhere in it lands on
+        // the same cleanup: StopStream disarms counting and detaches every subscription. Each
+        // enumeration below SNAPSHOTS DataChannels — Core's SyncChannelsFromCore replaces that
+        // list in place with Clear() + AddRange() from its own thread, and enumerating it live
+        // throws InvalidOperationException.
         try
         {
+            // Deselecting a channel between two streams did not actually turn it off. Stopping
+            // the stream clears each channel's sample but not its ACTIVATION, and AddChannel ORs
+            // into the enable mask built from whatever is already active — so streaming AI0+AI1,
+            // stopping, deselecting AI1 and restarting left AI1 enabled on the device. It kept
+            // being acquired and logged with no trace on the plot to show for it. Make the
+            // device's active analog-input set match the selection before enabling anything.
+            foreach (var channel in device.DataChannels.ToList())
+            {
+                if (channel.Type != ChannelType.Analog || channel.IsOutput) { continue; }
+                if (!channel.IsActive || selected.Contains(channel.Name)) { continue; }
+                device.RemoveChannel(channel);
+            }
+
+            var i = 0;
+            foreach (var channel in analog)
+            {
+                device.AddChannel(channel);
+                var s = new ChannelSeries(channel.Name, Palette[i % Palette.Length], 600);
+                Series.Add(s);
+                _seriesByName[channel.Name] = s;
+                i++;
+            }
+
+            // Count every channel the device will actually stream — driven off IsActive, not off
+            // the selection or off which channels got a series. Those three agree after the loops
+            // above, and this keeps the readout true to its label even if they ever stop
+            // agreeing: whatever the device streams is what "samples acquired" has to count.
+            // Subscribed BEFORE InitializeStreaming so no sample can arrive uncounted. A re-sync
+            // landing between the snapshot and here leaves a subscription on a replaced instance;
+            // the render tick's re-arm repairs that within 50 ms, before any sample can be lost,
+            // because the device is not streaming yet.
+            foreach (var channel in device.DataChannels.ToList())
+            {
+                if (channel.Type != ChannelType.Analog || channel.IsOutput || !channel.IsActive) { continue; }
+                CountSamplesFrom(channel);
+            }
+
             device.StreamingFrequency = SampleRate;
             device.InitializeStreaming();
         }
