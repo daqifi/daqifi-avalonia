@@ -21,12 +21,16 @@ using CommunityToolkit.Mvvm.Input;
 namespace Daqifi.Desktop.ViewModels;
 
 // @port: Daqifi.Desktop.ViewModels.ExportDialogViewModel
-public partial class ExportDialogViewModel : ObservableObject
+public partial class ExportDialogViewModel : ObservableObject, IDisposable
 {
     #region Private Variables
     private readonly List<int> _sessionsIds;
-    private string _exportFilePath;
-    private CancellationTokenSource _cts;
+    private string _exportFilePath = string.Empty;
+
+    /// <summary>
+    /// Cancellation source for the in-flight export; null whenever no export is running.
+    /// </summary>
+    private CancellationTokenSource? _cts;
 
     // When true, every session is written as a separate "{session}.csv" file inside the
     // directory named by <see cref="ExportFilePath"/>, regardless of how many sessions are
@@ -48,11 +52,11 @@ public partial class ExportDialogViewModel : ObservableObject
     [ObservableProperty]
     private bool _exportSucceeded;
     [ObservableProperty]
-    private string _exportResultMessage;
+    private string? _exportResultMessage;
     [ObservableProperty]
     private int _averageQuantity = 2;
     [ObservableProperty]
-    private string _exportProgressText;
+    private string _exportProgressText = string.Empty;
     [ObservableProperty]
     private bool _exportRelativeTime;
     private int _exportProgress;
@@ -199,58 +203,90 @@ public partial class ExportDialogViewModel : ObservableObject
         var progress = new Progress<int>(progressValue => ExportProgress = progressValue);
         AppLogger.Instance.AddBreadcrumb("export", $"Data export started ({_sessionsIds.Count} session(s))");
 
+        // Resolved here rather than on the worker below because it reads LoggingManager's
+        // UI-bound session collection. It touches no file system, so it cannot block.
+        var targets = ResolveExportTargets();
+
         var cancelled = false;
         var failed = false;
-        var failureMessage = "Export failed. Please try again.";
+
+        // Non-null once we can tell the user *why* the export failed (a locked or unwritable
+        // destination). Everything else falls back to the generic message.
+        string? failureReason = null;
+
+        // The destination currently being written, so the catch below can name the offending
+        // file even though the exception surfaces from deep inside the exporter.
+        var currentFilepath = ExportFilePath;
         try
         {
             await Task.Run(async () =>
             {
-                var totalSessions = _sessionsIds.Count;
-                for (var i = 0; i < totalSessions; i++)
+                // Resolve the sessions that still exist first. Only their destinations are
+                // pre-flighted below, so a stale id whose row has since been deleted — which the
+                // export would skip anyway — can never block the whole run.
+                var live = new List<(LoggingSession Session, string Filepath)>(targets.Count);
+                foreach (var target in targets)
                 {
                     cancellationToken.ThrowIfCancellationRequested();
-                    var sessionId = _sessionsIds[i];
-                    var loggingSession = await GetLoggingSessionFromId(sessionId);
+                    var loggingSession = await GetLoggingSessionFromId(target.SessionId);
                     if (loggingSession == null)
                     {
                         AppLogger.Instance.Warning(
-                            $"Skipping export for session {sessionId}: it was not found in the database.");
+                            $"Skipping export for session {target.SessionId}: it was not found in the database.");
                         continue;
                     }
 
-                    // Per-session file naming only applies when writing into a directory (multi-session
-                    // export, or the directory-layout test hook). Resolve the display name lazily so a
-                    // plain single-file export doesn't depend on LoggingManager — falling back to the
-                    // default "Session_{id}" form when the session is no longer in the in-memory list.
-                    string filepath;
-                    if (_forceDirectoryLayout || totalSessions > 1)
-                    {
-                        var sessionName = LoggingManager.Instance.LoggingSessions
-                            .FirstOrDefault(s => s.ID == sessionId)?.Name ?? $"Session_{sessionId}";
-                        filepath = Path.Combine(ExportFilePath, $"{MakeSafeFileName(sessionName)}.csv");
-                    }
-                    else
-                    {
-                        filepath = ExportFilePath;
-                    }
+                    live.Add((loggingSession, target.Filepath));
+                }
+
+                // Pre-flight: check every destination before writing anything, so a multi-session
+                // export can't leave half its files on disk before failing, and the user gets an
+                // actionable message naming the file that blocked it (issue #747). Inherently racy,
+                // so the catch below still handles a destination that goes bad after the check.
+                foreach (var (_, filepath) in live)
+                {
+                    cancellationToken.ThrowIfCancellationRequested();
+                    var reason = DescribeUnwritableDestination(filepath, out var probeError);
+                    if (reason == null) { continue; }
+
+                    currentFilepath = filepath;
+                    failureReason = reason;
+                    // DescribeUnwritableDestination only returns a reason when it caught an exception,
+                    // so probeError is non-null on this path.
+                    AppLogger.Instance.Warning(probeError!, $"Export aborted: {reason}");
+                    return;
+                }
+
+                for (var i = 0; i < live.Count; i++)
+                {
+                    cancellationToken.ThrowIfCancellationRequested();
+                    currentFilepath = live[i].Filepath;
 
                     if (ExportAllSelected)
                     {
-                        ExportAllSamples(loggingSession, filepath, progress, cancellationToken, i, totalSessions);
+                        ExportAllSamples(live[i].Session, currentFilepath, progress, cancellationToken, i, live.Count);
                     }
                     else if (ExportAverageSelected)
                     {
-                        ExportAverageSamples(loggingSession, filepath, progress, cancellationToken, i, totalSessions);
+                        ExportAverageSamples(live[i].Session, currentFilepath, progress, cancellationToken, i, live.Count);
                     }
                 }
             }, cancellationToken);
 
-            // Reaching here means the loop ran to completion without a cancellation being
-            // observed at a checkpoint — a Cancel click that lands after the work is done no
-            // longer suppresses the result state. Cancellation is signalled only by the
-            // OperationCanceledException path below.
-            AppLogger.Instance.AddBreadcrumb("export", "Data export completed");
+            if (failureReason != null)
+            {
+                failed = true;
+                AppLogger.Instance.AddBreadcrumb("export", "Data export blocked by destination file",
+                    Common.Loggers.BreadcrumbLevel.Warning);
+            }
+            else
+            {
+                // Reaching here means the loop ran to completion without a cancellation being
+                // observed at a checkpoint — a Cancel click that lands after the work is done no
+                // longer suppresses the result state. Cancellation is signalled only by the
+                // OperationCanceledException path below.
+                AppLogger.Instance.AddBreadcrumb("export", "Data export completed");
+            }
         }
         catch (OperationCanceledException)
         {
@@ -258,24 +294,28 @@ public partial class ExportDialogViewModel : ObservableObject
             AppLogger.Instance.Information("Export operation was cancelled by user.");
             AppLogger.Instance.AddBreadcrumb("export", "Data export cancelled", Common.Loggers.BreadcrumbLevel.Warning);
         }
+        catch (Exception ex) when (IsDestinationBlocked(ex))
+        {
+            // A destination that cannot be written — held by another program, read-only, denied, or
+            // on a folder that disappeared — is a user/environmental condition, not an app bug. Log
+            // it as a warning (stack trace stays in the local log, no Sentry event) the same way the
+            // device layer classifies an unreachable device. Anything else, including a database-level
+            // I/O error, still takes the Error/Sentry path below.
+            failed = true;
+            failureReason = DescribeFileFailure(ex, currentFilepath);
+            AppLogger.Instance.Warning(ex, $"Export failed writing '{currentFilepath}'.");
+            AppLogger.Instance.AddBreadcrumb("export", "Data export blocked by destination file",
+                Common.Loggers.BreadcrumbLevel.Warning);
+        }
         catch (Exception ex)
         {
             failed = true;
-            // Write-side failures to the chosen destination surface either as IOException (locked file,
-            // removed drive, full disk, long path — DirectoryNotFoundException / PathTooLongException
-            // etc. are all IOException subtypes) or as UnauthorizedAccessException (destination is
-            // read-only or a folder ACL denies write — that one is NOT an IOException). The exporter's
-            // void methods now propagate instead of swallowing it as a false success; give one concise
-            // actionable hint (issue #747), kept short so it fits the fixed-size result dialog.
-            failureMessage = ex is IOException or UnauthorizedAccessException
-                ? "Export failed — couldn't write to the destination. Make sure it isn't open in another program or read-only, then try again."
-                : "Export failed. Please try again.";
             AppLogger.Instance.Error(ex, "Problem Exporting Data");
             AppLogger.Instance.AddBreadcrumb("export", "Data export failed", Common.Loggers.BreadcrumbLevel.Error);
         }
         finally
         {
-            _cts.Dispose();
+            _cts?.Dispose();
             _cts = null;
 
             // A cancel returns to the configuration form; a success or failure shows the
@@ -284,7 +324,9 @@ public partial class ExportDialogViewModel : ObservableObject
             if (!cancelled)
             {
                 ExportSucceeded = !failed;
-                ExportResultMessage = failed ? failureMessage : "Export complete";
+                ExportResultMessage = failed
+                    ? failureReason ?? "Export failed. Please try again."
+                    : "Export complete";
                 IsExportComplete = true;
             }
 
@@ -292,12 +334,25 @@ public partial class ExportDialogViewModel : ObservableObject
         }
     }
 
+    /// <summary>
+    /// Returns the dialog to its configuration form after a failure so the user can close the
+    /// program holding the file (or pick a different destination) and export again.
+    /// </summary>
+    [RelayCommand]
+    // @port: Daqifi.Desktop.ViewModels.ExportDialogViewModel.RetryExport
+    private void RetryExport()
+    {
+        IsExportComplete = false;
+        ExportProgress = 0;
+        ExportResultMessage = null;
+    }
+
     // @port: Daqifi.Desktop.ViewModels.ExportDialogViewModel.CanExport
     private bool CanExport => !string.IsNullOrWhiteSpace(ExportFilePath);
 
     /// <summary>
-    /// Opens the export destination in File Explorer: the folder itself for a directory export,
-    /// or the containing folder with the file selected for a single-file export.
+    /// Opens the export destination in the platform's file manager: the folder itself for a
+    /// directory export, or the containing folder with the file selected for a single-file export.
     /// </summary>
     [RelayCommand]
     // @port: Daqifi.Desktop.ViewModels.ExportDialogViewModel.OpenExportLocation
@@ -309,18 +364,18 @@ public partial class ExportDialogViewModel : ObservableObject
 
             if (Directory.Exists(ExportFilePath))
             {
-                Process.Start(new ProcessStartInfo("explorer.exe", $"\"{ExportFilePath}\"") { UseShellExecute = true });
+                RevealInFileManager(ExportFilePath, selectTarget: false);
             }
             else if (File.Exists(ExportFilePath))
             {
-                Process.Start(new ProcessStartInfo("explorer.exe", $"/select,\"{ExportFilePath}\"") { UseShellExecute = true });
+                RevealInFileManager(ExportFilePath, selectTarget: true);
             }
             else
             {
                 var directory = Path.GetDirectoryName(ExportFilePath);
                 if (!string.IsNullOrEmpty(directory) && Directory.Exists(directory))
                 {
-                    Process.Start(new ProcessStartInfo("explorer.exe", $"\"{directory}\"") { UseShellExecute = true });
+                    RevealInFileManager(directory, selectTarget: false);
                 }
             }
         }
@@ -328,6 +383,48 @@ public partial class ExportDialogViewModel : ObservableObject
         {
             AppLogger.Instance.Warning(ex, $"Could not open export location '{ExportFilePath}'.");
         }
+    }
+
+    /// <summary>
+    /// Shows <paramref name="path"/> in the host's file manager. Upstream hard-codes
+    /// <c>explorer.exe</c>, which is inert on the non-Windows desktops this port exists to serve,
+    /// so the launcher is chosen per OS: Explorer on Windows, Finder (<c>open</c>) on macOS, and
+    /// the desktop-portal handler (<c>xdg-open</c>) on Linux.
+    /// </summary>
+    /// <param name="path">Absolute path to a file or a directory.</param>
+    /// <param name="selectTarget">When true, <paramref name="path"/> is a file that should be
+    /// revealed inside its folder rather than opened. <c>xdg-open</c> has no reveal verb, so on
+    /// Linux this degrades to opening the containing folder.</param>
+    private static void RevealInFileManager(string path, bool selectTarget)
+    {
+        if (OperatingSystem.IsWindows())
+        {
+            // Explorer's /select takes one comma-joined argument and rejects the escaping
+            // ArgumentList would apply, so this one keeps the raw argument string.
+            var arguments = selectTarget ? $"/select,\"{path}\"" : $"\"{path}\"";
+            Process.Start(new ProcessStartInfo("explorer.exe", arguments) { UseShellExecute = true });
+            return;
+        }
+
+        var startInfo = new ProcessStartInfo { UseShellExecute = false };
+
+        if (OperatingSystem.IsMacOS())
+        {
+            // Absolute path on purpose: a .app launched from Finder inherits a minimal PATH, and
+            // /usr/bin/open is a fixed location on macOS. "-R" is Finder's reveal-and-select verb,
+            // the direct analogue of Explorer's "/select,".
+            startInfo.FileName = "/usr/bin/open";
+            if (selectTarget) { startInfo.ArgumentList.Add("-R"); }
+            startInfo.ArgumentList.Add(path);
+        }
+        else
+        {
+            // Resolved from PATH: xdg-open's location varies by distribution.
+            startInfo.FileName = "xdg-open";
+            startInfo.ArgumentList.Add(selectTarget ? Path.GetDirectoryName(path) ?? path : path);
+        }
+
+        Process.Start(startInfo);
     }
 
     // @port: Daqifi.Desktop.ViewModels.ExportDialogViewModel.ExportAllSamples
@@ -342,6 +439,148 @@ public partial class ExportDialogViewModel : ObservableObject
     {
         var loggingSessionExporter = new OptimizedLoggingSessionExporter(_loggingContext);
         loggingSessionExporter.ExportAverageSamples(session, filepath, AverageQuantity, ExportRelativeTime, progress, cancellationToken, sessionIndex, totalSessions);
+    }
+
+    /// <summary>
+    /// One session mapped to the file it will be written to.
+    /// </summary>
+    // @port: Daqifi.Desktop.ViewModels.ExportDialogViewModel.ExportTarget
+    private sealed record ExportTarget(int SessionId, string Filepath);
+
+    /// <summary>
+    /// Resolves the destination file for every selected session up front, so the export can be
+    /// pre-flighted before any data is written. Per-session file naming only applies when writing
+    /// into a directory (multi-session export, or the directory-layout test hook); a plain
+    /// single-file export writes straight to <see cref="ExportFilePath"/> and so doesn't depend on
+    /// LoggingManager. Sessions no longer in the in-memory list fall back to "Session_{id}".
+    /// </summary>
+    // @port: Daqifi.Desktop.ViewModels.ExportDialogViewModel.ResolveExportTargets
+    private List<ExportTarget> ResolveExportTargets()
+    {
+        var targets = new List<ExportTarget>(_sessionsIds.Count);
+        var perSessionFiles = _forceDirectoryLayout || _sessionsIds.Count > 1;
+
+        foreach (var sessionId in _sessionsIds)
+        {
+            string filepath;
+            if (perSessionFiles)
+            {
+                var sessionName = LoggingManager.Instance.LoggingSessions
+                    .FirstOrDefault(s => s.ID == sessionId)?.Name ?? $"Session_{sessionId}";
+                filepath = Path.Combine(ExportFilePath, $"{MakeSafeFileName(sessionName)}.csv");
+            }
+            else
+            {
+                filepath = ExportFilePath;
+            }
+
+            targets.Add(new ExportTarget(sessionId, filepath));
+        }
+
+        return targets;
+    }
+
+    /// <summary>
+    /// Returns a user-facing reason why <paramref name="filepath"/> cannot be written, or null when
+    /// it looks writable. Only an existing file is probed, and the probe never truncates or creates
+    /// anything, so a blocked export leaves the destination untouched.
+    /// </summary>
+    /// <remarks>
+    /// <para>The probe asks for exactly what the export itself asks for — <see cref="FileAccess.Write"/>
+    /// with <see cref="FileShare.Read"/>, the mode <c>StreamWriter</c> uses in
+    /// <c>OptimizedLoggingSessionExporter.RunExport</c>. Anything stricter predicts failures the real
+    /// write would not hit: with <see cref="FileShare.None"/> a destination merely being *read* by
+    /// another program failed the probe while <c>StreamWriter</c> went on to succeed, which would have
+    /// aborted a perfectly good export.</para>
+    /// <para>Measured on macOS 26, holder vs. probe: a reader (either share mode) passes the probe and
+    /// the write; an exclusive writer — the "still open in Excel" case this exists for — fails both.
+    /// A chmod-444 destination raises <see cref="UnauthorizedAccessException"/>. So the probe is
+    /// meaningful off Windows, though not exhaustive: Unix has no mandatory locking, so a non-.NET
+    /// program holding the file goes undetected and is caught by the write itself.</para>
+    /// </remarks>
+    /// <param name="filepath">Destination to probe.</param>
+    /// <param name="error">The exception the probe caught, so the caller can log it with its stack
+    /// trace; null when the destination looks writable.</param>
+    // @port: Daqifi.Desktop.ViewModels.ExportDialogViewModel.DescribeUnwritableDestination
+    private static string? DescribeUnwritableDestination(string filepath, out Exception? error)
+    {
+        error = null;
+
+        try
+        {
+            if (!File.Exists(filepath)) { return null; }
+
+            using var probe = new FileStream(filepath, FileMode.Open, FileAccess.Write, FileShare.Read);
+            return null;
+        }
+        catch (Exception ex) when (ex is IOException or UnauthorizedAccessException)
+        {
+            error = ex;
+            return DescribeFileFailure(ex, filepath);
+        }
+    }
+
+    /// <summary>
+    /// True when an export failure is the destination's fault — denied, gone, or held by another
+    /// program. Deliberately narrow: a generic <see cref="IOException"/> (a full disk, a failing
+    /// drive, an EF/SQLite read error) keeps the default Error/Sentry treatment so real problems
+    /// stay visible.
+    /// </summary>
+    // @port: Daqifi.Desktop.ViewModels.ExportDialogViewModel.IsDestinationBlocked
+    private static bool IsDestinationBlocked(Exception ex) => ex switch
+    {
+        UnauthorizedAccessException => true,
+        DirectoryNotFoundException => true,
+        IOException io => IsSharingViolation(io),
+        _ => false,
+    };
+
+    /// <summary>
+    /// Turns a file-access failure into a message that tells the user what to do about it.
+    /// </summary>
+    // @port: Daqifi.Desktop.ViewModels.ExportDialogViewModel.DescribeFileFailure
+    private static string DescribeFileFailure(Exception ex, string filepath)
+    {
+        var name = string.IsNullOrWhiteSpace(filepath) ? "the export file" : $"'{Path.GetFileName(filepath)}'";
+
+        return ex switch
+        {
+            UnauthorizedAccessException =>
+                $"Could not write {name} — access was denied. Choose a different folder, or check that the file is not read-only.",
+            DirectoryNotFoundException =>
+                $"Could not write {name} — that folder no longer exists. Choose a different location and try again.",
+            IOException io when IsSharingViolation(io) =>
+                $"Could not write {name} — it is open in another program. Close it and try again.",
+            _ =>
+                $"Could not write {name}. {ex.Message}",
+        };
+    }
+
+    /// <summary>
+    /// True when Windows refused the handle because someone else already holds the file
+    /// (ERROR_SHARING_VIOLATION / ERROR_LOCK_VIOLATION) — the "it's still open in Excel" case, as
+    /// opposed to a full disk or an I/O error, which deserve a different message.
+    /// </summary>
+    /// <remarks>
+    /// Gated to Windows on purpose. .NET on macOS also raises file exceptions carrying FACILITY_WIN32
+    /// HResults built from the Unix errno (a missing directory measured as 0x80070003 there), so the
+    /// low word is an errno, not a Win32 status code, and 32/33 would mean something else entirely.
+    /// The genuine "held by another program" case on macOS arrives as an <see cref="IOException"/>
+    /// with no facility at all, and is caught by the pre-flight probe rather than by this check.
+    /// </remarks>
+    // @port: Daqifi.Desktop.ViewModels.ExportDialogViewModel.IsSharingViolation
+    private static bool IsSharingViolation(IOException ex)
+    {
+        const int FACILITY_WIN32 = unchecked((int)0x80070000);
+        const int ERROR_SHARING_VIOLATION = 32;
+        const int ERROR_LOCK_VIOLATION = 33;
+
+        if (!OperatingSystem.IsWindows()) { return false; }
+
+        if ((ex.HResult & unchecked((int)0xFFFF0000)) != FACILITY_WIN32) { return false; }
+
+        var win32Error = ex.HResult & 0xFFFF;
+        return win32Error is ERROR_SHARING_VIOLATION or ERROR_LOCK_VIOLATION;
     }
 
     /// <summary>
@@ -360,7 +599,7 @@ public partial class ExportDialogViewModel : ObservableObject
     }
 
     // @port: Daqifi.Desktop.ViewModels.ExportDialogViewModel.GetLoggingSessionFromId
-    private async Task<LoggingSession> GetLoggingSessionFromId(int sessionId)
+    private async Task<LoggingSession?> GetLoggingSessionFromId(int sessionId)
     {
         await using var context = _loggingContext.CreateDbContext();
         var loggingSession = await context.Sessions
@@ -391,6 +630,35 @@ public partial class ExportDialogViewModel : ObservableObject
         _forceDirectoryLayout = true;
         ExportFilePath = directory;
         return ExportLoggingSessionsCommand.ExecuteAsync(null);
+    }
+    #endregion
+
+    #region IDisposable
+    /// <summary>
+    /// Cancels and releases the export cancellation source. Called by <c>ExportDialog</c> when the
+    /// dialog window closes, so a dialog dismissed mid-export does not leak the token source (and its
+    /// registrations) for the lifetime of the process.
+    /// </summary>
+    // @port: Daqifi.Desktop.ViewModels.ExportDialogViewModel.Dispose
+    public void Dispose()
+    {
+        var cts = _cts;
+        _cts = null;
+        if (cts != null)
+        {
+            try
+            {
+                cts.Cancel();
+            }
+            catch (ObjectDisposedException)
+            {
+                // Already disposed by the export's finally block — nothing left to cancel.
+            }
+
+            cts.Dispose();
+        }
+
+        GC.SuppressFinalize(this);
     }
     #endregion
 }

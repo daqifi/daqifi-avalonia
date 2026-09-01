@@ -828,8 +828,12 @@ files:
   last_synced_sha: null
 - upstream: Daqifi.Desktop/ViewModels/ExportDialogViewModel.cs
   downstream: Daqifi.Avalonia/Daqifi.Desktop/ViewModels/ExportDialogViewModel.cs
-  relation: subset
-  notes: ' (scaffolded)'
+  relation: equivalent
+  notes: 'Destination pre-flight, per-cause failure messages, Try Again and Dispose
+    now match upstream. Reveal-in-file-manager diverges by design: upstream hard-codes
+    explorer.exe, the port dispatches to Explorer / Finder / xdg-open. IsSharingViolation
+    is gated to Windows because the Win32 status codes it tests are errno values off
+    Windows.'
   rationale: null
   last_synced_sha: null
 - upstream: Daqifi.Desktop/ViewModels/FirmwareDialogViewModel.cs

@@ -67,13 +67,16 @@
                     Foreground="{StaticResource StatusRed}"
                     IsVisible="{Binding !ExportSucceeded}"/>
             <TextBlock Text="{Binding ExportResultMessage}" FontSize="16" HorizontalAlignment="Center" TextAlignment="Center" TextWrapping="Wrap" Margin="0,14,0,4" Foreground="{StaticResource TextPrimary}"/>
+            <!-- Shown for a failure too: it names the destination the export could not write. -->
             <TextBlock Text="{Binding ExportFilePath}" FontSize="11" HorizontalAlignment="Center" TextAlignment="Center" TextWrapping="Wrap"
-                       Foreground="{StaticResource TextSecondary}" Margin="0,0,0,22"
-                       IsVisible="{Binding ExportSucceeded}"/>
+                       Foreground="{StaticResource TextSecondary}" Margin="0,0,0,22"/>
             <StackPanel Orientation="Horizontal" HorizontalAlignment="Center">
                 <Button Content="Open Folder" Command="{Binding OpenExportLocationCommand}" Width="120" Height="32" Margin="0,0,10,0"
                         Theme="{StaticResource DarkSecondaryButton}"
                         IsVisible="{Binding ExportSucceeded}"/>
+                <Button Content="Try Again" Command="{Binding RetryExportCommand}" Width="120" Height="32" Margin="0,0,10,0"
+                        Theme="{StaticResource DarkSecondaryButton}"
+                        IsVisible="{Binding !ExportSucceeded}"/>
                 <Button Content="Done" Click="btnDone_Click" Width="120" Height="32" Classes="accent"/>
             </StackPanel>
         </StackPanel>
