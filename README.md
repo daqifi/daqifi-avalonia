@@ -100,8 +100,9 @@ Crash reporting can be compiled out with `-p:SentryDsn=`.
 
 ## Contributing
 
-Issues and pull requests are welcome. CI builds every head on every pull request, so
-expect the build to tell you quickly if a change breaks a platform you did not test.
+Issues and pull requests are welcome — see [CONTRIBUTING.md](CONTRIBUTING.md). CI builds
+every head on every pull request, so expect the build to tell you quickly if a change
+breaks a platform you did not test.
 
 ## License
 
