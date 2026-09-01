@@ -69,9 +69,9 @@ public class ImportAllSummaryTests
 
         var summary = DeviceLogsViewModel.BuildImportAllSummary(outcome);
 
-        Assert.Contains("LOG_0009.bin", summary, StringComparison.Ordinal);
-        Assert.DoesNotContain("LOG_0010.bin", summary, StringComparison.Ordinal);
-        Assert.Contains("...and 2 more", summary, StringComparison.Ordinal);
+        Assert.Contains("LOG_0004.bin", summary, StringComparison.Ordinal);
+        Assert.DoesNotContain("LOG_0005.bin", summary, StringComparison.Ordinal);
+        Assert.Contains("...and 7 more", summary, StringComparison.Ordinal);
     }
 
     [Fact]

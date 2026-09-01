@@ -677,10 +677,11 @@ public partial class DeviceLogsViewModel : ObservableObject
 
     /// <summary>
     /// How many skipped file names the completion dialog lists before collapsing the rest into a
-    /// count. A card can hold hundreds of logs, and a dialog listing all of them is unreadable.
+    /// count. A card carrying dozens of empty logs would otherwise produce a dialog taller than
+    /// the screen.
     /// </summary>
     // @port: Daqifi.Desktop.ViewModels.DeviceLogsViewModel.MAX_LISTED_SKIPPED_FILES
-    private const int MAX_LISTED_SKIPPED_FILES = 10;
+    private const int MAX_LISTED_SKIPPED_FILES = 5;
 
     /// <summary>
     /// Builds the text of the "Import Complete" dialog from what the batch actually did.
