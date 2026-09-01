@@ -150,10 +150,15 @@ public partial class SummaryLogger : ObservableObject, ILogger
 
     #region Private Data
     /// <summary>
-    /// Guards <see cref="_statuses"/> and <see cref="_messagesSinceRefresh"/>, both written on the
-    /// device's message thread and read from the UI thread. Core's aggregator has its own lock and
-    /// is not covered by this one.
+    /// Serializes this logger's window lifecycle: <see cref="_statuses"/>,
+    /// <see cref="_messagesSinceRefresh"/> and <see cref="_snapshot"/>, and — so that they are
+    /// ordered against a reset rather than racing it — the <see cref="Enabled"/> test that admits a
+    /// sample, Core's <c>Record</c>, Core's <c>Reset</c>, and taking a reading.
     /// </summary>
+    /// <remarks>
+    /// Core's aggregator has its own lock; this one sits outside it and is always taken first, so
+    /// the two nest in one direction only. No change notification is ever raised while it is held.
+    /// </remarks>
     private readonly object _gate = new();
 
     /// <summary>
@@ -299,19 +304,38 @@ public partial class SummaryLogger : ObservableObject, ILogger
     /// Records one sample into Core's aggregator.
     /// </summary>
     /// <remarks>
+    /// <para>
     /// Samples without a Core channel — an SD card import, or a row rehydrated from the database —
     /// are skipped: this panel describes a live acquisition, and Core keys its per-channel
     /// accumulators by channel type and number, which only a live channel can supply.
+    /// </para>
+    /// <para>
+    /// The <see cref="Enabled"/> test and the record are one atomic step under <see cref="_gate"/>,
+    /// which <see cref="StartNewWindow"/> also holds while it clears Core's window. Tested outside
+    /// it, a sample admitted moments before a <see cref="Reset"/> could record <em>after</em> the
+    /// window was cleared and leave the supposedly empty, no-longer-recording panel showing a
+    /// straggler from the discarded acquisition indefinitely. Ordering the two makes the outcome
+    /// the same either way: record first and the reset clears it, or arrive after and find
+    /// <see cref="Enabled"/> already false.
+    /// </para>
     /// </remarks>
     // @port: Daqifi.Desktop.Logger.SummaryLogger.Log
     public void Log(DataSample dataSample)
     {
-        if (!Enabled || dataSample?.CoreChannel is not { } coreChannel)
+        if (dataSample?.CoreChannel is not { } coreChannel)
         {
             return;
         }
 
-        _statistics.Record(coreChannel, dataSample);
+        lock (_gate)
+        {
+            if (!Enabled)
+            {
+                return;
+            }
+
+            _statistics.Record(coreChannel, dataSample);
+        }
     }
 
     /// <summary>
@@ -378,20 +402,40 @@ public partial class SummaryLogger : ObservableObject, ILogger
     /// <summary>
     /// Takes a fresh reading and tells the bindings to re-read it.
     /// </summary>
+    /// <remarks>
+    /// Reading and publishing are one step under <see cref="_gate"/> so that publishes from the
+    /// device thread and from <see cref="Reset"/> cannot interleave. Split, a device-thread
+    /// publish could be preempted between taking its reading and storing it, let Reset store the
+    /// empty one, and then overwrite it — leaving the panel showing the discarded window for good,
+    /// since Reset has also stopped recording. Whichever publish takes the lock last now wins, and
+    /// after a reset every reading is of the cleared window regardless of order.
+    /// <para>
+    /// The change notification is deliberately raised OUTSIDE the lock: it runs binding handlers,
+    /// and those must never re-enter this logger while it is held.
+    /// </para>
+    /// </remarks>
     private void PublishSnapshot()
     {
-        _snapshot = _statistics.Snapshot();
+        lock (_gate)
+        {
+            _snapshot = _statistics.Snapshot();
+        }
+
         NotifyResultsChanged();
     }
 
     /// <summary>
     /// Discards everything accumulated so far and begins a new measurement window.
     /// </summary>
+    /// <remarks>
+    /// Core's reset happens under <see cref="_gate"/> alongside the app-side state, so it is
+    /// ordered against the recording in <see cref="Log(DataSample)"/> rather than racing it.
+    /// </remarks>
     private void StartNewWindow()
     {
-        _statistics.Reset();
         lock (_gate)
         {
+            _statistics.Reset();
             _statuses.Clear();
             _messagesSinceRefresh = 0;
         }
