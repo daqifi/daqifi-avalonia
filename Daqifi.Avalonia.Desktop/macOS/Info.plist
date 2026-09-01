@@ -1,0 +1,83 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
+<!--
+    TEMPLATE. This is not the file that ships.
+
+    MacAppBundle.targets reads this, substitutes every DAQIFI_* placeholder (the
+    at-sign-delimited tokens below), and writes the result to Contents/Info.plist inside
+    the built bundle. A placeholder left unsubstituted is a build error, not a silently
+    literal token in a shipped app.
+
+    Keys are here only if they do something for THIS app. Notably absent, deliberately:
+
+      NSBonjourServices          - discovery is a subnet-directed UDP broadcast sweep on
+                                   port 30303 (Services/NativeWiFiDiscovery.cs), not mDNS,
+                                   so there is no service type to declare.
+      LSApplicationCategoryType  - App Store metadata only, and this bundle is not signed
+                                   or submitted to anything (see #109).
+      NSPrincipalClass           - consulted by NSApplicationMain, which never runs here:
+                                   the .NET host calls Program.Main and Avalonia's macOS
+                                   backend creates NSApplication itself.
+-->
+<plist version="1.0">
+<dict>
+	<key>CFBundleInfoDictionaryVersion</key>
+	<string>6.0</string>
+	<key>CFBundleDevelopmentRegion</key>
+	<string>en</string>
+	<key>CFBundlePackageType</key>
+	<string>APPL</string>
+
+	<!-- The name macOS shows in the Dock, the menu bar and Force Quit. Without a bundle
+	     the app registers with Launch Services as "Avalonia Application" (#108). -->
+	<key>CFBundleName</key>
+	<string>DAQiFi</string>
+	<key>CFBundleDisplayName</key>
+	<string>DAQiFi</string>
+
+	<!-- The reverse-DNS id, matching the Android head's ApplicationId. That value was
+	     chosen to be platform- and framework-neutral precisely so Apple and Play could
+	     share one namespace - see the comment on <ApplicationId> in
+	     Daqifi.Avalonia.Android.csproj. (The iOS head still carries the older
+	     com.daqifi.avalonia; reconciling it is that head's call, not this one's, and it
+	     is unpublished so it can still move.) -->
+	<key>CFBundleIdentifier</key>
+	<string>com.daqifi.app</string>
+
+	<!-- The binary inside Contents/MacOS. Substituted from $(AssemblyName) so renaming
+	     the assembly cannot leave a bundle that fails to launch. -->
+	<key>CFBundleExecutable</key>
+	<string>@DAQIFI_EXECUTABLE@</string>
+
+	<!-- Marketing version, from $(DaqifiAppVersion) in Directory.Build.props - the single
+	     place this repo declares the app version, shared with the in-app version text, the
+	     Sentry release, android:versionName and the iOS CFBundleShortVersionString (#126).
+	     CFBundleVersion is the macOS build number and is deliberately NOT that property,
+	     for the same reason the per-store <ApplicationVersion> counters are not. -->
+	<key>CFBundleShortVersionString</key>
+	<string>@DAQIFI_SHORT_VERSION@</string>
+	<key>CFBundleVersion</key>
+	<string>@DAQIFI_BUNDLE_VERSION@</string>
+
+	<!-- Contents/Resources/AppIcon.icns. -->
+	<key>CFBundleIconFile</key>
+	<string>AppIcon</string>
+
+	<!-- Without this the app is rendered at 1x and upscaled - blurry on every Mac made in
+	     the last decade. -->
+	<key>NSHighResolutionCapable</key>
+	<true/>
+
+	<key>LSMinimumSystemVersion</key>
+	<string>@DAQIFI_MIN_SYSTEM_VERSION@</string>
+
+	<!-- The reason this ticket had teeth. macOS 15 gates local-network traffic behind a
+	     user permission, and the explanation shown in that prompt comes from this key; an
+	     app with nowhere to put it gets the prompt without an explanation at best. DAQiFi
+	     discovery is a UDP sweep on port 30303, so a dismissed prompt means discovery
+	     finds nothing, silently. Same wording as the iOS head's key, which exists for the
+	     same reason. -->
+	<key>NSLocalNetworkUsageDescription</key>
+	<string>DAQiFi discovers Nyquist data-acquisition devices on your local network.</string>
+</dict>
+</plist>

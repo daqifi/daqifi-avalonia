@@ -1,0 +1,157 @@
+<Project>
+
+  <!--
+    Packages the macOS publish output as a real .app bundle.
+
+    Before this, `dotnet publish -r osx-arm64` produced a bare Mach-O executable and nothing
+    else (#108). It ran, but macOS had no bundle to read metadata from, so the app had no
+    name (Launch Services called it "Avalonia Application"), no icon, no bundle identifier,
+    no version — and, the part with teeth, no Info.plist, which is the only place
+    NSLocalNetworkUsageDescription can live. Discovery is a UDP sweep on port 30303 and
+    macOS 15 gates local-network traffic behind a permission prompt, so "nowhere to put the
+    usage string" is a functional problem, not a cosmetic one.
+
+    WHY AN MSBUILD TARGET, NOT A SCRIPT
+
+    The issue's prior art was a bundle hand-assembled in a scratch directory. That works
+    once. A post-publish target is the same set of file operations, but it runs wherever the
+    publish runs — a developer's laptop and CI alike — and cannot drift from the build that
+    produced the payload. Everything it does is copy-a-file or write-a-file: no Apple
+    tooling, so cross-publishing osx-arm64 from Linux still yields a complete bundle (which
+    is also why AppIcon.icns is committed rather than generated — see make-appicon-icns.sh).
+
+    ONE THING THE BUNDLE ALONE DOES NOT FIX
+
+    The name in the menu bar, the Dock and Force Quit does not come from CFBundleName here.
+    Avalonia's macOS backend pushes Application.Name into NSApplication at startup and that
+    wins, so with a correct Info.plist and no Name the app still announced itself as
+    "Avalonia Application". The fix is the Name attribute on Application in
+    Daqifi.Avalonia/App.axaml, not anything in this file.
+
+    WHAT IT DOES NOT DO
+
+    Code signing and notarization. Gatekeeper will quarantine this bundle if it is
+    downloaded, and the first launch needs the right-click-Open path. That is gated on an
+    Apple Developer account and tracked separately (#109); it is deliberately not faked with
+    an ad-hoc signature here, because an ad-hoc signature satisfies nothing a real one does
+    and makes the gap harder to see.
+
+    HOOKED TO PUBLISH, NOT BUILD
+
+    Packaging is a publish concern, and the payload it packages is the publish output. A
+    plain `dotnet build -r osx-arm64` still leaves a bare executable in bin/ — that is the
+    inner dev loop and it stays fast. Use publish when you want something launchable from
+    Finder:
+
+        dotnet publish Daqifi.Avalonia.Desktop/Daqifi.Avalonia.Desktop.csproj \
+          -c Release -r osx-arm64 -p:SelfContained=false
+        -> Daqifi.Avalonia.Desktop/bin/Release/net10.0/osx-arm64/DAQiFi.app
+
+    SelfContained=false keeps the bundle small but requires the .NET runtime on the target
+    Mac; set it true for a bundle that runs on a machine with no .NET installed. The target
+    is agnostic — it copies whatever the publish produced.
+  -->
+
+  <PropertyGroup>
+    <!-- Gate on the RID rather than on the host OS: a macOS RID is the thing that makes a
+         .app meaningful, and it is what CI will pass. [System.String]::Copy is used so the
+         condition is still well-formed when RuntimeIdentifier is empty, which is exactly
+         the case for the RID-less build that the repo's build gate runs. -->
+    <DaqifiBuildMacAppBundle Condition="'$(DaqifiBuildMacAppBundle)' == '' And $([System.String]::Copy('$(RuntimeIdentifier)').StartsWith('osx-'))">true</DaqifiBuildMacAppBundle>
+    <DaqifiBuildMacAppBundle Condition="'$(DaqifiBuildMacAppBundle)' == ''">false</DaqifiBuildMacAppBundle>
+
+    <!-- Bundle directory name, and CFBundleName/CFBundleDisplayName in Info.plist. The
+         executable inside keeps its assembly name; the two do not have to match. -->
+    <DaqifiMacBundleName Condition="'$(DaqifiMacBundleName)' == ''">DAQiFi</DaqifiMacBundleName>
+
+    <!-- CFBundleVersion — the macOS build number, which is a different thing from the
+         marketing version and is deliberately not tied to $(DaqifiAppVersion). Same
+         reasoning as the per-store <ApplicationVersion> counters on the Android and iOS
+         heads: a store wants a unique increasing build number for every upload, including
+         re-uploads of an unchanged marketing version. Nothing consumes this yet (the bundle
+         is unsigned and undistributed), so it starts at 1. -->
+    <DaqifiMacBundleVersion Condition="'$(DaqifiMacBundleVersion)' == ''">1</DaqifiMacBundleVersion>
+
+    <!-- LSMinimumSystemVersion. 14.0 is .NET 10's own macOS support floor (dotnet/core
+         release-notes/10.0/supported-os.md lists macOS 14, 15 and 26), not a guess and not
+         a number this app chose for itself. The runtime's Mach-O load commands claim a
+         lower minos than that (the published apphost's LC_BUILD_VERSION reads minos 12.0),
+         so the binary would *start* on macOS 12 and 13 — but nothing below the floor is
+         supported by the runtime under it, and claiming support nobody stands behind is
+         worse than a version check that refuses to launch. -->
+    <DaqifiMacMinimumSystemVersion Condition="'$(DaqifiMacMinimumSystemVersion)' == ''">14.0</DaqifiMacMinimumSystemVersion>
+
+    <!-- Where the .app is written; empty means "the default", resolved in the target below
+         rather than here. This file is imported before the SDK's own targets, so $(OutputPath)
+         does not exist yet at evaluation time — defaulting to it here silently yields the
+         empty string and drops the bundle in the project directory. -->
+  </PropertyGroup>
+
+  <Target Name="DaqifiCreateMacAppBundle"
+          AfterTargets="Publish"
+          Condition="'$(DaqifiBuildMacAppBundle)' == 'true'">
+
+    <PropertyGroup>
+      <!-- Beside the publish/ directory, under the normal per-RID output path, so the path
+           is predictable for CI. Anchored on $(MSBuildProjectDirectory) because $(OutputPath)
+           is relative and NormalizeDirectory would otherwise resolve it against the process's
+           working directory, which is wherever the developer happened to run dotnet from. An
+           absolute DaqifiMacBundleOutputDir override wins over the anchor, as NormalizeDirectory
+           discards earlier fragments once it sees a rooted one. -->
+      <_DaqifiBundleParentDir Condition="'$(DaqifiMacBundleOutputDir)' != ''">$(DaqifiMacBundleOutputDir)</_DaqifiBundleParentDir>
+      <_DaqifiBundleParentDir Condition="'$(_DaqifiBundleParentDir)' == ''">$(OutputPath)</_DaqifiBundleParentDir>
+      <_DaqifiAppDir>$([MSBuild]::NormalizeDirectory('$(MSBuildProjectDirectory)', '$(_DaqifiBundleParentDir)', '$(DaqifiMacBundleName).app'))</_DaqifiAppDir>
+      <_DaqifiAppContentsDir>$([MSBuild]::NormalizeDirectory('$(_DaqifiAppDir)', 'Contents'))</_DaqifiAppContentsDir>
+      <_DaqifiAppMacOSDir>$([MSBuild]::NormalizeDirectory('$(_DaqifiAppContentsDir)', 'MacOS'))</_DaqifiAppMacOSDir>
+      <_DaqifiAppResourcesDir>$([MSBuild]::NormalizeDirectory('$(_DaqifiAppContentsDir)', 'Resources'))</_DaqifiAppResourcesDir>
+    </PropertyGroup>
+
+    <!-- Assemble from scratch every time. Copying over a previous bundle would leave files
+         the current publish no longer produces sitting inside a shipped app, and a stale
+         managed dll next to a current one is the kind of thing that fails at runtime with a
+         MissingMethodException rather than at build time. -->
+    <RemoveDir Directories="$(_DaqifiAppDir)" />
+
+    <ItemGroup>
+      <!-- Globbed inside the target, not at evaluation: the publish directory does not
+           exist yet when the project is evaluated. -->
+      <_DaqifiMacPayload Include="$(PublishDir)**/*" />
+    </ItemGroup>
+
+    <Error Condition="'@(_DaqifiMacPayload)' == ''"
+           Text="macOS bundling found no files under '$(PublishDir)'. Expected the publish output to be there." />
+
+    <Copy SourceFiles="@(_DaqifiMacPayload)"
+          DestinationFiles="@(_DaqifiMacPayload->'$(_DaqifiAppMacOSDir)%(RecursiveDir)%(Filename)%(Extension)')" />
+
+    <Copy SourceFiles="$(MSBuildThisFileDirectory)AppIcon.icns"
+          DestinationFolder="$(_DaqifiAppResourcesDir)" />
+
+    <PropertyGroup>
+      <_DaqifiInfoPlistText>$([System.IO.File]::ReadAllText('$(MSBuildThisFileDirectory)Info.plist'))</_DaqifiInfoPlistText>
+      <_DaqifiInfoPlistText>$(_DaqifiInfoPlistText.Replace('@DAQIFI_EXECUTABLE@', '$(AssemblyName)'))</_DaqifiInfoPlistText>
+      <_DaqifiInfoPlistText>$(_DaqifiInfoPlistText.Replace('@DAQIFI_SHORT_VERSION@', '$(DaqifiAppVersion)'))</_DaqifiInfoPlistText>
+      <_DaqifiInfoPlistText>$(_DaqifiInfoPlistText.Replace('@DAQIFI_BUNDLE_VERSION@', '$(DaqifiMacBundleVersion)'))</_DaqifiInfoPlistText>
+      <_DaqifiInfoPlistText>$(_DaqifiInfoPlistText.Replace('@DAQIFI_MIN_SYSTEM_VERSION@', '$(DaqifiMacMinimumSystemVersion)'))</_DaqifiInfoPlistText>
+    </PropertyGroup>
+
+    <!-- Adding a placeholder to the template without adding its Replace above would
+         otherwise ship the literal token, which macOS reads as a perfectly valid string and
+         nothing complains about until someone reads the version in Finder. -->
+    <Error Condition="$(_DaqifiInfoPlistText.Contains('@DAQIFI_'))"
+           Text="macOS Info.plist template has an unsubstituted placeholder. Every DAQIFI_ token in macOS/Info.plist needs a matching Replace in MacAppBundle.targets." />
+
+    <!-- Escape, because WriteLinesToFile takes an item list: an unescaped ';' in the text
+         would be read as an item separator and a '*' as a glob. -->
+    <WriteLinesToFile File="$(_DaqifiAppContentsDir)Info.plist"
+                      Lines="$([MSBuild]::Escape($(_DaqifiInfoPlistText)))"
+                      Overwrite="true"
+                      WriteOnlyWhenDifferent="true" />
+
+    <!-- No Contents/PkgInfo. It is the pre-Info.plist way of recording an APPL type/creator
+         pair, superseded by CFBundlePackageType, which the plist above sets. -->
+
+    <Message Importance="high" Text="macOS app bundle written to $(_DaqifiAppDir)" />
+  </Target>
+
+</Project>
