@@ -60,8 +60,18 @@
     <DaqifiBuildMacAppBundle Condition="'$(DaqifiBuildMacAppBundle)' == '' And $([System.String]::Copy('$(RuntimeIdentifier)').StartsWith('osx-'))">true</DaqifiBuildMacAppBundle>
     <DaqifiBuildMacAppBundle Condition="'$(DaqifiBuildMacAppBundle)' == ''">false</DaqifiBuildMacAppBundle>
 
-    <!-- Bundle directory name, and CFBundleName/CFBundleDisplayName in Info.plist. The
-         executable inside keeps its assembly name; the two do not have to match. -->
+    <!-- The bundle's name: the .app directory, and CFBundleName/CFBundleDisplayName in the
+         generated Info.plist. The executable inside keeps its assembly name; the two do not
+         have to match.
+
+         NOT the name macOS shows in the menu bar and the Dock — that is Application.Name,
+         set in Daqifi.Avalonia/App.axaml, which the Avalonia backend pushes into
+         NSApplication at startup where it wins over CFBundleName. Changing this property
+         alone renames the bundle in Finder but not the running app; keep the two in step.
+
+         Validated below rather than trusted: it is a command-line-overridable property that
+         ends up as a path fragment which this target recursively deletes, and as text
+         written into an XML document. -->
     <DaqifiMacBundleName Condition="'$(DaqifiMacBundleName)' == ''">DAQiFi</DaqifiMacBundleName>
 
     <!-- CFBundleVersion — the macOS build number, which is a different thing from the
@@ -90,6 +100,16 @@
   <Target Name="DaqifiCreateMacAppBundle"
           AfterTargets="Publish"
           Condition="'$(DaqifiBuildMacAppBundle)' == 'true'">
+
+    <!-- DaqifiMacBundleName is a leaf name, not a path, and this target deletes the
+         directory it names. Unvalidated, `-p:DaqifiMacBundleName=/tmp/archive` would make
+         the target recursively delete /tmp/archive.app instead of building a bundle, and
+         `-p:DaqifiMacBundleName=../..` would escape the output tree entirely. The allowed
+         character set is deliberately narrower than "no separators": it also rules out the
+         XML metacharacters that would otherwise let the value break the Info.plist it is
+         substituted into, and the ';' that WriteLinesToFile reads as an item separator. -->
+    <Error Condition="!$([System.Text.RegularExpressions.Regex]::IsMatch('$(DaqifiMacBundleName)', '^[A-Za-z0-9][A-Za-z0-9 ._-]*$'))"
+           Text="DaqifiMacBundleName must be a plain bundle name (letters, digits, space, dot, underscore, hyphen; starting with a letter or digit). It is used as a directory name that this target deletes and rebuilds, and as text in Info.plist. Got: '$(DaqifiMacBundleName)'" />
 
     <PropertyGroup>
       <!-- Beside the publish/ directory, under the normal per-RID output path, so the path
@@ -129,6 +149,7 @@
 
     <PropertyGroup>
       <_DaqifiInfoPlistText>$([System.IO.File]::ReadAllText('$(MSBuildThisFileDirectory)Info.plist'))</_DaqifiInfoPlistText>
+      <_DaqifiInfoPlistText>$(_DaqifiInfoPlistText.Replace('@DAQIFI_BUNDLE_NAME@', '$(DaqifiMacBundleName)'))</_DaqifiInfoPlistText>
       <_DaqifiInfoPlistText>$(_DaqifiInfoPlistText.Replace('@DAQIFI_EXECUTABLE@', '$(AssemblyName)'))</_DaqifiInfoPlistText>
       <_DaqifiInfoPlistText>$(_DaqifiInfoPlistText.Replace('@DAQIFI_SHORT_VERSION@', '$(DaqifiAppVersion)'))</_DaqifiInfoPlistText>
       <_DaqifiInfoPlistText>$(_DaqifiInfoPlistText.Replace('@DAQIFI_BUNDLE_VERSION@', '$(DaqifiMacBundleVersion)'))</_DaqifiInfoPlistText>

@@ -28,12 +28,15 @@
 	<key>CFBundlePackageType</key>
 	<string>APPL</string>
 
-	<!-- The name macOS shows in the Dock, the menu bar and Force Quit. Without a bundle
-	     the app registers with Launch Services as "Avalonia Application" (#108). -->
+	<!-- The bundle's name in Finder and Launch Services, substituted from
+	     $(DaqifiMacBundleName) so it cannot disagree with the .app directory it lives in.
+	     Note this is NOT what the Dock and the menu bar show: Avalonia pushes
+	     Application.Name into NSApplication at startup and it wins over CFBundleName, so
+	     Daqifi.Avalonia/App.axaml is the other half of the app's identity (#108). -->
 	<key>CFBundleName</key>
-	<string>DAQiFi</string>
+	<string>@DAQIFI_BUNDLE_NAME@</string>
 	<key>CFBundleDisplayName</key>
-	<string>DAQiFi</string>
+	<string>@DAQIFI_BUNDLE_NAME@</string>
 
 	<!-- The reverse-DNS id, matching the Android head's ApplicationId. That value was
 	     chosen to be platform- and framework-neutral precisely so Apple and Play could
