@@ -24,6 +24,44 @@ internal static class AvaloniaCapture
     private static string _outDir = "";
     private static bool _failed;   // any [FAIL] → non-zero exit so run.sh aborts the pipeline
 
+    // Every screen this harness is contracted to produce. Checked at the end of the run, and
+    // that check is the point: without it a MISSING screen is the quietest possible failure.
+    // Several capture sites can decline to fire without anything going wrong on the surface —
+    // SweepDrawer prints [SKIP] when a VM property is gone, NavClick prints [SKIP] when a named
+    // button is gone, and the mobile settings overlay was simply skipped in silence when the
+    // named control was absent — and none of those set the failure flag. A screen dropped that
+    // way then disappears from every downstream comparison too: the run-to-run determinism
+    // check compares whatever both runs contain, so a consistently absent screen reads as a
+    // clean "17/17 byte-identical" rather than as an incomplete capture. A gate that quietly
+    // shrinks its own scope is worse than no gate, because it is believed.
+    //
+    // Adding a screen means adding its name here. That is deliberate: this list is the
+    // contract, and the failure it produces when the two drift apart is the whole feature.
+    private static readonly string[] ExpectedScreens =
+    [
+        "desktop-1-livegraph",
+        "desktop-2-loggeddata",
+        "desktop-3-channels",
+        "desktop-4-devices",
+        "desktop-5-profiles",
+        "desktop-6-settings-drawer",
+        "desktop-7-notifications-flyout",
+        "desktop-8-livegraph-settings-flyout",
+        "desktop-9-summary-flyout",
+        "mobile-portrait-1-stream",
+        "mobile-portrait-2-channels",
+        "mobile-portrait-3-storage",
+        "mobile-portrait-4-profiles",
+        "mobile-portrait-5-settings",
+        "mobile-landscape-1-stream",
+        "mobile-landscape-2-channels",
+        "mobile-landscape-3-storage",
+        "mobile-landscape-4-profiles",
+    ];
+
+    // Names actually written, recorded by Capture only after the file is confirmed non-empty.
+    private static readonly HashSet<string> _captured = new(StringComparer.Ordinal);
+
     [STAThread]
     public static void Main(string[] args)
     {
@@ -111,6 +149,7 @@ internal static class AvaloniaCapture
         {
             CaptureDesktop(desktop.MainWindow);
             CaptureMobile();
+            VerifyExpectedScreens();
         }
         finally
         {
@@ -392,12 +431,45 @@ internal static class AvaloniaCapture
             // line's grouping vary by machine, which run-to-run log comparison relies on
             // not doing.
             var size = written.Length.ToString("N0", CultureInfo.InvariantCulture);
+            _captured.Add(name);
             Console.WriteLine($"[OK]   {name}: {size} bytes, settled in {rounds} round(s)");
         }
         catch (Exception ex)
         {
             _failed = true;
             Console.WriteLine($"[FAIL] {name}: {ex.GetType().Name}: {ex.Message}");
+        }
+    }
+
+    // Turn "a screen is missing" from a silent shrink into a failed run. Reports BOTH
+    // directions: a missing screen is the dangerous case, and an unexpected one means the
+    // capture set and ExpectedScreens have drifted, which is the same bug seen from the other
+    // side — a downstream comparison would treat the new name as an extra rather than as
+    // coverage nobody approved.
+    private static void VerifyExpectedScreens()
+    {
+        var missing = ExpectedScreens.Where(name => !_captured.Contains(name)).ToArray();
+        var unexpected = _captured.Except(ExpectedScreens, StringComparer.Ordinal)
+                                  .OrderBy(name => name, StringComparer.Ordinal).ToArray();
+
+        if (missing.Length > 0)
+        {
+            _failed = true;
+            Console.WriteLine($"[FAIL] {missing.Length} expected screen(s) were not captured: " +
+                              string.Join(", ", missing) +
+                              ". A [SKIP] or [FAIL] above says why; the run is incomplete, and an " +
+                              "incomplete set must not be compared as if it were whole.");
+        }
+        if (unexpected.Length > 0)
+        {
+            _failed = true;
+            Console.WriteLine($"[FAIL] {unexpected.Length} screen(s) were captured that " +
+                              "ExpectedScreens does not list: " + string.Join(", ", unexpected) +
+                              ". Add them there so the completeness check covers them.");
+        }
+        if (missing.Length == 0 && unexpected.Length == 0)
+        {
+            Console.WriteLine($"[OK]   all {ExpectedScreens.Length} expected screens captured");
         }
     }
 }

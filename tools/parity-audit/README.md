@@ -68,7 +68,18 @@ DOTNET=~/.dotnet/dotnet ./run.sh /some/out/dir
 # prove the capture is deterministic on this host BEFORE trusting any comparison
 ./run.sh --determinism /some/out/dir                       # 5 runs
 DETERMINISM_RUNS=10 ./run.sh --determinism /some/out/dir    # more, if you are chasing a flake
+
+# then: capture once and diff every screen against the committed baseline
+./run.sh --check-baseline /some/out/dir
 ```
+
+Every mode fails non-zero on anything it cannot vouch for, including an **incomplete**
+capture. `AvaloniaCapture` declares the screens it is contracted to produce
+(`ExpectedScreens`) and fails the run if any is absent or if it wrote one that is not on
+the list — because several capture sites can decline to fire and only print `[SKIP]`, and
+a screen dropped that way vanishes from every downstream comparison too. A determinism
+run would then report a clean `17/17` and a baseline check would never look for the
+missing name. A gate that quietly shrinks its own scope is worse than no gate.
 
 ### Always run `--determinism` on a host you have not captured from before
 
@@ -152,22 +163,25 @@ time.
 
 ## Baselines
 
-`baselines/macos-arm64.sha256` records the SHA-256 of all 18 Avalonia screens as
-captured on macOS — a dated reference point for "has anything moved", checkable with
-a stock tool:
+`baselines/<os>-<arch>.sha256` records the SHA-256 of all 18 Avalonia screens for one
+host — a dated reference point for "has anything moved". `./run.sh --check-baseline`
+captures once and verifies against the one for the current host, failing on a changed
+screen, a missing one, and one the baseline does not list (`shasum -c` only checks the
+names it was given, so the extra-file direction is checked separately).
 
-```bash
-DOTNET=~/.dotnet/dotnet ./run.sh /tmp/parity
-cd /tmp/parity/avalonia && shasum -a 256 -c <repo>/tools/parity-audit/baselines/macos-arm64.sha256
-```
+`macos-arm64.sha256` was recorded 2026-09-01 against `6834469` (macOS 26.5, Apple
+silicon, .NET SDK 10.0.302, Avalonia 12.1.1). No other host has one yet; the mode tells
+you how to record one and refuses to invent a comparison without it.
 
-Recorded 2026-09-01 against `6834469` (macOS 26.5, Apple silicon, .NET SDK 10.0.302,
-Avalonia 12.1.1). **A mismatch is a prompt, not a verdict** — re-read that list first.
-The PNGs themselves are deliberately *not* committed: the harness is deterministic,
-so they are exactly regenerable from any commit, and 640 KB of binaries per recording
-would be permanent git weight for data that has a one-command source. Re-record after
-an intended UI change with `shasum -a 256 *.png` from the capture dir, and update the
-environment line above with it.
+**A mismatch is a prompt, not a verdict** — re-read that environment line first. The
+PNGs themselves are deliberately *not* committed: the harness is deterministic, so they
+are exactly regenerable from any commit, and 640 KB of binaries per recording would be
+permanent git weight for data that has a one-command source. Re-record after an intended
+UI change with `shasum -a 256 *.png` from the capture dir, in the same commit as the
+change, and update the environment line above with it.
+
+**Record a baseline only after `--determinism` passes on that host.** A baseline taken
+from a host that races its own animations bakes one arbitrary frame in as the truth.
 
 Cross-*machine* reproducibility has **not** been verified — the manifest was taken on
 one Mac. Two different Macs agreeing is plausible (embedded Inter font, HarfBuzz

@@ -22,6 +22,12 @@
 # Usage:   ./run.sh [out-dir]
 #          ./run.sh --determinism [out-dir]          # 5 runs by default
 #          DETERMINISM_RUNS=10 ./run.sh --determinism [out-dir]
+#          ./run.sh --check-baseline [out-dir]       # capture once, diff vs the manifest
+#
+# --check-baseline captures once and verifies every screen against the committed
+# baselines/<os>-<arch>.sha256, failing on a changed screen, a missing one, or one the
+# baseline does not list. Run --determinism first on a host you have not captured from:
+# a baseline check on a non-deterministic host reports differences that are not regressions.
 #
 # --determinism captures the Avalonia side N times into <out>/determinism/r1..rN and
 # requires every PNG to be byte-identical to the first run's. Run it before you trust
@@ -36,11 +42,12 @@ set -euo pipefail
 
 HERE="$(cd "$(dirname "$0")" && pwd)"
 
-DETERMINISM=0
-if [ "${1:-}" = "--determinism" ]; then
-  DETERMINISM=1
-  shift
-fi
+MODE="capture"
+case "${1:-}" in
+  --determinism)    MODE="determinism"; shift ;;
+  --check-baseline) MODE="baseline";    shift ;;
+  --*) echo "unknown option '$1' (expected --determinism or --check-baseline)" >&2; exit 1 ;;
+esac
 
 OUT="${1:-$HERE/out}"
 mkdir -p "$OUT"
@@ -125,7 +132,88 @@ determinism_check() {
   return "$rc"
 }
 
-if [ "$DETERMINISM" -eq 1 ]; then
+# Which committed baseline belongs to this host. NOT uname alone: under WSL the capture
+# executes on the WINDOWS runtime through interop (run.sh drives the Windows dotnet there),
+# so `uname -s` says Linux while the pixels are Windows pixels. Getting that backwards would
+# compare a Windows capture against a Linux baseline and report the whole set as regressed.
+platform_id() {
+  if [ "$HOST_KIND" = "wsl" ]; then printf 'windows-x64'; return 0; fi
+  local os arch
+  case "$(uname -s)" in
+    Darwin) os="macos" ;;
+    Linux)  os="linux" ;;
+    *)      return 1 ;;
+  esac
+  case "$(uname -m)" in
+    arm64|aarch64) arch="arm64" ;;
+    x86_64|amd64)  arch="x64" ;;
+    *)             return 1 ;;
+  esac
+  printf '%s-%s' "$os" "$arch"
+}
+
+# `shasum` is present on macOS and most Linux; `sha256sum` is the coreutils one. Both read
+# the same "<hash>  <name>" format, so the committed manifest works with either.
+sha256_verify() {   # $1 = manifest path; cwd must be the capture dir
+  if command -v shasum >/dev/null 2>&1; then
+    shasum -a 256 -c "$1"
+  elif command -v sha256sum >/dev/null 2>&1; then
+    sha256sum -c "$1"
+  else
+    echo "!! neither shasum nor sha256sum is on PATH; cannot verify the baseline" >&2
+    return 1
+  fi
+}
+
+if [ "$MODE" = "baseline" ]; then
+  # Compare a fresh capture against the committed manifest for this host. The manifest is a
+  # record of what the UI looked like at a known commit; this is the step that turns it from
+  # documentation into something with an exit code.
+  #
+  # Run --determinism FIRST on any host you have not captured from. A baseline check on a
+  # host whose captures are not deterministic reports differences that are not regressions,
+  # which is the failure this whole tool exists to avoid.
+  if ! id="$(platform_id)"; then
+    echo "!! no baseline naming for $(uname -s)/$(uname -m); baselines are per OS+arch" >&2
+    exit 1
+  fi
+  manifest="$HERE/baselines/$id.sha256"
+  if [ ! -f "$manifest" ]; then
+    echo "!! no committed baseline for '$id' ($manifest)." >&2
+    echo "   Record one only after './run.sh --determinism' passes on this host:" >&2
+    echo "     cd <out>/avalonia && shasum -a 256 *.png > $manifest" >&2
+    echo "   and state the host in tools/parity-audit/README.md, as the macOS entry does." >&2
+    exit 1
+  fi
+
+  run_capture "avalonia" "$AVALONIA_CSPROJ" "$OUT/avalonia"
+
+  echo "== baseline ($id) =="
+  rc=0
+  ( cd "$OUT/avalonia" && sha256_verify "$manifest" ) || rc=1
+
+  # `shasum -c` only checks the names the manifest lists, so a screen the harness gained
+  # since the baseline was recorded would pass unnoticed. Both directions, always.
+  shopt -s nullglob
+  for path in "$OUT/avalonia"/*.png; do
+    name="$(basename "$path")"
+    if ! grep -q "  $name\$" "$manifest"; then
+      echo "!! $name: captured but absent from the baseline — the screen set has grown" >&2
+      rc=1
+    fi
+  done
+
+  if [ "$rc" -ne 0 ]; then
+    echo "!! baseline check FAILED against $manifest." >&2
+    echo "   If the UI changed on purpose, re-record it (see README 'Baselines') and say so" >&2
+    echo "   in the same commit. If it did not, this is a visual regression." >&2
+    exit 1
+  fi
+  echo "baseline OK: every screen matches $manifest"
+  exit 0
+fi
+
+if [ "$MODE" = "determinism" ]; then
   # How many times to capture. More than two, by default, and the reason is arithmetic
   # rather than caution: the two real defects this mode found on macOS were each a ~50/50
   # per-run coin flip (a one-pixel flyout edge, and a pane caught mid-fade), and two runs
