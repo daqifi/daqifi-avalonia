@@ -147,6 +147,36 @@ jobs:
           path: '**/obj/project.assets.json'
           if-no-files-found: error
 
+      # Everything above only sees drift that a PLAIN restore reacts to, and a plain
+      # restore that finds a CONSISTENT lock file leaves it byte-for-byte alone. NuGet
+      # compares ids case-insensitively when deciding that, so a lock file spelled
+      # differently from what the pinned SDK now writes is "consistent", survives locked
+      # mode and the check above, and stays stale indefinitely. That is #106: four files
+      # kept the project key `Oxyplot.Avalonia` long after the SDK started writing
+      # `oxyplot.avalonia`, and it surfaced only when a contributor ran --force-evaluate
+      # by hand and got a diff out of an untouched tree.
+      #
+      # --force-evaluate re-derives the graph from scratch, so this fails if the committed
+      # files are not what a clean derivation produces. It runs LAST and does not replace
+      # the restore above, because --force-evaluate also overrides RestoreLockedMode —
+      # this is a staleness check, not a substitute for the drift gate.
+      - name: Lock files must equal a from-scratch derivation
+        run: |
+          set -euo pipefail
+          dotnet restore Daqifi.Avalonia/Daqifi.Avalonia.csproj --force-evaluate
+          dotnet restore Daqifi.Avalonia.Desktop/Daqifi.Avalonia.Desktop.csproj --force-evaluate
+          dotnet restore tools/parity-audit/AvaloniaCapture/AvaloniaCapture.csproj \
+            --force-evaluate
+          if ! git diff --quiet -- '**/packages.lock.json'; then
+            echo "::error::a from-scratch restore derives lock files different from the" \
+                 "committed ones. They are stale rather than drifted, which is why every" \
+                 "other check passed. Regenerate with .github/scripts/refresh_lock_files.sh" \
+                 "and commit the result."
+            git diff --stat -- '**/packages.lock.json'
+            exit 1
+          fi
+          echo "lock files match a from-scratch derivation"
+
   macos:
     name: Desktop head on macOS
     # #88. macOS was verified once by hand (docs/RUNBOOK-macos-ios.md §1.1, 2026-08-01)
