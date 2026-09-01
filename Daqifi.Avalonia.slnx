@@ -3,4 +3,5 @@
   <Project Path="Daqifi.Avalonia.Desktop/Daqifi.Avalonia.Desktop.csproj" />
   <Project Path="Daqifi.Avalonia.Android/Daqifi.Avalonia.Android.csproj" />
   <Project Path="Daqifi.Avalonia.iOS/Daqifi.Avalonia.iOS.csproj" />
+  <Project Path="Daqifi.Avalonia.Tests/Daqifi.Avalonia.Tests.csproj" />
 </Solution>
