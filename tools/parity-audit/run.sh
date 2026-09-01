@@ -58,9 +58,16 @@ OUT="$(cd "$OUT" && pwd)"
 case "$OUT" in
   ""|"/") echo "Refusing to use unsafe output dir '$OUT'" >&2; exit 1 ;;
 esac
-# Start from clean output dirs so stale PNGs from a prior run can't be mistaken for
-# this run's captures (a failed/partial capture would otherwise be masked by old images).
-rm -rf "$OUT/avalonia" "$OUT/wpf" "$OUT/montage" "$OUT/determinism"
+# Start from clean output dirs so stale PNGs from a prior run can't be mistaken for this run's
+# captures (a failed/partial capture would otherwise be masked by old images).
+#
+# Scoped to the dirs THIS mode writes, and deferred until the mode has finished its preflight.
+# Neither is cosmetic. An unconditional wipe up here meant `--check-baseline` on a host with no
+# committed manifest deleted the determinism evidence you had just been told to produce, then
+# exited without replacing it — the cleanup destroyed the very thing the failure message asked
+# you to go and get. Per-mode scoping also stops the three modes clobbering each other's output
+# when they share an out-dir, which is the normal way to use them.
+clean_dirs() { rm -rf "$@"; }
 
 # Under WSL the harnesses run on the WINDOWS runtime through interop, so every path
 # handed to them has to be a Windows path — a Linux-style argument would resolve
@@ -186,6 +193,7 @@ if [ "$MODE" = "baseline" ]; then
     exit 1
   fi
 
+  clean_dirs "$OUT/avalonia"
   run_capture "avalonia" "$AVALONIA_CSPROJ" "$OUT/avalonia"
 
   echo "== baseline ($id) =="
@@ -238,6 +246,7 @@ if [ "$MODE" = "determinism" ]; then
     exit 1
   fi
 
+  clean_dirs "$OUT/determinism"
   echo "== determinism ($runs runs of the Avalonia leg, byte-compared) =="
   i=1
   while [ "$i" -le "$runs" ]; do
@@ -272,6 +281,7 @@ if [ "$MODE" = "determinism" ]; then
   exit 0
 fi
 
+clean_dirs "$OUT/avalonia" "$OUT/wpf" "$OUT/montage"
 run_capture "avalonia" "$AVALONIA_CSPROJ" "$OUT/avalonia"
 
 if [ "$HOST_KIND" = "wsl" ]; then

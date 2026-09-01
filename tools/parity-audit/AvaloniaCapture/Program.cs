@@ -188,14 +188,33 @@ internal static class AvaloniaCapture
         main.Height = 900;
         if (!main.IsVisible) { main.Show(); }
 
+        // Never capture after a navigation that did not happen. Set() returning false means the
+        // property is gone or read-only, and the window is therefore still showing the PREVIOUS
+        // screen — capturing anyway would write that frame under this screen's name, which is
+        // worse than not capturing it: a missing screen is caught by VerifyExpectedScreens, and
+        // a mislabelled one passes every check this tool has while quietly lying about what the
+        // UI looks like. Skipping the capture converts it into the case that IS caught.
         var tabs = new[] { "livegraph", "loggeddata", "channels", "devices", "profiles" };
         for (var i = 0; i < tabs.Length; i++)
         {
-            Set(vm, "SelectedIndex", i);
-            Capture($"desktop-{i + 1}-{tabs[i]}", main);
+            var name = $"desktop-{i + 1}-{tabs[i]}";
+            if (!Set(vm, "SelectedIndex", i))
+            {
+                _failed = true;
+                Console.WriteLine($"[SKIP] {name}: SelectedIndex is not writable on the " +
+                                  "view-model; not capturing the previous tab under this name");
+                continue;
+            }
+            Capture(name, main);
         }
 
-        Set(vm, "SelectedIndex", 0);
+        if (!Set(vm, "SelectedIndex", 0))
+        {
+            _failed = true;
+            Console.WriteLine("[FAIL] could not return to tab 0 before the drawer sweep; the " +
+                              "drawer captures would show the wrong pane behind them");
+            return;
+        }
         Quiesce(main);
         SweepDrawer(main, vm, "IsAppSettingsOpen", "desktop-6-settings-drawer");
         SweepDrawer(main, vm, "IsNotificationsOpen", "desktop-7-notifications-flyout");
@@ -205,7 +224,12 @@ internal static class AvaloniaCapture
 
     private static void SweepDrawer(Window main, object vm, string prop, string name)
     {
-        if (!Set(vm, prop, true)) { Console.WriteLine($"[SKIP] {name}: no prop {prop}"); return; }
+        if (!Set(vm, prop, true))
+        {
+            _failed = true;
+            Console.WriteLine($"[SKIP] {name}: no writable prop {prop}");
+            return;
+        }
         Capture(name, main);
         Set(vm, prop, false);
         // Let the CLOSE finish before the next drawer opens. Set() pumps a fixed number of
@@ -269,16 +293,40 @@ internal static class AvaloniaCapture
         // "below the fold / clipped" issues (e.g. #15) reproduce headless instead of
         // silently fitting in an oversized viewport.
         // Portrait phone
+        // Every capture below is gated on the navigation that selects it. NavClick returning
+        // false means the named button is gone and the view is still on the PREVIOUS pane, so
+        // capturing anyway would save that pane under this one's name — a duplicate, mislabelled
+        // screenshot that satisfies the completeness check and every byte comparison downstream,
+        // while being a picture of the wrong screen. That is the one failure a visual gate must
+        // never produce. Skipping the capture turns it into a missing screen, which
+        // VerifyExpectedScreens does catch.
+        //
+        // The bare NavClicks that return to Stream are gated too, for the same reason one step
+        // removed: they set up the state the NEXT capture is taken from.
         Resize(host, 384, 800);
         Capture("mobile-portrait-1-stream", host);
-        NavClick(mobile, "NavChannels"); Capture("mobile-portrait-2-channels", host);
-        NavClick(mobile, "NavStorage");  Capture("mobile-portrait-3-storage", host);
-        NavClick(mobile, "NavProfiles"); Capture("mobile-portrait-4-profiles", host);
-        NavClick(mobile, "NavStream");
+        if (NavClick(mobile, "NavChannels")) { Capture("mobile-portrait-2-channels", host); }
+        if (NavClick(mobile, "NavStorage"))  { Capture("mobile-portrait-3-storage", host); }
+        if (NavClick(mobile, "NavProfiles")) { Capture("mobile-portrait-4-profiles", host); }
+
+        // Back to Stream. This one is not followed by a capture of its own, but the two that
+        // come after it — the settings overlay and the landscape Stream pane — are both taken
+        // with it as their backdrop, so a failure here mislabels them rather than itself.
+        var onStream = NavClick(mobile, "NavStream");
 
         // Settings overlay (#11): toggle the named overlay visible + give it its VM.
         var overlay = mobile.FindControl<Control>("SettingsOverlay");
-        if (overlay is not null)
+        if (overlay is null)
+        {
+            _failed = true;
+            Console.WriteLine("[SKIP] mobile-portrait-5-settings: no SettingsOverlay control");
+        }
+        else if (!onStream)
+        {
+            Console.WriteLine("[SKIP] mobile-portrait-5-settings: the view is not on Stream, so " +
+                              "the overlay would be captured over the wrong pane");
+        }
+        else
         {
             overlay.DataContext ??= new Daqifi.Desktop.ViewModels.SettingsViewModel();
             overlay.IsVisible = true;
@@ -288,10 +336,17 @@ internal static class AvaloniaCapture
 
         // Landscape phone (desktop-style left rail per design intent)
         Resize(host, 820, 360);
-        Capture("mobile-landscape-1-stream", host);
-        NavClick(mobile, "RailChannels"); Capture("mobile-landscape-2-channels", host);
-        NavClick(mobile, "RailStorage");  Capture("mobile-landscape-3-storage", host);
-        NavClick(mobile, "RailProfiles"); Capture("mobile-landscape-4-profiles", host);
+        if (onStream)
+        {
+            Capture("mobile-landscape-1-stream", host);
+        }
+        else
+        {
+            Console.WriteLine("[SKIP] mobile-landscape-1-stream: the view is not on Stream");
+        }
+        if (NavClick(mobile, "RailChannels")) { Capture("mobile-landscape-2-channels", host); }
+        if (NavClick(mobile, "RailStorage"))  { Capture("mobile-landscape-3-storage", host); }
+        if (NavClick(mobile, "RailProfiles")) { Capture("mobile-landscape-4-profiles", host); }
         NavClick(mobile, "RailStream");
     }
 
@@ -304,12 +359,22 @@ internal static class AvaloniaCapture
         Pump();
     }
 
-    private static void NavClick(Control root, string name)
+    // Returns whether the navigation actually happened, and fails the run when it did not.
+    // Callers MUST gate their capture on this: the view is still on the previous pane, so a
+    // capture taken anyway is a picture of the wrong screen filed under the right name.
+    private static bool NavClick(Control root, string name)
     {
         var btn = root.FindControl<Button>(name);
-        if (btn is null) { Console.WriteLine($"[SKIP] nav {name}: not found"); return; }
+        if (btn is null)
+        {
+            _failed = true;
+            Console.WriteLine($"[SKIP] nav {name}: button not found; the pane it selects is not " +
+                              "reachable, so nothing is captured for it");
+            return false;
+        }
         btn.RaiseEvent(new RoutedEventArgs(Button.ClickEvent));
         Pump();
+        return true;
     }
 
     private static bool Set(object target, string prop, object? value)
