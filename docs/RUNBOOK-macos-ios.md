@@ -146,11 +146,27 @@ you deliberately decide to add a Catalyst head, which is not in scope here.
 
 ### ⚠ You have to create `.portomatic/project.yaml` — it is not in the clone
 
-**`.portomatic/project.yaml` is gitignored** (`.gitignore`, under
-*"portomatic local state (map/ and plans/ ARE committed)"*). It is per-machine
-config, so a fresh clone does **not** have it and no `git pull` will produce it.
-`.portomatic/map/`, `plans/`, `suites/` and `sync_state.yaml` **are** committed —
-only `project.yaml` (plus `reports/`, `research/`, `cache/`) is local.
+**The whole of `.portomatic/` is gitignored**, as of the commit that opened this
+repo to the public. It used to be only `project.yaml`, `reports/`, `research/` and
+`cache/`, with `map/`, `plans/`, `suites/` and `sync_state.yaml` committed; now
+none of it is tracked.
+
+That changes the setup step: a fresh clone has **no** `.portomatic/` at all, and no
+`git pull` will produce one. You need both `project.yaml` (per-machine config, never
+committed) *and* the map/plans, which now have to be carried across from an existing
+clone or restored from a commit before the untracking:
+
+```bash
+# restore the map and plans from the commit just before they were untracked
+git restore --source="$(git log --diff-filter=D -1 --format=%H -- .portomatic)^" \
+            --worktree .portomatic
+```
+
+`--worktree` is load-bearing. Plain `git checkout <sha> -- .portomatic` also brings
+the files back, but it writes them into the **index** as well, so they show up
+staged and the next `git commit -a` re-commits all 23k lines. `git restore
+--worktree` touches only the working tree, leaving them untracked and ignored,
+which is the intended state.
 
 Create it before running any portomatic command. It holds absolute paths to your
 two clones:

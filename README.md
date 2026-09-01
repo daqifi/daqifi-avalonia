@@ -31,6 +31,12 @@ This is a port in progress, not a finished rewrite. Expect rough edges: some cod
 still throw `NotImplementedException`, and `// @port:` markers throughout the source
 mark work that has not been reconciled with the app it ports. Treat it accordingly.
 
+Those `// @port:` markers reference an internal correspondence map (`.portomatic/`)
+that tracks this port against upstream file by file. It is working state for the
+porting tool rather than part of the application, so it is not published here — the
+markers are still useful as "this symbol came from upstream and may have diverged",
+but the map they index is not in this repository.
+
 ### Platform heads
 
 | Project | Target framework | Notes |
@@ -81,8 +87,6 @@ the same commit.
 - `docs/` — runbooks and design notes
 - `tools/` — build and release tooling, including the parity-audit harness used to
   compare this app's UI against the upstream WPF app
-- `.portomatic/` — correspondence maps and plans from the automated porting process
-  that produced the initial scaffold
 - `.github/` — CI workflows and the guard scripts they run. The policy directories
   (`dependency-updates/`, `upstream-sync/`, `merge-queue/`) each carry a README
   explaining what they enforce and why
