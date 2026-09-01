@@ -5439,15 +5439,21 @@ symbols:
     backlog_id: null
     last_synced_sha: null
   - upstream: DigitalChannelCount { get; set; }
-    downstream: DigitalChannelCount { get; set; }
-    relation: one_to_one
-    notes: null
+    downstream: null
+    relation: divergent
+    notes: 'Dropped downstream as dead state. Upstream declares the field but never
+      counts it: pre-#699 it initialised an always-zero local, and #699 replaced that
+      with a literal 0 once frame decoding moved into Core''s pipeline. No reader on
+      either side.'
     backlog_id: null
     last_synced_sha: null
   - upstream: AnalogChannelCount { get; set; }
-    downstream: AnalogChannelCount { get; set; }
-    relation: one_to_one
-    notes: null
+    downstream: null
+    relation: divergent
+    notes: 'Dropped downstream as dead state. Upstream declares the field but never
+      counts it: pre-#699 it initialised an always-zero local, and #699 replaced that
+      with a literal 0 once frame decoding moved into Core''s pipeline. No reader on
+      either side.'
     backlog_id: null
     last_synced_sha: null
   - upstream: DeviceStatus { get; set; }
