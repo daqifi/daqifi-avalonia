@@ -8,11 +8,19 @@ artifacts/
 # `dotnet test --logger trx` and every IDE test runner drop results here.
 TestResults/
 
-# portomatic local state (map/ and plans/ ARE committed)
-.portomatic/project.yaml
-.portomatic/reports/
-.portomatic/research/
-.portomatic/cache/
+# portomatic working state — ALL of it, local only.
+#
+# map/, plans/, suites/ and sync_state.yaml used to be committed; they were
+# untracked when this repo was opened to the public. They are the port's working
+# notes — a file-by-file correspondence map between this app and the upstream WPF
+# app — not part of the shipped application, and they are only meaningful to
+# someone running portomatic against two local clones.
+#
+# KEEP YOUR LOCAL COPY. The `// @port:` markers throughout the source still refer
+# to `.portomatic/map/`, and every portomatic command reads this directory. A
+# fresh clone will not have it, so it has to be carried over by hand or restored
+# from a commit before the untracking.
+.portomatic/
 
 # agent tooling (regenerate via portomatic's install-skill-pack.sh)
 .claude/

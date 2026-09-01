@@ -1220,9 +1220,9 @@ public partial class DaqifiViewModel : ObservableObject, IFirmwareUpdateHost, IL
     // @port: Daqifi.Desktop.ViewModels.DaqifiViewModel.TriggerWifiFirmwareProbe
     private void TriggerWifiFirmwareProbe()
     {
-        // The FLASH WIFI button's CanExecute reads SelectedDevice.HasWincWifiModule, which derives from
-        // DeviceType — populated asynchronously on connect — so refresh it here (the probe result also
-        // re-notifies once it lands).
+        // The FLASH WIFI button's CanExecute reads SelectedDevice.HasWincWifiModule, which comes from
+        // Core's device capabilities — populated asynchronously on connect — so refresh it here (the
+        // probe result also re-notifies once it lands).
         UpdateWifiFirmwareOnlyCommand.NotifyCanExecuteChanged();
 
         var probe = CheckWifiFirmwareAsync();
