@@ -74,7 +74,10 @@
                 <TextBlock Grid.Row="0" Grid.Column="1" Classes="cell"
                            Text="{Binding SelectedLoggingSession.Name}" TextAlignment="Center"/>
 
-                <TextBlock Grid.Row="1" Grid.Column="0" Classes="cellHeader" Text="Sample Size" Margin="5"/>
+                <!-- Refresh cadence, not a window size: the measurement window itself runs until
+                     Reset. Core's AcquisitionStatistics accumulates continuously, so this only
+                     decides how often the figures below are re-read. -->
+                <TextBlock Grid.Row="1" Grid.Column="0" Classes="cellHeader" Text="Refresh Every (msgs)" Margin="5"/>
                 <NumericUpDown Grid.Row="1" Grid.Column="1"
                                Value="{Binding SummaryLogger.SampleSize}"
                                Minimum="1" Increment="1" Width="150" HorizontalAlignment="Left"/>
@@ -102,27 +105,28 @@
                         <TextBlock Grid.Row="1" Grid.Column="1" Grid.ColumnSpan="3" Classes="cell"
                                    Text="{Binding SummaryLogger.ElapsedTime}"/>
 
-                        <TextBlock Grid.Row="2" Grid.Column="0" Classes="cellHeader" Text="Sample Rate (hz)"/>
+                        <TextBlock Grid.Row="2" Grid.Column="0" Classes="cellHeader" Text="Samples"/>
                         <TextBlock Grid.Row="2" Grid.Column="1" Grid.ColumnSpan="3" Classes="cell"
+                                   Text="{Binding SummaryLogger.SampleCount}"/>
+
+                        <!-- Total throughput, NOT the per-channel rate this row used to show.
+                             The per-channel rate now has its own pair of columns below, measured
+                             against both clocks, which is the number worth reading. -->
+                        <TextBlock Grid.Row="3" Grid.Column="0" Classes="cellHeader" Text="Total Samples/s"
+                                   ToolTip.Tip="Every channel combined, measured against the host clock. Per-channel rates are in the CHANNELS section."/>
+                        <TextBlock Grid.Row="3" Grid.Column="1" Grid.ColumnSpan="3" Classes="cell"
                                    Text="{Binding SummaryLogger.SampleRate}" TextAlignment="Center"/>
 
-                        <TextBlock Grid.Row="3" Grid.Column="0" Classes="cellHeader" Text="Statuses"/>
-                        <TextBlock Grid.Row="3" Grid.Column="1" Classes="cell"
+                        <TextBlock Grid.Row="4" Grid.Column="0" Classes="cellHeader" Text="Statuses"/>
+                        <TextBlock Grid.Row="4" Grid.Column="1" Classes="cell"
                                    Text="{Binding SummaryLogger.StatusList}" TextAlignment="Right"/>
 
-                        <TextBlock Grid.Row="4" Grid.Column="1" Classes="cellHeader" Text="Min"/>
-                        <TextBlock Grid.Row="4" Grid.Column="2" Classes="cellHeader" Text="Avg"/>
-                        <TextBlock Grid.Row="4" Grid.Column="3" Classes="cellHeader" Text="Max"/>
+                        <TextBlock Grid.Row="5" Grid.Column="1" Classes="cellHeader" Text="Min"/>
+                        <TextBlock Grid.Row="5" Grid.Column="2" Classes="cellHeader" Text="Avg"/>
+                        <TextBlock Grid.Row="5" Grid.Column="3" Classes="cellHeader" Text="Max"/>
 
-                        <TextBlock Grid.Row="5" Grid.Column="0" Classes="cellHeader" Text="Delta (ticks)"/>
-                        <TextBlock Grid.Row="5" Grid.Column="1" Classes="cell"
-                                   Text="{Binding SummaryLogger.MinDelta}" TextAlignment="Right"/>
-                        <TextBlock Grid.Row="5" Grid.Column="2" Classes="cell"
-                                   Text="{Binding SummaryLogger.AverageDelta}" TextAlignment="Right"/>
-                        <TextBlock Grid.Row="5" Grid.Column="3" Classes="cell"
-                                   Text="{Binding SummaryLogger.MaxDelta}" TextAlignment="Right"/>
-
-                        <TextBlock Grid.Row="6" Grid.Column="0" Classes="cellHeader" Text="Latency (ticks)"/>
+                        <TextBlock Grid.Row="6" Grid.Column="0" Classes="cellHeader" Text="Latency (ms)"
+                                   ToolTip.Tip="How far behind the device's own account of when a sample was taken the host was when it saw it. Negative means the device clock is running ahead of the host's."/>
                         <TextBlock Grid.Row="6" Grid.Column="1" Classes="cell"
                                    Text="{Binding SummaryLogger.MinLatency}" TextAlignment="Right"/>
                         <TextBlock Grid.Row="6" Grid.Column="2" Classes="cell"
@@ -137,7 +141,7 @@
                         <ListBox.ItemTemplate>
                             <DataTemplate>
                                 <Grid Margin="5" ColumnDefinitions="150,*,*,*"
-                                      RowDefinitions="Auto,Auto,Auto,Auto">
+                                      RowDefinitions="Auto,Auto,Auto,Auto,Auto,Auto,Auto">
                                     <TextBlock Grid.Row="0" Grid.Column="0" Classes="cell"
                                                Text="{Binding Name}"/>
                                     <TextBlock Grid.Row="0" Grid.Column="1" Classes="cell"
@@ -147,25 +151,44 @@
                                     <TextBlock Grid.Row="0" Grid.Column="3" Classes="cell"
                                                Text="{Binding SampleCount}" TextAlignment="Right"/>
 
-                                    <TextBlock Grid.Row="1" Grid.Column="0" Classes="cellHeader" Text="Sample Rate (hz)"/>
-                                    <TextBlock Grid.Row="1" Grid.Column="2" Classes="cell"
-                                               Text="{Binding SampleRate}" TextAlignment="Right"/>
+                                    <!-- The two rates side by side are the point of the panel: both
+                                         low means samples went missing, a disagreement means the
+                                         device and host clocks have drifted apart. -->
+                                    <TextBlock Grid.Row="1" Grid.Column="2" Classes="cellHeader"
+                                               Text="Host clock" TextAlignment="Right"/>
+                                    <TextBlock Grid.Row="1" Grid.Column="3" Classes="cellHeader"
+                                               Text="Device clock" TextAlignment="Right"/>
 
-                                    <TextBlock Grid.Row="2" Grid.Column="0" Classes="cellHeader" Text="Delta"/>
-                                    <TextBlock Grid.Row="2" Grid.Column="1" Classes="cell"
-                                               Text="{Binding MinDelta}" TextAlignment="Right"/>
+                                    <TextBlock Grid.Row="2" Grid.Column="0" Classes="cellHeader" Text="Sample Rate (Hz)"/>
                                     <TextBlock Grid.Row="2" Grid.Column="2" Classes="cell"
-                                               Text="{Binding AverageDelta}" TextAlignment="Right"/>
+                                               Text="{Binding SampleRate}" TextAlignment="Right"/>
                                     <TextBlock Grid.Row="2" Grid.Column="3" Classes="cell"
+                                               Text="{Binding DeviceClockSampleRate}" TextAlignment="Right"/>
+
+                                    <TextBlock Grid.Row="3" Grid.Column="1" Classes="cellHeader" Text="Min" TextAlignment="Right"/>
+                                    <TextBlock Grid.Row="3" Grid.Column="2" Classes="cellHeader" Text="Avg" TextAlignment="Right"/>
+                                    <TextBlock Grid.Row="3" Grid.Column="3" Classes="cellHeader" Text="Max" TextAlignment="Right"/>
+
+                                    <TextBlock Grid.Row="4" Grid.Column="0" Classes="cellHeader" Text="Interval (ms)"/>
+                                    <TextBlock Grid.Row="4" Grid.Column="1" Classes="cell"
+                                               Text="{Binding MinDelta}" TextAlignment="Right"/>
+                                    <TextBlock Grid.Row="4" Grid.Column="2" Classes="cell"
+                                               Text="{Binding AverageDelta}" TextAlignment="Right"/>
+                                    <TextBlock Grid.Row="4" Grid.Column="3" Classes="cell"
                                                Text="{Binding MaxDelta}" TextAlignment="Right"/>
 
-                                    <TextBlock Grid.Row="3" Grid.Column="0" Classes="cellHeader" Text="Value"/>
-                                    <TextBlock Grid.Row="3" Grid.Column="1" Classes="cell"
+                                    <TextBlock Grid.Row="5" Grid.Column="0" Classes="cellHeader" Text="Value"/>
+                                    <TextBlock Grid.Row="5" Grid.Column="1" Classes="cell"
                                                Text="{Binding MinValue}" TextAlignment="Right"/>
-                                    <TextBlock Grid.Row="3" Grid.Column="2" Classes="cell"
+                                    <TextBlock Grid.Row="5" Grid.Column="2" Classes="cell"
                                                Text="{Binding AverageValue}" TextAlignment="Right"/>
-                                    <TextBlock Grid.Row="3" Grid.Column="3" Classes="cell"
+                                    <TextBlock Grid.Row="5" Grid.Column="3" Classes="cell"
                                                Text="{Binding MaxValue}" TextAlignment="Right"/>
+
+                                    <TextBlock Grid.Row="6" Grid.Column="0" Classes="cellHeader" Text="Out of order"
+                                               ToolTip.Tip="Samples that arrived stamped behind one already seen on this channel."/>
+                                    <TextBlock Grid.Row="6" Grid.Column="3" Classes="cell"
+                                               Text="{Binding OutOfOrderSampleCount}" TextAlignment="Right"/>
                                 </Grid>
                             </DataTemplate>
                         </ListBox.ItemTemplate>

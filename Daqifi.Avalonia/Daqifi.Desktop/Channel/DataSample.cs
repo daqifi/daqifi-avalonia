@@ -14,7 +14,7 @@ using Daqifi.Desktop.Logger;
 namespace Daqifi.Desktop.Channel;
 
 // @port: Daqifi.Desktop.Channel.DataSample
-public class DataSample
+public class DataSample : Daqifi.Core.Channel.IDataSample
 {
     #region Properties
     // @port: Daqifi.Desktop.Channel.DataSample.ID
@@ -57,6 +57,48 @@ public class DataSample
     [Required]
     // @port: Daqifi.Desktop.Channel.DataSample.LoggingSession
     public LoggingSession LoggingSession { get; set; }
+
+    /// <summary>
+    /// The Core channel this sample was decoded onto, or <see langword="null"/> for samples that
+    /// did not come from a live stream (an SD card import, or a row rehydrated from the database).
+    /// </summary>
+    /// <remarks>
+    /// Carried so a consumer can hand the sample to a Core aggregator that keys channels the way
+    /// Core does — by <c>(type, channel number)</c> — rather than by the display name.
+    /// <para>
+    /// Deliberately <c>internal</c> and <c>[NotMapped]</c>: this type is an EF entity, and a public
+    /// property here would join the mapped model and demand a migration for something that is
+    /// in-memory plumbing.
+    /// </para>
+    /// </remarks>
+    [NotMapped]
+    internal Daqifi.Core.Channel.IChannel? CoreChannel { get; init; }
+    #endregion
+
+    #region Daqifi.Core.Channel.IDataSample
+    // Explicit implementations throughout: an implicit one would add public properties to an EF
+    // entity and pull them into the mapped model. `Value` is the exception — the entity already
+    // declares it with a matching signature, so it satisfies the interface as it stands.
+
+    /// <inheritdoc />
+    DateTime Daqifi.Core.Channel.IDataSample.Timestamp => new(TimestampTicks);
+
+    /// <summary>
+    /// Always <see langword="null"/>: the raw ADC count is consumed by the decode path that
+    /// produced <see cref="Value"/> and is not retained on this type.
+    /// </summary>
+    int? Daqifi.Core.Channel.IDataSample.RawValue => null;
+
+    /// <summary>
+    /// Always <see langword="null"/>: only the rollover-adjusted <see cref="TimestampTicks"/> is
+    /// retained, not the device's verbatim counter.
+    /// </summary>
+    uint? Daqifi.Core.Channel.IDataSample.DeviceTimestamp => null;
+
+    // Scaling is left at the interface default (null), which makes IDataSample.ScaledValue return
+    // Value unchanged. That is the correct answer here: any scaling the user configured has ALREADY
+    // been applied to Value by AbstractChannel.ActiveSample, so reporting a Core ChannelScaling as
+    // well would claim a second, unapplied conversion.
     #endregion
 
     #region Constructors
@@ -88,6 +130,12 @@ public class DataSample
         Value = value;
         TimestampTicks = timestamp.Ticks;
         FirmwareDeltaMs = firmwareDeltaMs;
+        CoreChannel = channel switch
+        {
+            AnalogChannel analog => analog.CoreChannel,
+            DigitalChannel digital => digital.CoreChannel,
+            _ => null
+        };
     }
     #endregion
 

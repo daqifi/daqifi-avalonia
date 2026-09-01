@@ -5,462 +5,319 @@
 
 using Daqifi.Desktop.Channel;
 using Daqifi.Desktop.Device;
+using System.Globalization;
 using System.Text;
 using CommunityToolkit.Mvvm.ComponentModel;
 using CommunityToolkit.Mvvm.Input;
+using CoreAcquisitionStatistics = Daqifi.Core.Device.AcquisitionStatistics;
+using CoreChannelStatistics = Daqifi.Core.Device.ChannelAcquisitionStatistics;
+using CoreStatisticsSnapshot = Daqifi.Core.Device.AcquisitionStatisticsSnapshot;
 
 namespace Daqifi.Desktop.Logger;
 
 /// <summary>
-/// Provaides summary data for incoming samples
+/// Provides summary data for incoming samples — the Log Summary flyout's view-model.
 /// </summary>
+/// <remarks>
+/// <para>
+/// The statistics themselves are <b>not computed here</b>. Every count, rate, interval, latency
+/// and value extreme comes from Core's <see cref="CoreAcquisitionStatistics"/> (daqifi-core#518,
+/// released in 1.6.0), which was itself ported out of upstream daqifi-desktop's copy of this
+/// class so that every Core consumer gets the measurement rather than just one app. This type
+/// feeds it and projects its snapshot onto the properties the flyout binds; that is the whole job.
+/// </para>
+/// <para>
+/// <b>What adopting Core's aggregator changed for the user.</b> The per-channel sample rate this
+/// class used to report was derived from the sample <em>timestamps</em>, which are reconstructed
+/// from the device's own clock — so it reported the rate the device believed it was streaming at
+/// and could not, even in principle, reveal that samples were going missing. Core measures both:
+/// <see cref="ChannelSummary.SampleRate"/> against the host clock (what actually arrived) and
+/// <see cref="ChannelSummary.DeviceClockSampleRate"/> against the device clock (what the device
+/// claims). The two agreeing but below the requested rate means samples were lost; the two
+/// disagreeing means the clocks have parted company.
+/// </para>
+/// <para>
+/// <b>Samples are handed over rather than observed.</b> Core can attach itself to a device and
+/// watch its channels directly, but the value extremes have to describe what the user configured
+/// this app to show: <see cref="AbstractChannel.ActiveSample"/> applies the channel's scale
+/// expression before the sample reaches the logging pipeline, and a device-attached aggregator
+/// would see the pre-expression volts instead. Feeding it from <see cref="Log(DataSample)"/> —
+/// the hand-fed mode Core documents — keeps the reported minimum, mean and maximum in whatever
+/// unit the channel is configured to report, which is what this panel has always shown.
+/// </para>
+/// <para>
+/// Device status codes are the one figure Core does not carry, since they are a property of the
+/// device message rather than of any sample; they are still accumulated here.
+/// </para>
+/// </remarks>
 // @port: Daqifi.Desktop.Logger.SummaryLogger
 public partial class SummaryLogger : ObservableObject, ILogger
 {
+    #region Constants
+    /// <summary>
+    /// How many device messages arrive between refreshes of the flyout by default. Purely a
+    /// display cadence: the measurement window itself runs until <see cref="Reset"/>.
+    /// </summary>
+    private const int DEFAULT_REFRESH_INTERVAL_MESSAGES = 1000;
+    #endregion
 
-    #region "Private Data"
-
+    #region Nested Types
+    /// <summary>
+    /// One channel's row in the flyout, projected from Core's per-channel statistics.
+    /// </summary>
     // @port: Daqifi.Desktop.Logger.SummaryLogger.ChannelSummary
-    public class ChannelSummary
+    public sealed class ChannelSummary
     {
-        private readonly ChannelBuffer _current;
+        private readonly CoreChannelStatistics _statistics;
 
-        internal ChannelSummary(string name, ChannelBuffer current)
+        internal ChannelSummary(CoreChannelStatistics statistics)
         {
-            Name = name;
-            _current = current;
+            _statistics = statistics;
         }
 
         /// <summary>
-        /// The frequency sample rate
+        /// The channel name.
         /// </summary>
-        public string Name { get; }
+        public string Name => _statistics.Name;
 
         /// <summary>
-        /// The number of samples seen
+        /// The number of samples seen on this channel in the current window.
         /// </summary>
-        public int SampleCount => _current.SampleCount;
+        public long SampleCount => _statistics.SampleCount;
 
         /// <summary>
-        /// The time of the last sample
+        /// The time of the last sample.
         /// </summary>
         // @port: Daqifi.Desktop.Logger.SummaryLogger.LastUpdate
-        public DateTime LastUpdate => new(_current.LastSampleTicks);
+        public DateTime LastUpdate => _statistics.LastReceivedAt;
 
         /// <summary>
-        /// The frequency sample rate
+        /// The rate samples actually reached the host at, in Hz. This is the answer to "am I
+        /// really getting the rate I asked for?" — it falls short of the requested rate when
+        /// samples go missing, which the device-clock rate below cannot show.
         /// </summary>
         // @port: Daqifi.Desktop.Logger.SummaryLogger.SampleRate
-        public double SampleRate
-        {
-            get
-            {
-                // FirstSampleTicks is measured from the end of the sample, so we need to drop the first sample
-                var delta = new TimeSpan(_current.LastSampleTicks - _current.FirstSampleTicks);
-                return delta.Ticks > 0 ? (_current.SampleCount - 1) / delta.TotalSeconds : 0.0;
-            }
-        }
+        public double SampleRate => _statistics.MeasuredSampleRateHz;
 
         /// <summary>
-        /// The maximum time between samples
+        /// The rate the device's own timestamps claim, in Hz. Compare against
+        /// <see cref="SampleRate"/>: both low means lost samples, a disagreement means the device
+        /// and host clocks have drifted apart.
+        /// </summary>
+        public double DeviceClockSampleRate => _statistics.DeviceClockSampleRateHz;
+
+        /// <summary>
+        /// The largest gap between consecutive samples, in milliseconds.
         /// </summary>
         // @port: Daqifi.Desktop.Logger.SummaryLogger.MaxDelta
-        public double MaxDelta => _current.MaxDeltaTicks;
+        public double MaxDelta => _statistics.MaxSampleInterval.TotalMilliseconds;
 
         /// <summary>
-        /// The average time between samples
+        /// The mean gap between consecutive samples, in milliseconds.
         /// </summary>
         // @port: Daqifi.Desktop.Logger.SummaryLogger.AverageDelta
-        public double AverageDelta => _current.AverageDeltaTicks;
+        public double AverageDelta => _statistics.MeanSampleInterval.TotalMilliseconds;
 
         /// <summary>
-        /// The minimum time between samples
+        /// The smallest gap between consecutive samples, in milliseconds.
         /// </summary>
         // @port: Daqifi.Desktop.Logger.SummaryLogger.MinDelta
-        public double MinDelta => _current.MinDeltaTicks;
+        public double MinDelta => _statistics.MinSampleInterval.TotalMilliseconds;
 
         /// <summary>
-        /// The largest sample value seen on this channel
+        /// How many samples arrived stamped behind one already seen on this channel. Non-zero
+        /// means the device sent frames out of order, which is why it is reported separately
+        /// rather than folded into the interval bounds as a negative gap.
         /// </summary>
-        public double MaxValue => _current.MaxValue;
+        public long OutOfOrderSampleCount => _statistics.OutOfOrderSampleCount;
 
         /// <summary>
-        /// The smallest sample value seen on this channel
+        /// The largest sample value seen on this channel.
         /// </summary>
-        public double MinValue => _current.MinValue;
+        public double MaxValue => _statistics.MaxValue;
 
         /// <summary>
-        /// The mean of the sample values seen on this channel
+        /// The smallest sample value seen on this channel.
         /// </summary>
-        public double AverageValue => _current.AverageValue;
+        public double MinValue => _statistics.MinValue;
+
+        /// <summary>
+        /// The mean of the sample values seen on this channel.
+        /// </summary>
+        public double AverageValue => _statistics.MeanValue;
     }
+    #endregion
 
-    internal class ChannelBuffer
-    {
-        /// <summary>
-        /// The number of samples seen
-        /// </summary>
-        public int SampleCount { get; set; }
-
-        /// <summary>
-        /// The total elapsed time
-        /// </summary>
-        public long FirstSampleTicks { get; set; }
-
-        /// <summary>
-        /// The total elapsed time
-        /// </summary>
-        public long LastSampleTicks { get; set; }
-
-        /// <summary>
-        /// The average time between samples
-        /// </summary>
-        public double AverageDeltaTicks { get; set; }
-
-        /// <summary>
-        /// The maximum time between samples
-        /// </summary>
-        public long MaxDeltaTicks { get; set; }
-
-        /// <summary>
-        /// The minimum time between samples
-        /// </summary>
-        public long MinDeltaTicks { get; set; }
-
-        /// <summary>
-        /// The running mean of these samples
-        /// </summary>
-        public double AverageValue { get; set; }
-
-        /// <summary>
-        /// The maximum value of these samples
-        /// </summary>
-        public double MaxValue { get; set; }
-
-        /// <summary>
-        /// The minimum value of these samples
-        /// </summary>
-        public double MinValue { get; set; }
-
-        // @port: Daqifi.Desktop.Logger.SummaryLogger.Reset
-        public void Reset()
-        {
-            SampleCount = 0;
-            FirstSampleTicks = 0;
-            LastSampleTicks = 0;
-            AverageDeltaTicks = 0;
-            MaxDeltaTicks = 0;
-            MinDeltaTicks = 0;
-            AverageValue = 0;
-            MaxValue = 0;
-            MinValue = 0;
-        }
-    }
-
+    #region Private Data
+    /// <summary>
+    /// Guards <see cref="_statuses"/> and <see cref="_messagesSinceRefresh"/>, both written on the
+    /// device's message thread and read from the UI thread. Core's aggregator has its own lock and
+    /// is not covered by this one.
+    /// </summary>
+    private readonly object _gate = new();
 
     /// <summary>
-    /// Summary results object
+    /// Core's aggregator, in its hand-fed mode: it subscribes to nothing and records only what
+    /// <see cref="Log(DataSample)"/> passes it.
     /// </summary>
-    // @port: Daqifi.Desktop.Logger.SummaryLogger.SummaryBuffer
-    private class SummaryBuffer
-    {
-        public SummaryBuffer()
-        {
-            Channels = new Dictionary<string, ChannelBuffer>(64);
-            StatusList = new HashSet<int>();
-        }
+    private readonly CoreAcquisitionStatistics _statistics = new();
 
-        /// <summary>
-        /// The number of samples seen
-        /// </summary>
-        public int SampleCount { get; set; }
+    /// <summary>
+    /// The device status codes seen in the current window.
+    /// </summary>
+    // @port: Daqifi.Desktop.Logger.SummaryLogger.StatusList
+    private readonly HashSet<int> _statuses = [];
 
-        /// <summary>
-        /// The total elapsed time
-        /// </summary>
-        public long FirstSampleTicks { get; set; }
+    /// <summary>
+    /// The most recently published reading. Replaced wholesale on the message thread and read on
+    /// the UI thread, so every bound property sees one internally consistent snapshot rather than
+    /// a set of figures taken at different instants.
+    /// </summary>
+    private volatile CoreStatisticsSnapshot _snapshot = new CoreAcquisitionStatistics().Snapshot();
 
-        /// <summary>
-        /// The total elapsed time
-        /// </summary>
-        public long LastSampleTicks { get; set; }
-
-        /// <summary>
-        /// The average time between samples
-        /// </summary>
-        public double AverageDeltaTicks { get; set; }
-
-        /// <summary>
-        /// The maximum time between samples
-        /// </summary>
-        public long MaxDeltaTicks { get; set; }
-
-        /// <summary>
-        /// The minimum time between samples
-        /// </summary>
-        public long MinDeltaTicks { get; set; }
-
-        /// <summary>
-        /// The longest time between when the board reported a message and when the app received it
-        /// </summary>
-        public long MaxLatencyTicks { get; set; }
-
-        /// <summary>
-        /// The shortest time between when the board reported a message and when the app received it
-        /// </summary>
-        public long MinLatencyTicks { get; set; }
-
-        /// <summary>
-        /// The running mean time between when the board reported a message and when the app received it
-        /// </summary>
-        public double AverageLatencyTicks { get; set; }
-
-        /// <summary>
-        /// The statuses seen
-        /// </summary>
-        // @port: Daqifi.Desktop.Logger.SummaryLogger.StatusList
-        public HashSet<int> StatusList { get; set; }
-
-        /// <summary>
-        /// Indicates whether the device timestamp rolled over in this sample set
-        /// </summary>
-        public bool HasRollover { get; set; }
-
-        /// <summary>
-        /// The channels seen
-        /// </summary>
-        // @port: Daqifi.Desktop.Logger.SummaryLogger.Channels
-        public Dictionary<string, ChannelBuffer> Channels { get; set; }
-
-        public void Reset()
-        {
-            SampleCount = 0;
-            FirstSampleTicks = 0;
-            LastSampleTicks = 0;
-            AverageDeltaTicks = 0;
-            MaxDeltaTicks = 0;
-            MinDeltaTicks = 0;
-            MaxLatencyTicks = 0;
-            MinLatencyTicks = 0;
-            AverageLatencyTicks = 0;
-            StatusList.Clear();
-            foreach (var pair in Channels)
-            {
-                pair.Value.Reset();
-            }
-        }
-    }
+    /// <summary>
+    /// Device messages seen since the last publish. Counts messages, not samples, matching what
+    /// <see cref="SampleSize"/> has always meant.
+    /// </summary>
+    private int _messagesSinceRefresh;
 
     [ObservableProperty]
-    private int _sampleSize;
+    private int _sampleSize = DEFAULT_REFRESH_INTERVAL_MESSAGES;
 
     [ObservableProperty]
     private bool _enabled;
-
-    /// <summary>
-    /// The in-progress sample set
-    /// </summary>
-    private SummaryBuffer _buffer;
-
-    /// <summary>
-    /// The last completed sample set
-    /// </summary>
-    private SummaryBuffer _current;
-
     #endregion
 
-    #region "Properties"
+    #region Properties
     /// <summary>
-    /// The total elapsed time
+    /// How long data has been flowing in the current window, in milliseconds.
     /// </summary>
     // @port: Daqifi.Desktop.Logger.SummaryLogger.ElapsedTime
-    public double ElapsedTime => TimeSpan.FromTicks(_current.LastSampleTicks - _current.FirstSampleTicks).TotalMilliseconds;
+    public double ElapsedTime => _snapshot.Duration.TotalMilliseconds;
 
     /// <summary>
-    /// The time of the last sample
+    /// The time of the last sample.
     /// </summary>
-    public DateTime LastUpdate => new(_current.LastSampleTicks);
+    public DateTime LastUpdate => _snapshot.LastReceivedAt;
 
     /// <summary>
-    /// The frequency sample rate
+    /// The total number of samples recorded across every channel in the current window.
+    /// </summary>
+    public long SampleCount => _snapshot.TotalSampleCount;
+
+    /// <summary>
+    /// The combined rate samples arrived at across every channel, in Hz, measured against the
+    /// host clock. Divide by the number of active channels for the per-channel rate, or read it
+    /// directly off the channel rows.
     /// </summary>
     public double SampleRate
     {
         get
         {
-            var delta = new TimeSpan(_current.LastSampleTicks - _current.FirstSampleTicks);
-            return delta.Ticks > 0 ? (_current.SampleCount - 1) / delta.TotalSeconds : 0.0;
+            var span = _snapshot.Duration;
+            return _snapshot.TotalSampleCount > 1 && span.Ticks > 0
+                ? (_snapshot.TotalSampleCount - 1) / span.TotalSeconds
+                : 0.0;
         }
     }
 
     /// <summary>
-    /// The maximum time between samples
-    /// </summary>
-    public double MaxDelta => _current.MaxDeltaTicks;
-
-    /// <summary>
-    /// The minimum time between samples
-    /// </summary>
-    public double MinDelta => _current.MinDeltaTicks;
-
-    /// <summary>
-    /// The average time between samples
-    /// </summary>
-    public double AverageDelta => _current.AverageDeltaTicks;
-
-    /// <summary>
-    /// The longest message latency in the sample set
+    /// The longest observed delay between the device's account of when a sample was taken and the
+    /// host seeing it, in milliseconds.
     /// </summary>
     // @port: Daqifi.Desktop.Logger.SummaryLogger.MaxLatency
-    public double MaxLatency => _current.MaxLatencyTicks;
+    public double MaxLatency => _snapshot.MaxLatency.TotalMilliseconds;
 
     /// <summary>
-    /// The shortest message latency in the sample set
+    /// The shortest observed sample latency, in milliseconds. Can legitimately be negative when
+    /// the device clock outruns the host's.
     /// </summary>
     // @port: Daqifi.Desktop.Logger.SummaryLogger.MinLatency
-    public double MinLatency => _current.MinLatencyTicks;
+    public double MinLatency => _snapshot.MinLatency.TotalMilliseconds;
 
     /// <summary>
-    /// The mean message latency of the sample set
+    /// The mean sample latency, in milliseconds.
     /// </summary>
     // @port: Daqifi.Desktop.Logger.SummaryLogger.AverageLatency
-    public double AverageLatency => _current.AverageLatencyTicks;
+    public double AverageLatency => _snapshot.MeanLatency.TotalMilliseconds;
 
     /// <summary>
-    /// Display info for the channels
+    /// Display info for the channels, in the device's own channel order (analog first, then
+    /// digital, ascending within each) rather than in first-seen order.
     /// </summary>
+    // @port: Daqifi.Desktop.Logger.SummaryLogger.Channels
     public IEnumerable<ChannelSummary> Channels
     {
         get
         {
-            var result = new List<ChannelSummary>();
-            foreach (var pair in _current.Channels)
+            var channels = _snapshot.Channels;
+            var result = new List<ChannelSummary>(channels.Count);
+            foreach (var channel in channels)
             {
-                result.Add(new ChannelSummary(pair.Key, pair.Value));
+                result.Add(new ChannelSummary(channel));
             }
             return result;
         }
     }
 
+    /// <summary>
+    /// The distinct device status codes seen in the current window, or "-" when none have been.
+    /// </summary>
     public string StatusList
     {
         get
         {
-            var sb = new StringBuilder();
-            if (_current.StatusList.Count > 0)
+            int[] statuses;
+            lock (_gate)
             {
-                var first = true;
-                foreach (var status in _current.StatusList)
+                if (_statuses.Count == 0)
                 {
-                    if (!first) sb.Append(", ");
-                    first = false;
-                    sb.Append(status);
+                    return "-";
                 }
+
+                statuses = [.. _statuses];
             }
-            else
+
+            var builder = new StringBuilder();
+            for (var i = 0; i < statuses.Length; i++)
             {
-                sb.Append('-');
+                if (i > 0)
+                {
+                    builder.Append(", ");
+                }
+
+                builder.Append(statuses[i].ToString(CultureInfo.CurrentCulture));
             }
-            return sb.ToString();
+
+            return builder.ToString();
         }
     }
-
     #endregion
 
-    #region "Constructor"
-
-    public SummaryLogger()
-    {
-        _sampleSize = 1000;
-        _buffer = new SummaryBuffer();
-        _current = new SummaryBuffer();
-    }
-
+    #region ILogger
     /// <summary>
-    /// Creates a new instance
+    /// Records one sample into Core's aggregator.
     /// </summary>
-    /// <param name="sampleSize">The size of the sample set</param>
-    public SummaryLogger(int sampleSize)
-    {
-        _sampleSize = sampleSize;
-        _buffer = new SummaryBuffer();
-        _current = new SummaryBuffer();
-        _enabled = true;
-        Start();
-    }
-
-    #endregion
-
+    /// <remarks>
+    /// Samples without a Core channel — an SD card import, or a row rehydrated from the database —
+    /// are skipped: this panel describes a live acquisition, and Core keys its per-channel
+    /// accumulators by channel type and number, which only a live channel can supply.
+    /// </remarks>
     // @port: Daqifi.Desktop.Logger.SummaryLogger.Log
     public void Log(DataSample dataSample)
     {
-        if (!Enabled)
+        if (!Enabled || dataSample?.CoreChannel is not { } coreChannel)
         {
             return;
         }
 
-        lock(_buffer)
-        {
-            if (!_buffer.Channels.ContainsKey(dataSample.ChannelName))
-            {
-                _buffer.Channels[dataSample.ChannelName] = new ChannelBuffer();
-            }
-
-            var buffer = _buffer.Channels[dataSample.ChannelName];
-
-            if (buffer.SampleCount == 0)
-            {
-                buffer.FirstSampleTicks = dataSample.TimestampTicks;
-
-                // Seed the running extremes from the first sample of the window, the same way the
-                // delta and latency accumulators seed themselves. ChannelBuffer starts (and
-                // Reset()s) at 0, so without this the extremes stay anchored at 0 and Math.Min/
-                // Math.Max report 0 for any channel that never crosses zero.
-                buffer.MinValue = dataSample.Value;
-                buffer.MaxValue = dataSample.Value;
-            }
-            else
-            {
-                buffer.MinValue = Math.Min(dataSample.Value, buffer.MinValue);
-                buffer.MaxValue = Math.Max(dataSample.Value, buffer.MaxValue);
-            }
-
-            // Accumulate the mean incrementally over the samples this channel actually received.
-            // SampleSize counts device *messages*, not per-channel samples, and it is a live,
-            // user-editable field on the Summary flyout, so dividing by it rescaled an in-progress
-            // average. This form is exact for every window length and independent of SampleSize.
-            buffer.AverageValue += (dataSample.Value - buffer.AverageValue) / (buffer.SampleCount + 1);
-
-            if (buffer.SampleCount > 0)
-            {
-                var elapsed = dataSample.TimestampTicks - buffer.LastSampleTicks;
-                if (buffer.SampleCount == 1)
-                {
-                    buffer.MinDeltaTicks = elapsed;
-                    buffer.MaxDeltaTicks = elapsed;
-                }
-                else
-                {
-                    buffer.MinDeltaTicks = Math.Min(buffer.MinDeltaTicks, elapsed);
-                    buffer.MaxDeltaTicks = Math.Max(buffer.MaxDeltaTicks, elapsed);
-                }
-                // Mean over the intervals this channel actually saw, for the same reason
-                // AverageValue is: SampleSize bounds the window in device *messages*, not this
-                // channel's interval count. At the k-th interval SampleCount is exactly k, so this
-                // self-seeds on the first interval and cannot divide by zero (guarded by
-                // SampleCount > 0).
-                buffer.AverageDeltaTicks += (elapsed - buffer.AverageDeltaTicks) / buffer.SampleCount;
-            }
-            buffer.LastSampleTicks = dataSample.TimestampTicks;
-
-            ++buffer.SampleCount;
-        }
+        _statistics.Record(coreChannel, dataSample);
     }
 
     /// <summary>
-    /// Consumes a device message
+    /// Consumes a device message: records its status code and, every <see cref="SampleSize"/>
+    /// messages, republishes the reading the flyout is bound to.
     /// </summary>
-    /// <param name="dataSample"></param>
     // @port: Daqifi.Desktop.Logger.SummaryLogger.Log
     public void Log(DeviceMessage dataSample)
     {
@@ -469,99 +326,29 @@ public partial class SummaryLogger : ObservableObject, ILogger
             return;
         }
 
-        lock (_buffer)
+        lock (_gate)
         {
-            _buffer.StatusList.Add(dataSample.DeviceStatus);
-            _buffer.HasRollover = dataSample.Rollover;
+            _statuses.Add(dataSample.DeviceStatus);
 
-            var latency = dataSample.AppTicks - dataSample.TimestampTicks;
-            if (_buffer.SampleCount == 0)
+            // SampleSize is live-editable from the flyout and can drop below the count already
+            // accumulated, so this compares with >= rather than == — an equality test would sail
+            // past the new threshold and stop refreshing until the counter wrapped all the way
+            // round through the old one.
+            if (++_messagesSinceRefresh < Math.Max(1, SampleSize))
             {
-                _buffer.FirstSampleTicks = dataSample.AppTicks;
-                _buffer.MinLatencyTicks = latency;
-                _buffer.MaxLatencyTicks = latency;
+                return;
             }
-            else
-            {
-                _buffer.MinLatencyTicks = Math.Min(latency, _buffer.MinLatencyTicks);
-                _buffer.MaxLatencyTicks = Math.Max(latency, _buffer.MaxLatencyTicks);
-            }
-            // Mean over the messages this window actually holds. This accumulator has no
-            // first-message guard, so it runs for all SampleSize messages of a completed window --
-            // one more than the (SampleSize - 1) it used to divide by, which read the average high
-            // and produced Infinity at the SampleSize of 1 the Summary flyout permits. SampleCount
-            // is the pre-increment count, so this seeds the first value by 1 and the n-th by n.
-            _buffer.AverageLatencyTicks += (latency - _buffer.AverageLatencyTicks) / (_buffer.SampleCount + 1);
 
-            if (_buffer.SampleCount > 0)
-            {
-                var elapsed = dataSample.AppTicks - _buffer.LastSampleTicks;
-                if (_buffer.SampleCount == 1)
-                {
-                    _buffer.MinDeltaTicks = elapsed;
-                    _buffer.MaxDeltaTicks = elapsed;
-                }
-                else
-                {
-                    _buffer.MinDeltaTicks = Math.Min(_buffer.MinDeltaTicks, elapsed);
-                    _buffer.MaxDeltaTicks = Math.Max(_buffer.MaxDeltaTicks, elapsed);
-                }
-
-                // Running mean over the intervals this window actually holds. SampleCount is the
-                // pre-increment interval index here (1 on the first interval), so this incremental
-                // form is exact for every window length AND cannot divide by zero when the user
-                // drops the live-editable SampleSize to 1 mid-window -- which the old (SampleSize - 1)
-                // divisor did, poisoning the average with Infinity/NaN that surfaces in the Summary
-                // flyout (found in review). Diverges from upstream #763, which kept (SampleSize - 1)
-                // and carries the same latent div-by-zero.
-                _buffer.AverageDeltaTicks += (elapsed - _buffer.AverageDeltaTicks) / _buffer.SampleCount;
-            }
-            _buffer.LastSampleTicks = dataSample.AppTicks;
-
-            ++_buffer.SampleCount;
-            if (_buffer.SampleCount == SampleSize)
-            {
-                lock (_current)
-                {
-                    SwapBuffer();
-                }
-            }
+            _messagesSinceRefresh = 0;
         }
+
+        PublishSnapshot();
     }
+    #endregion
 
-    // @port: Daqifi.Desktop.Logger.SummaryLogger.SwapBuffer
-    private void SwapBuffer()
-    {
-        lock(_buffer)
-        {
-            lock (_current)
-            {
-                (_current, _buffer) = (_buffer, _current);
-                _buffer.Reset();
-
-                NotifyResultsChanged();
-            }
-        }
-    }
-
-    // @port: Daqifi.Desktop.Logger.SummaryLogger.NotifyResultsChanged
-    private void NotifyResultsChanged()
-    {
-        OnPropertyChanged(nameof(Channels));
-        OnPropertyChanged(nameof(ElapsedTime));
-        OnPropertyChanged(nameof(LastUpdate));
-        OnPropertyChanged(nameof(SampleRate));
-        OnPropertyChanged(nameof(MaxDelta));
-        OnPropertyChanged(nameof(MinDelta));
-        OnPropertyChanged(nameof(AverageDelta));
-        OnPropertyChanged(nameof(MaxLatency));
-        OnPropertyChanged(nameof(MinLatency));
-        OnPropertyChanged(nameof(AverageLatency));
-        OnPropertyChanged(nameof(StatusList));
-    }
-
-    [RelayCommand]
+    #region Commands
     // @port: Daqifi.Desktop.Logger.SummaryLogger.ToggleEnabled
+    [RelayCommand]
     private void ToggleEnabled()
     {
         if (Enabled)
@@ -574,41 +361,68 @@ public partial class SummaryLogger : ObservableObject, ILogger
         }
     }
 
+    /// <summary>
+    /// Stops recording, restores the default refresh interval, and discards the current window.
+    /// </summary>
+    [RelayCommand]
+    private void Reset()
+    {
+        Enabled = false;
+        SampleSize = DEFAULT_REFRESH_INTERVAL_MESSAGES;
+        StartNewWindow();
+        PublishSnapshot();
+    }
+    #endregion
+
+    #region Private Methods
+    /// <summary>
+    /// Takes a fresh reading and tells the bindings to re-read it.
+    /// </summary>
+    private void PublishSnapshot()
+    {
+        _snapshot = _statistics.Snapshot();
+        NotifyResultsChanged();
+    }
+
+    /// <summary>
+    /// Discards everything accumulated so far and begins a new measurement window.
+    /// </summary>
+    private void StartNewWindow()
+    {
+        _statistics.Reset();
+        lock (_gate)
+        {
+            _statuses.Clear();
+            _messagesSinceRefresh = 0;
+        }
+    }
+
+    // @port: Daqifi.Desktop.Logger.SummaryLogger.NotifyResultsChanged
+    private void NotifyResultsChanged()
+    {
+        OnPropertyChanged(nameof(Channels));
+        OnPropertyChanged(nameof(ElapsedTime));
+        OnPropertyChanged(nameof(LastUpdate));
+        OnPropertyChanged(nameof(SampleCount));
+        OnPropertyChanged(nameof(SampleRate));
+        OnPropertyChanged(nameof(MaxLatency));
+        OnPropertyChanged(nameof(MinLatency));
+        OnPropertyChanged(nameof(AverageLatency));
+        OnPropertyChanged(nameof(StatusList));
+    }
+
     // @port: Daqifi.Desktop.Logger.SummaryLogger.Start
     private void Start()
     {
-        lock(_buffer)
-        {
-            Enabled = false;
-            _buffer.Reset();
-            Enabled = true;
-            OnPropertyChanged(nameof(Enabled));
-        }
+        Enabled = false;
+        StartNewWindow();
+        Enabled = true;
     }
 
     // @port: Daqifi.Desktop.Logger.SummaryLogger.Stop
     private void Stop()
     {
-        lock (_buffer)
-        {
-            Enabled = false;
-            OnPropertyChanged(nameof(Enabled));
-        }
+        Enabled = false;
     }
-
-    [RelayCommand]
-    private void Reset()
-    {
-        lock(_buffer)
-        {
-            lock (_current)
-            {
-                Enabled = false;
-                SampleSize = 1000;
-                _buffer.Reset();
-                _current.Reset();
-                NotifyResultsChanged();
-            }
-        }
-    }
+    #endregion
 }
