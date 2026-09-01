@@ -19,21 +19,21 @@ files:
 - upstream: Daqifi.Desktop/Channel/AnalogChannel.cs
   downstream: Daqifi.Avalonia/Daqifi.Desktop/Channel/AnalogChannel.cs
   relation: subset
-  notes: ' (scaffolded)'
-  rationale: null
-  last_synced_sha: null
+  notes: 'Still carries ReplaceCoreChannel, which upstream dropped in 05f0b8e1 now that Core keeps channel instances stable. Harmless against Core 1.7.0 (it is a self-assignment), and the port never adopted the per-channel SampleReceived subscription that made the swap dangerous upstream. But its wasEnabled save/restore LOOKS like it preserves the app''s enable intent and does not - it reads back whatever Core just resynced from the device mask, so anyone reading it could wrongly conclude the AbstractStreamingDevice.cs channel-adoption gap is already handled.'
+  rationale: '2026-09-01 parity audit (upstream b469ca1..36995fed): both sides read against upstream 05f0b8e1.'
+  last_synced_sha: 36995fedb291337cc681b17aefd32c6fa96c3d86
 - upstream: Daqifi.Desktop/Channel/Channel.cs
   downstream: Daqifi.Avalonia/Daqifi.Desktop/Channel/Channel.cs
-  relation: subset
-  notes: ' (scaffolded)'
-  rationale: null
-  last_synced_sha: null
+  relation: divergent
+  notes: 'Upstream DELETED this file; the downstream copy survives. Still an EF entity downstream - LoggingContext maps it to a Channel table that upstream dropped in migration 20260714120000_DropChannelTable.'
+  rationale: '2026-09-01 parity audit (upstream b469ca1..36995fed): the map called this `subset`, which reads as ''the port has less than upstream''. The opposite is true - upstream has none of it. Port-only code, not a parity gap.'
+  last_synced_sha: 36995fedb291337cc681b17aefd32c6fa96c3d86
 - upstream: Daqifi.Desktop/Channel/ChannelColorManager.cs
   downstream: Daqifi.Avalonia/Daqifi.Desktop/Channel/ChannelColorManager.cs
-  relation: subset
-  notes: ' (scaffolded)'
-  rationale: null
-  last_synced_sha: null
+  relation: equivalent
+  notes: 'Same 38-brush Material palette in the same order, same round-robin NewColor(). Only the brush type differs: WPF SolidColorBrush + Freeze() vs Avalonia ImmutableSolidColorBrush, which is born immutable, so upstream''s FromHex helper and Freeze loop have no downstream counterpart.'
+  rationale: '2026-09-01 parity audit (upstream b469ca1..36995fed): full diff read; the -10 line delta is the two WPF-only helpers. No behavioural difference.'
+  last_synced_sha: 36995fedb291337cc681b17aefd32c6fa96c3d86
 - upstream: Daqifi.Desktop/Channel/DataSample.cs
   downstream: Daqifi.Avalonia/Daqifi.Desktop/Channel/DataSample.cs
   relation: subset
@@ -42,10 +42,10 @@ files:
   last_synced_sha: null
 - upstream: Daqifi.Desktop/Channel/DigitalChannel.cs
   downstream: Daqifi.Avalonia/Daqifi.Desktop/Channel/DigitalChannel.cs
-  relation: subset
-  notes: ' (scaffolded)'
-  rationale: null
-  last_synced_sha: null
+  relation: equivalent
+  notes: 'PWM half of upstream 11ba0219 is already ported: downstream stopped seeding a local default duty and says so in-file, deferring to Core''s DigitalChannel, and both sides keep the same 1-100 UI clamp and setter logic.'
+  rationale: '2026-09-01 parity audit (upstream b469ca1..36995fed): both files read against upstream 11ba0219.'
+  last_synced_sha: 36995fedb291337cc681b17aefd32c6fa96c3d86
 - upstream: Daqifi.Desktop/Channel/IChannel.cs
   downstream: Daqifi.Avalonia/Daqifi.Desktop/Channel/IChannel.cs
   relation: subset
@@ -60,28 +60,28 @@ files:
   last_synced_sha: null
 - upstream: Daqifi.Desktop/Commands/CompositeCommand.cs
   downstream: Daqifi.Avalonia/Daqifi.Desktop/Commands/CompositeCommand.cs
-  relation: subset
-  notes: ' (scaffolded)'
-  rationale: null
-  last_synced_sha: null
+  relation: divergent
+  notes: 'Upstream DELETED this file; the downstream copy survives. Referenced only by HostCommands.cs downstream.'
+  rationale: '2026-09-01 parity audit (upstream b469ca1..36995fed): the map called this `subset`, which reads as ''the port has less than upstream''. The opposite is true - upstream has none of it. Port-only code, not a parity gap.'
+  last_synced_sha: 36995fedb291337cc681b17aefd32c6fa96c3d86
 - upstream: Daqifi.Desktop/Commands/HostCommands.cs
   downstream: Daqifi.Avalonia/Daqifi.Desktop/Commands/HostCommands.cs
-  relation: subset
-  notes: ' (scaffolded)'
-  rationale: null
-  last_synced_sha: null
+  relation: divergent
+  notes: 'Upstream DELETED this file; the downstream copy survives. Still used by DaqifiViewModel.cs and MainWindow.axaml.cs downstream.'
+  rationale: '2026-09-01 parity audit (upstream b469ca1..36995fed): the map called this `subset`, which reads as ''the port has less than upstream''. The opposite is true - upstream has none of it. Port-only code, not a parity gap.'
+  last_synced_sha: 36995fedb291337cc681b17aefd32c6fa96c3d86
 - upstream: Daqifi.Desktop/Commands/IActiveAware.cs
   downstream: Daqifi.Avalonia/Daqifi.Desktop/Commands/IActiveAware.cs
-  relation: subset
-  notes: ' (scaffolded)'
-  rationale: null
-  last_synced_sha: null
+  relation: divergent
+  notes: 'Upstream DELETED this file; the downstream copy survives. Referenced only by CompositeCommand.cs downstream.'
+  rationale: '2026-09-01 parity audit (upstream b469ca1..36995fed): the map called this `subset`, which reads as ''the port has less than upstream''. The opposite is true - upstream has none of it. Port-only code, not a parity gap.'
+  last_synced_sha: 36995fedb291337cc681b17aefd32c6fa96c3d86
 - upstream: Daqifi.Desktop/Commands/WeakEventHandler.cs
   downstream: Daqifi.Avalonia/Daqifi.Desktop/Commands/WeakEventHandler.cs
-  relation: subset
-  notes: ' (scaffolded)'
-  rationale: null
-  last_synced_sha: null
+  relation: divergent
+  notes: 'Upstream DELETED this file; the downstream copy survives. Unreferenced downstream.'
+  rationale: '2026-09-01 parity audit (upstream b469ca1..36995fed): the map called this `subset`, which reads as ''the port has less than upstream''. The opposite is true - upstream has none of it. Port-only code, not a parity gap.'
+  last_synced_sha: 36995fedb291337cc681b17aefd32c6fa96c3d86
 - upstream: Daqifi.Desktop/Configuration/FirewallManager.cs
   downstream: Daqifi.Avalonia/Daqifi.Desktop/Configuration/FirewallManager.cs
   relation: subset
@@ -96,10 +96,10 @@ files:
   last_synced_sha: null
 - upstream: Daqifi.Desktop/ConnectionManager.cs
   downstream: Daqifi.Avalonia/Daqifi.Desktop/ConnectionManager.cs
-  relation: subset
-  notes: ' (scaffolded)'
-  rationale: null
-  last_synced_sha: null
+  relation: divergent
+  notes: 'Diverged in both directions. Downstream is AHEAD: it generalised upstream''s Windows-only WMI unplug watcher behind IDeviceWatcher (WMI on Windows, serial-port polling on macOS/Linux, no-op elsewhere) and surfaces HotplugDetectionUnavailableMessage when the backend cannot start - do NOT replay upstream''s 47d6df2e deletion verbatim. Downstream is BEHIND on the replacement: no OnDeviceConnectionLost, no ConnectionLostEventArgs, and none of 429d4600''s SubscribeDeviceEvents / OnDeviceErrorOccurred / OnDeviceSendFailed / IsAppBug / DescribeCommand. The port''s only teardown path filters SerialStreamingDevice, so a WiFi/TCP drop leaves the device in the connected list with its channels still subscribed and no notification. The mobile shell already handles this; the desktop shell does not.'
+  rationale: '2026-09-01 parity audit (upstream b469ca1..36995fed): both ConnectionManagers read against upstream 47d6df2e and 429d4600. When porting IsAppBug, note Core 1.7.0 adds a fifth DeviceErrorSource member (StatusNotification) that upstream''s 1.4.0-era switch routes through its default false arm.'
+  last_synced_sha: 36995fedb291337cc681b17aefd32c6fa96c3d86
 - upstream: Daqifi.Desktop/Converters/BoolAndToVisibilityConverter.cs
   downstream: Daqifi.Avalonia/Daqifi.Desktop/Converters/BoolAndToVisibilityConverter.cs
   relation: subset
@@ -108,22 +108,22 @@ files:
   last_synced_sha: null
 - upstream: Daqifi.Desktop/Converters/BoolToActiveStatusConverter.cs
   downstream: Daqifi.Avalonia/Daqifi.Desktop/Converters/BoolToActiveStatusConverter.cs
-  relation: subset
-  notes: ' (scaffolded)'
-  rationale: null
-  last_synced_sha: null
+  relation: divergent
+  notes: 'Upstream DELETED this file; the downstream copy survives. Still registered in App.axaml downstream.'
+  rationale: '2026-09-01 parity audit (upstream b469ca1..36995fed): the map called this `subset`, which reads as ''the port has less than upstream''. The opposite is true - upstream has none of it. Port-only code, not a parity gap.'
+  last_synced_sha: 36995fedb291337cc681b17aefd32c6fa96c3d86
 - upstream: Daqifi.Desktop/Converters/BoolToConnectionStatusConverter.cs
   downstream: Daqifi.Avalonia/Daqifi.Desktop/Converters/BoolToConnectionStatusConverter.cs
-  relation: subset
-  notes: ' (scaffolded)'
-  rationale: null
-  last_synced_sha: null
+  relation: divergent
+  notes: 'Upstream DELETED this file; the downstream copy survives. Unreferenced downstream.'
+  rationale: '2026-09-01 parity audit (upstream b469ca1..36995fed): the map called this `subset`, which reads as ''the port has less than upstream''. The opposite is true - upstream has none of it. Port-only code, not a parity gap.'
+  last_synced_sha: 36995fedb291337cc681b17aefd32c6fa96c3d86
 - upstream: Daqifi.Desktop/Converters/BoolToStatusColorConverter.cs
   downstream: Daqifi.Avalonia/Daqifi.Desktop/Converters/BoolToStatusColorConverter.cs
-  relation: subset
-  notes: ' (scaffolded)'
-  rationale: null
-  last_synced_sha: null
+  relation: divergent
+  notes: 'Upstream DELETED this file; the downstream copy survives. Still registered in App.axaml downstream.'
+  rationale: '2026-09-01 parity audit (upstream b469ca1..36995fed): the map called this `subset`, which reads as ''the port has less than upstream''. The opposite is true - upstream has none of it. Port-only code, not a parity gap.'
+  last_synced_sha: 36995fedb291337cc681b17aefd32c6fa96c3d86
 - upstream: Daqifi.Desktop/Converters/BrushColorMatchConverter.cs
   downstream: Daqifi.Avalonia/Daqifi.Desktop/Converters/BrushColorMatchConverter.cs
   relation: subset
@@ -138,10 +138,10 @@ files:
   last_synced_sha: null
 - upstream: Daqifi.Desktop/Converters/ConnectionTypeToUsbConverter.cs
   downstream: Daqifi.Avalonia/Daqifi.Desktop/Converters/ConnectionTypeToUsbConverter.cs
-  relation: subset
-  notes: ' (scaffolded)'
-  rationale: null
-  last_synced_sha: null
+  relation: divergent
+  notes: 'Upstream DELETED this file; the downstream copy survives. Unreferenced downstream.'
+  rationale: '2026-09-01 parity audit (upstream b469ca1..36995fed): the map called this `subset`, which reads as ''the port has less than upstream''. The opposite is true - upstream has none of it. Port-only code, not a parity gap.'
+  last_synced_sha: 36995fedb291337cc681b17aefd32c6fa96c3d86
 - upstream: Daqifi.Desktop/Converters/InvertedBoolToVisibilityConverter.cs
   downstream: Daqifi.Avalonia/Daqifi.Desktop/Converters/InvertedBoolToVisibilityConverter.cs
   relation: subset
@@ -169,9 +169,9 @@ files:
 - upstream: Daqifi.Desktop/Device/AbstractStreamingDevice.cs
   downstream: Daqifi.Avalonia/Daqifi.Desktop/Device/AbstractStreamingDevice.cs
   relation: subset
-  notes: ' (scaffolded)'
-  rationale: null
-  last_synced_sha: null
+  notes: 'TOP GAP (upstream d801c348). Connect() never adopts the app''s empty channel set: upstream calls AdoptDeviceChannelSet right after InitializeAsync and issues DisableAllChannels when Core reports any channel already enabled. Downstream AnalogChannel.IsActive reads straight through to Core''s IsEnabled, which Core 1.7.0 resyncs from the device''s own analog_in_port_enabled mask, so on a device that reports a non-empty mask every tile renders active, Select All (which skips already-active tiles) does nothing, nothing is ever subscribed, and CanToggleLogging = ActiveChannels.Count > 0 leaves Start Logging permanently disabled. Also missing here: the ConnectionLost/ErrorOccurred/SendFailed wiring of 429d4600 and the StreamFrameDiscarded breadcrumb of ac5961bf. Also still carries the leftover-frame guard (STALE_FRAME_WINDOW_SECONDS, MAX_DISCARDED_LEFTOVER_FRAMES, _pendingFirstFrameValidation) that Core 1.7.0 now owns on both consumer paths, so it re-screens already-screened frames and holds the first frame of the first session until a second arrives.'
+  rationale: '2026-09-01 parity audit (upstream b469ca1..36995fed): upstream AdoptDeviceChannelSet/IsConnectionFatal read in full; the four downstream preconditions (IsActive passthrough, SelectAll filter, CanToggleLogging gate, absent adoption call) each confirmed by hand. NOT reproduced on the bench Nq1 (fw 3.7.2): its enabled-analog mask read empty immediately after connect, both before and after enabling three channels and reconnecting, so the trigger is a device/firmware state that board did not present today.'
+  last_synced_sha: 36995fedb291337cc681b17aefd32c6fa96c3d86
 - upstream: Daqifi.Desktop/Device/DeviceMessage.cs
   downstream: Daqifi.Avalonia/Daqifi.Desktop/Device/DeviceMessage.cs
   relation: subset
@@ -205,15 +205,15 @@ files:
 - upstream: Daqifi.Desktop/Device/Firmware/BootloaderWatcher.cs
   downstream: Daqifi.Avalonia/Daqifi.Desktop/Device/Firmware/BootloaderWatcher.cs
   relation: subset
-  notes: ' (scaffolded)'
-  rationale: null
-  last_synced_sha: null
+  notes: 'REAL GAP (upstream 52257bdf). Downstream has no IsFlashInProgress property and no FlashInProgressChanged event, and clears _flashingPath before the hold is re-grabbed rather than in a finally after it. The watcher''s own HID discovery is correctly paused, but nothing tells the connection dialog to keep serial and WiFi discovery paused for the duration of a flash.'
+  rationale: '2026-09-01 parity audit (upstream b469ca1..36995fed): upstream patch for 52257bdf pulled; every added member grepped for downstream and absent.'
+  last_synced_sha: 36995fedb291337cc681b17aefd32c6fa96c3d86
 - upstream: Daqifi.Desktop/Device/Firmware/FirmwareUpdateCoordinator.cs
   downstream: Daqifi.Avalonia/Daqifi.Desktop/Device/Firmware/FirmwareUpdateCoordinator.cs
   relation: subset
-  notes: ' (scaffolded)'
-  rationale: null
-  last_synced_sha: null
+  notes: 'REAL GAP (upstream f0e95c3f). Downstream classifies only FirmwareUpdateState.JumpingToApp as ''installed, just could not be re-reached''; ReconnectingAfterFlash appears nowhere in the port. A WiFi flash that succeeds and then times out reconnecting is reported to the user as a failure. Separately, downstream exits WiFi transparent mode by opening a raw SerialPort inline in a finally block rather than through Core''s WifiBridgeActivator.DeactivateAsync (upstream e63f9f0d), so a wedged CDC open can block that thread with no timeout, and both retry attempts are logged at Warning so a stranded device is never reported.'
+  rationale: '2026-09-01 parity audit (upstream b469ca1..36995fed): both coordinators read against upstream f0e95c3f, e63f9f0d and the post-5ecf5ffd shape. Firmware update is desktop-only by DIV-UI-004; this gap is on desktop, where the feature exists.'
+  last_synced_sha: 36995fedb291337cc681b17aefd32c6fa96c3d86
 - upstream: Daqifi.Desktop/Device/Firmware/FirmwareUpdateServiceConfig.cs
   downstream: Daqifi.Avalonia/Daqifi.Desktop/Device/Firmware/FirmwareUpdateServiceConfig.cs
   relation: subset
@@ -247,9 +247,9 @@ files:
 - upstream: Daqifi.Desktop/Device/Firmware/IBootloaderWatcher.cs
   downstream: Daqifi.Avalonia/Daqifi.Desktop/Device/Firmware/IBootloaderWatcher.cs
   relation: subset
-  notes: ' (scaffolded)'
-  rationale: null
-  last_synced_sha: null
+  notes: 'REAL GAP (upstream 52257bdf). Missing `bool IsFlashInProgress { get; }` and `event EventHandler? FlashInProgressChanged`, the two members the connection dialog needs to hold discovery down across a manual HID flash.'
+  rationale: '2026-09-01 parity audit (upstream b469ca1..36995fed): see the BootloaderWatcher.cs entry.'
+  last_synced_sha: 36995fedb291337cc681b17aefd32c6fa96c3d86
 - upstream: Daqifi.Desktop/Device/Firmware/IFirmwareUpdateHost.cs
   downstream: Daqifi.Avalonia/Daqifi.Desktop/Device/Firmware/IFirmwareUpdateHost.cs
   relation: subset
@@ -259,9 +259,9 @@ files:
 - upstream: Daqifi.Desktop/Device/IDevice.cs
   downstream: Daqifi.Avalonia/Daqifi.Desktop/Device/IDevice.cs
   relation: subset
-  notes: ' (scaffolded)'
-  rationale: null
-  last_synced_sha: null
+  notes: 'REAL GAP (upstream 429d4600). Missing three members: an EventHandler<ConnectionLostEventArgs> ConnectionLost event, an EventHandler<CoreDeviceErrorEventArgs> ErrorOccurred event, and an EventHandler<CoreSendFailedEventArgs> SendFailed event. Core 1.7.0 raises the latter two, so this is un-ported app wiring, not a Core gap.'
+  rationale: '2026-09-01 parity audit (upstream b469ca1..36995fed): upstream IDevice.cs is 68 lines to the port''s 38; each member grepped for downstream and absent (SendFailed has zero hits in the whole port).'
+  last_synced_sha: 36995fedb291337cc681b17aefd32c6fa96c3d86
 - upstream: Daqifi.Desktop/Device/IStreamingDevice.cs
   downstream: Daqifi.Avalonia/Daqifi.Desktop/Device/IStreamingDevice.cs
   relation: subset
@@ -271,9 +271,9 @@ files:
 - upstream: Daqifi.Desktop/Device/SerialDevice/SerialStreamingDevice.cs
   downstream: Daqifi.Avalonia/Daqifi.Desktop/Device/SerialDevice/SerialStreamingDevice.cs
   relation: subset
-  notes: ' (scaffolded)'
-  rationale: null
-  last_synced_sha: null
+  notes: 'REAL GAP (upstream ded1ad13), and macOS-shaped. LogConnectFailure still matches FileNotFoundException / UnauthorizedAccessException, but Core 1.7.0''s SerialStreamTransport.Connect() throws the typed SerialPortConnectException instead, so neither arm can match and every ordinary failed serial connect (port missing, port already open elsewhere) falls through to AppLogger.Error and reaches Sentry. Upstream''s note matters here: on macOS a missing port and a busy port throw byte-identical exceptions, so the two old arms could never have been right on this port''s own platforms. The SCPI-init half (5a932595) IS already ported - both transports match ScpiInitializationErrorException and log Warning.'
+  rationale: '2026-09-01 parity audit (upstream b469ca1..36995fed): SerialPortConnectException has zero hits in the port; both LogConnectFailure bodies read.'
+  last_synced_sha: 36995fedb291337cc681b17aefd32c6fa96c3d86
 - upstream: Daqifi.Desktop/Device/WiFiDevice/DaqifiStreamingDevice.cs
   downstream: Daqifi.Avalonia/Daqifi.Desktop/Device/WiFiDevice/DaqifiStreamingDevice.cs
   relation: subset
@@ -348,10 +348,10 @@ files:
   last_synced_sha: null
 - upstream: Daqifi.Desktop/Exporter/LoggingSessionSampleSource.cs
   downstream: Daqifi.Avalonia/Daqifi.Desktop/Exporter/LoggingSessionSampleSource.cs
-  relation: subset
-  notes: ' (scaffolded)'
-  rationale: null
-  last_synced_sha: null
+  relation: equivalent
+  notes: 'Same three query paths and the same EF/in-memory constructor pair. Downstream lacks upstream''s CreateContext() guard, so building over an in-memory collection and then hitting an EF path would NullReferenceException downstream where upstream throws a named InvalidOperationException. Unreachable today - the two constructors are mutually exclusive and every caller checks - so this is diagnostics quality, not behaviour.'
+  rationale: '2026-09-01 parity audit (upstream b469ca1..36995fed): full diff read; the -11 line delta is that guard plus nullable annotations.'
+  last_synced_sha: 36995fedb291337cc681b17aefd32c6fa96c3d86
 - upstream: Daqifi.Desktop/Exporter/OptimizedLoggingSessionExporter.cs
   downstream: Daqifi.Avalonia/Daqifi.Desktop/Exporter/OptimizedLoggingSessionExporter.cs
   relation: subset
@@ -396,10 +396,10 @@ files:
   last_synced_sha: null
 - upstream: Daqifi.Desktop/Helpers/MyMultiValueConverter.cs
   downstream: Daqifi.Avalonia/Daqifi.Desktop/Helpers/MyMultiValueConverter.cs
-  relation: subset
-  notes: ' (scaffolded)'
-  rationale: null
-  last_synced_sha: null
+  relation: divergent
+  notes: 'Upstream DELETED this file; the downstream copy survives. Unreferenced downstream.'
+  rationale: '2026-09-01 parity audit (upstream b469ca1..36995fed): the map called this `subset`, which reads as ''the port has less than upstream''. The opposite is true - upstream has none of it. Port-only code, not a parity gap.'
+  last_synced_sha: 36995fedb291337cc681b17aefd32c6fa96c3d86
 - upstream: Daqifi.Desktop/Helpers/NaturalSortHelper.cs
   downstream: Daqifi.Avalonia/Daqifi.Desktop/Helpers/NaturalSortHelper.cs
   relation: subset
@@ -445,9 +445,9 @@ files:
 - upstream: Daqifi.Desktop/Loggers/ImportTimestampQuality.cs
   downstream: Daqifi.Avalonia/Daqifi.Desktop/Loggers/ImportTimestampQuality.cs
   relation: subset
-  notes: ' (scaffolded)'
-  rationale: null
-  last_synced_sha: null
+  notes: 'REAL GAP (upstream a39247e3). Upstream observes Core''s exact per-entry SdCardLogEntry.HasDeviceTimestamp flag and warns whenever ANY sample had its timestamp substituted, naming the exact count and a culture-formatted percent with a <0.1% floor. Downstream still infers substitution from tick equality against the first entry and stays silent below a 20% threshold, so a file with 19% fabricated timestamps imports with no warning at all, and a healthy file with genuine duplicate ticks can warn falsely. Core 1.7.0 exposes HasDeviceTimestamp, so nothing blocks this.'
+  rationale: '2026-09-01 parity audit (upstream b469ca1..36995fed): both files read in full; call sites are SdCardSessionImporter.cs:397 upstream / :353 downstream, surfaced in the import dialog and the batch summary.'
+  last_synced_sha: 36995fedb291337cc681b17aefd32c6fa96c3d86
 - upstream: Daqifi.Desktop/Loggers/LoggedSeriesLegendItem.cs
   downstream: Daqifi.Avalonia/Daqifi.Desktop/Loggers/LoggedSeriesLegendItem.cs
   relation: subset
@@ -469,9 +469,9 @@ files:
 - upstream: Daqifi.Desktop/Loggers/LoggingManager.cs
   downstream: Daqifi.Avalonia/Daqifi.Desktop/Loggers/LoggingManager.cs
   relation: subset
-  notes: ' (scaffolded)'
-  rationale: null
-  last_synced_sha: null
+  notes: 'Upstream 60dc32b6 (unsubscribe the channel that was matched, not the first same-named one) fixed downstream in this audit. Remaining delta against upstream is the profile XML/schema handling and session bookkeeping, re-checked as behaviourally present.'
+  rationale: '2026-09-01 parity audit (upstream b469ca1..36995fed): Unsubscribe read line-by-line against upstream; AbstractChannel.Equals compares Name only on both sides, so List.Remove dropped the wrong device''s same-named channel downstream.'
+  last_synced_sha: 36995fedb291337cc681b17aefd32c6fa96c3d86
 - upstream: Daqifi.Desktop/Loggers/LoggingSession.cs
   downstream: Daqifi.Avalonia/Daqifi.Desktop/Loggers/LoggingSession.cs
   relation: subset
@@ -499,9 +499,9 @@ files:
 - upstream: Daqifi.Desktop/Loggers/SdCardSessionImporter.cs
   downstream: Daqifi.Avalonia/Daqifi.Desktop/Loggers/SdCardSessionImporter.cs
   relation: subset
-  notes: ' (scaffolded)'
-  rationale: null
-  last_synced_sha: null
+  notes: 'REAL GAP (upstream 5ecf5ffd). Downstream still carries two of the four daqifi-core#398 bandaids Core v1.4.0 retired: a zero-length SD file throws SdCardEmptyTransferException instead of importing as an empty session (upstream now logs a Warning and imports it), and an empty FilePath from Core throws the same user-facing exception instead of an InvalidOperationException on the Error path. Downstream also still throws its local SdCardDownloadStalledException where Core 1.7.0 offers SdCardTransferStalledException with a typed Reason.'
+  rationale: '2026-09-01 parity audit (upstream b469ca1..36995fed): upstream patch for 5ecf5ffd pulled and compared line-by-line. The port pins Core 1.7.0, so every replacement API is already available.'
+  last_synced_sha: 36995fedb291337cc681b17aefd32c6fa96c3d86
 - upstream: Daqifi.Desktop/Loggers/SessionDataRepository.cs
   downstream: Daqifi.Avalonia/Daqifi.Desktop/Loggers/SessionDataRepository.cs
   relation: subset
@@ -522,10 +522,10 @@ files:
   last_synced_sha: null
 - upstream: Daqifi.Desktop/Loggers/SummaryLogger.cs
   downstream: Daqifi.Avalonia/Daqifi.Desktop/Loggers/SummaryLogger.cs
-  relation: subset
-  notes: ' (scaffolded)'
-  rationale: null
-  last_synced_sha: null
+  relation: divergent
+  notes: 'Independent downstream rewrite, not a subset. Downstream delegates the statistics to Core''s per-device aggregators in hand-fed mode and treats SampleSize as a refresh cadence; upstream accumulates its own two-buffer window and treats SampleSize as the window length. Upstream 7ec536d4 (live resize stranding the summary) is ALREADY covered downstream by the `>=` compare and Math.Max(1, SampleSize) guard at Log(DeviceMessage). One residual: upstream coerces SampleSize to >= 1 in the setter and pushes the coerced value back to the flyout; downstream clamps only at the comparison, so the flyout can display 0 while behaving as 1.'
+  rationale: '2026-09-01 parity audit (upstream b469ca1..36995fed): both files read in full against upstream commit 7ec536d4. The -163 line delta is the two-buffer machinery Core now owns, not dropped capability.'
+  last_synced_sha: 36995fedb291337cc681b17aefd32c6fa96c3d86
 - upstream: Daqifi.Desktop/Loggers/TimestampGapDetector.cs
   downstream: Daqifi.Avalonia/Daqifi.Desktop/Loggers/TimestampGapDetector.cs
   relation: subset
@@ -594,10 +594,10 @@ files:
   last_synced_sha: null
 - upstream: Daqifi.Desktop/Models/AddProfileModel.cs
   downstream: Daqifi.Avalonia/Daqifi.Desktop/Models/AddProfileModel.cs
-  relation: subset
-  notes: ' (scaffolded)'
-  rationale: null
-  last_synced_sha: null
+  relation: divergent
+  notes: 'Upstream renamed this file to Daqifi.Desktop/Models/ProfileModels.cs; downstream still carries AddProfileModel.cs.'
+  rationale: '2026-09-01 parity audit (upstream b469ca1..36995fed): path-level rename upstream, not a content gap. See the ProfileModels.cs entry.'
+  last_synced_sha: 36995fedb291337cc681b17aefd32c6fa96c3d86
 - upstream: Daqifi.Desktop/Models/DaqifiSettings.cs
   downstream: Daqifi.Avalonia/Daqifi.Desktop/Models/DaqifiSettings.cs
   relation: subset
@@ -631,9 +631,9 @@ files:
 - upstream: Daqifi.Desktop/Models/SdCardFile.cs
   downstream: Daqifi.Avalonia/Daqifi.Desktop/Models/SdCardFile.cs
   relation: subset
-  notes: ' (scaffolded)'
-  rationale: null
-  last_synced_sha: null
+  notes: 'No user-visible difference today - both sides label SD files with the same three types, and the downstream Device Logs grid binds the same FormatDisplay. Upstream now asks Core (SdCardFileParserFactory.TryDetectFormat / SupportedExtensions) in one place; downstream hardcodes the extension list in three (Models/SdCardFile.cs, Device/AbstractStreamingDevice.cs, ViewModels/DaqifiViewModel.cs), so a format Core adds or drops would need three synchronised edits and a miss shows as ''Unknown''.'
+  rationale: '2026-09-01 parity audit (upstream b469ca1..36995fed): upstream 11ba0219 and Models/SdCardLogFormatInfo.cs read; all three downstream sites located.'
+  last_synced_sha: 36995fedb291337cc681b17aefd32c6fa96c3d86
 - upstream: Daqifi.Desktop/Services/AdminChecker.cs
   downstream: Daqifi.Avalonia/Daqifi.Desktop/Services/AdminChecker.cs
   relation: subset
@@ -787,21 +787,21 @@ files:
 - upstream: Daqifi.Desktop/ViewModels/ConnectionDialogViewModel.cs
   downstream: Daqifi.Avalonia/Daqifi.Desktop/ViewModels/ConnectionDialogViewModel.cs
   relation: subset
-  notes: ' (scaffolded)'
-  rationale: null
-  last_synced_sha: null
+  notes: 'REAL GAP (upstream 52257bdf) plus a STALE DIVERGENCE. Gap: no _hidFirmwareDialogOpen flag, no IsDiscoveryPausedForFirmware three-way guard and no FlashInProgressChanged subscription, so (a) a manual HID flash never marks a firmware update in progress and another device finishing its auto-update restarts serial+WiFi discovery mid-flash, and (b) ConnectHid restarts both discoveries unconditionally in its finally while the flash lease is still unwinding. Stale divergence: DIV-DS-001 says to remove the 10s serial-sweep watchdog and bounded drain once the app consumes a Core release containing daqifi-core#295; that PR merged 2026-07-17 and shipped in Core v1.2.0, and this app now pins 1.7.0, so the condition has been met.'
+  rationale: '2026-09-01 parity audit (upstream b469ca1..36995fed): upstream patch for 52257bdf pulled; Core release dates checked against daqifi-core#295''s merge date.'
+  last_synced_sha: 36995fedb291337cc681b17aefd32c6fa96c3d86
 - upstream: Daqifi.Desktop/ViewModels/DaqifiViewModel.cs
   downstream: Daqifi.Avalonia/Daqifi.Desktop/ViewModels/DaqifiViewModel.cs
   relation: subset
-  notes: ' (scaffolded)'
-  rationale: null
-  last_synced_sha: null
+  notes: 'REAL GAP (upstream 4fc11188, partial 3a90dbfb, f0e95c3f). (a) OnSelectedDeviceFriendlyNameChanged runs on Core''s inbound-message thread with no dispatcher hop, so a late device-reported name update mutates the UI-bound rename buffer and its two flags from a background thread - the user can lose an in-progress rename mid-keystroke. (b) Dispose already unsubscribes the handler, but OnSelectedDeviceChanged has no disposed-guard on re-attach, and Dispose runs from the window''s Closing, so a cancelled close plus a device-tile click re-roots a disposed view model. (c) The WiFi-only flash catch has no ReconnectingAfterFlash carve-out and tells the user to power-cycle and retry a flash that already succeeded.'
+  rationale: '2026-09-01 parity audit (upstream b469ca1..36995fed): handler and Dispose read in full against upstream 4fc11188 and 3a90dbfb; the firmware half cross-checked against f0e95c3f.'
+  last_synced_sha: 36995fedb291337cc681b17aefd32c6fa96c3d86
 - upstream: Daqifi.Desktop/ViewModels/DeviceLogsViewModel.cs
   downstream: Daqifi.Avalonia/Daqifi.Desktop/ViewModels/DeviceLogsViewModel.cs
   relation: subset
-  notes: ' (scaffolded)'
-  rationale: null
-  last_synced_sha: null
+  notes: 'Headline of upstream c315149e is ALREADY PORTED: both sides catch per file inside the import loop and only break on a card-wide failure, and downstream additionally re-checks device.IsConnected each iteration. What is missing is upstream''s ImportAllOutcome/BuildImportAllSummary - the completion dialog names the skipped files (capped, then ''...and N more'') and gives one deduped guidance line per distinct reason, where downstream shows a bare ''N file(s) failed to import.'' and shows guidance only when nothing succeeded.'
+  rationale: '2026-09-01 parity audit (upstream b469ca1..36995fed): both import loops read in full.'
+  last_synced_sha: 36995fedb291337cc681b17aefd32c6fa96c3d86
 - upstream: Daqifi.Desktop/ViewModels/DeviceTileViewModel.cs
   downstream: Daqifi.Avalonia/Daqifi.Desktop/ViewModels/DeviceTileViewModel.cs
   relation: subset
@@ -864,16 +864,16 @@ files:
   last_synced_sha: null
 - upstream: Daqifi.Desktop/ViewModels/PlotViewModel.cs
   downstream: Daqifi.Avalonia/Daqifi.Desktop/ViewModels/PlotViewModel.cs
-  relation: subset
-  notes: ' (scaffolded)'
-  rationale: null
-  last_synced_sha: null
+  relation: divergent
+  notes: 'Upstream DELETED this file; the downstream copy survives. Unreferenced downstream; every member is a NotImplementedException stub.'
+  rationale: '2026-09-01 parity audit (upstream b469ca1..36995fed): the map called this `subset`, which reads as ''the port has less than upstream''. The opposite is true - upstream has none of it. Port-only code, not a parity gap.'
+  last_synced_sha: 36995fedb291337cc681b17aefd32c6fa96c3d86
 - upstream: Daqifi.Desktop/ViewModels/PlottingViewModel.cs
   downstream: Daqifi.Avalonia/Daqifi.Desktop/ViewModels/PlottingViewModel.cs
-  relation: subset
-  notes: ' (scaffolded)'
-  rationale: null
-  last_synced_sha: null
+  relation: divergent
+  notes: 'Upstream DELETED this file; the downstream copy survives. Unreferenced downstream; every member is a NotImplementedException stub.'
+  rationale: '2026-09-01 parity audit (upstream b469ca1..36995fed): the map called this `subset`, which reads as ''the port has less than upstream''. The opposite is true - upstream has none of it. Port-only code, not a parity gap.'
+  last_synced_sha: 36995fedb291337cc681b17aefd32c6fa96c3d86
 - upstream: Daqifi.Desktop/ViewModels/ProfilesPaneViewModel.cs
   downstream: Daqifi.Avalonia/Daqifi.Desktop/ViewModels/ProfilesPaneViewModel.cs
   relation: subset
@@ -894,28 +894,28 @@ files:
   last_synced_sha: null
 - upstream: Daqifi.Desktop/ViewModels/ViewModelLocator.cs
   downstream: Daqifi.Avalonia/Daqifi.Desktop/ViewModels/ViewModelLocator.cs
-  relation: subset
-  notes: ' (scaffolded)'
-  rationale: null
-  last_synced_sha: null
+  relation: divergent
+  notes: 'Upstream DELETED this file; the downstream copy survives. Unreferenced downstream; every member is a NotImplementedException stub.'
+  rationale: '2026-09-01 parity audit (upstream b469ca1..36995fed): the map called this `subset`, which reads as ''the port has less than upstream''. The opposite is true - upstream has none of it. Port-only code, not a parity gap.'
+  last_synced_sha: 36995fedb291337cc681b17aefd32c6fa96c3d86
 - upstream: Daqifi.Desktop/WindowViewModelMapping/IWindowViewModelMappings.cs
   downstream: Daqifi.Avalonia/Daqifi.Desktop/WindowViewModelMapping/IWindowViewModelMappings.cs
-  relation: subset
-  notes: ' (scaffolded)'
-  rationale: null
-  last_synced_sha: null
+  relation: divergent
+  notes: 'Upstream DELETED this file; the downstream copy survives. Still used by DialogService.cs and App.cs downstream.'
+  rationale: '2026-09-01 parity audit (upstream b469ca1..36995fed): the map called this `subset`, which reads as ''the port has less than upstream''. The opposite is true - upstream has none of it. Port-only code, not a parity gap.'
+  last_synced_sha: 36995fedb291337cc681b17aefd32c6fa96c3d86
 - upstream: Daqifi.Desktop/WindowViewModelMapping/IWindowViewModelMappingsContract.cs
   downstream: Daqifi.Avalonia/Daqifi.Desktop/WindowViewModelMapping/IWindowViewModelMappingsContract.cs
-  relation: subset
-  notes: ' (scaffolded)'
-  rationale: null
-  last_synced_sha: null
+  relation: divergent
+  notes: 'Upstream DELETED this file; the downstream copy survives. Referenced only by IWindowViewModelMappings.cs downstream.'
+  rationale: '2026-09-01 parity audit (upstream b469ca1..36995fed): the map called this `subset`, which reads as ''the port has less than upstream''. The opposite is true - upstream has none of it. Port-only code, not a parity gap.'
+  last_synced_sha: 36995fedb291337cc681b17aefd32c6fa96c3d86
 - upstream: Daqifi.Desktop/WindowViewModelMapping/WindowViewModelMappings.cs
   downstream: Daqifi.Avalonia/Daqifi.Desktop/WindowViewModelMapping/WindowViewModelMappings.cs
-  relation: subset
-  notes: ' (scaffolded)'
-  rationale: null
-  last_synced_sha: null
+  relation: divergent
+  notes: 'Upstream DELETED this file; the downstream copy survives. Still used by App.cs downstream.'
+  rationale: '2026-09-01 parity audit (upstream b469ca1..36995fed): the map called this `subset`, which reads as ''the port has less than upstream''. The opposite is true - upstream has none of it. Port-only code, not a parity gap.'
+  last_synced_sha: 36995fedb291337cc681b17aefd32c6fa96c3d86
 - upstream: Daqifi.Desktop/AssemblyInfo.cs
   downstream: null
   relation: not_yet_ported
@@ -1058,10 +1058,69 @@ files:
 - upstream: Daqifi.Desktop/Helpers/VersionHelper.cs
   downstream: Daqifi.Avalonia/Daqifi.Desktop/Helpers/VersionHelper.cs
   relation: dropped
-  notes: null
-  rationale: 'Deleted on BOTH sides: upstream cf20bff replaced it with Core''s FirmwareVersion,
-    port mirrored at the 2026-07-14 sync (6c0827f).'
-  last_synced_sha: c4c63faca6db7e036a5739a1ae3829a045233617
+  notes: 'Deleted on both sides. Confirmed still absent upstream and downstream.'
+  rationale: '2026-09-01 parity audit (upstream b469ca1..36995fed): re-verified; unchanged since the 2026-07-14 sync.'
+  last_synced_sha: 36995fedb291337cc681b17aefd32c6fa96c3d86
+- upstream: Daqifi.Desktop/Device/AbstractStreamingDevice.Diagnostics.cs
+  downstream: null
+  relation: not_yet_ported
+  notes: 'Added upstream by 429d4600 (surface Core''s background failures in the app log). No downstream counterpart.'
+  rationale: '2026-09-01 parity audit (upstream b469ca1..36995fed): new upstream file since the 2026-07-14 mapping run.'
+  last_synced_sha: 36995fedb291337cc681b17aefd32c6fa96c3d86
+- upstream: Daqifi.Desktop/Device/ConnectionLostEventArgs.cs
+  downstream: null
+  relation: not_yet_ported
+  notes: 'Added upstream alongside 429d4600''s IDevice surface. No downstream counterpart.'
+  rationale: '2026-09-01 parity audit (upstream b469ca1..36995fed): new upstream file since the 2026-07-14 mapping run.'
+  last_synced_sha: 36995fedb291337cc681b17aefd32c6fa96c3d86
+- upstream: Daqifi.Desktop/Device/Firmware/FirmwareFailureClassifier.cs
+  downstream: null
+  relation: not_yet_ported
+  notes: 'Added upstream by f0e95c3f, revised by 5ecf5ffd. Pure logic, no WPF dependency - port the post-5ecf5ffd shape, never the phase-keyed original. See the FirmwareUpdateCoordinator.cs entry for the user-facing consequence.'
+  rationale: '2026-09-01 parity audit (upstream b469ca1..36995fed): new upstream file since the 2026-07-14 mapping run.'
+  last_synced_sha: 36995fedb291337cc681b17aefd32c6fa96c3d86
+- upstream: Daqifi.Desktop/Models/SdCardLogFormatInfo.cs
+  downstream: null
+  relation: not_yet_ported
+  notes: 'Added upstream by 11ba0219 as the single place SD log-format detection is asked of Core. Downstream keeps three hardcoded extension lists instead - see the Models/SdCardFile.cs entry.'
+  rationale: '2026-09-01 parity audit (upstream b469ca1..36995fed): new upstream file since the 2026-07-14 mapping run.'
+  last_synced_sha: 36995fedb291337cc681b17aefd32c6fa96c3d86
+- upstream: Daqifi.Desktop/Migrations/20260714120000_DropChannelTable.cs
+  downstream: null
+  relation: not_yet_ported
+  notes: 'Upstream drops the dead Channel table and renames IX_Samples_LoggingSessionID_TimestampTicks to IX_Samples_SessionTime. Downstream still creates the Channel table in 20250812090000_InitialSQLiteMigration and still maps Channel.Channel as an EF entity in LoggingContext, so every port database carries a table nothing reads.'
+  rationale: '2026-09-01 parity audit (upstream b469ca1..36995fed): new upstream file since the 2026-07-14 mapping run. Schema change against existing user databases - not a drive-by.'
+  last_synced_sha: 36995fedb291337cc681b17aefd32c6fa96c3d86
+- upstream: Daqifi.Desktop/Models/ProfileModels.cs
+  downstream: Daqifi.Avalonia/Daqifi.Desktop/Models/AddProfileModel.cs
+  relation: subset
+  notes: 'Upstream''s rename of Models/AddProfileModel.cs. Content not re-audited in this pass.'
+  rationale: '2026-09-01 parity audit (upstream b469ca1..36995fed): path-level correspondence recorded so the rename stops reading as a deletion.'
+  last_synced_sha: null
+- upstream: Daqifi.Desktop/ViewModels/SdCardFailureClassifier.cs
+  downstream: Daqifi.Avalonia/Daqifi.Desktop/ViewModels/SdCardFailureClassifier.cs
+  relation: divergent
+  notes: 'Diverged in both directions. Downstream is AHEAD with five classifier arms upstream has no equivalent for (SdCardListIncompleteException, FeatureNotSupportedException, TransportNotConnectedException, DeviceNotConnectedException, SdOperationBlockedException) - do not regress these. Downstream is BEHIND on stall typing: upstream splits guidance three ways off Core''s SdCardTransferStallReason and has a size-aware empty-transfer message, where downstream gives the same ''power-cycle the device'' advice for every stall and for an empty transfer. The two @port-divergence comments in the downstream file describe fixes upstream has since made properly and are now stale.'
+  rationale: '2026-09-01 parity audit (upstream b469ca1..36995fed): the file existed on both sides but had no map row. Both classifiers read in full against upstream c315149e and 5ecf5ffd.'
+  last_synced_sha: 36995fedb291337cc681b17aefd32c6fa96c3d86
+- upstream: Daqifi.Desktop/Helpers/UiThreadHelper.cs
+  downstream: null
+  relation: divergent
+  notes: 'WPF-only: marshals through System.Windows.Application.Current.Dispatcher. The port dispatches through Avalonia''s Dispatcher.UIThread at each call site instead - covered by the hal-ui_thread_dispatch plan, not a gap.'
+  rationale: '2026-09-01 parity audit (upstream b469ca1..36995fed): new upstream file since the 2026-07-14 mapping run.'
+  last_synced_sha: 36995fedb291337cc681b17aefd32c6fa96c3d86
+- upstream: Daqifi.Desktop/Helpers/TileBrushes.cs
+  downstream: null
+  relation: divergent
+  notes: 'WPF-only: the ''parse hex then Freeze()'' idiom. Avalonia''s ImmutableSolidColorBrush is born immutable, so the port has no equivalent to centralise. Not a gap.'
+  rationale: '2026-09-01 parity audit (upstream b469ca1..36995fed): new upstream file since the 2026-07-14 mapping run.'
+  last_synced_sha: 36995fedb291337cc681b17aefd32c6fa96c3d86
+- upstream: Daqifi.Desktop/Helpers/ReferenceComparer.cs
+  downstream: Daqifi.Avalonia/Daqifi.Desktop/Helpers/ReferenceComparer.cs
+  relation: one_to_one
+  notes: 'Present on both sides; had no map row.'
+  rationale: '2026-09-01 parity audit (upstream b469ca1..36995fed): coverage fix.'
+  last_synced_sha: null
 symbols:
 - upstream:
     kind: class
@@ -19107,6 +19166,15 @@ divergences:
     async stops leave it set and skip finder/CTS disposal on timeout) are upstream
     parity as of c4c63fa (#689, reconciled at the 2026-07-14 sync). Remove the watchdog+drain
     once the app consumes a Core release containing daqifi-core#295.
+
+
+    REMOVE-WHEN CONDITION NOW MET (2026-09-01 parity audit). daqifi-core#295 merged
+    2026-07-17 and first shipped in Core v1.2.0 (2026-07-18); this app has pinned Core
+    1.7.0 since #131. The watchdog is not inert while it waits: after MaxConsecutiveWatchdogTrips
+    (3) it stops serial discovery outright and tells the user to power-cycle, which is a
+    user-visible hard stop upstream does not have and which is now justified by a Core
+    version the app no longer runs. Retiring it needs a bench run against a real board,
+    not a desk decision.
 
     '
   accepted_at: '2026-07-13'
