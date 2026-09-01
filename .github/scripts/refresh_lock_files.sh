@@ -7,10 +7,10 @@
 # Dependabot cannot do it. Its NuGet updater rewrites the lock file only in the
 # directory whose manifest it edited, and every head's lock file records the SHARED
 # library's full transitive closure — Sentry, NLog, EF Core, Daqifi.Core and the rest
-# all appear as `Transitive` entries in Desktop, Android, iOS and AvaloniaCapture. So a
-# one-line bump in Daqifi.Avalonia/Daqifi.Avalonia.csproj invalidates FIVE lock files
-# and Dependabot refreshes one, leaving four stale. Locked mode then fails the other
-# four heads with:
+# all appear as `Transitive` entries in Desktop, Android, iOS, AvaloniaCapture and the
+# test project. So a one-line bump in Daqifi.Avalonia/Daqifi.Avalonia.csproj invalidates
+# SIX lock files and Dependabot refreshes one, leaving five stale. Locked mode then fails
+# the other five with:
 #
 #     error NU1004: The project references daqifi.avalonia whose dependencies has
 #     changed. The packages lock file is inconsistent with the project dependencies
@@ -69,6 +69,7 @@ PROJECTS=(
   Daqifi.Avalonia.Desktop/Daqifi.Avalonia.Desktop.csproj
   Daqifi.Avalonia.Android/Daqifi.Avalonia.Android.csproj
   Daqifi.Avalonia.iOS/Daqifi.Avalonia.iOS.csproj
+  Daqifi.Avalonia.Tests/Daqifi.Avalonia.Tests.csproj
   tools/parity-audit/AvaloniaCapture/AvaloniaCapture.csproj
   third_party/oxyplot-avalonia/OxyPlot.Avalonia/OxyPlot.Avalonia.csproj
 )
