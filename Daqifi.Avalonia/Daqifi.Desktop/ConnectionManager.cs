@@ -438,6 +438,24 @@ public partial class ConnectionManager : ObservableObject
                 return;
             }
             
+            // A transport that dies between device.Connect() returning and the loss handler going
+            // live below is UNOBSERVABLE: there is no subscriber yet, and even with one the handler
+            // would find the device not yet in ConnectedDevices and return. Subscribing earlier
+            // therefore does not close this window — re-reading the device's own state does. Without
+            // it, accepting a wrapper whose transport is already gone puts exactly the stale entry
+            // into ConnectedDevices that this class now exists to remove, and reports it as a
+            // successful connect. Release the transport Connect() opened rather than leaking its
+            // handle for the process lifetime.
+            if (!device.IsConnected)
+            {
+                AppLogger.Instance.Warning(
+                    $"Device {device.DeviceDisplayName} connected but its transport was already gone " +
+                    "before it could be accepted; reporting the connect as failed.");
+                device.Disconnect();
+                ConnectionStatus = DAQiFiConnectionStatus.Error;
+                return;
+            }
+
             ConnectedDevices.Add(device);
 
             // Only now: these events bridge to the Core device, which does not exist until
@@ -446,6 +464,27 @@ public partial class ConnectionManager : ObservableObject
             SubscribeDeviceEvents(device);
 
             await Task.Delay(1000);
+
+            // The device can be torn down DURING that settle, and only since this PR: the loss
+            // handler goes live at the SubscribeDeviceEvents call above, and it runs on the UI
+            // thread while this continuation is suspended. If it did, the connect did not leave a
+            // usable connection — publishing "Connected" here would put the shell back into a
+            // connected state for a device that is gone, and SetDeviceContext below would tag every
+            // later Sentry event with dead hardware. Treat it as an aborted connect.
+            //
+            // Error rather than Disconnected because that is the status every other failure in this
+            // method reports, and it is what keeps the connection dialog open
+            // (ConnectionDialogViewModel:534) — reconnecting is exactly what the user does next. The
+            // accurate, device-naming message still comes from the teardown's own notification.
+            if (!ConnectedDevices.Contains(device))
+            {
+                AppLogger.Instance.Warning(
+                    $"Device {device.DeviceDisplayName} dropped while its connection was settling; " +
+                    "reporting the connect as failed rather than connected.");
+                ConnectionStatus = DAQiFiConnectionStatus.Error;
+                return;
+            }
+
             OnPropertyChanged("ConnectedDevices");
             ConnectionStatus = DAQiFiConnectionStatus.Connected;
 

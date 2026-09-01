@@ -72,6 +72,69 @@ public class ConnectionManagerTeardownTests
         Assert.Single(released);
     }
 
+    /// <summary>
+    /// The other half of the same window. A transport that dies between <c>device.Connect()</c>
+    /// returning and the loss handler being wired is unobservable — no subscriber exists yet, and
+    /// even with one the handler would find the device not yet in <c>ConnectedDevices</c> and
+    /// return. Accepting it anyway would put the stale entry into the connected list that this
+    /// whole class now exists to remove, and report it to the user as a successful connect.
+    /// </summary>
+    [Fact]
+    public async Task A_device_whose_transport_died_before_it_was_accepted_is_not_added()
+    {
+        var released = new List<IChannel>();
+        var manager = NewManager(released);
+        var device = new DroppableTestDevice("SN-STILLBORN") { PretendTransportDiesDuringConnect = true };
+
+        await manager.Connect(device);
+
+        Assert.DoesNotContain(device, manager.ConnectedDevices);
+        Assert.Equal(DAQiFiConnectionStatus.Error, manager.ConnectionStatus);
+    }
+
+    /// <summary>
+    /// A drop during <see cref="ConnectionManager.Connect"/>'s one-second post-connect settle must
+    /// abort the connect, not complete it. The window only became reachable with this PR: the loss
+    /// handler goes live before the settle, and it runs while <c>Connect</c>'s continuation is
+    /// suspended — so without the guard the continuation would publish <c>Connected</c> and set
+    /// Sentry's device context for hardware that had already been torn down.
+    /// </summary>
+    /// <remarks>
+    /// The drop is fired from a background task that waits until the device is in
+    /// <c>ConnectedDevices</c> (which happens immediately before the subscription) and then pauses
+    /// 50 ms. That lands it roughly 50 ms into a 1000 ms window — comfortably after the wiring and
+    /// with a 20x margin before the settle ends. Both failure directions are red rather than green:
+    /// too early and no handler is attached so nothing tears down; too late and the device is still
+    /// in the list.
+    /// </remarks>
+    [Fact]
+    public async Task A_drop_while_the_connection_is_settling_aborts_the_connect()
+    {
+        var released = new List<IChannel>();
+        var manager = NewManager(released);
+        var device = new DroppableTestDevice("SN-SETTLING") { PretendConnectSucceeds = true };
+        device.DataChannels.Add(new FakeChannel("AI0", "SN-SETTLING"));
+
+        var drop = Task.Run(async () =>
+        {
+            while (!manager.ConnectedDevices.Contains(device))
+            {
+                await Task.Delay(5);
+            }
+
+            await Task.Delay(50);
+            device.ReportCoreStatus(ConnectionStatus.Lost);
+        });
+
+        await manager.Connect(device);
+        await drop;
+
+        Assert.DoesNotContain(device, manager.ConnectedDevices);
+        Assert.NotEqual(DAQiFiConnectionStatus.Connected, manager.ConnectionStatus);
+        Assert.Single(released);
+        Assert.Contains("SN-SETTLING", manager.LastDisconnectReason);
+    }
+
     [Fact]
     public void A_dropped_wifi_device_is_removed_from_the_connected_list()
     {

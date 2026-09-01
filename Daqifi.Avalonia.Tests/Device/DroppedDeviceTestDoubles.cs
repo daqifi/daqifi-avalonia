@@ -54,11 +54,61 @@ internal sealed class DroppableTestDevice : AbstractStreamingDevice
     /// </summary>
     public bool PretendConnectSucceeds { get; init; }
 
-    public override bool Connect() => PretendConnectSucceeds || base.Connect();
+    /// <summary>
+    /// Reports a successful connect whose transport is already gone by the time the call returns —
+    /// the narrow window between <c>Connect()</c> succeeding and the manager wiring its loss
+    /// handler, where a drop is unobservable and the only signal left is the device's own state.
+    /// </summary>
+    public bool PretendTransportDiesDuringConnect { get; init; }
+
+    /// <summary>
+    /// Backs <see cref="IsConnected"/> for the pretend-connect path. The real property reads
+    /// <c>CoreDevice?.IsConnected</c>, and this double has no Core device — so without this the
+    /// double would report itself permanently disconnected and could never be accepted.
+    /// </summary>
+    private bool _pretendConnected;
+
+    public override bool IsConnected =>
+        PretendConnectSucceeds || PretendTransportDiesDuringConnect ? _pretendConnected : base.IsConnected;
+
+    public override bool Connect()
+    {
+        if (PretendTransportDiesDuringConnect)
+        {
+            _pretendConnected = false;
+            return true;
+        }
+
+        if (!PretendConnectSucceeds)
+        {
+            return base.Connect();
+        }
+
+        _pretendConnected = true;
+        return true;
+    }
+
+    public override bool Disconnect()
+    {
+        _pretendConnected = false;
+        return base.Disconnect();
+    }
 
     /// <summary>Replays what Core reports when the transport's status changes.</summary>
-    public void ReportCoreStatus(ConnectionStatus status) =>
+    /// <remarks>
+    /// The state is settled BEFORE the raise, matching the real wrapper: Core has already moved the
+    /// device off Connected by the time it reports the transition, so a subscriber reading
+    /// <see cref="IsConnected"/> during teardown must see the settled value.
+    /// </remarks>
+    public void ReportCoreStatus(ConnectionStatus status)
+    {
+        if (status is ConnectionStatus.Lost or ConnectionStatus.Failed)
+        {
+            _pretendConnected = false;
+        }
+
         OnCoreStatusChanged(this, new DeviceStatusEventArgs(status));
+    }
 }
 
 /// <summary>
