@@ -2,7 +2,6 @@ using Daqifi.Core.Communication.Transport; // TransportNotConnectedException (ty
 using Daqifi.Core.Device; // FeatureNotSupportedException (firmware feature gating, Core ADR 0001)
 using Daqifi.Core.Device.SdCard;
 using Daqifi.Desktop.Device; // SdOperationBlockedException (the app's own quiescence guard)
-using Daqifi.Desktop.Loggers;
 
 namespace Daqifi.Desktop.ViewModels;
 
@@ -27,9 +26,15 @@ namespace Daqifi.Desktop.ViewModels;
 /// anything else is a genuine defect and keeps the Error path.
 /// </param>
 /// <param name="IsCardUnavailable">
-/// <c>true</c> when the SD subsystem — not just this one file — is unusable, so further file
-/// operations against the same device would fail the same way. Batch imports stop early on these
-/// rather than retrying every remaining file through the same multi-second failure.
+/// <c>true</c> only when the SD subsystem — not just this one file — is unmistakably unusable, so
+/// further file operations against the same device would fail the same way. Batch imports stop
+/// early on these rather than retrying every remaining file through the same multi-second failure.
+///
+/// Deliberately narrow. A condition that <i>might</i> be specific to one file must not set this:
+/// <c>ImportAllFiles</c> abandons the rest of the batch, and because the file list comes back in
+/// the same order every time, the files after the failing one become unreachable through Import
+/// All entirely. Skipping the one file and carrying on costs a failed download; aborting costs the
+/// user every later healthy file.
 /// </param>
 // @port: Daqifi.Desktop.ViewModels.SdCardFailure
 public sealed record SdCardFailure(
@@ -63,6 +68,36 @@ public static class SdCardFailureClassifier
     /// </summary>
     internal const string POWER_CYCLE_GUIDANCE =
         "The device's SD card subsystem is not responding. Power-cycle the device and try again.";
+
+    /// <summary>
+    /// Guidance for a transfer that delivered nothing at all for one file. Core cannot always tell
+    /// a genuinely empty (0-byte) log — routinely left behind on a FAT card by an interrupted
+    /// logging session — from an SD subsystem that was not ready when it opened the file, so the
+    /// advice has to cover both: this file is skipped, and the power cycle is only worth reaching
+    /// for when every file behaves the same way. Sending the user to power-cycle a healthy device
+    /// over one empty log costs support time and fixes nothing.
+    /// </summary>
+    internal const string EMPTY_TRANSFER_GUIDANCE =
+        "The device sent no data for this file, which may simply be an empty log. If every file " +
+        "fails the same way, power-cycle the device and try again.";
+
+    /// <summary>
+    /// Guidance for a transfer that stopped part-way. Distinct from
+    /// <see cref="EMPTY_TRANSFER_GUIDANCE"/> because a stall can interrupt a transfer that was
+    /// already delivering data, and how much arrived is not knowable here — so this must not
+    /// diagnose an empty file the way that one does.
+    /// </summary>
+    internal const string INCOMPLETE_TRANSFER_GUIDANCE =
+        "The device stopped sending this file before it was complete. Try importing it on its " +
+        "own; if every file fails the same way, power-cycle the device and try again.";
+
+    /// <summary>
+    /// Guidance for a transfer whose transport went away mid-file. Distinct from the two above
+    /// because the card is not the problem: Core states that retrying on the same transport cannot
+    /// succeed, so the user has to re-establish the connection first.
+    /// </summary>
+    internal const string TRANSPORT_CLOSED_GUIDANCE =
+        "The connection to the device was lost during the transfer. Reconnect the device and try again.";
 
     /// <summary>Guidance for a device with no card in the slot.</summary>
     internal const string NO_CARD_GUIDANCE =
@@ -114,20 +149,66 @@ public static class SdCardFailureClassifier
                 IsExpectedDeviceCondition: true,
                 IsCardUnavailable: true),
 
-            // The device opened the file and closed it again without sending a byte. This is
-            // AMBIGUOUS — Core cannot distinguish a wedged SD subsystem from a genuinely empty (0-byte)
-            // log file (an interrupted logging session leaves those on FAT) — so it throws this for
-            // both. Keep the power-cycle guidance, but @port-divergence: do NOT mark the whole card
-            // unavailable. Upstream sets this true, which makes a batch import abort on the FIRST empty
-            // file and silently skip every later (healthy) file; treating it as per-file lets the batch
-            // skip just this file and keep going. (Upstream shares the abort — reported upstream.)
+            // The device opened the file and closed it again without sending a byte, after Core
+            // exhausted its own retries.
+            //
+            // Since Core v1.4.0 this is size-aware: the receiver compares the marker-only transfer
+            // against the directory listing's reported size and only raises this for a file the
+            // listing calls non-empty, or whose listed size it could not determine
+            // (daqifi-core#398 gap 2). A genuinely 0-byte log — routinely left on a FAT card by an
+            // interrupted logging session — now downloads as a legitimate empty file and never
+            // reaches here. What does reach here is still ambiguous enough that the guidance must
+            // not assert a device fault: hence EMPTY_TRANSFER_GUIDANCE rather than the flat
+            // power-cycle instruction this used to give.
+            //
+            // Still per-file rather than card-wide: the unknown-listed-size case keeps Core's
+            // conservative throw, and one wedged file must not make every file listed after it
+            // unimportable through Import All.
             SdCardEmptyTransferException => new SdCardFailure(
                 State: SdCardState.Error,
                 StatusMessage: "The device returned no data for this file.",
-                Guidance: POWER_CYCLE_GUIDANCE,
+                Guidance: EMPTY_TRANSFER_GUIDANCE,
                 IsExpectedDeviceCondition: true,
                 IsCardUnavailable: false),
 
+            // The transfer stopped making progress before the end-of-file marker arrived. Core
+            // raises this directly for a transport that returned an empty read or closed; the
+            // importer raises it for its own stall watchdog and for Core's hard download deadline
+            // (see SdCardSessionImporter.DownloadWithStallWatchdogAsync).
+            //
+            // Reason is what decides how far the failure generalises — the typed replacement for
+            // this port's old binary "was the device quiet for the full window" measurement
+            // (daqifi-core#398 gap 1), which gave "your cable dropped" and "your device is wedged"
+            // the same sentence. It must precede the SdCardOperationException arm below, which is
+            // its base type.
+            SdCardTransferStalledException stalled => new SdCardFailure(
+                State: SdCardState.Error,
+                StatusMessage: stalled.Reason == SdCardTransferStallReason.TransportClosed
+                    ? "The connection to the device dropped during the transfer."
+                    : "The device stopped responding during the transfer.",
+                Guidance: stalled.Reason switch
+                {
+                    // The whole transfer deadline elapsed with the file incomplete. That is
+                    // evidence about the device, and far too expensive to pay again per file.
+                    SdCardTransferStallReason.TransferTimeout => POWER_CYCLE_GUIDANCE,
+
+                    // The transport is gone; Core states a retry on it cannot succeed.
+                    SdCardTransferStallReason.TransportClosed => TRANSPORT_CLOSED_GUIDANCE,
+
+                    // NoDataReceived — over USB serial this is the ordinary per-read stall and
+                    // fires in well under a second, so it can be one unreadable file.
+                    _ => INCOMPLETE_TRANSFER_GUIDANCE
+                },
+                IsExpectedDeviceCondition: true,
+                // Deliberately narrow: only the two reasons that are unmistakably about the device
+                // rather than about this one file stop a batch. The per-read stall also fires on a
+                // momentary inter-chunk gap on a healthy device (an SD read-latency spike, USB
+                // backpressure, a GC pause), so aborting on it would skip every later healthy file.
+                IsCardUnavailable: stalled.Reason is SdCardTransferStallReason.TransferTimeout
+                    or SdCardTransferStallReason.TransportClosed),
+
+            // Unambiguously device-wide: the device is using the card itself, so no file on it can
+            // be downloaded until logging stops.
             SdCardBusyException => new SdCardFailure(
                 State: SdCardState.Error,
                 StatusMessage: "The device's SD card is busy.",
@@ -135,13 +216,13 @@ public static class SdCardFailureClassifier
                 IsExpectedDeviceCondition: true,
                 IsCardUnavailable: true),
 
+            // A filesystem error can be the whole card or one corrupt directory entry, and the
+            // device message does not say which — so skip this file rather than write off the rest.
             SdCardFilesystemException filesystem => new SdCardFailure(
                 State: SdCardState.Error,
                 StatusMessage: filesystem.DeviceMessage ?? filesystem.Message,
                 Guidance: GENERIC_CARD_GUIDANCE,
                 IsExpectedDeviceCondition: true,
-                // @port-divergence (as above): a filesystem error can be specific to one corrupt file,
-                // so per-file rather than card-wide — a batch skips it and keeps going.
                 IsCardUnavailable: false),
 
             // The listing did not arrive in full: the device never answered the file-list query,
@@ -178,22 +259,6 @@ public static class SdCardFailureClassifier
                 // A rejected SCPI command can be specific to one file, so the rest of the card
                 // is still worth trying.
                 IsCardUnavailable: false),
-
-            // Raised when a download stalls: either the desktop's own SUSTAINED-silence watchdog
-            // (StallTimeout > 0 — e.g. 90s of no data, genuinely device-wide), or Core's own ~500ms
-            // per-read serial timeout normalized to this type in SdCardSessionImporter with
-            // StallTimeout == 0. Both are expected device conditions (power-cycle guidance, no Sentry).
-            // @port-divergence on card-unavailability: ONLY the sustained watchdog stall is treated as
-            // device-wide (abort the batch, paint the card panel). The transport per-read timeout also
-            // fires on a single momentary inter-chunk gap on a healthy device (SD read-latency spike,
-            // USB backpressure, a GC pause), so it's per-file — don't abort, or one hiccup would skip
-            // every later healthy file.
-            SdCardDownloadStalledException stalled => new SdCardFailure(
-                State: SdCardState.Error,
-                StatusMessage: "The device stopped responding during the transfer.",
-                Guidance: POWER_CYCLE_GUIDANCE,
-                IsExpectedDeviceCondition: true,
-                IsCardUnavailable: stalled.StallTimeout > TimeSpan.Zero),
 
             // Core gates SD file transfer over WiFi behind DeviceFeature.SdFileTransferOverWifi
             // (min firmware v3.7.0, per its ADR 0001) and throws this when the connected device's
@@ -285,6 +350,11 @@ public static class SdCardFailureClassifier
                 IsExpectedDeviceCondition: true,
                 IsCardUnavailable: true),
 
+            // A bare TimeoutException is deliberately NOT matched: one reaching here from some
+            // other layer is not evidence that the SD subsystem is wedged and must keep the Error
+            // path. The importer normalises the one timeout that IS about the card — Core's hard
+            // download deadline — onto SdCardTransferStalledException at the call site, where the
+            // scope makes it safe.
             _ => new SdCardFailure(
                 State: SdCardState.Error,
                 StatusMessage: ex.Message,

@@ -48,4 +48,13 @@
     <ProjectReference Include="..\Daqifi.Avalonia\Daqifi.Avalonia.csproj" />
   </ItemGroup>
 
+  <ItemGroup>
+    <!-- Real SD card log files the tests parse through Daqifi.Core's own parsers, rather than
+         hand-built entry objects. `empty-log.bin` is zero bytes on purpose: it is the artefact an
+         interrupted logging session leaves on a FAT card, and the case it pins only exists as a
+         file on disk. Copied rather than embedded so the parser's file-path overload — the one
+         the importer uses — is what gets exercised. -->
+    <None Update="Fixtures\**" CopyToOutputDirectory="PreserveNewest" />
+  </ItemGroup>
+
 </Project>

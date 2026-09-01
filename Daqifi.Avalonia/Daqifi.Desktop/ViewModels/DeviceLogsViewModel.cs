@@ -5,6 +5,7 @@
 
 using System.Collections.ObjectModel;
 using System.ComponentModel;
+using System.Globalization;
 using System.Text;
 using Avalonia;
 using Avalonia.Controls.ApplicationLifetimes;
@@ -588,12 +589,7 @@ public partial class DeviceLogsViewModel : ObservableObject
         if (device == null || !CanAccessSdCard || DeviceFiles == null || !DeviceFiles.Any()) return;
 
         var filesToImport = DeviceFiles.ToList();
-        var successCount = 0;
-        var failCount = 0;
-        var timestampWarningCount = 0;
-        SdCardFailure? abortingFailure = null;
-        SdCardFailure? lastExpectedFailure = null;
-        var disconnectedMidBatch = false;
+        var outcome = new ImportAllOutcome { TotalCount = filesToImport.Count };
 
         try
         {
@@ -612,12 +608,12 @@ public partial class DeviceLogsViewModel : ObservableObject
                 // cover a fully silent TCP death: Core's TcpStreamTransport raises StatusChanged
                 // only from its connect-failure and DisconnectAsync paths (no read-error hook or
                 // keepalive), so IsConnected stays true and this check cannot see it. That case is
-                // caught instead by the download stall watchdog, whose SdCardDownloadStalledException
+                // caught instead by the download stall watchdog, whose SdCardTransferStalledException
                 // classifies card-unavailable and breaks below — costing one stall timeout for the
                 // batch rather than one per remaining file.
                 if (!device.IsConnected)
                 {
-                    disconnectedMidBatch = true;
+                    outcome.DisconnectedMidBatch = true;
                     break;
                 }
 
@@ -638,71 +634,32 @@ public partial class DeviceLogsViewModel : ObservableObject
 
                     if (result.TimestampQuality.HasDegenerateTimeAxis)
                     {
-                        timestampWarningCount++;
+                        outcome.TimestampWarningCount++;
                     }
 
-                    successCount++;
+                    outcome.ImportedCount++;
                 }
                 catch (Exception ex)
                 {
                     var failure = HandleImportFailure(ex, file.FileName, device);
-                    failCount++;
-                    // Remember the last EXPECTED device condition (not just the last failure), so a later
-                    // unexpected app error doesn't drop the actionable guidance an earlier card condition
-                    // carried.
-                    if (failure.IsExpectedDeviceCondition)
-                    {
-                        lastExpectedFailure = failure;
-                    }
 
                     // The SD subsystem is unusable, not just this one file — every remaining file
                     // would fail the same multi-second way, so stop rather than grinding through them.
                     if (failure.IsCardUnavailable)
                     {
-                        abortingFailure = failure;
+                        outcome.AbortingFailure = failure;
+                        outcome.AbortedOnFile = file.FileName;
                         break;
                     }
+
+                    // Anything else may be specific to this file — an empty log, one corrupt
+                    // directory entry, a rejected command. Skip it and keep going, and name it in
+                    // the summary so the user can retry it on its own.
+                    outcome.RecordSkip(file.FileName, failure.Guidance);
                 }
             }
 
-            var message = $"Imported {successCount} of {filesToImport.Count} files.";
-            if (failCount > 0)
-            {
-                message += $"\n{failCount} file(s) failed to import.";
-            }
-
-            if (timestampWarningCount > 0)
-            {
-                message += $"\nWarning: {timestampWarningCount} file(s) have missing or unusable per-sample " +
-                           "timestamps; their sessions' time axes may be flat or partially collapsed.";
-            }
-
-            if (disconnectedMidBatch)
-            {
-                // Say so explicitly: without this a batch cut short by a disconnect reports the same
-                // "Import Complete" summary as a finished one, and the user has no way to tell that
-                // the untouched files were skipped rather than imported.
-                message += "\n\nImport stopped early: the device disconnected. Reconnect and run " +
-                           "Import All again to pick up the remaining files.";
-            }
-            else if (abortingFailure != null)
-            {
-                message += $"\n\nImport stopped early: {abortingFailure.Guidance}";
-            }
-            else if (successCount == 0 && lastExpectedFailure != null)
-            {
-                // Surface actionable guidance when we didn't abort but NOTHING imported — i.e. every file
-                // failed with a device condition, which over Windows USB serial is how a wedged SD
-                // subsystem presents (Core's ~500ms per-read timeout beats the sustained watchdog, so the
-                // device-wide abort path is unreachable and every file fails per-file). Without this the
-                // batch summary would report only a failure count and never tell the user to power-cycle
-                // (issue #754). The successCount==0 guard is deliberate: if some files imported, the
-                // device is demonstrably working, so a lone empty/corrupt/hiccup file must NOT trigger a
-                // misleading "power-cycle the device" — its failure is already in the count.
-                message += $"\n\n{lastExpectedFailure.Guidance}";
-            }
-
-            await ShowMessage("Import Complete", message, MessageBoxButton.OK);
+            await ShowMessage("Import Complete", BuildImportAllSummary(outcome), MessageBoxButton.OK);
         }
         catch (Exception ex)
         {
@@ -716,6 +673,80 @@ public partial class DeviceLogsViewModel : ObservableObject
             IsBusy = false;
             BusyMessage = string.Empty;
         }
+    }
+
+    /// <summary>
+    /// How many skipped file names the completion dialog lists before collapsing the rest into a
+    /// count. A card can hold hundreds of logs, and a dialog listing all of them is unreadable.
+    /// </summary>
+    // @port: Daqifi.Desktop.ViewModels.DeviceLogsViewModel.MAX_LISTED_SKIPPED_FILES
+    private const int MAX_LISTED_SKIPPED_FILES = 10;
+
+    /// <summary>
+    /// Builds the text of the "Import Complete" dialog from what the batch actually did.
+    ///
+    /// Skipped files are reported as skipped, by name, with the advice that applies to them — not
+    /// as a card-wide abort, and not as a bare "N file(s) failed to import." with no way to tell
+    /// which. Telling the user to power-cycle the device because one log file was empty sent them
+    /// after a fault that was not there and hid the fact that every other file imported fine.
+    /// </summary>
+    /// <param name="outcome">What the batch imported, skipped, and stopped at.</param>
+    /// <returns>The message body shown in the completion dialog.</returns>
+    // @port: Daqifi.Desktop.ViewModels.DeviceLogsViewModel.BuildImportAllSummary
+    internal static string BuildImportAllSummary(ImportAllOutcome outcome)
+    {
+        ArgumentNullException.ThrowIfNull(outcome);
+
+        var message = new StringBuilder();
+        message.Append(CultureInfo.CurrentCulture, $"Imported {outcome.ImportedCount} of {outcome.TotalCount} files.");
+
+        if (outcome.SkippedFiles.Count > 0)
+        {
+            message.Append(CultureInfo.CurrentCulture, $"\n\nSkipped {outcome.SkippedFiles.Count} file(s).");
+            message.Append(" You can retry any of them on their own from the file list.");
+
+            foreach (var fileName in outcome.SkippedFiles.Take(MAX_LISTED_SKIPPED_FILES))
+            {
+                message.Append(CultureInfo.CurrentCulture, $"\n  • {fileName}");
+            }
+
+            var undisplayed = outcome.SkippedFiles.Count - MAX_LISTED_SKIPPED_FILES;
+            if (undisplayed > 0)
+            {
+                message.Append(CultureInfo.CurrentCulture, $"\n  • ...and {undisplayed} more");
+            }
+
+            // One line per distinct reason: a card holding both an empty log and a corrupt one
+            // needs both pieces of advice, but a card holding ten empty logs needs it once.
+            foreach (var guidance in outcome.SkipGuidance)
+            {
+                message.Append(CultureInfo.CurrentCulture, $"\n\n{guidance}");
+            }
+        }
+
+        if (outcome.DisconnectedMidBatch)
+        {
+            // Say so explicitly: without this a batch cut short by a disconnect reports the same
+            // "Import Complete" summary as a finished one, and the user has no way to tell that
+            // the untouched files were skipped rather than imported.
+            message.Append("\n\nImport stopped early: the device disconnected. Reconnect and run ");
+            message.Append("Import All again to pick up the remaining files.");
+        }
+        else if (outcome.AbortingFailure != null)
+        {
+            message.Append(CultureInfo.CurrentCulture,
+                $"\n\nImport stopped at {outcome.AbortedOnFile}: {outcome.AbortingFailure.Guidance}");
+        }
+
+        if (outcome.TimestampWarningCount > 0)
+        {
+            message.Append(CultureInfo.CurrentCulture,
+                $"\n\nWarning: {outcome.TimestampWarningCount} file(s) contain samples with no device");
+            message.Append(" timestamp; those samples were placed at the session start time, so their");
+            message.Append(" time spacing is not meaningful.");
+        }
+
+        return message.ToString();
     }
 
     // @port: Daqifi.Desktop.ViewModels.DeviceLogsViewModel.ResolveImporter
@@ -792,4 +823,75 @@ public partial class DeviceLogsViewModel : ObservableObject
     }
 
     private static readonly IMessageBoxService _messageBoxService = new AvaloniaMessageBoxService();
+}
+
+/// <summary>
+/// What an "Import All" run did, in the terms its completion dialog reports. Accumulated as the
+/// batch runs and handed to <see cref="DeviceLogsViewModel.BuildImportAllSummary"/>, which is
+/// separated out so the wording can be unit-tested without a dialog or a device.
+/// </summary>
+// @port: Daqifi.Desktop.ViewModels.ImportAllOutcome
+internal sealed class ImportAllOutcome
+{
+    private readonly List<string> _skippedFiles = [];
+    private readonly List<string> _skipGuidance = [];
+
+    /// <summary>How many files the batch started with.</summary>
+    // @port: Daqifi.Desktop.ViewModels.ImportAllOutcome.TotalCount
+    public int TotalCount { get; init; }
+
+    /// <summary>How many files imported successfully.</summary>
+    // @port: Daqifi.Desktop.ViewModels.ImportAllOutcome.ImportedCount
+    public int ImportedCount { get; set; }
+
+    /// <summary>How many imported sessions carried at least one substituted timestamp.</summary>
+    // @port: Daqifi.Desktop.ViewModels.ImportAllOutcome.TimestampWarningCount
+    public int TimestampWarningCount { get; set; }
+
+    /// <summary>
+    /// Files that failed for a reason that may be specific to them, in list order. The batch
+    /// carried on past each of these, and the user can still retry them individually.
+    /// </summary>
+    // @port: Daqifi.Desktop.ViewModels.ImportAllOutcome.SkippedFiles
+    public IReadOnlyList<string> SkippedFiles => _skippedFiles;
+
+    /// <summary>
+    /// The distinct guidance sentences the skipped files produced, in first-seen order. Deduped
+    /// so ten empty logs read out their advice once rather than ten times.
+    /// </summary>
+    // @port: Daqifi.Desktop.ViewModels.ImportAllOutcome.SkipGuidance
+    public IReadOnlyList<string> SkipGuidance => _skipGuidance;
+
+    /// <summary>
+    /// The card-wide failure that ended the batch early, or <c>null</c> if it ran to completion.
+    /// </summary>
+    // @port: Daqifi.Desktop.ViewModels.ImportAllOutcome.AbortingFailure
+    public SdCardFailure? AbortingFailure { get; set; }
+
+    /// <summary>The file the batch stopped at, set with <see cref="AbortingFailure"/>.</summary>
+    // @port: Daqifi.Desktop.ViewModels.ImportAllOutcome.AbortedOnFile
+    public string? AbortedOnFile { get; set; }
+
+    /// <summary>
+    /// True when the batch stopped because the device went away mid-run. Port-only: this app
+    /// re-checks <c>IDevice.IsConnected</c> on every iteration, which upstream does not, and a
+    /// batch cut short that way has no failing file to name.
+    /// </summary>
+    public bool DisconnectedMidBatch { get; set; }
+
+    /// <summary>
+    /// Records a file the batch skipped and carried on past.
+    /// </summary>
+    /// <param name="fileName">The file that failed.</param>
+    /// <param name="guidance">What the user should do about it.</param>
+    // @port: Daqifi.Desktop.ViewModels.ImportAllOutcome.RecordSkip
+    public void RecordSkip(string fileName, string guidance)
+    {
+        _skippedFiles.Add(fileName);
+
+        if (!_skipGuidance.Contains(guidance))
+        {
+            _skipGuidance.Add(guidance);
+        }
+    }
 }
