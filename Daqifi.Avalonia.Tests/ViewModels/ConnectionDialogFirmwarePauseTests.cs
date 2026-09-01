@@ -132,24 +132,41 @@ public class ConnectionDialogFirmwarePauseTests : IDisposable
     }
 
     /// <summary>
-    /// The pause reason goes up <em>before</em> the drains, not after them: an auto-update can finish
-    /// while the dialog is still awaiting its own teardown, and would otherwise restart the very
-    /// discovery being torn down.
+    /// The pause reason goes up <em>before</em> the transports are drained, not after them. Draining
+    /// them is not instant — a wedged port can hold a discovery loop for seconds — and an auto-update
+    /// finishing inside that window would restart the very discovery being torn down. Reading the gate
+    /// after the drains would not tell these two orderings apart, so this reads it during one.
     /// </summary>
     [Fact]
-    public async Task The_pause_is_in_place_from_the_first_moment_of_the_hid_flash_window()
+    public async Task The_pause_is_in_place_before_the_transports_finish_draining()
     {
         using var viewModel = CreateViewModel(new FakeBootloaderWatcher());
-        var pausedWhenTheWindowOpened = false;
+        var viewModelUnderTest = viewModel.Value;
 
-        await RunHidFlashWindowAsync(viewModel.Value, () =>
+        // Stands in for a discovery loop that has not finished winding down: the quiesce window awaits
+        // this before it can show the firmware dialog.
+        var drainCanFinish = new TaskCompletionSource();
+        SetPrivateField(viewModelUnderTest, "_wifiDiscoveryTask", drainCanFinish.Task);
+
+        // The call returns only once the window has suspended on that drain — an async method runs
+        // synchronously up to its first real suspension point — so control is back here at a moment
+        // that is provably inside the teardown. No sleep, no polling.
+        var window = RunHidFlashWindowAsync(viewModelUnderTest, () =>
         {
-            pausedWhenTheWindowOpened = IsDiscoveryPausedForFirmware(viewModel.Value);
+            // Hold one reason across the window's exit restart so no real finder is ever created.
             ConnectionManager.Instance.DeviceBeingUpdated = new TestDevice();
             return Task.CompletedTask;
         });
 
-        Assert.True(pausedWhenTheWindowOpened);
+        var pausedWhileDraining = IsDiscoveryPausedForFirmware(viewModelUnderTest);
+
+        drainCanFinish.SetResult();
+        await window;
+
+        Assert.True(
+            pausedWhileDraining,
+            "The pause must already be in place while the transports are still draining, or an "
+            + "auto-update ending mid-teardown restarts the discovery being torn down.");
     }
 
     /// <summary>

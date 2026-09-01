@@ -182,11 +182,57 @@ public class BootloaderWatcherFlashStateTests
         var edges = new List<bool>();
         watcher.FlashInProgressChanged += (_, _) => edges.Add(watcher.IsFlashInProgress);
 
-        await watcher.PrepareFlashAsync(PathA);
-        await watcher.PrepareFlashAsync(PathA);
+        var first = await watcher.PrepareFlashAsync(PathA);
+        var second = await watcher.PrepareFlashAsync(PathA);
 
         Assert.Equal(new[] { true }, edges);
         Assert.True(watcher.IsFlashInProgress);
+
+        // Leave nothing outstanding: an undisposed lease would hold discovery paused for the rest of
+        // the watcher's life, which is exactly what the next test is about.
+        await first.DisposeAsync();
+        await second.DisposeAsync();
+    }
+
+    /// <summary>
+    /// Every <c>PrepareFlashAsync</c> hands out its own lease, and the published flash state has to
+    /// describe <em>all</em> of them: if the first disposal cleared it, the connection dialog's guard
+    /// would open and discovery would probe the bus into a write that is still running.
+    ///
+    /// <para>
+    /// Two overlapping flashes are not reachable through today's UI — the only caller,
+    /// <c>FirmwareDialogViewModel</c>, is behind a modal opened from another modal — so this pins the
+    /// contract rather than reproducing a live failure. It is the same reason the re-grab is deferred:
+    /// reopening the handle while a second write to the same device is in flight would fight it.
+    /// </para>
+    /// </summary>
+    [Fact]
+    public async Task Disposing_one_of_two_overlapping_leases_leaves_the_flash_in_progress()
+    {
+        using var watcher = await CreateStartedWatcherHoldingAsync(PathA);
+        var first = await watcher.PrepareFlashAsync(PathA);
+        var second = await watcher.PrepareFlashAsync(PathA);
+        var edges = new List<bool>();
+        watcher.FlashInProgressChanged += (_, _) => edges.Add(watcher.IsFlashInProgress);
+        var beginHoldsBefore = _holds[PathA].BeginHoldCount;
+
+        await first.DisposeAsync();
+
+        Assert.True(
+            watcher.IsFlashInProgress,
+            "A flash must stay in progress while another lease is still outstanding.");
+        Assert.False(_discovery.IsRunning, "Discovery must not resume while a lease is outstanding.");
+        Assert.Empty(edges);
+        Assert.Equal(
+            beginHoldsBefore,
+            _holds[PathA].BeginHoldCount);
+
+        await second.DisposeAsync();
+
+        Assert.False(watcher.IsFlashInProgress);
+        Assert.Equal(new[] { false }, edges);
+        Assert.True(_discovery.IsRunning);
+        Assert.Equal(beginHoldsBefore + 1, _holds[PathA].BeginHoldCount);
     }
 
     /// <summary>
