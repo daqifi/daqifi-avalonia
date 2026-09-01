@@ -236,17 +236,19 @@ public partial class LoggingManager : ObservableObject
     // ExecutionAndPublication, so the one-instance guarantee is unchanged.
     private static readonly Lazy<LoggingManager> _instance = new(() => new LoggingManager());
 
+    // Chains to the constructor below rather than repeating its body. That also keeps this file's
+    // warning count where it was: CS8618 is reported once per constructor that does NOT chain, so
+    // adding a second independent one would have duplicated the two _session/_selectedProfile
+    // warnings this type already carries.
     private LoggingManager()
+        : this(App.ServiceProvider.GetRequiredService<IDbContextFactory<LoggingContext>>())
     {
-        Loggers = [];
-        // _subscribedChannels starts empty via its field initializer; it has no setter (copy-on-write).
-        _loggingContext = App.ServiceProvider.GetRequiredService<IDbContextFactory<LoggingContext>>();
     }
 
     /// <summary>
-    /// Test-only constructor. Takes the context factory directly instead of resolving it from
-    /// <c>App.ServiceProvider</c>, which does not exist outside the app host, so the channel
-    /// subscription contract can be exercised without standing up an application.
+    /// Takes the context factory directly instead of resolving it from <c>App.ServiceProvider</c>,
+    /// which does not exist outside the app host, so the channel subscription contract can be
+    /// exercised without standing up an application.
     /// </summary>
     /// <remarks>
     /// Mirrors upstream's <c>internal LoggingManager(IDbContextFactory&lt;LoggingContext&gt;)</c>
@@ -257,6 +259,7 @@ public partial class LoggingManager : ObservableObject
     internal LoggingManager(IDbContextFactory<LoggingContext> loggingContext)
     {
         Loggers = [];
+        // _subscribedChannels starts empty via its field initializer; it has no setter (copy-on-write).
         _loggingContext = loggingContext;
     }
 
