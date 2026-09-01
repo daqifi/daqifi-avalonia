@@ -44,7 +44,8 @@
 		         -p:MtouchInterpreter=all
 		                                binary  6.7 MB  .app 103 MB  NOT trimmed
 		     The third row is the isolation experiment, and the only fair comparison
-		     for the AOT cost alone: 6.7 MB vs 35.5 MB of app binary, ~33 MB. A
+		     for the AOT cost alone: 28.8 MB more app binary (6.7 to 35.5) plus the
+		     5.6 MB dedup file, i.e. ~33 MB of .app, 103 to 136. A
 		     6.7 MB binary is the tell that under "all" there is essentially no AOT
 		     code in the app AT ALL. Avalonia's render loop, OxyPlot and our stream
 		     handling were all being interpreted to keep one library working, on a
