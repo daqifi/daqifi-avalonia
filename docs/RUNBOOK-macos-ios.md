@@ -30,17 +30,19 @@ The app launches, the window renders, and `DAQifiAppLog.log` reports
 **macOS needs no new project.** `Daqifi.Avalonia.Desktop` already declares
 `osx-x64;osx-arm64` in its `RuntimeIdentifiers` — written during the
 shared-project split (`4489f28`) — and that declaration now has a build behind
-it. Note that CI still does not. There **is** a macOS runner in
-`.github/workflows/build.yml` now — the `ios` job, added in #105 — but it builds
-`Daqifi.Avalonia.iOS`. No job builds the Desktop head for an `osx-*` RID, so
-nothing stops a macOS regression from landing (#88).
+it — by hand, and now in CI as well. The `macos` job in
+`.github/workflows/build.yml` builds the Desktop head for `osx-arm64` and asserts
+the result is an arm64 Mach-O whose macOS native libraries are all present and all
+carry an arm64 slice (#88). It runs on every pull request and on pushes to `main`
+— which is this workflow's trigger, so a feature branch is covered from the moment
+it has a PR and not before. `osx-x64` is declared but still built by nobody.
 
 So the remaining macOS work is not "will it compile" — it is:
 
 - **Runtime behaviour under QA** (1.2). Compiling is not rendering; the
-  PlotView and icon checks are the real gate.
+  PlotView and icon checks are the real gate, and the CI job does not run the
+  app, so it cannot stand in for this.
 - **Windows-only code paths that degrade rather than crash** (1.3).
-- **A macOS CI job**, so this does not silently rot. Its own ticket.
 
 Budget: less than the day originally planned for bring-up, more than zero for QA.
 
