@@ -9,6 +9,7 @@ using NLog.Targets;
 using System.Configuration;
 using System.IO;
 using System.Reflection;
+using System.Text.RegularExpressions;
 
 namespace Daqifi.Desktop.Common.Loggers;
 
@@ -21,6 +22,17 @@ public class AppLogger : IAppLogger
     private readonly NLog.Logger? _logger;
     private IDisposable? _sentryDisposable;
     private static readonly bool IsTestMode = IsRunningInTestEnvironment();
+
+    /// <summary>
+    /// Matches the account segment of a home directory — <c>/Users/<i>name</i></c>,
+    /// <c>C:\Users\<i>name</i></c>, <c>/home/<i>name</i></c>.
+    /// </summary>
+    private static readonly Regex HomeDirectoryAccount = new(
+        @"(?<prefix>[/\\](?:Users|home)[/\\])(?<account>[^/\\]+)",
+        RegexOptions.IgnoreCase | RegexOptions.CultureInvariant);
+
+    /// <summary>This user's profile directory, for a profile that is not under the usual root.</summary>
+    private static readonly string UserProfileDirectory = ResolveUserProfileDirectory();
     #endregion
 
     // @port: Daqifi.Desktop.Common.Loggers.AppLogger.Instance
@@ -318,7 +330,57 @@ public class AppLogger : IAppLogger
     /// </para>
     /// </remarks>
     private static void LeaveBreadcrumb(string message, Sentry.BreadcrumbLevel level) =>
-        SentrySdk.AddBreadcrumb(message: message, category: "log", level: level);
+        SentrySdk.AddBreadcrumb(message: RedactAccountNames(message), category: "log", level: level);
+
+    private static string ResolveUserProfileDirectory()
+    {
+        try
+        {
+            return Environment.GetFolderPath(Environment.SpecialFolder.UserProfile);
+        }
+        catch
+        {
+            // Not resolvable on every head; the regex below is the general case anyway.
+            return string.Empty;
+        }
+    }
+
+    /// <summary>
+    /// Removes the account name from any home-directory path in text bound for Sentry.
+    /// </summary>
+    /// <remarks>
+    /// Warning messages are written by call sites that reasonably assume they stay on the
+    /// machine, and two of them interpolate a path the user chose — an export destination, a
+    /// temp file. A home directory contains the account name, so uploading one verbatim would
+    /// send a username, which is the specific thing <c>SendDefaultPii = false</c> and the app
+    /// store data declaration say we do not do. That option only governs what the SDK attaches
+    /// on its own; it does not touch content the application supplies.
+    /// <para>
+    /// The account segment goes, the rest of the path stays: <c>/Users/jane/Documents/run.csv</c>
+    /// becomes <c>/Users/&lt;account&gt;/Documents/run.csv</c>. Which folder and which file is the
+    /// half that explains a failure, and only the name identifies anybody.
+    /// </para>
+    /// <para>
+    /// Deliberately narrow. This removes account names from paths; it is not a general PII
+    /// scrubber and does not try to be one, because free-text log messages cannot be reliably
+    /// classified. Other user-supplied strings — a device's friendly name, an IP address — are
+    /// unchanged, and are already sent today through the explicit <see cref="AddBreadcrumb"/>
+    /// calls and through <c>Error</c>'s messages, so this is not a surface the change opens.
+    /// </para>
+    /// </remarks>
+    private static string RedactAccountNames(string message)
+    {
+        if (string.IsNullOrEmpty(message)) { return message; }
+
+        var redacted = HomeDirectoryAccount.Replace(message, "${prefix}<account>");
+
+        if (!string.IsNullOrEmpty(UserProfileDirectory))
+        {
+            redacted = redacted.Replace(UserProfileDirectory, "~", StringComparison.OrdinalIgnoreCase);
+        }
+
+        return redacted;
+    }
 
     /// <inheritdoc />
     // @port: Daqifi.Desktop.Common.Loggers.AppLogger.AddBreadcrumb

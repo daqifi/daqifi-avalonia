@@ -124,9 +124,13 @@ public abstract partial class AbstractStreamingDevice : ObservableObject, IStrea
     // these exist so a persistent fault is reported with its frequency instead of once per
     // streamed message. Reset when streaming starts, so each session reports afresh rather than
     // inheriting the previous session's suppression.
-    private int _analogProcessingFailureCount;
-    private int _digitalProcessingFailureCount;
-    private int _debugDataFailureCount;
+    // long, not int: at the documented 1 kHz persistent-failure rate an int wraps negative
+    // after ~24.9 days, and a negative occurrence fails IsPowerOfTen while satisfying
+    // "< FullyLoggedFailureCount" — so every message would take the warning branch and the
+    // throttle would invert into exactly the write storm it exists to prevent.
+    private long _analogProcessingFailureCount;
+    private long _digitalProcessingFailureCount;
+    private long _debugDataFailureCount;
 
     // Whether the device-reported clock frequency has been applied to _timestampProcessor for the
     // current streaming session. Cleared alongside every ResetAll(), which per Core's contract also
@@ -1407,9 +1411,11 @@ public abstract partial class AbstractStreamingDevice : ObservableObject, IStrea
             _timestampFrequencyApplied = false;
         }
         _discardedLeftoverFrameCount = 0;
-        _analogProcessingFailureCount = 0;
-        _digitalProcessingFailureCount = 0;
-        _debugDataFailureCount = 0;
+        // Interlocked, because a 64-bit assignment is not guaranteed atomic on a 32-bit
+        // runtime and these are written here while a stream handler may still be incrementing.
+        Interlocked.Exchange(ref _analogProcessingFailureCount, 0);
+        Interlocked.Exchange(ref _digitalProcessingFailureCount, 0);
+        Interlocked.Exchange(ref _debugDataFailureCount, 0);
         _checkForLeftoverFrames = _hasSeenDeviceTimestamp;
         _pendingFirstFrameValidation = !_hasSeenDeviceTimestamp;
         _heldFirstFrame = null;
@@ -1460,8 +1466,19 @@ public abstract partial class AbstractStreamingDevice : ObservableObject, IStrea
     /// logged in full, which covers a transient fault completely; past that only the reported
     /// ones are, and the count in the next report is what conveys the true frequency.
     /// </para>
+    /// <para>
+    /// The per-session reset races, and that is accepted rather than overlooked. Messages are
+    /// dispatched fire-and-forget (see OnInboundMessageReceived), so a handler already past the
+    /// IsStreaming guard when a restart resets the counters can increment afterwards, numbering
+    /// a stale failure as occurrence 1 or pushing the session's real first failure to 2 — where
+    /// it is logged locally but not sent until occurrence 10. Closing it properly needs a
+    /// stream generation threaded through every dispatched message and checked before
+    /// reporting: real work in the per-message path, to make a log line's ordinal exact. The
+    /// counters gate only when to log, never device behaviour or data, and the neighbouring
+    /// _discardedLeftoverFrameCount — which does gate behaviour — is reset the same way.
+    /// </para>
     /// </remarks>
-    private void ReportStreamProcessingFailure(ref int failureCount, Exception ex, string what)
+    private void ReportStreamProcessingFailure(ref long failureCount, Exception ex, string what)
     {
         var occurrence = Interlocked.Increment(ref failureCount);
         var message = $"{what} (occurrence {occurrence.ToString(CultureInfo.InvariantCulture)})";
@@ -1487,7 +1504,7 @@ public abstract partial class AbstractStreamingDevice : ObservableObject, IStrea
     private const int FullyLoggedFailureCount = 10;
 
     /// <summary>Whether <paramref name="value"/> is 1, 10, 100, 1000, …</summary>
-    private static bool IsPowerOfTen(int value)
+    private static bool IsPowerOfTen(long value)
     {
         if (value < 1) { return false; }
 
