@@ -838,8 +838,8 @@
           "NLog": "[6.1.4, )",
           "Newtonsoft.Json": "[13.0.4, )",
           "Optris.Icons.Avalonia.MaterialDesign": "[12.0.7, )",
+          "OxyPlot.Avalonia": "[2.1.2, )",
           "OxyPlot.Core": "[2.2.0, )",
-          "Oxyplot.Avalonia": "[2.1.2, )",
           "SQLitePCLRaw.bundle_e_sqlite3": "[3.0.4, )",
           "Sentry": "[6.8.0, )",
           "System.Configuration.ConfigurationManager": "[10.0.10, )",
@@ -848,7 +848,7 @@
           "Xaml.Behaviors.Avalonia": "[12.0.5, )"
         }
       },
-      "Oxyplot.Avalonia": {
+      "oxyplot.avalonia": {
         "type": "Project",
         "dependencies": {
           "Avalonia": "[12.1.1, )",

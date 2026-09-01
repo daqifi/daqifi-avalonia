@@ -16,9 +16,9 @@ namespace Daqifi.Avalonia.Views;
 /// </summary>
 public sealed class LivePlot : Control
 {
-    // Render runs on the 50 ms timer while streaming, so anything constructed inside it is
-    // allocated ~20x/second — and with 16 channels the per-series brush and pen made that ~640
-    // allocations/second of pure churn. These are immutable and shared instead.
+    // Render runs off the view's render timer while streaming, so anything constructed inside it
+    // is allocated ~10x/second — and with 16 channels the per-series brush and pen made that
+    // hundreds of allocations/second of pure churn. These are immutable and shared instead.
     //
     // The per-colour caches are plain Dictionaries with no lock: Render is only ever invoked on
     // the UI thread, so there is no second writer to race with.
@@ -48,6 +48,14 @@ public sealed class LivePlot : Control
         return pen;
     }
 
+    // One reusable destination per series for ChannelSeries.CopyTo, plus how many samples each
+    // holds. Render used to take a freshly allocated array per series per redraw — 16 x 600
+    // doubles, ~77 KB a frame, which at 20 redraws a second made this control the app's largest
+    // allocator (#122). Same reasoning as the brush and pen caches above: Render only ever runs
+    // on the UI thread, so these need no synchronisation of their own.
+    private double[][] _samples = [];
+    private int[] _sampleCounts = [];
+
     public IReadOnlyList<ChannelSeries>? Series { get; set; }
 
     /// <summary>
@@ -61,10 +69,13 @@ public sealed class LivePlot : Control
     /// <para>
     /// It has never described what is DRAWN. The poll still appends at most one point per channel
     /// per tick, so the trace remains a 20 Hz decimation of the stream and a spike shorter than
-    /// 50 ms is still invisible; min/max decimation is the fix for that and belongs with the rest
-    /// of the render-path work in #122. Recorded data was never affected either way: logging runs
-    /// off the per-frame device message (AbstractStreamingDevice.DispatchDeviceMessage), so a CSV
-    /// export has always held every sample.
+    /// 50 ms is still invisible. Min/max decimation would be the fix for that; it was left out of
+    /// the #122 render-path work on measurement — the cost there is rasterising the stroke, not
+    /// the number of points, and decimating to the plot's width would have added points, not
+    /// removed them. So it remains unimplemented. Recorded data was never affected either way:
+    /// logging runs off the per-frame device message
+    /// (AbstractStreamingDevice.DispatchDeviceMessage), so a CSV export has always held every
+    /// sample.
     /// </para>
     /// </remarks>
     public long SampleCount { get; set; }
@@ -82,16 +93,28 @@ public sealed class LivePlot : Control
         if (series == null || series.Count == 0) { return; }
 
         // Shared Y auto-scale across every series so overlaid traces are
-        // comparable; snapshot once per render.
-        var snaps = new List<double[]>(series.Count);
+        // comparable; copy once per render into the reusable buffers.
+        if (_samples.Length < series.Count)
+        {
+            Array.Resize(ref _samples, series.Count);
+            Array.Resize(ref _sampleCounts, series.Count);
+        }
         var min = double.MaxValue;
         var max = double.MinValue;
-        foreach (var s in series)
+        for (var si = 0; si < series.Count; si++)
         {
-            var d = s.Snapshot();
-            snaps.Add(d);
-            foreach (var v in d)
+            var s = series[si];
+            var d = _samples[si];
+            if (d == null || d.Length < s.Capacity)
             {
+                d = new double[s.Capacity];
+                _samples[si] = d;
+            }
+            var n = s.CopyTo(d);
+            _sampleCounts[si] = n;
+            for (var i = 0; i < n; i++)
+            {
+                var v = d[i];
                 if (v < min) { min = v; }
                 if (v > max) { max = v; }
             }
@@ -104,17 +127,18 @@ public sealed class LivePlot : Control
         if (hasData)
         {
             if (max - min < 1e-9) { max = min + 1; min -= 1; }  // flat line
-            for (var si = 0; si < snaps.Count; si++)
+            for (var si = 0; si < series.Count; si++)
             {
-                var d = snaps[si];
-                if (d.Length < 2) { continue; }
+                var d = _samples[si];
+                var n = _sampleCounts[si];
+                if (n < 2) { continue; }
                 var pen = PenFor(series[si].ColorArgb);
                 var geo = new StreamGeometry();
                 using (var g = geo.Open())
                 {
-                    for (var i = 0; i < d.Length; i++)
+                    for (var i = 0; i < n; i++)
                     {
-                        var x = w * i / (d.Length - 1);
+                        var x = w * i / (n - 1);
                         var y = h * (1 - (d[i] - min) / (max - min));
                         var pt = new Point(x, y);
                         if (i == 0) { g.BeginFigure(pt, false); }

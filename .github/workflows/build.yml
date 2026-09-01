@@ -147,6 +147,52 @@ jobs:
           path: '**/obj/project.assets.json'
           if-no-files-found: error
 
+      # THE CANONICAL COPY OF THIS CHECK — the android and ios jobs run the same thing
+      # against their own heads and point back here.
+      #
+      # Everything above only sees drift that a PLAIN restore reacts to, and a plain
+      # restore that finds a CONSISTENT lock file leaves it byte-for-byte alone. NuGet
+      # compares ids case-insensitively when deciding that, so a lock file whose entries
+      # are merely SPELLED differently from what a fresh derivation produces is
+      # "consistent": it satisfies locked mode, survives the check above, and stays stale
+      # indefinitely. Nothing in this repo could see that class of difference before.
+      #
+      # #106 is what it cost. The vendored project's key sat as `Oxyplot.Avalonia` in
+      # four of the five lock files that carry it, while a macOS restore derived
+      # `oxyplot.avalonia`. So every Mac contributor who ran --force-evaluate — which the
+      # error text above tells them to run, and which .github/scripts/refresh_lock_files.sh
+      # runs on every project — got a one-line diff out of an untouched tree and had to
+      # know to throw it away.
+      #
+      # The cause was a case-only mismatch between the vendored project's PackageId and
+      # its project name, which macOS and Linux resolved differently; removing it is the
+      # other half of #106. This check is what proves that stayed fixed: the derivation
+      # now runs on BOTH hosts (here and the android job on ubuntu, the ios job on
+      # macOS), so a key that is host-dependent again fails on one of them.
+      #
+      # It runs LAST and does not replace the restore above, because --force-evaluate
+      # also overrides RestoreLockedMode — this is a staleness check, not a substitute
+      # for the drift gate.
+      - name: Lock files must equal a from-scratch derivation
+        run: |
+          set -euo pipefail
+          dotnet restore Daqifi.Avalonia/Daqifi.Avalonia.csproj --force-evaluate
+          dotnet restore Daqifi.Avalonia.Desktop/Daqifi.Avalonia.Desktop.csproj --force-evaluate
+          dotnet restore tools/parity-audit/AvaloniaCapture/AvaloniaCapture.csproj \
+            --force-evaluate
+          if ! git diff --quiet -- '**/packages.lock.json'; then
+            echo "::error::a from-scratch restore derives lock files different from the" \
+                 "committed ones. They are stale rather than drifted, which is why every" \
+                 "other check passed. Regenerate with .github/scripts/refresh_lock_files.sh" \
+                 "and commit the result."
+            # The full diff, not --stat. A staleness failure is usually a handful of
+            # lines and the CONTENT is the whole diagnosis — a file name alone leaves
+            # the reader to re-derive it locally, on a host that may not reproduce it.
+            git diff -- '**/packages.lock.json'
+            exit 1
+          fi
+          echo "lock files match a from-scratch derivation"
+
   macos:
     name: Desktop head on macOS
     # #88. macOS was verified once by hand (docs/RUNBOOK-macos-ios.md §1.1, 2026-08-01)
@@ -425,6 +471,25 @@ jobs:
           path: '**/obj/project.assets.json'
           if-no-files-found: error
 
+      # Same staleness check as the desktop job, which carries the reasoning. It has to
+      # be repeated per head: a ProjectReference restore reaches the vendored OxyPlot
+      # from the shared library, but it never reaches the Android head, so this lock
+      # file is not covered by any other job's re-derivation.
+      - name: Lock files must equal a from-scratch derivation
+        run: |
+          set -euo pipefail
+          dotnet restore Daqifi.Avalonia.Android/Daqifi.Avalonia.Android.csproj \
+            --force-evaluate -p:AndroidSdkDirectory="$ANDROID_HOME"
+          if ! git diff --quiet -- '**/packages.lock.json'; then
+            echo "::error::a from-scratch restore derives lock files different from the" \
+                 "committed ones. They are stale rather than drifted, which is why every" \
+                 "other check passed. Regenerate with .github/scripts/refresh_lock_files.sh" \
+                 "and commit the result."
+            git diff -- '**/packages.lock.json'
+            exit 1
+          fi
+          echo "lock files match a from-scratch derivation"
+
   ios:
     name: iOS head
     # The only job here that is not ubuntu, and it has no choice: iOS cannot
@@ -650,6 +715,30 @@ jobs:
           # Same glob and same reasoning as the other two jobs.
           path: '**/obj/project.assets.json'
           if-no-files-found: error
+
+      # Same staleness check as the desktop job, which carries the reasoning — and this
+      # is the copy that runs on macOS. Restoring this head walks its ProjectReference
+      # into the shared library, so Daqifi.Avalonia/packages.lock.json — the file that
+      # actually carries the vendored project's key — gets re-derived here AND on ubuntu
+      # by the desktop job. That pair is the cross-host comparison. #106 was a key that
+      # differed between the two host families; without a macOS copy of this check, it
+      # could come back with only ubuntu watching.
+      #
+      # No -r, for the same reason the Restore step above has none: an explicit RID
+      # restore prunes the lock file to that one RID.
+      - name: Lock files must equal a from-scratch derivation
+        run: |
+          set -euo pipefail
+          dotnet restore Daqifi.Avalonia.iOS/Daqifi.Avalonia.iOS.csproj --force-evaluate
+          if ! git diff --quiet -- '**/packages.lock.json'; then
+            echo "::error::a from-scratch restore derives lock files different from the" \
+                 "committed ones. They are stale rather than drifted, which is why every" \
+                 "other check passed. Regenerate with .github/scripts/refresh_lock_files.sh" \
+                 "and commit the result."
+            git diff -- '**/packages.lock.json'
+            exit 1
+          fi
+          echo "lock files match a from-scratch derivation"
 
   avalonia-graph:
     name: Avalonia version lockstep

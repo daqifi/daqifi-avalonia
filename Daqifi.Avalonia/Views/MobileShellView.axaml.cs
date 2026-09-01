@@ -7,8 +7,22 @@ namespace Daqifi.Avalonia.Views;
 
 public partial class MobileShellView : UserControl
 {
+    /// <summary>
+    /// Polls per plot redraw. The poll runs at 50 ms and must stay there: it is what appends the
+    /// plot's points (so the trace's time resolution is the poll rate) and the stream watchdog
+    /// counts polls, not seconds, for its ~8 s deadline. Redrawing is the expensive half — the
+    /// picture, not the data — and it is what was costing ~1.7 cores on a phone (#122). Drawing
+    /// every second poll halves that at no cost to the samples plotted: they are still captured
+    /// at 20 Hz, just shown 10 times a second. What it does cost is motion granularity — LivePlot
+    /// spaces the buffer across the full width, so at the 600-sample buffer the trace now steps
+    /// two samples per redraw instead of one: 2/599ths of the plot's width, about 2 px rather
+    /// than 1 px on a 700 px wide plot.
+    /// </summary>
+    private const int PollsPerRedraw = 2;
+
     private readonly MobileShellViewModel _viewModel = new();
     private readonly DispatcherTimer _renderTimer;
+    private int _pollsSinceRedraw;
 
     public MobileShellView()
     {
@@ -29,8 +43,8 @@ public partial class MobileShellView : UserControl
 #endif
         VersionText.Text = $"v{semver}{sha}";
 
-        // Redraw the strip-chart at ~20 fps while streaming — decoupled from
-        // the 100 Hz sample rate so the UI thread isn't flooded.
+        // Poll the device at ~20 Hz while streaming — decoupled from the 100 Hz sample rate so
+        // the UI thread isn't flooded — and redraw the strip-chart on every second poll (~10 fps).
         Plot.Series = _viewModel.Series;
         _renderTimer = new DispatcherTimer { Interval = TimeSpan.FromMilliseconds(50) };
         // NOTE (#113): this timer keeps firing at its full rate while the Android activity is
@@ -39,12 +53,13 @@ public partial class MobileShellView : UserControl
         // watchdog in MobileShellViewModel depends on knowing this.
         _renderTimer.Tick += (_, _) =>
         {
-            if (_viewModel.IsStreaming)
-            {
-                _viewModel.PollActiveSamples();
-                Plot.SampleCount = _viewModel.TotalSamples;
-                Plot.Pulse();
-            }
+            if (!_viewModel.IsStreaming) { return; }
+            _viewModel.PollActiveSamples();
+            _pollsSinceRedraw++;
+            if (_pollsSinceRedraw < PollsPerRedraw) { return; }
+            _pollsSinceRedraw = 0;
+            Plot.SampleCount = _viewModel.TotalSamples;
+            Plot.Pulse();
         };
         _renderTimer.Start();
 
