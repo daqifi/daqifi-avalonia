@@ -129,18 +129,36 @@ public sealed class BootloaderWatcher : IBootloaderWatcher, IDisposable
             _flashingPaths[devicePath] = _flashingPaths.GetValueOrDefault(devicePath) + 1;
             Volatile.Write(ref _outstandingFlashes, _outstandingFlashes + 1);
 
-            if (_holds.TryGetValue(devicePath, out var hold))
+            try
             {
-                // Release ONLY the target so the flasher's transport can open it by path. Graceful release
-                // (no HoldDropped); the hold object is kept so the lease can re-grab the same device after.
-                await hold.ReleaseAsync().ConfigureAwait(false);
-                _logger.Information($"Released hold on {devicePath} for flashing; other bootloaders stay held.");
+                if (_holds.TryGetValue(devicePath, out var hold))
+                {
+                    // Release ONLY the target so the flasher's transport can open it by path. Graceful release
+                    // (no HoldDropped); the hold object is kept so the lease can re-grab the same device after.
+                    await hold.ReleaseAsync().ConfigureAwait(false);
+                    _logger.Information($"Released hold on {devicePath} for flashing; other bootloaders stay held.");
+                }
+            }
+            catch
+            {
+                // The marker is raised before this await (a concurrent auto-update ending must not see a
+                // gap), so a failure here has to roll it back by hand: no lease is returned when this
+                // throws, so nothing would ever release it. A stranded marker does not just pause HID
+                // discovery any more — the connection dialog keys its serial and WiFi discovery on
+                // IsFlashInProgress too, so it would leave the whole bus unscanned for the life of the
+                // process, for a flash that never started.
+                ReleaseFlashSlot(devicePath);
+                ResumeDiscoveryIfIdle();
+                throw;
             }
         }
         finally
         {
             _gate.Release();
         }
+
+        // Unreachable on the failure path above, which rethrows — so a flash that never started never
+        // announces a rising edge, and no subscriber is left waiting for a falling one.
 
         if (flashStarted)
         {

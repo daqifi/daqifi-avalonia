@@ -236,6 +236,30 @@ public class BootloaderWatcherFlashStateTests
     }
 
     /// <summary>
+    /// The marker is raised before the target's hold is released, so that a coordinator auto-update
+    /// ending during that release cannot see a gap. The cost is that a failed release would strand it:
+    /// no lease is returned, so nothing would ever clear it, and every transport — HID here, and serial
+    /// and WiFi through the connection dialog's guard — would stay dark for the life of the process
+    /// over a flash that never began. Failing loudly is fine; failing quietly and permanently is not.
+    /// </summary>
+    [Fact]
+    public async Task A_preparation_that_fails_to_release_the_hold_does_not_strand_the_pause()
+    {
+        using var watcher = await CreateStartedWatcherHoldingAsync(PathA);
+        var edges = new List<bool>();
+        watcher.FlashInProgressChanged += (_, _) => edges.Add(watcher.IsFlashInProgress);
+        _holds[PathA].ReleaseGate = () => throw new IOException("the handle went away");
+
+        await Assert.ThrowsAsync<IOException>(() => watcher.PrepareFlashAsync(PathA));
+
+        Assert.False(
+            watcher.IsFlashInProgress,
+            "A preparation that threw must not leave a flash reported as in progress.");
+        Assert.True(_discovery.IsRunning, "Discovery must come back when the preparation failed.");
+        Assert.Empty(edges);
+    }
+
+    /// <summary>
     /// A flash and a coordinator auto-update can overlap on a multi-device bench. Whichever lease is
     /// disposed first must not resume HID discovery while the other is still holding the bus quiet.
     /// </summary>
@@ -307,6 +331,9 @@ public class BootloaderWatcherFlashStateTests
         /// <summary>Runs inside <see cref="BeginHoldAsync"/>; null means "succeed immediately".</summary>
         public Func<Task>? BeginHoldGate { get; set; }
 
+        /// <summary>Runs inside <see cref="ReleaseAsync"/>; null means "succeed immediately".</summary>
+        public Func<Task>? ReleaseGate { get; set; }
+
 #pragma warning disable CS0067 // Never raised here: no test in this class drops a hold mid-flight.
         public event EventHandler? HoldDropped;
 #pragma warning restore CS0067
@@ -324,11 +351,15 @@ public class BootloaderWatcherFlashStateTests
 
         public Task PauseForFlashAsync() => Task.CompletedTask;
 
-        public Task ReleaseAsync()
+        public async Task ReleaseAsync()
         {
             ReleaseCount++;
+            if (ReleaseGate != null)
+            {
+                await ReleaseGate();
+            }
+
             IsHolding = false;
-            return Task.CompletedTask;
         }
 
         public void Dispose() => IsHolding = false;
