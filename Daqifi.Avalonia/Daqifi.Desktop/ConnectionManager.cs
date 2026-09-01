@@ -836,13 +836,15 @@ public partial class ConnectionManager : ObservableObject
     /// and remove it, then raise the user-visible notification with a reason that names it.
     /// </summary>
     /// <remarks>
-    /// Channels are released BEFORE <see cref="Disconnect(IStreamingDevice)"/> because
-    /// <c>AbstractStreamingDevice.Disconnect</c> clears <c>DataChannels</c> — after it there is
-    /// nothing left to enumerate, and the channels would stay in <c>LoggingManager</c> marked
-    /// active for the process lifetime, still counting toward <c>CanToggleLogging</c> and still
-    /// listed as live inputs. The list is snapshotted for the same reason
-    /// <see cref="ActiveChannelCount"/> guards itself: Core's background events rebuild
-    /// <c>DataChannels</c> wholesale.
+    /// Releasing the channels is not optional bookkeeping: left subscribed they stay in
+    /// <c>LoggingManager</c> marked active for the process lifetime, still counting toward
+    /// <c>CanToggleLogging</c> and still listed as live inputs for a device that is gone.
+    /// <para>
+    /// Ordered before <see cref="Disconnect(IStreamingDevice)"/> because
+    /// <c>AbstractStreamingDevice.Disconnect</c> clears <c>DataChannels</c>, which
+    /// <see cref="ChannelsToRelease"/> falls back to for a device that has no serial number —
+    /// after the disconnect there would be nothing left for that fallback to enumerate.
+    /// </para>
     /// </remarks>
     /// <param name="device">The device whose connection went away.</param>
     /// <param name="reason">User-facing sentence naming the device and what happened.</param>

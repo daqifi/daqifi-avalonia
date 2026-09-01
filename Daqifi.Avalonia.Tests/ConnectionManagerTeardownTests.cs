@@ -254,13 +254,14 @@ public class ConnectionManagerTeardownTests
     }
 
     /// <summary>
-    /// Channels have to be released BEFORE the device's own teardown, because
-    /// <c>AbstractStreamingDevice.Disconnect</c> clears <c>DataChannels</c>. Release them after and
-    /// there is nothing left to enumerate, so they stay subscribed for the process lifetime — the
-    /// exact leak, reintroduced by an ordering change that looks harmless.
+    /// The teardown must leave the logger holding nothing for the dropped device, and must still
+    /// disconnect it. Both halves in one case, because an ordering or short-circuit change that
+    /// breaks either one looks harmless in isolation: channels left subscribed keep counting toward
+    /// <c>CanToggleLogging</c> for the process lifetime, and a device left connected is the whole
+    /// bug.
     /// </summary>
     [Fact]
-    public void Channels_are_released_before_the_device_clears_them()
+    public void Teardown_leaves_neither_a_subscribed_channel_nor_a_connected_device()
     {
         var subs = new FakeSubscriptions();
         var manager = NewManager(subs);
@@ -269,7 +270,9 @@ public class ConnectionManagerTeardownTests
         device.ReportCoreStatus(ConnectionStatus.Lost);
 
         Assert.Equal(2, subs.Released.Count);
+        Assert.Empty(subs.Subscribed);
         Assert.Empty(device.DataChannels);
+        Assert.DoesNotContain(device, manager.ConnectedDevices);
     }
 
     [Fact]
