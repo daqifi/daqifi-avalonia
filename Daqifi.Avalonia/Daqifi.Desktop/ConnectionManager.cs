@@ -40,17 +40,21 @@ public partial class ConnectionManager : ObservableObject
     private readonly IDeviceWatcher _deviceWatcher;
 
     /// <summary>
-    /// How a torn-down device's channels are released. Null in the singleton, which resolves
-    /// <see cref="LoggingManager"/> lazily through <see cref="UnsubscribeChannel"/>; set by the
-    /// test constructor.
+    /// The logger's own view of what it is holding, and how one entry is released. Null in the
+    /// singleton, which resolves <see cref="LoggingManager"/> lazily through
+    /// <see cref="SubscribedChannels"/> and <see cref="UnsubscribeChannel"/>; set by the test
+    /// constructor.
     /// </summary>
     /// <remarks>
     /// The indirection exists because <see cref="LoggingManager"/> is itself a singleton whose
     /// constructor resolves an EF Core context factory out of <c>App.ServiceProvider</c> — i.e. it
     /// cannot be constructed at all without a running Avalonia application. Teardown is the one
-    /// behaviour on this class worth pinning with a test, so it gets the one seam that makes that
-    /// possible, and production keeps the direct singleton call it always had.
+    /// behaviour on this class worth pinning with a test, so it gets the seams that make that
+    /// possible, and production keeps the direct singleton calls it always had.
     /// </remarks>
+    private readonly Func<IReadOnlyList<IChannel>>? _subscribedChannels;
+
+    /// <inheritdoc cref="_subscribedChannels" />
     private readonly Action<IChannel>? _unsubscribeChannel;
 
     /// <summary>
@@ -308,14 +312,19 @@ public partial class ConnectionManager : ObservableObject
     /// notification are all the production code.
     /// </remarks>
     internal ConnectionManager(
-        IDeviceWatcher watcher, Action<IChannel> unsubscribeChannel, Action<Action> postToUiThread)
+        IDeviceWatcher watcher,
+        Func<IReadOnlyList<IChannel>> subscribedChannels,
+        Action<IChannel> unsubscribeChannel,
+        Action<Action> postToUiThread)
     {
         ArgumentNullException.ThrowIfNull(watcher);
+        ArgumentNullException.ThrowIfNull(subscribedChannels);
         ArgumentNullException.ThrowIfNull(unsubscribeChannel);
         ArgumentNullException.ThrowIfNull(postToUiThread);
 
         ConnectedDevices = [];
         _deviceWatcher = watcher;
+        _subscribedChannels = subscribedChannels;
         _unsubscribeChannel = unsubscribeChannel;
         _postToUiThread = postToUiThread;
 
@@ -343,6 +352,16 @@ public partial class ConnectionManager : ObservableObject
 
         LoggingManager.Instance.Unsubscribe(channel);
     }
+
+    /// <summary>
+    /// Everything the logger is currently holding, as the immutable copy-on-write snapshot
+    /// <see cref="LoggingManager.SubscribedChannels"/> publishes. See
+    /// <see cref="_subscribedChannels"/> for why this is indirect.
+    /// </summary>
+    private IReadOnlyList<IChannel> SubscribedChannels() =>
+        _subscribedChannels != null
+            ? _subscribedChannels()
+            : LoggingManager.Instance.SubscribedChannels;
 
     /// <summary>
     /// Marshals teardown onto the UI thread — see <see cref="_postToUiThread"/> for why this is
@@ -829,7 +848,7 @@ public partial class ConnectionManager : ObservableObject
     /// <param name="reason">User-facing sentence naming the device and what happened.</param>
     private void TearDownDroppedDevice(IStreamingDevice device, string reason)
     {
-        foreach (var channel in SnapshotChannels(device))
+        foreach (var channel in ChannelsToRelease(device))
         {
             UnsubscribeChannel(channel);
         }
@@ -841,31 +860,49 @@ public partial class ConnectionManager : ObservableObject
     }
 
     /// <summary>
-    /// Takes a stable copy of a device's channels for teardown, and never throws.
+    /// The channels teardown has to release: the entries the logger is actually still holding for
+    /// <paramref name="device"/>.
     /// </summary>
     /// <remarks>
-    /// <c>DataChannels</c> is a plain <c>List</c> that Core's background events rebuild wholesale
-    /// (<c>Clear</c> + <c>AddRange</c>), so copying it can throw — "collection was modified" is only
-    /// the tidiest way: a read racing <c>AddRange</c>'s grow can index past the end, and one landing
-    /// inside <c>Clear</c> can hand back a null element. This is the same hazard
-    /// <see cref="ActiveChannelCount"/> guards, and it matters more here: this runs inside an action
-    /// posted to the dispatcher, so an escaping exception would take the whole teardown with it and
-    /// leave the device connected — the exact state being fixed — with nothing to catch it.
-    /// Disconnecting the device is the half that must happen, so a failed snapshot logs and lets it
-    /// proceed rather than aborting.
+    /// <para>
+    /// Asks the LOGGER what it is holding rather than asking the device what it owns, because only
+    /// the first question can be answered atomically. <c>DataChannels</c> is a plain <c>List</c>
+    /// that Core's background events rebuild wholesale (<c>Clear</c> then <c>AddRange</c>), so a
+    /// copy of it can legitimately come back short — or empty — without throwing anything, and
+    /// every channel missed that way stays in the logger marked active for the process lifetime,
+    /// still counting toward <c>CanToggleLogging</c>. That is the leak this whole class now exists
+    /// to close, reintroduced through a race. <c>SubscribedChannels</c> has no such window: it is
+    /// published copy-on-write, so a reader always gets a complete, immutable list.
+    /// </para>
+    /// <para>
+    /// Matching is by serial number, ordinally — serials are opaque identifiers, and it is the same
+    /// discriminator <c>LoggingManager.Unsubscribe</c> resolves by. A device with no serial number
+    /// cannot be matched that way (a blank serial would sweep up every other unidentified device's
+    /// channels), so that case alone falls back to the device's own list, best-effort and guarded:
+    /// this runs inside an action posted to the dispatcher, and an escaping exception would take the
+    /// whole teardown with it and leave the device connected, with nothing to catch it.
+    /// </para>
     /// </remarks>
-    private static List<IChannel> SnapshotChannels(IStreamingDevice device)
+    private List<IChannel> ChannelsToRelease(IStreamingDevice device)
     {
         try
         {
+            var serialNumber = device.DeviceSerialNo;
+            if (!string.IsNullOrWhiteSpace(serialNumber))
+            {
+                return SubscribedChannels()
+                    .Where(c => string.Equals(c.DeviceSerialNo, serialNumber, StringComparison.Ordinal))
+                    .ToList();
+            }
+
             return device.DataChannels?.ToList() ?? [];
         }
         catch (Exception ex)
         {
             AppLogger.Instance.Warning(
                 ex,
-                $"Could not read the channel list of {device.DeviceDisplayName} while tearing it " +
-                "down after a dropped connection; disconnecting it anyway.");
+                $"Could not determine which channels belong to {device.DeviceDisplayName} while " +
+                "tearing it down after a dropped connection; disconnecting it anyway.");
             return [];
         }
     }

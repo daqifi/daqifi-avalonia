@@ -25,23 +25,56 @@ namespace Daqifi.Avalonia.Tests;
 public class ConnectionManagerTeardownTests
 {
     /// <summary>
-    /// A manager with its own device list, an inert watcher (so no background serial poller
-    /// starts), channel release routed into <paramref name="released"/> instead of
-    /// <c>LoggingManager</c> (which cannot be constructed without a running Avalonia application),
-    /// and its UI marshal run inline (outside a running application, Avalonia's dispatcher queues
-    /// onto a thread nothing pumps). Everything else — the teardown, the firmware-update carve-out,
-    /// the subscription bookkeeping, the notification — is the production code path.
+    /// Stands in for <c>LoggingManager</c>, which cannot be constructed without a running Avalonia
+    /// application (its constructor resolves an EF Core context factory out of
+    /// <c>App.ServiceProvider</c>). Holds what the logger holds, and records what teardown releases.
     /// </summary>
-    private static ConnectionManager NewManager(List<IChannel> released) =>
-        new(new NoOpDeviceWatcher(), released.Add, action => action());
+    private sealed class FakeSubscriptions
+    {
+        private readonly List<IChannel> _subscribed = [];
 
+        public List<IChannel> Released { get; } = [];
+
+        public IReadOnlyList<IChannel> Subscribed => _subscribed.ToList();
+
+        public void Subscribe(IChannel channel) => _subscribed.Add(channel);
+
+        public void Unsubscribe(IChannel channel)
+        {
+            Released.Add(channel);
+            _subscribed.RemoveAll(c => ReferenceEquals(c, channel));
+        }
+    }
+
+    /// <summary>
+    /// A manager with its own device list, an inert watcher (so no background serial poller
+    /// starts), its logger replaced by <paramref name="subscriptions"/>, and its UI marshal run
+    /// inline (outside a running application, Avalonia's dispatcher queues onto a thread nothing
+    /// pumps). Everything else — the teardown, the firmware-update carve-out, the subscription
+    /// bookkeeping, the notification — is the production code path.
+    /// </summary>
+    private static ConnectionManager NewManager(FakeSubscriptions subscriptions) =>
+        new(new NoOpDeviceWatcher(),
+            () => subscriptions.Subscribed,
+            subscriptions.Unsubscribe,
+            action => action());
+
+    /// <summary>
+    /// A connected device whose channels are BOTH on the device and in the logger — the state a
+    /// device is in once the user has selected channels to record.
+    /// </summary>
     private static DroppableTestDevice ConnectedWifiDevice(
-        ConnectionManager manager, string serial = "SN-WIFI-1", int channelCount = 2)
+        ConnectionManager manager,
+        FakeSubscriptions subscriptions,
+        string serial = "SN-WIFI-1",
+        int channelCount = 2)
     {
         var device = new DroppableTestDevice(serial);
         for (var i = 0; i < channelCount; i++)
         {
-            device.DataChannels.Add(new FakeChannel($"AI{i}", serial));
+            var channel = new FakeChannel($"AI{i}", serial);
+            device.DataChannels.Add(channel);
+            subscriptions.Subscribe(channel);
         }
 
         manager.ConnectedDevices.Add(device);
@@ -58,10 +91,12 @@ public class ConnectionManagerTeardownTests
     [Fact]
     public async Task Connecting_a_device_wires_it_for_teardown()
     {
-        var released = new List<IChannel>();
-        var manager = NewManager(released);
+        var subs = new FakeSubscriptions();
+        var manager = NewManager(subs);
         var device = new DroppableTestDevice("SN-CONNECTED") { PretendConnectSucceeds = true };
-        device.DataChannels.Add(new FakeChannel("AI0", "SN-CONNECTED"));
+        var channel = new FakeChannel("AI0", "SN-CONNECTED");
+        device.DataChannels.Add(channel);
+        subs.Subscribe(channel);
 
         await manager.Connect(device);
         Assert.Contains(device, manager.ConnectedDevices);
@@ -69,7 +104,7 @@ public class ConnectionManagerTeardownTests
         device.ReportCoreStatus(ConnectionStatus.Lost);
 
         Assert.DoesNotContain(device, manager.ConnectedDevices);
-        Assert.Single(released);
+        Assert.Single(subs.Released);
     }
 
     /// <summary>
@@ -82,8 +117,8 @@ public class ConnectionManagerTeardownTests
     [Fact]
     public async Task A_device_whose_transport_died_before_it_was_accepted_is_not_added()
     {
-        var released = new List<IChannel>();
-        var manager = NewManager(released);
+        var subs = new FakeSubscriptions();
+        var manager = NewManager(subs);
         var device = new DroppableTestDevice("SN-STILLBORN") { PretendTransportDiesDuringConnect = true };
 
         await manager.Connect(device);
@@ -110,10 +145,12 @@ public class ConnectionManagerTeardownTests
     [Fact]
     public async Task A_drop_while_the_connection_is_settling_aborts_the_connect()
     {
-        var released = new List<IChannel>();
-        var manager = NewManager(released);
+        var subs = new FakeSubscriptions();
+        var manager = NewManager(subs);
         var device = new DroppableTestDevice("SN-SETTLING") { PretendConnectSucceeds = true };
-        device.DataChannels.Add(new FakeChannel("AI0", "SN-SETTLING"));
+        var channel = new FakeChannel("AI0", "SN-SETTLING");
+        device.DataChannels.Add(channel);
+        subs.Subscribe(channel);
 
         var drop = Task.Run(async () =>
         {
@@ -131,16 +168,16 @@ public class ConnectionManagerTeardownTests
 
         Assert.DoesNotContain(device, manager.ConnectedDevices);
         Assert.NotEqual(DAQiFiConnectionStatus.Connected, manager.ConnectionStatus);
-        Assert.Single(released);
+        Assert.Single(subs.Released);
         Assert.Contains("SN-SETTLING", manager.LastDisconnectReason);
     }
 
     [Fact]
     public void A_dropped_wifi_device_is_removed_from_the_connected_list()
     {
-        var released = new List<IChannel>();
-        var manager = NewManager(released);
-        var device = ConnectedWifiDevice(manager);
+        var subs = new FakeSubscriptions();
+        var manager = NewManager(subs);
+        var device = ConnectedWifiDevice(manager, subs);
 
         device.ReportCoreStatus(ConnectionStatus.Lost);
 
@@ -150,9 +187,9 @@ public class ConnectionManagerTeardownTests
     [Fact]
     public void A_dropped_wifi_device_releases_every_one_of_its_channels()
     {
-        var released = new List<IChannel>();
-        var manager = NewManager(released);
-        var device = ConnectedWifiDevice(manager, channelCount: 3);
+        var subs = new FakeSubscriptions();
+        var manager = NewManager(subs);
+        var device = ConnectedWifiDevice(manager, subs, channelCount: 3);
         var expected = device.DataChannels.ToList();
 
         device.ReportCoreStatus(ConnectionStatus.Lost);
@@ -160,8 +197,60 @@ public class ConnectionManagerTeardownTests
         // By name and by instance: the channels released must be this device's own objects, not
         // equal-by-name ones — AbstractChannel.Equals compares Name alone, and two boards both
         // expose AI0.
-        Assert.Equal(3, released.Count);
-        Assert.All(expected, channel => Assert.Contains(released, r => ReferenceEquals(r, channel)));
+        Assert.Equal(3, subs.Released.Count);
+        Assert.All(expected, channel => Assert.Contains(subs.Released, r => ReferenceEquals(r, channel)));
+    }
+
+    /// <summary>
+    /// Teardown must not take the device's word for which channels are its own. Core rebuilds
+    /// <c>DataChannels</c> with a <c>Clear</c> followed by an <c>AddRange</c>, so a read landing in
+    /// that interval comes back short — or, as here, empty — without throwing anything. Every
+    /// channel missed that way stays in the logger marked active for the process lifetime, still
+    /// counting toward <c>CanToggleLogging</c>: the leak this class exists to close, reintroduced
+    /// through a race. The logger's own list has no such window, so that is what teardown reads.
+    /// </summary>
+    [Fact]
+    public void Channels_are_released_even_if_the_device_list_is_being_rebuilt()
+    {
+        var subs = new FakeSubscriptions();
+        var manager = NewManager(subs);
+        var device = ConnectedWifiDevice(manager, subs, serial: "SN-REBUILDING", channelCount: 3);
+
+        // Exactly what a reader sees between Core's Clear() and its AddRange().
+        device.DataChannels.Clear();
+
+        device.ReportCoreStatus(ConnectionStatus.Lost);
+
+        Assert.Equal(3, subs.Released.Count);
+        Assert.Empty(subs.Subscribed);
+        Assert.DoesNotContain(device, manager.ConnectedDevices);
+    }
+
+    /// <summary>
+    /// The serial number is what identifies a device's subscriptions, so a device that has not
+    /// reported one cannot be matched that way — a blank serial would sweep up every other
+    /// unidentified device's channels. That case alone falls back to the device's own list.
+    /// </summary>
+    [Fact]
+    public void A_device_with_no_serial_number_falls_back_to_its_own_channel_list()
+    {
+        var subs = new FakeSubscriptions();
+        var manager = NewManager(subs);
+
+        var anonymous = new DroppableTestDevice(string.Empty);
+        var ownChannel = new FakeChannel("AI0", string.Empty);
+        anonymous.DataChannels.Add(ownChannel);
+        subs.Subscribe(ownChannel);
+        manager.ConnectedDevices.Add(anonymous);
+        manager.SubscribeDeviceEvents(anonymous);
+
+        var identified = ConnectedWifiDevice(manager, subs, serial: "SN-IDENTIFIED", channelCount: 2);
+
+        anonymous.ReportCoreStatus(ConnectionStatus.Lost);
+
+        Assert.Equal([ownChannel], subs.Released);
+        Assert.Equal(2, identified.DataChannels.Count);
+        Assert.Contains(identified, manager.ConnectedDevices);
     }
 
     /// <summary>
@@ -173,22 +262,22 @@ public class ConnectionManagerTeardownTests
     [Fact]
     public void Channels_are_released_before_the_device_clears_them()
     {
-        var released = new List<IChannel>();
-        var manager = NewManager(released);
-        var device = ConnectedWifiDevice(manager, channelCount: 2);
+        var subs = new FakeSubscriptions();
+        var manager = NewManager(subs);
+        var device = ConnectedWifiDevice(manager, subs, channelCount: 2);
 
         device.ReportCoreStatus(ConnectionStatus.Lost);
 
-        Assert.Equal(2, released.Count);
+        Assert.Equal(2, subs.Released.Count);
         Assert.Empty(device.DataChannels);
     }
 
     [Fact]
     public void The_user_is_told_which_device_went_away_and_why()
     {
-        var released = new List<IChannel>();
-        var manager = NewManager(released);
-        var device = ConnectedWifiDevice(manager, serial: "Nq1-0042");
+        var subs = new FakeSubscriptions();
+        var manager = NewManager(subs);
+        var device = ConnectedWifiDevice(manager, subs, serial: "Nq1-0042");
 
         device.ReportCoreStatus(ConnectionStatus.Lost);
 
@@ -206,15 +295,15 @@ public class ConnectionManagerTeardownTests
     [Fact]
     public void A_device_being_firmware_updated_is_left_alone()
     {
-        var released = new List<IChannel>();
-        var manager = NewManager(released);
-        var device = ConnectedWifiDevice(manager);
+        var subs = new FakeSubscriptions();
+        var manager = NewManager(subs);
+        var device = ConnectedWifiDevice(manager, subs);
         manager.DeviceBeingUpdated = device;
 
         device.ReportCoreStatus(ConnectionStatus.Lost);
 
         Assert.Contains(device, manager.ConnectedDevices);
-        Assert.Empty(released);
+        Assert.Empty(subs.Released);
         Assert.False(manager.NotifyConnection);
         Assert.Equal(2, device.DataChannels.Count);
     }
@@ -227,9 +316,9 @@ public class ConnectionManagerTeardownTests
     [Fact]
     public void A_second_report_for_the_same_drop_does_nothing()
     {
-        var released = new List<IChannel>();
-        var manager = NewManager(released);
-        var device = ConnectedWifiDevice(manager, channelCount: 2);
+        var subs = new FakeSubscriptions();
+        var manager = NewManager(subs);
+        var device = ConnectedWifiDevice(manager, subs, channelCount: 2);
 
         device.ReportCoreStatus(ConnectionStatus.Lost);
         manager.NotifyConnection = false;
@@ -237,7 +326,7 @@ public class ConnectionManagerTeardownTests
 
         device.ReportCoreStatus(ConnectionStatus.Lost);
 
-        Assert.Equal(2, released.Count);
+        Assert.Equal(2, subs.Released.Count);
         Assert.False(manager.NotifyConnection);
         Assert.Equal(string.Empty, manager.LastDisconnectReason);
     }
@@ -252,18 +341,18 @@ public class ConnectionManagerTeardownTests
     [Fact]
     public void An_explicitly_disconnected_device_is_unwired_from_the_manager()
     {
-        var released = new List<IChannel>();
-        var manager = NewManager(released);
-        var device = ConnectedWifiDevice(manager);
-        var other = ConnectedWifiDevice(manager, serial: "SN-WIFI-2");
+        var subs = new FakeSubscriptions();
+        var manager = NewManager(subs);
+        var device = ConnectedWifiDevice(manager, subs);
+        var other = ConnectedWifiDevice(manager, subs, serial: "SN-WIFI-2");
 
         manager.Disconnect(device);
-        released.Clear();
+        subs.Released.Clear();
 
         device.ReportCoreStatus(ConnectionStatus.Lost);
 
         Assert.False(manager.NotifyConnection);
-        Assert.Empty(released);
+        Assert.Empty(subs.Released);
         // The manager is otherwise intact: the drop reached nobody, it did not empty the list.
         Assert.Contains(other, manager.ConnectedDevices);
     }
@@ -275,14 +364,14 @@ public class ConnectionManagerTeardownTests
     [Fact]
     public void Subscribing_twice_still_tears_down_once()
     {
-        var released = new List<IChannel>();
-        var manager = NewManager(released);
-        var device = ConnectedWifiDevice(manager, channelCount: 2);
+        var subs = new FakeSubscriptions();
+        var manager = NewManager(subs);
+        var device = ConnectedWifiDevice(manager, subs, channelCount: 2);
         manager.SubscribeDeviceEvents(device);
 
         device.ReportCoreStatus(ConnectionStatus.Lost);
 
-        Assert.Equal(2, released.Count);
+        Assert.Equal(2, subs.Released.Count);
         Assert.DoesNotContain(device, manager.ConnectedDevices);
     }
 
@@ -292,16 +381,16 @@ public class ConnectionManagerTeardownTests
     [Fact]
     public void Only_the_device_that_dropped_is_torn_down()
     {
-        var released = new List<IChannel>();
-        var manager = NewManager(released);
-        var dropped = ConnectedWifiDevice(manager, serial: "SN-A", channelCount: 2);
-        var kept = ConnectedWifiDevice(manager, serial: "SN-B", channelCount: 2);
+        var subs = new FakeSubscriptions();
+        var manager = NewManager(subs);
+        var dropped = ConnectedWifiDevice(manager, subs, serial: "SN-A", channelCount: 2);
+        var kept = ConnectedWifiDevice(manager, subs, serial: "SN-B", channelCount: 2);
 
         dropped.ReportCoreStatus(ConnectionStatus.Lost);
 
         Assert.DoesNotContain(dropped, manager.ConnectedDevices);
         Assert.Contains(kept, manager.ConnectedDevices);
         Assert.Equal(2, kept.DataChannels.Count);
-        Assert.All(released, channel => Assert.Equal("SN-A", channel.DeviceSerialNo));
+        Assert.All(subs.Released, channel => Assert.Equal("SN-A", channel.DeviceSerialNo));
     }
 }
