@@ -31,9 +31,11 @@ The app launches, the window renders, and `DAQifiAppLog.log` reports
 `osx-x64;osx-arm64` in its `RuntimeIdentifiers` — written during the
 shared-project split (`4489f28`) — and that declaration now has a build behind
 it — by hand, and now in CI as well. The `macos` job in
-`.github/workflows/build.yml` builds the Desktop head for `osx-arm64` on every
-push and PR and asserts the result is an arm64 Mach-O carrying its macOS native
-libraries (#88). `osx-x64` is declared but still built by nobody.
+`.github/workflows/build.yml` builds the Desktop head for `osx-arm64` and asserts
+the result is an arm64 Mach-O whose macOS native libraries are all present and all
+carry an arm64 slice (#88). It runs on every pull request and on pushes to `main`
+— which is this workflow's trigger, so a feature branch is covered from the moment
+it has a PR and not before. `osx-x64` is declared but still built by nobody.
 
 So the remaining macOS work is not "will it compile" — it is:
 

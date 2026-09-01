@@ -265,10 +265,43 @@ jobs:
       #                              Avalonia 12 (see this file's header)
       #   libSystem.IO.Ports.Native  serial/USB — the entire point of the app
       #   libe_sqlite3               the logging database
+      #
+      # Presence alone is not enough for any of them: a package that shipped an
+      # x86_64-only binary under runtimes/osx-arm64/ would satisfy an existence test
+      # and still not load in an arm64 process. So each one is read for an arm64
+      # slice, exactly as the apphost is.
       - name: macOS output must be an arm64 binary carrying its native dependencies
         run: |
           set -euo pipefail
           out=Daqifi.Avalonia.Desktop/bin/Release/net10.0/osx-arm64
+
+          # `file -b`, and only its FIRST line. Neither is tidiness. The output
+          # directory is literally named 'osx-arm64' and plain `file` prefixes every
+          # line it prints with the path, so the string "arm64" is in that output no
+          # matter what the binary actually is:
+          #
+          #   * For a THIN file the path prefix lands BEFORE the word "Mach-O", so a
+          #     *Mach-O*arm64* test still rejects an x86_64 binary — by luck of
+          #     ordering, not by design.
+          #   * For a UNIVERSAL file `file` appends one line per architecture, each
+          #     repeating the path AFTER that header. Now the pattern matches the
+          #     DIRECTORY NAME rather than the architecture list, and an x86_64+i386
+          #     fat binary would sail through. Three of the five libraries below are
+          #     universal today, so that is not the corner case; it is the usual one.
+          #
+          # -b drops the prefix from the header line, and the header alone names every
+          # architecture in a fat file ("...2 architectures: [x86_64:...] [arm64]") —
+          # sufficient, and free of the path. A universal binary passing is correct
+          # rather than a loophole: an arm64 slice is an arm64 slice.
+          #
+          # awk 'NR == 1' rather than `head -1`: head exits immediately, file takes
+          # EPIPE on its next write and aborts with 134, which pipefail turns into a
+          # failed job. The ios job hit that exact race with xcodebuild; awk reads to
+          # EOF and drains the pipe.
+          arch_of() {
+            file -b "$1" | awk 'NR == 1'
+          }
+
           host="${out}/Daqifi.Avalonia.Desktop"
           if [ ! -x "${host}" ]; then
             echo "::error::no executable at ${host}. The build output moved; this check" \
@@ -276,12 +309,9 @@ jobs:
             ls -la "${out}" || ls -la Daqifi.Avalonia.Desktop/bin/Release || true
             exit 1
           fi
-          # Captured once into a variable rather than piped, so nothing downstream can
-          # close the pipe early on it.
-          host_kind=$(file "${host}")
-          echo "${host_kind}"
-          # Two substrings rather than one exact sentence: `file` phrases this string
-          # its own way, but an x86_64 or a non-Mach-O host cannot contain both.
+          host_kind=$(arch_of "${host}")
+          echo "apphost: ${host_kind}"
+          # Both substrings: a non-Mach-O file and an x86_64 one each fail to match.
           case "${host_kind}" in
             *Mach-O*arm64*) ;;
             *)
@@ -290,22 +320,37 @@ jobs:
               exit 1
               ;;
           esac
-          missing=0
+
+          bad=0
           for lib in libAvaloniaNative libSkiaSharp libHarfBuzzSharp \
                      libSystem.IO.Ports.Native libe_sqlite3; do
-            if [ ! -f "${out}/${lib}.dylib" ]; then
+            path="${out}/${lib}.dylib"
+            if [ ! -f "${path}" ]; then
               echo "::error::${lib}.dylib is missing from ${out}. The osx-arm64 runtime" \
                    "asset for it did not resolve, so the app would fail at startup with" \
                    "a DllNotFoundException. Check whether the package that ships it still" \
                    "carries a runtimes/osx-arm64/native/ entry."
-              missing=1
+              bad=1
+              continue
             fi
+            lib_kind=$(arch_of "${path}")
+            echo "${lib}.dylib: ${lib_kind}"
+            case "${lib_kind}" in
+              *Mach-O*arm64*) ;;
+              *)
+                echo "::error::${path} has no arm64 slice: ${lib_kind}. The file is" \
+                     "there but cannot load in an arm64 process, so the app fails at" \
+                     "startup anyway. A universal binary is fine; an x86_64-only one" \
+                     "under runtimes/osx-arm64/ is a packaging regression upstream."
+                bad=1
+                ;;
+            esac
           done
-          if [ "${missing}" -ne 0 ]; then
+          if [ "${bad}" -ne 0 ]; then
             ls -la "${out}"
             exit 1
           fi
-          echo "arm64 Mach-O host and all five macOS natives present"
+          echo "arm64 apphost and all five macOS natives present, each with an arm64 slice"
 
   android:
     name: Android head
