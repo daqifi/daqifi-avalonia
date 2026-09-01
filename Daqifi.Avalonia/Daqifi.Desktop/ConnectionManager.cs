@@ -195,9 +195,12 @@ public partial class ConnectionManager : ObservableObject
         }
         catch (Exception ex)
         {
-            // A backend that could not be built or started is replaced by the one that is
-            // guaranteed inert, so every later use of the field is unconditional.
-            _deviceWatcher = watcher ?? new NoOpDeviceWatcher();
+            // Release whatever the failed backend managed to allocate before its Start() threw —
+            // WmiDeviceWatcher, for one, assigns its ManagementEventWatcher and hooks its event
+            // before the Start() call that can throw — then install the backend that is guaranteed
+            // inert, so every later use of the field is unconditional.
+            DisposeQuietly(watcher);
+            _deviceWatcher = new NoOpDeviceWatcher();
 
             // Only a platform that actually has USB serial has something to lose here: a mobile
             // head has no serial transport, so a watcher that never runs is not a user-facing
@@ -208,6 +211,30 @@ public partial class ConnectionManager : ObservableObject
             }
 
             AppLogger.Instance.Error(ex, "Failed to start the USB hotplug watcher: " + ex.Message);
+        }
+    }
+
+    /// <summary>
+    /// Disposes a half-built watcher during singleton construction. The catch is empty on purpose
+    /// and for the same reason the surrounding one exists: this runs from a static field
+    /// initializer, so a cleanup failure escaping here would become a fatal
+    /// <see cref="TypeInitializationException"/> at first access of <see cref="Instance"/> — a far
+    /// worse outcome than an undisposed watcher that was already failing.
+    /// </summary>
+    private static void DisposeQuietly(IDeviceWatcher? watcher)
+    {
+        if (watcher == null)
+        {
+            return;
+        }
+
+        try
+        {
+            watcher.Dispose();
+        }
+        catch
+        {
+            // Intentionally ignored — see the summary above.
         }
     }
 
@@ -530,7 +557,16 @@ public partial class ConnectionManager : ObservableObject
     // @port: Daqifi.Desktop.ConnectionManager.CheckIfSerialDeviceWasRemoved
     private void CheckIfSerialDeviceWasRemoved()
     {
-        NotifyConnection = false;
+        // Every backend raises the removal event from a thread-pool thread — WMI's EventArrived and
+        // the poller's timer callback alike — so nothing here may touch UI-bound state directly.
+        // NotifyConnection's change notification runs DaqifiViewModel.UpdateUi synchronously, and
+        // that mutates the notification collection the UI is bound to; done off-thread it can throw
+        // straight back into the watcher, which would swallow the removal before the worker below is
+        // even started. Post rather than Invoke: the reset and the notification raised at the end of
+        // this method then run in the order they were queued, and a host with no dispatcher pumping
+        // (a headless harness) cannot block the watcher thread.
+        Dispatcher.UIThread.Post(() => NotifyConnection = false);
+
         var bw = new BackgroundWorker();
         bw.DoWork += delegate
         {
@@ -547,8 +583,15 @@ public partial class ConnectionManager : ObservableObject
                 return;
             }
 
-            var devicesToRemove = ConnectedDevices
-                .OfType<SerialStreamingDevice>()
+            // ConnectedDevices is a plain List mutated on the UI thread by Connect/Disconnect, so
+            // snapshot it there rather than enumerating it from this worker: a concurrent connect
+            // would otherwise throw "collection was modified" into BackgroundWorker's swallowing
+            // catch and lose the removal entirely. Port enumeration above stays off-thread, which is
+            // the part that is actually slow.
+            var connectedSerialDevices = Dispatcher.UIThread.Invoke(
+                () => ConnectedDevices.OfType<SerialStreamingDevice>().ToList());
+
+            var devicesToRemove = connectedSerialDevices
                 .Where(device =>
                     string.IsNullOrWhiteSpace(device.Port?.PortName) ||
                     !availableSerialPorts.Contains(device.Port.PortName))

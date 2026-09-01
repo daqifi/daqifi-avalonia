@@ -47,6 +47,13 @@ public sealed class SerialPortPollingDeviceWatcher : IDeviceWatcher
     private Timer? _timer;
     private HashSet<string>? _knownPorts;
 
+    /// <summary>
+    /// Identifies the current Start/Stop cycle. Each timer callback carries the generation it was
+    /// created for, so a tick still enumerating when the watcher is stopped and restarted cannot
+    /// compare its stale reading against the new baseline and report a removal that never happened.
+    /// </summary>
+    private int _generation;
+
     /// <summary>Guards against a slow poll overlapping the next timer tick.</summary>
     private int _pollInProgress;
 
@@ -111,7 +118,8 @@ public sealed class SerialPortPollingDeviceWatcher : IDeviceWatcher
             // detect a removal.
             _knownPorts = TryGetPortNames();
 
-            _timer = new Timer(_ => Poll(), null, _pollInterval, _pollInterval);
+            var generation = ++_generation;
+            _timer = new Timer(_ => Poll(generation), null, _pollInterval, _pollInterval);
         }
     }
 
@@ -120,9 +128,7 @@ public sealed class SerialPortPollingDeviceWatcher : IDeviceWatcher
     {
         lock (_sync)
         {
-            _timer?.Dispose();
-            _timer = null;
-            _knownPorts = null;
+            StopCore();
         }
     }
 
@@ -137,13 +143,23 @@ public sealed class SerialPortPollingDeviceWatcher : IDeviceWatcher
             }
 
             _disposed = true;
-            _timer?.Dispose();
-            _timer = null;
-            _knownPorts = null;
+            StopCore();
         }
     }
 
-    private void Poll()
+    /// <summary>Tears down the current cycle. Caller holds <see cref="_sync"/>.</summary>
+    private void StopCore()
+    {
+        // Bumping the generation retires every callback already in flight: Timer.Dispose does not
+        // wait for one that is mid-enumeration, and blocking here for it could deadlock a Stop
+        // called from the UI thread against a handler that dispatches to it.
+        _generation++;
+        _timer?.Dispose();
+        _timer = null;
+        _knownPorts = null;
+    }
+
+    private void Poll(int generation)
     {
         // A tick that arrives while the previous one is still sampling is dropped rather than
         // queued: the next tick re-reads the whole port table, so no removal can be missed.
@@ -163,8 +179,11 @@ public sealed class SerialPortPollingDeviceWatcher : IDeviceWatcher
             bool anyRemoved;
             lock (_sync)
             {
-                // Stopped or disposed between the tick firing and this point.
-                if (_timer == null)
+                // Stopped, disposed, or restarted between this tick firing and now. The generation
+                // check is what distinguishes "still the cycle I was created for" from "a later
+                // Start() has already taken a fresh baseline"; without it a stale reading could be
+                // compared against that new baseline and report a removal that never happened.
+                if (_timer == null || _generation != generation)
                 {
                     return;
                 }
@@ -173,7 +192,13 @@ public sealed class SerialPortPollingDeviceWatcher : IDeviceWatcher
                 _knownPorts = current;
             }
 
-            if (anyRemoved)
+            // Raised outside the lock so a handler can never re-enter this instance under it. The
+            // generation is re-read first because Stop may have landed since: that cannot be an
+            // airtight guarantee — Stop deliberately does not block on in-flight callbacks — but it
+            // closes all of the window that this method itself controls. Consumers already have to
+            // tolerate a silent backend (see IDeviceWatcher), and a late removal event is checked
+            // against the live port table by the handler anyway.
+            if (anyRemoved && Volatile.Read(ref _generation) == generation)
             {
                 DeviceRemoved?.Invoke(this, EventArgs.Empty);
             }
