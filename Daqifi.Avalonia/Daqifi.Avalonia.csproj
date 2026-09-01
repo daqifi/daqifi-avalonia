@@ -48,6 +48,16 @@
 	</ItemGroup>
 
 	<ItemGroup>
+		<!-- The unit-test project only. Some connect-path logic is deliberately internal — it is
+		     wiring inside the Connect() template, not an extension point transports may call — but
+		     it still needs covering: AbstractStreamingDevice.AdoptDeviceChannelSet and the
+		     IsConnectionFatal / IsTransportDisconnectedError classifiers decide whether a
+		     connection is reported as successful. Widening them to public or protected to make
+		     them testable would be a worse trade than this line. -->
+		<InternalsVisibleTo Include="Daqifi.Avalonia.Tests" />
+	</ItemGroup>
+
+	<ItemGroup>
 		<!-- Mirrors upstream Daqifi.Desktop.csproj's Compile Remove list — legacy files kept in-tree but never compiled -->
 		<Compile Remove="Daqifi.Desktop\ViewModels\PlottingViewModel.cs" />
 		<Compile Remove="Daqifi.Desktop\ViewModels\PlotViewModel.cs" />
