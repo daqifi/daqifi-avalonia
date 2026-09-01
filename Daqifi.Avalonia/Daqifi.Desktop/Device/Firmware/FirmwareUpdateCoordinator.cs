@@ -717,8 +717,6 @@ public class FirmwareUpdateCoordinator
     // @port: Daqifi.Desktop.Device.Firmware.FirmwareUpdateCoordinator.HandleFirmwareUpdateException
     private void HandleFirmwareUpdateException(FirmwareUpdateException exception)
     {
-        _host.HasErrorOccured = true;
-
         // A post-flash reconnect timeout is categorically different from a mid-flash failure: the image
         // was fully written and verified and only the device's return to normal serial operation timed
         // out. On the PIC32 that is the JumpingToApp step (reached only after erase + program +
@@ -749,6 +747,12 @@ public class FirmwareUpdateCoordinator
                 FirmwareFailureClassifier.BuildInstalledButNotReconnectedMessage(exception.FailedState));
             return;
         }
+
+        // Set only on the genuine-failure path. The flag is the host's "something went wrong"
+        // state (UploadFirmwareAsync clears it at the start of every run), and raising it for an
+        // outcome whose own dialog says the firmware installed successfully would contradict that
+        // dialog the moment anything binds it.
+        _host.HasErrorOccured = true;
 
         _appLogger.AddBreadcrumb(
             "firmware",

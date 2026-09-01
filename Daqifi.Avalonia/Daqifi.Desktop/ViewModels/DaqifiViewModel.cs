@@ -2262,8 +2262,6 @@ public partial class DaqifiViewModel : ObservableObject, IFirmwareUpdateHost, IL
         }
         catch (FirmwareUpdateException ex)
         {
-            HasErrorOccured = true;
-
             // Same carve-out as the combined auto-update path (FirmwareUpdateCoordinator): a
             // post-flash reconnect timeout means the WINC image was written and its success marker
             // confirmed, and only the device's serial re-enumeration ran out of time. That is a
@@ -2285,6 +2283,9 @@ public partial class DaqifiViewModel : ObservableObject, IFirmwareUpdateHost, IL
                 ShowWifiFirmwareInstalledPowerCycleDialog(ex.FailedState);
                 return;
             }
+
+            // Set only on the genuine-failure path — see the coordinator's matching comment.
+            HasErrorOccured = true;
 
             _appLogger.Error(ex, $"WiFi firmware flash failed during '{ex.Operation}' ({ex.FailedState}).");
             _appLogger.AddBreadcrumb("firmware", $"WiFi firmware update failed: {ex.FailedState}", Common.Loggers.BreadcrumbLevel.Error);
