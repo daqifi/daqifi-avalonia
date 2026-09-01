@@ -318,6 +318,11 @@ public partial class ConnectionManager : ObservableObject
         _deviceWatcher = watcher;
         _unsubscribeChannel = unsubscribeChannel;
         _postToUiThread = postToUiThread;
+
+        // The same state the singleton is in until the connection dialog installs one; Connect
+        // null-checks it and rejects duplicates when it is unset. Assigned explicitly only so this
+        // constructor does not add a CS8618 to the repo's warning count.
+        DuplicateDeviceHandler = null!;
     }
 
     // @port: Daqifi.Desktop.ConnectionManager.Instance
