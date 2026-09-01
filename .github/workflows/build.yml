@@ -147,6 +147,166 @@ jobs:
           path: '**/obj/project.assets.json'
           if-no-files-found: error
 
+  macos:
+    name: Desktop head on macOS
+    # #88. macOS was verified once by hand (docs/RUNBOOK-macos-ios.md §1.1, 2026-08-01)
+    # and then guarded by nothing, which is how a Windows-shaped path separator —
+    # AppDirectory + "\\..." — reached macOS and quietly wrote settings to a file
+    # literally NAMED 'DAQiFi\DAQifiConfiguration.xml'. It never threw, and no job in
+    # this workflow could have seen it.
+    #
+    # Be honest about what this job does and does not add over the ubuntu `desktop`
+    # job, which already compiles the same sources from the same RID-less restore:
+    #
+    #   * It builds the Desktop head for an osx-* RID, which nothing did before. A
+    #     RID is not a no-op here — it selects a runtime pack, an apphost, and each
+    #     package's runtimes/osx-arm64/ assets.
+    #   * It asserts those macOS native assets actually landed (see the last step).
+    #     That is the part a green compile genuinely does not prove.
+    #
+    # It does NOT catch the separator bug above, or anything else that is wrong only
+    # at runtime; nothing that merely compiles can. What it buys is that the macOS
+    # target stops being a claim nobody re-checks, and it gives the runtime checks a
+    # place to land when there is something to run.
+    #
+    # Deliberately NOT covered, so the green tick does not imply more than it means:
+    #   * osx-x64. The head declares it; nobody builds or ships it. macos-latest is
+    #     Apple silicon, and a second RID would double a 10x-billed job for a target
+    #     with no users.
+    #   * Running the app, or a test suite. The macOS QA list (RUNBOOK §1.2) is a
+    #     human checklist, and #88's "should it run the unit suite" has an awkward
+    #     answer: there is no test project in this repo to run. When one exists, it
+    #     belongs here.
+    #   * tools/parity-audit/AvaloniaCapture. Pinned to win-x64 and already
+    #     cross-built by the `desktop` job; compiling a Windows tool on a macOS
+    #     runner buys nothing.
+    #   * A dependency-graph upload for `avalonia-graph`. That gate reads the
+    #     `libraries` section, which comes from a RID-LESS restore and so is
+    #     byte-identical to the one `desktop` already uploads. Uploading it would add
+    #     a 10x job to that gate's critical path in exchange for no new information —
+    #     and, because the download step takes every artifact in the run rather than
+    #     a named list, an upload without a matching `needs:` entry would be a race.
+    #
+    # macos-latest, matching the ios job, because this repo pins no macOS image.
+    # Unlike that job nothing here depends on which one arrives: the Desktop head is
+    # plain net10.0, so there is no workload to install and no Xcode to select.
+    runs-on: macos-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      # Same pin as every other job — see the comment on the desktop job, and #107.
+      - uses: actions/setup-dotnet@v4
+        with:
+          global-json-file: global.json
+
+      # No -r, for the reason the ios job gives at length and Directory.Build.props
+      # gives at more: an explicit-RID restore REWRITES the lock file to hold only
+      # that RID (#85), and this head declares four. The RID arrives at BUILD time
+      # instead, against the per-RID assets a RID-less restore has already produced
+      # for every declared RuntimeIdentifier.
+      #
+      # The head alone is enough to restore — Daqifi.Avalonia and the vendored
+      # OxyPlot.Avalonia arrive as project references.
+      - name: Restore
+        run: dotnet restore Daqifi.Avalonia.Desktop/Daqifi.Avalonia.Desktop.csproj
+
+      # Same guard as every other job.
+      - name: Lock files must be unchanged by restore
+        run: |
+          set -euo pipefail
+          if ! git diff --quiet -- '**/packages.lock.json'; then
+            echo "::error::restore modified a committed lock file — it was not in the state a" \
+                 "clean restore produces. Most often this is a lock file committed from a" \
+                 "'-r <rid>' build, which prunes the other RIDs. Re-restore without that flag" \
+                 "(or force-evaluate) and commit the result."
+            git diff --stat -- '**/packages.lock.json'
+            exit 1
+          fi
+          echo "lock files unchanged by restore"
+
+      # --no-restore is load-bearing, not a speed-up — the same point the ios job
+      # makes. It is what keeps the -r above out of restore, and therefore out of the
+      # lock file.
+      - name: Build
+        run: |
+          dotnet build Daqifi.Avalonia.Desktop/Daqifi.Avalonia.Desktop.csproj \
+            -c Release -r osx-arm64 --no-restore
+
+      # The second look the ios job also takes, and for the same reason: this is one
+      # of only two jobs that pass -r at all, the post-restore check cannot see a lock
+      # file rewritten by the BUILD, and --no-restore above is precisely a claim about
+      # the build's effect on that file.
+      - name: Lock files must be unchanged by the RID build
+        run: |
+          set -euo pipefail
+          if ! git diff --quiet -- '**/packages.lock.json'; then
+            echo "::error::the -r build rewrote a lock file, which means it restored" \
+                 "despite --no-restore. Whatever caused that, do not commit the result:" \
+                 "a RID-pruned lock file fails the next run with NU1004."
+            git diff --stat -- '**/packages.lock.json'
+            exit 1
+          fi
+          echo "lock files unchanged by the RID build"
+
+      # Verify the ARTIFACT, not the exit code — the standing rule in
+      # docs/RUNBOOK-macos-ios.md, and the same shape as the ios job's Assets.car
+      # check. This is the part of the job a green compile does not already cover.
+      #
+      # Every library below ships inside a NuGet package as a runtimes/osx-arm64/
+      # native/ entry, and `-r osx-arm64` is what makes the SDK select that RID's
+      # copy and place it next to the binary. If a bump ever dropped or renamed one,
+      # the managed compile would still succeed — on ubuntu AND here — and the app
+      # would die on first use with a DllNotFoundException that names a file nobody
+      # put in a csproj. Each of these is fatal on its own:
+      #
+      #   libAvaloniaNative          the macOS windowing backend; no window without it
+      #   libSkiaSharp               the renderer
+      #   libHarfBuzzSharp           text shaping, decoupled from the renderer in
+      #                              Avalonia 12 (see this file's header)
+      #   libSystem.IO.Ports.Native  serial/USB — the entire point of the app
+      #   libe_sqlite3               the logging database
+      - name: macOS output must be an arm64 binary carrying its native dependencies
+        run: |
+          set -euo pipefail
+          out=Daqifi.Avalonia.Desktop/bin/Release/net10.0/osx-arm64
+          host="${out}/Daqifi.Avalonia.Desktop"
+          if [ ! -x "${host}" ]; then
+            echo "::error::no executable at ${host}. The build output moved; this check" \
+                 "needs updating, and the macOS binary is unverified."
+            ls -la "${out}" || ls -la Daqifi.Avalonia.Desktop/bin/Release || true
+            exit 1
+          fi
+          # Captured once into a variable rather than piped, so nothing downstream can
+          # close the pipe early on it.
+          host_kind=$(file "${host}")
+          echo "${host_kind}"
+          # Two substrings rather than one exact sentence: `file` phrases this string
+          # its own way, but an x86_64 or a non-Mach-O host cannot contain both.
+          case "${host_kind}" in
+            *Mach-O*arm64*) ;;
+            *)
+              echo "::error::${host} is not an arm64 Mach-O binary: ${host_kind}." \
+                   "The -r osx-arm64 build did not produce an Apple-silicon apphost."
+              exit 1
+              ;;
+          esac
+          missing=0
+          for lib in libAvaloniaNative libSkiaSharp libHarfBuzzSharp \
+                     libSystem.IO.Ports.Native libe_sqlite3; do
+            if [ ! -f "${out}/${lib}.dylib" ]; then
+              echo "::error::${lib}.dylib is missing from ${out}. The osx-arm64 runtime" \
+                   "asset for it did not resolve, so the app would fail at startup with" \
+                   "a DllNotFoundException. Check whether the package that ships it still" \
+                   "carries a runtimes/osx-arm64/native/ entry."
+              missing=1
+            fi
+          done
+          if [ "${missing}" -ne 0 ]; then
+            ls -la "${out}"
+            exit 1
+          fi
+          echo "arm64 Mach-O host and all five macOS natives present"
+
   android:
     name: Android head
     runs-on: ubuntu-latest
