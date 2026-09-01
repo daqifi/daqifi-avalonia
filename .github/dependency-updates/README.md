@@ -298,11 +298,15 @@ It iterates projects rather than restoring `Daqifi.Avalonia.slnx`, because
 would silently miss it. It never passes `-r`, which would prune the lock file to a
 single RID (see the warning at the top of `Directory.Build.props`).
 
-Its first run also normalises one line in four lock files: the vendored project's key
-`Oxyplot.Avalonia` becomes `oxyplot.avalonia`. That is the pinned SDK's own output, not
-churn — `Daqifi.Avalonia.iOS/packages.lock.json` already carries the lowercase form
-because it was regenerated on 10.0.302 in `d905541`, while the other four still hold
-what an older SDK wrote.
+`--force-evaluate` is also the only thing that catches a lock file that is *stale* rather
+than drifted. NuGet compares ids case-insensitively when it decides an existing lock file
+is consistent, so a file whose entries are merely spelled differently from what a fresh
+derivation produces satisfies locked mode, survives the post-restore `git diff`, and stays
+stale indefinitely. [#106] is what that cost: the vendored project's key derived as
+`oxyplot.avalonia` on macOS and `Oxyplot.Avalonia` on Linux, so running this script on a
+Mac produced a one-line diff nobody could tell from churn. The cause is gone (see
+`third_party/oxyplot-avalonia/VENDORED.md`), and all three build jobs now re-derive their
+own head, so a key that is host-dependent again fails in CI rather than on a laptop.
 
 ### Why `/Daqifi.Avalonia.Android` stays in `directories`
 
@@ -330,6 +334,7 @@ this class of silent Dependabot failure.
 [#93]: https://github.com/daqifi/daqifi-avalonia/pull/93
 [#95]: https://github.com/daqifi/daqifi-avalonia/pull/95
 [#96]: https://github.com/daqifi/daqifi-avalonia/pull/96
+[#106]: https://github.com/daqifi/daqifi-avalonia/issues/106
 [#130]: https://github.com/daqifi/daqifi-avalonia/pull/130
 [#131]: https://github.com/daqifi/daqifi-avalonia/pull/131
 [#132]: https://github.com/daqifi/daqifi-avalonia/issues/132
