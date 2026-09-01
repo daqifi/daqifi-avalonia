@@ -399,6 +399,11 @@ public abstract partial class AbstractStreamingDevice : ObservableObject, IStrea
 
             CoreDevice = coreDevice;
 
+            // Point any already-attached diagnostics subscriber at THIS session's Core device.
+            // Connect() is a template that can run again on the same wrapper (reconnect), and the
+            // ErrorOccurred/SendFailed bridge binds lazily on first subscribe — see RebindDiagnostics.
+            RebindDiagnostics();
+
             coreDevice.ChannelsPopulated += OnCoreChannelsPopulated;
             coreDevice.MessageReceived += OnCoreMessageReceived;
             coreDevice.StatusChanged += OnCoreStatusChanged;
@@ -558,6 +563,11 @@ public abstract partial class AbstractStreamingDevice : ObservableObject, IStrea
 
         CoreDevice = null;
 
+        // Release the ErrorOccurred/SendFailed bridge to the Core device just disposed. Without
+        // this, a wrapper whose subscriber is still attached keeps the disposed Core device — and
+        // through it the transport — reachable for as long as the wrapper is.
+        RebindDiagnostics();
+
         // CoreDevice is now null, so IsConnected reads false. The explicit-disconnect path
         // unsubscribes StatusChanged before cleanup, so notify here to cover teardown (issue #3).
         RaiseIsConnectedChanged();
@@ -600,15 +610,55 @@ public abstract partial class AbstractStreamingDevice : ObservableObject, IStrea
     /// tells the user to reconnect.
     /// </para>
     /// </summary>
-    private void OnCoreStatusChanged(object? sender, DeviceStatusEventArgs e)
+    /// <remarks>
+    /// <para>
+    /// <b>Which statuses count as a drop.</b> Upstream also treats <c>Disconnected</c> as one.
+    /// This port deliberately does not, because at the pinned Core (1.7.0) <c>Disconnected</c> is
+    /// reachable only from a caller-issued <c>Disconnect()</c> — <c>DisconnectCore</c> and
+    /// <c>MarkDisconnectedWithoutTeardown</c> are the only two producers of it, and both run under
+    /// a teardown the app asked for. Every app-initiated teardown path here detaches this handler
+    /// (<see cref="Disconnect"/> and <see cref="CleanupConnection"/> both call
+    /// <c>UnsubscribeCoreDeviceEvents</c> before touching the Core device), so acting on
+    /// <c>Disconnected</c> could only ever re-enter teardown on a device that is already being torn
+    /// down. <c>Failed</c> IS included even though it is unreachable today: Core only reports it
+    /// when automatic reconnect exhausts its attempts, and this app leaves
+    /// <c>DaqifiDevice.ReconnectOptions</c> at its disabled default — so a drop stops at
+    /// <c>Lost</c>. Handling it now means enabling reconnect later cannot silently reintroduce the
+    /// untorn-down device this method exists to prevent.
+    /// </para>
+    /// </remarks>
+    // @port: Daqifi.Desktop.Device.AbstractStreamingDevice.OnCoreStatusChanged
+    protected virtual void OnCoreStatusChanged(object? sender, DeviceStatusEventArgs e)
     {
-        if (e.Status == ConnectionStatus.Lost)
+        if (e.Status is not (ConnectionStatus.Lost or ConnectionStatus.Failed))
         {
-            OnConnectionLost();
+            RaiseIsConnectedChanged();
+            return;
         }
 
+        OnConnectionLost();
+
         RaiseIsConnectedChanged();
+
+        var reason = e.Status == ConnectionStatus.Lost ? "connection lost" : "connection failed";
+        AppLogger.Instance.Warning($"DAQiFi device {DisplayIdentifier} {reason} unexpectedly.");
+
+        // Raised last, and OUTSIDE the UI-thread marshal, on purpose. The subscriber that matters
+        // (ConnectionManager) disposes this device's Core device and its transport, and it does its
+        // own marshalling; running that teardown inline on Core's transport thread is what the
+        // handler is written for. Raising it after the notifications above also means a subscriber
+        // that reads IsConnected/IsStreaming during teardown sees the settled values.
+        ConnectionLost?.Invoke(this, new ConnectionLostEventArgs(reason));
     }
+
+    /// <summary>
+    /// Raised when Core reports that this device's transport dropped underneath it, rather than
+    /// through an app-initiated <see cref="Disconnect"/>. See <see cref="OnCoreStatusChanged"/>
+    /// for which Core statuses count.
+    /// </summary>
+    /// <inheritdoc cref="IDevice.ConnectionLost" />
+    // @port: Daqifi.Desktop.Device.AbstractStreamingDevice.ConnectionLost
+    public event EventHandler<ConnectionLostEventArgs>? ConnectionLost;
 
     /// <summary>
     /// Marks the device as no longer streaming after the transport dropped underneath it.

@@ -1792,9 +1792,18 @@ public partial class DaqifiViewModel : ObservableObject, IFirmwareUpdateHost, IL
                 var deviceConnection = ConnectionManager.Instance.NotifyConnection;
                 if (deviceConnection)
                 {
-                    var errorDialogViewModel = new ErrorDialogViewModel("Device disconnected unexpectedly.");
+                    // Name the device and say what happened. The generic fallback is what this
+                    // dialog always said; it now only appears if a producer raises the flag without
+                    // setting a reason, which no current path does.
+                    var message = string.IsNullOrWhiteSpace(ConnectionManager.Instance.LastDisconnectReason)
+                        ? "Device disconnected unexpectedly."
+                        : ConnectionManager.Instance.LastDisconnectReason;
+                    var errorDialogViewModel = new ErrorDialogViewModel(message);
                     _ = _dialogService.ShowDialogAsync<ErrorDialog>(this, errorDialogViewModel);
                     ConnectionManager.Instance.NotifyConnection = false;
+                    // Clear so a later notification that doesn't set its own reason never shows
+                    // this one's stale device/reason text.
+                    ConnectionManager.Instance.LastDisconnectReason = string.Empty;
                 }
                 break;
         }

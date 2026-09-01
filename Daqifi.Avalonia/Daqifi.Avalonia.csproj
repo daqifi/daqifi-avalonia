@@ -48,6 +48,14 @@
 	</ItemGroup>
 
 	<ItemGroup>
+		<!-- The unit-test project sees this assembly's internals. Some behaviour here is only
+		     reachable through a seam that has no business being public API — ConnectionManager's
+		     test constructor, for one, which exists so device teardown can be exercised without
+		     the singleton's real hotplug watcher and its LoggingManager dependency. -->
+		<InternalsVisibleTo Include="Daqifi.Avalonia.Tests" />
+	</ItemGroup>
+
+	<ItemGroup>
 		<!-- Mirrors upstream Daqifi.Desktop.csproj's Compile Remove list — legacy files kept in-tree but never compiled -->
 		<Compile Remove="Daqifi.Desktop\ViewModels\PlottingViewModel.cs" />
 		<Compile Remove="Daqifi.Desktop\ViewModels\PlotViewModel.cs" />
