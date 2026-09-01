@@ -17,6 +17,10 @@ public partial class ExportDialog : Window
     public ExportDialog()
     {
         InitializeComponent();
+
+        // The view model owns a CancellationTokenSource for the in-flight export. Nothing else in the
+        // dialog lifecycle disposes it, so release it when the window closes.
+        Closed += (_, _) => (DataContext as IDisposable)?.Dispose();
     }
 
     // @port: Daqifi.Desktop.View.ExportDialog.btnCancel_Click

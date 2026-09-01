@@ -30,19 +30,87 @@
 		     Mac to build it on. Add it back off the strength of a real build on
 		     Intel hardware, not on the strength of it looking harmless. -->
 		<RuntimeIdentifiers>iossimulator-arm64;ios-arm64</RuntimeIdentifiers>
-		<!-- REQUIRED for EF Core, not a tuning knob. iOS is aot-only, and EF Core
-		     builds its DbContext factory through System.Linq.Expressions, which
-		     falls back to Reflection.Emit and throws
-		         ExecutionEngineException: Attempting to JIT compile method
-		         '...Thunk1_LoggingContext_IReadOnlyList`1_DbSet`1...'
-		         while running in aot-only mode
-		     from App.InitializeMobile (migration) and from
-		     LoggingManager.GetLoggingSessionsSnapshot (the Logged Data pane).
-		     Observed on the simulator before this was set; both now work.
-		     The interpreter costs startup and throughput, so the eventual fix is
-		     an EF compiled model (`dotnet ef dbcontext optimize`) plus AOT-safe
-		     factory registration — until then this is what makes the head run. -->
-		<UseInterpreter>true</UseInterpreter>
+		<!-- Interpret EF CORE ONLY, not the whole app (#102). This replaces
+		     <UseInterpreter>true</UseInterpreter>, which was the same knob set to
+		     "all". Still REQUIRED, still not a tuning knob: iOS is aot-only, EF Core
+		     generates code at runtime, and without an interpreter the data layer
+		     does not work at all.
+
+		     What the old setting cost, measured after deleting bin and obj each
+		     time (Release, iossimulator-arm64):
+		         UseInterpreter=true    binary  2.0 MB  .app  53 MB  trimmed
+		         this list              binary 35.5 MB  .app 136 MB  NOT trimmed
+		                                (+ 5.6 MB aot-instances.aotdata.arm64)
+		         -p:MtouchInterpreter=all
+		                                binary  6.7 MB  .app 103 MB  NOT trimmed
+		     The third row is the isolation experiment, and the only fair comparison
+		     for the AOT cost alone: 28.8 MB more app binary (6.7 to 35.5) plus the
+		     5.6 MB dedup file, i.e. ~33 MB of .app, 103 to 136. A
+		     6.7 MB binary is the tell that under "all" there is essentially no AOT
+		     code in the app AT ALL. Avalonia's render loop, OxyPlot and our stream
+		     handling were all being interpreted to keep one library working, on a
+		     head whose main job is rendering a 16-channel stream at 100 Hz. Naming
+		     assemblies buys that back for everything unnamed.
+
+		     But rows 1 and 2 are what actually changed on disk, and that is +83 MB
+		     on the simulator, because setting this property IN THE PROJECT also
+		     turns the simulator trimmer off. Xamarin.Shared.Sdk.Trimming.props
+		     ("_DefaultLinkMode=None when MtouchInterpreter != ''") is injected via
+		     CustomAfterDirectoryBuildTargets and therefore runs BEFORE
+		     Xamarin.Shared.props turns UseInterpreter into MtouchInterpreter=all —
+		     so the old head trimmed (SdkOnly) despite interpreting everything, and
+		     this one does not. A -p: on the command line is a global property and
+		     IS visible there, which is why row 3 behaves like row 2. That is also
+		     the ENTIRE reason this head's warning count fell from 1248 to 293:
+		     TrimMode=copy sets SuppressTrimAnalysisWarnings=true. Nothing was
+		     fixed. Device builds are SdkOnly either way, so the shipping config is
+		     still trimmed and CI (simulator-only) no longer covers that; see
+		     docs/RUNBOOK-macos-ios.md before "fixing" either number.
+
+		     The extra aot-instances file is generic-instance dedup, which
+		     Xamarin.Shared.Sdk.targets enables for every value EXCEPT "all".
+
+		     Why the list is these five: they are the assemblies that build and
+		     execute expression trees against our model — the query pipeline
+		     (EntityFrameworkCore + Relational + Sqlite) and the bulk-insert path
+		     the sample writer uses (EFCore.BulkExtensions.*). Keep it in step with
+		     the EF PackageReferences in Daqifi.Avalonia.csproj.
+
+		     What was verified is that the head works WITH this list: migration
+		     applies and the Logged Data pane loads. It was NOT tested whether a
+		     shorter list also works — enabling the interpreter at all is what makes
+		     the SDK leave RuntimeFeature.IsDynamicCodeSupported true (see
+		     Xamarin.Shared.Sdk.targets), so a shorter list may well be enough for
+		     the expression trees alone. Do not shrink it on that theory without
+		     running the app; EF also dispatches generically over runtime types,
+		     which is the other thing an interpreter covers. Adding an assembly is
+		     cheap; the failure mode for a missing one is a pane that breaks at RUN
+		     time, with a green build.
+
+		     Do NOT go back to "all" to make some other library work. Add that
+		     library to this list, or fix its call site.
+
+		     NOT YET SOLVED — removing the interpreter entirely still needs EF
+		     precompiled queries, and today it cannot be done. Measured on the
+		     iPhone 17 simulator against this exact head, three separate aot-only
+		     walls, each hidden behind the previous one:
+		       1. DbContext construction — ClrPropertySetterFactory built a setter
+		          per DbSet property. FIXED here: LoggingContext's DbSets are now
+		          get-only (`=> Set<T>()`), so EF never builds those setters.
+		       2. Model building — "Model building is not supported when publishing
+		          with NativeAOT. Use a compiled model." Fixable with
+		          `dotnet ef dbcontext optimize`; verified working, then reverted,
+		          because wall 3 makes it useless on its own.
+		       3. Every query — "Query wasn't precompiled and dynamic code isn't
+		          supported with NativeAOT", from LoggingManager
+		          .GetLoggingSessionsSnapshot. Needs the `precompile-queries` option
+		          of that same command, which FAILS on this codebase: EF's
+		          C#-to-LINQ translator rejects queries
+		          that capture instance fields ("Encountered unknown identifier name
+		          '_session'"), and the data layer is written that way throughout.
+		     Clearing wall 3 means rewriting the data layer against an experimental
+		     EF feature, with no test project here to catch a regression. See #102. -->
+		<MtouchInterpreter>Microsoft.EntityFrameworkCore,Microsoft.EntityFrameworkCore.Relational,Microsoft.EntityFrameworkCore.Sqlite,EFCore.BulkExtensions.Core,EFCore.BulkExtensions.Sqlite</MtouchInterpreter>
 	</PropertyGroup>
 
 	<ItemGroup>
