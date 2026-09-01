@@ -9614,21 +9614,21 @@ symbols:
     backlog_id: null
     last_synced_sha: null
   - upstream: Sessions { get; set; }
-    downstream: Sessions { get; set; }
+    downstream: Sessions => Set<LoggingSession>()
     relation: one_to_one
-    notes: null
+    notes: Get-only downstream; see DIV-DS-005.
     backlog_id: null
     last_synced_sha: null
   - upstream: Samples { get; set; }
-    downstream: Samples { get; set; }
+    downstream: Samples => Set<DataSample>()
     relation: one_to_one
-    notes: null
+    notes: Get-only downstream; see DIV-DS-005.
     backlog_id: null
     last_synced_sha: null
   - upstream: SessionDeviceMetadata { get; set; }
-    downstream: SessionDeviceMetadata { get; set; }
+    downstream: SessionDeviceMetadata => Set<SessionDeviceMetadata>()
     relation: one_to_one
-    notes: null
+    notes: Get-only downstream; see DIV-DS-005.
     backlog_id: null
     last_synced_sha: null
 - upstream:
@@ -19142,6 +19142,23 @@ divergences:
     \ cell-template name scope, so upstream's ElementName=DeviceFilesList form is\
     \ silently dead. Same name-scope rule ProfilesPane hit; catalog idiom.\n"
   accepted_at: '2026-07-13'
+- id: DIV-DS-005
+  upstream_path: Daqifi.Desktop/Loggers/LoggingContext.cs
+  downstream_path: Daqifi.Avalonia/Daqifi.Desktop/Loggers/LoggingContext.cs
+  upstream_symbol: Daqifi.Desktop.Logger.LoggingContext
+  downstream_symbol: Daqifi.Desktop.Logger.LoggingContext
+  kind: api_shape
+  rationale: >
+    The three DbSet properties are get-only (`=> Set<T>()`) downstream, where upstream
+    declares them `{ get; set; }`. Same objects, same EF model, same table naming — EF's
+    DbSetFinder still discovers the properties, it just stores a null setter for them.
+    The upstream shape does not survive the crossing: upstream is a JIT-only WPF app,
+    this port has an iOS head that is aot-only, and a settable DbSet makes EF build a
+    ClrPropertySetter through Expression.Compile() in the DbContext CONSTRUCTOR. That
+    needed a Reflection.Emit thunk and threw ExecutionEngineException, so every
+    CreateDbContext() failed and no database was created at all. See #102 and the block
+    comment in the file.
+  accepted_at: '2026-09-01'
 backlog:
 - id: PORT-001
   upstream_symbol: Daqifi.Desktop.App
