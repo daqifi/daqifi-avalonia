@@ -37,7 +37,7 @@ porting tool rather than part of the application, so it is not published here â€
 markers are still useful as "this symbol came from upstream and may have diverged",
 but the map they index is not in this repository.
 
-### Platform heads
+### Projects
 
 | Project | Target framework | Notes |
 | --- | --- | --- |
@@ -100,8 +100,9 @@ Crash reporting can be compiled out with `-p:SentryDsn=`.
 
 ## Contributing
 
-Issues and pull requests are welcome. CI builds every head on every pull request, so
-expect the build to tell you quickly if a change breaks a platform you did not test.
+Issues and pull requests are welcome â€” see [CONTRIBUTING.md](CONTRIBUTING.md). CI builds
+every head on every pull request, so expect the build to tell you quickly if a change
+breaks a platform you did not test.
 
 ## License
 
