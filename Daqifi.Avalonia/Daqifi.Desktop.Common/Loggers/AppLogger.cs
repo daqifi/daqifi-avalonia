@@ -139,7 +139,13 @@ public class AppLogger : IAppLogger
         // Step 6. Initialize Sentry SDK — explicit CaptureException calls in Error() are the
         // sole capture path; SentryTarget is intentionally omitted to avoid double-reporting.
         var dsn = ResolveSentryDsn();
-        var version = Assembly.GetEntryAssembly()?.GetName().Version?.ToString() ?? "0.0.0";
+        // Deliberate divergence from upstream's
+        //     Assembly.GetEntryAssembly()?.GetName().Version?.ToString() ?? "0.0.0"
+        // which is safe in a single-head WPF app and is not here: the entry assembly is the
+        // platform head, and on Android there is no managed entry assembly at all, so every
+        // mobile event was tagged with the literal fallback release "0.0.0" (#126). AppVersion
+        // reads the shared assembly instead — same answer on every head. See its remarks.
+        var version = AppVersion.Informational;
 
         if (string.IsNullOrWhiteSpace(dsn))
         {
@@ -169,11 +175,15 @@ public class AppLogger : IAppLogger
         }
     }
 
-    private static IDisposable InitializeSentry(string dsn, string version) =>
+    private static IDisposable InitializeSentry(string dsn, string? version) =>
         SentrySdk.Init(options =>
         {
             options.Dsn = dsn;
-            options.Release = version;
+            // Left unset when the version cannot be resolved rather than sent as a placeholder.
+            // An unset Release lets the SDK apply its own detection; a stand-in like "0.0.0" is
+            // indistinguishable in Sentry from a release that genuinely is 0.0.0, which is
+            // precisely how #126 stayed invisible until someone read a crash report closely.
+            if (!string.IsNullOrWhiteSpace(version)) { options.Release = version; }
             options.AutoSessionTracking = true;
             options.IsGlobalModeEnabled = true;
             // Explicit, not relying on the SDK default: this app ships to app stores, where
