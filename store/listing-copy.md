@@ -127,6 +127,15 @@ count of points drawn, not samples acquired — the plot decimates the stream to
 screenshots showed a label the app no longer uses. Screens 03 and 04 are byte-identical to the
 previous set: the crop removes the status bar, and neither screen has other time-varying content.
 
+> **Stale again — screens 01 and 02 need one more regeneration before the next submission.**
+> The rest of #120 landed: the readout now counts every sample the device delivers, not the
+> subset the 20 Hz poll observed, and it reads **"N samples acquired"**. Both the label and the
+> magnitude in `screenshot-01-live-plot.png` / `screenshot-02-live-plot-detail.png` are therefore
+> out of date — the number a fresh capture shows will be roughly **five times larger** for the
+> same elapsed time. Regenerating needs the bench A16 (these are Android captures over Wi-Fi), so
+> it could not be done alongside the code change. Screens 03 and 04 are unaffected; neither shows
+> the plot. The plot itself is still a 20 Hz decimation, so nothing about the *trace* changes.
+
 ---
 
 ## Notes for whoever pastes this

@@ -36,6 +36,12 @@ public partial class MobileShellViewModel : ObservableObject, IDisposable
     // rather than elapsed time, so the threshold tracks how often this code actually runs.
     private const int SilentPollsBeforeStreamDeclaredDead = 160;   // ~8 s
     private int _silentPolls;
+    // TotalSamples as of the END of the previous poll. The watchdog asks whether a sample
+    // arrived BETWEEN two polls (50 ms), which is only true if the reference point is the
+    // previous poll. Comparing against a value read at the top of the SAME poll asks whether
+    // one arrived during the few microseconds the poll body takes — almost never, so the
+    // watchdog would tear a perfectly healthy connection down within seconds.
+    private long _samplesAtLastPoll;
 
     public ObservableCollection<MobileDeviceItem> Devices { get; } = [];
 
@@ -81,8 +87,33 @@ public partial class MobileShellViewModel : ObservableObject, IDisposable
     // DataChannels each tick — immune to that instance churn.
     private readonly Dictionary<string, ChannelSeries> _seriesByName = [];
     private readonly Dictionary<string, long> _lastTicksByName = [];
+
+    // Channels whose samples are being counted. REFERENCE identity, not AbstractChannel.Equals
+    // — that compares by Name, so a replacement instance for the same channel would look like
+    // one already subscribed and its samples would never be counted. Guarded by its own lock:
+    // the teardown paths can be reached from a device property-change raised off the UI thread,
+    // while the render poll re-arms from the UI thread.
+    private readonly HashSet<IChannel> _countedChannels = new(ReferenceEqualityComparer.Instance);
     private long _totalSamples;
-    public long TotalSamples => _totalSamples;
+
+    /// <summary>
+    /// Samples acquired since streaming started, summed over every streamed channel.
+    /// </summary>
+    /// <remarks>
+    /// Counted at the source — <see cref="IChannel.OnChannelUpdated"/>, which fires once per
+    /// channel per parsed streaming frame on the Core receive thread, the same signal the
+    /// logging path consumes — so this is the number of samples the device actually delivered.
+    /// <para>
+    /// It used to be incremented inside <see cref="PollActiveSamples"/>, which can only ever
+    /// observe the LATEST value per channel per render tick. That capped it at 20 samples per
+    /// channel per second whatever the device was streaming at: at 16 channels / 100 Hz it
+    /// reported about a fifth of the samples acquired, on a screen that calls them samples
+    /// (#120). The plot is still fed from the poll — that decimation is a rendering concern,
+    /// tracked with the rest of the render-path work in #122 — but the count no longer inherits
+    /// the render rate.
+    /// </para>
+    /// </remarks>
+    public long TotalSamples => Interlocked.Read(ref _totalSamples);
     private static readonly uint[] Palette =
     [
         0xFF4FC3F7, 0xFFFFB74D, 0xFF81C784, 0xFFE57373,
@@ -353,7 +384,10 @@ public partial class MobileShellViewModel : ObservableObject, IDisposable
         Series.Clear();
         _seriesByName.Clear();
         _lastTicksByName.Clear();
-        _totalSamples = 0;
+        StopCountingSamples();
+        Interlocked.Exchange(ref _totalSamples, 0);
+        _samplesAtLastPoll = 0;
+        _silentPolls = 0;
         var i = 0;
         foreach (var channel in analog)
         {
@@ -361,6 +395,8 @@ public partial class MobileShellViewModel : ObservableObject, IDisposable
             var s = new ChannelSeries(channel.Name, Palette[i % Palette.Length], 600);
             Series.Add(s);
             _seriesByName[channel.Name] = s;
+            // Subscribe BEFORE InitializeStreaming so no sample can arrive uncounted.
+            CountSamplesFrom(channel);
             i++;
         }
 
@@ -402,47 +438,97 @@ public partial class MobileShellViewModel : ObservableObject, IDisposable
     /// DataChannels (immune to the enable-time instance re-sync) and appends
     /// only genuinely-new samples (dedup by the sample's device timestamp).
     /// </summary>
+    /// <remarks>
+    /// This feeds the PLOT, and only the plot: it draws one point per channel per tick, so it
+    /// sees whatever value happened to be latest when the tick ran. <see cref="TotalSamples"/>
+    /// is no longer derived from it — see that property, and #120.
+    /// </remarks>
     public void PollActiveSamples()
     {
         var device = _connected;
         if (device == null || !IsStreaming) { return; }
-        var samplesBefore = _totalSamples;
         var monitored = 0;
         foreach (var channel in device.DataChannels)
         {
             if (channel.Type != ChannelType.Analog || channel.IsOutput) { continue; }
             if (!channel.IsActive) { continue; }
             monitored++;
+            if (!_seriesByName.TryGetValue(channel.Name, out var series)) { continue; }
+            // Re-arm the sample count against the CURRENT instance. Same reasoning as reading
+            // DataChannels fresh each tick: if the device re-synced its channel list, the
+            // subscription taken at stream start is on an object nothing writes to any more,
+            // and the count would silently stop. Idempotent, so this is a set lookup per
+            // channel per tick in the steady state.
+            CountSamplesFrom(channel);
             var sample = channel.ActiveSample;
             if (sample == null) { continue; }
-            if (!_seriesByName.TryGetValue(channel.Name, out var series)) { continue; }
             var ticks = sample.TimestampTicks;
             if (_lastTicksByName.TryGetValue(channel.Name, out var last) && last == ticks)
             {
-                continue;   // same frame as last poll — don't double-count
+                continue;   // same frame as last poll — don't plot it twice
             }
             _lastTicksByName[channel.Name] = ticks;
             series.Append(sample.Value);
-            _totalSamples++;
         }
 
-        // Only judge silence when there is something whose silence would mean anything. If no
-        // active analog channel is being polled, _totalSamples cannot advance no matter how
-        // healthy the transport is, and the watchdog would tear down a working connection — the
-        // exact false-positive this design was supposed to avoid. Reset rather than merely skip,
-        // so a stretch of unmonitored polls cannot bank silence toward a later trip.
+        // Only judge silence when there is something whose silence would mean anything. With no
+        // active analog channel there is nothing to produce a sample, so the count cannot advance
+        // no matter how healthy the transport is, and the watchdog would tear down a working
+        // connection — the exact false-positive this design was supposed to avoid. Reset rather
+        // than merely skip, so a stretch of unmonitored polls cannot bank silence toward a later
+        // trip.
         if (monitored > 0)
         {
-            CheckForSilentStream(samplesBefore);
+            CheckForSilentStream();
         }
         else
         {
             _silentPolls = 0;
+            _samplesAtLastPoll = TotalSamples;
         }
     }
 
     /// <summary>
-    /// Declares the stream dead after a run of polls that produced no new samples.
+    /// Starts counting <paramref name="channel"/>'s samples toward <see cref="TotalSamples"/>.
+    /// Idempotent per channel INSTANCE, so it is safe to call every render tick.
+    /// </summary>
+    private void CountSamplesFrom(IChannel channel)
+    {
+        lock (_countedChannels)
+        {
+            if (_countedChannels.Add(channel))
+            {
+                channel.OnChannelUpdated += OnSampleAcquired;
+            }
+        }
+    }
+
+    /// <summary>
+    /// Detaches every sample subscription. Called on every path that ends a stream, so a
+    /// stopped or lost stream cannot keep advancing the count.
+    /// </summary>
+    private void StopCountingSamples()
+    {
+        lock (_countedChannels)
+        {
+            foreach (var channel in _countedChannels)
+            {
+                channel.OnChannelUpdated -= OnSampleAcquired;
+            }
+            _countedChannels.Clear();
+        }
+    }
+
+    /// <summary>
+    /// One acquired sample. Raised on the Core receive thread, once per channel per streaming
+    /// frame — 1,600 times a second at 16 channels / 100 Hz — so this must stay an interlocked
+    /// add and nothing else. Anything that touches bound state belongs on the render tick.
+    /// </summary>
+    private void OnSampleAcquired(object sender, DataSample e) =>
+        Interlocked.Increment(ref _totalSamples);
+
+    /// <summary>
+    /// Declares the stream dead after a run of polls across which no sample arrived.
     /// </summary>
     /// <remarks>
     /// Defence in depth behind the device-level signal, for the case Core cannot see. A TCP socket
@@ -468,17 +554,20 @@ public partial class MobileShellViewModel : ObservableObject, IDisposable
     /// </para>
     /// <list type="bullet">
     /// <item>the foreground service keeps the socket alive, samples keep arriving, and the
-    /// watchdog stays quiet — verified at 347 samples/s through 180 s with the device asleep;</item>
+    /// watchdog stays quiet — verified at 347 poll observations/s through 180 s with the device
+    /// asleep (that measurement predates #120, so it is a poll rate, not an acquisition rate);</item>
     /// <item>if the stream dies anyway (an OEM kills the service, the AP drops), samples stop and
     /// the watchdog tears the dead connection down. The user returns to "Tap Scan to reconnect"
     /// rather than a frozen plot, which is the whole point.</item>
     /// </list>
     /// </para>
     /// </remarks>
-    private void CheckForSilentStream(long samplesBefore)
+    private void CheckForSilentStream()
     {
-        if (_totalSamples != samplesBefore)
+        var total = TotalSamples;
+        if (total != _samplesAtLastPoll)
         {
+            _samplesAtLastPoll = total;
             _silentPolls = 0;
             return;
         }
@@ -503,8 +592,10 @@ public partial class MobileShellViewModel : ObservableObject, IDisposable
     {
         try { _connected?.StopStreaming(); }
         catch { /* best-effort */ }
+        StopCountingSamples();
         IsStreaming = false;
         _silentPolls = 0;
+        _samplesAtLastPoll = TotalSamples;
         if (IsConnected) { Status = "Streaming stopped."; }
     }
 
@@ -544,8 +635,10 @@ public partial class MobileShellViewModel : ObservableObject, IDisposable
     /// </summary>
     private void HandleStreamLost()
     {
+        StopCountingSamples();
         IsStreaming = false;
         _silentPolls = 0;
+        _samplesAtLastPoll = TotalSamples;
         AppLogger.Instance.AddBreadcrumb(
             "streaming", "Stream lost — device stopped sending data", BreadcrumbLevel.Warning);
         Status = "Streaming stopped — the device stopped sending data. Reconnect to start again.";
@@ -565,9 +658,11 @@ public partial class MobileShellViewModel : ObservableObject, IDisposable
         var lost = _connected;
         var name = lost?.Name ?? "device";
 
+        StopCountingSamples();
         IsStreaming = false;
         IsConnected = false;
         _silentPolls = 0;
+        _samplesAtLastPoll = TotalSamples;
         _connected = null;
 
         if (lost != null)
@@ -586,6 +681,10 @@ public partial class MobileShellViewModel : ObservableObject, IDisposable
     {
         if (IsScanning) { StopScan(); }
         if (IsStreaming) { StopStream(); }
+        // Unconditional backstop: StopStream only runs when the shell still believes it is
+        // streaming, and a subscription that outlives this view-model would keep a channel —
+        // and through it the device — reachable.
+        StopCountingSamples();
         var connected = _connected;
         _connected = null;
         IsConnected = false;
