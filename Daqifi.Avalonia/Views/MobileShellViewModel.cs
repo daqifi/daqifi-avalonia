@@ -94,7 +94,14 @@ public partial class MobileShellViewModel : ObservableObject, IDisposable
     // the teardown paths can be reached from a device property-change raised off the UI thread,
     // while the render poll re-arms from the UI thread.
     private readonly HashSet<IChannel> _countedChannels = new(ReferenceEqualityComparer.Instance);
-    private bool _countingSamples;
+    // One generation per stream, and one handler delegate closed over it. Unsubscribing cannot
+    // stop an OnChannelUpdated invocation that has already read the channel's delegate field, so
+    // a callback from the previous stream can still be in flight while the next stream resets the
+    // total to zero — and would then credit its sample to the new stream. Checking the generation
+    // is how such a callback recognises that it is stale. Both fields are guarded by
+    // _countedChannels; the generation is also read unlocked from the receive thread.
+    private int _countingGeneration;
+    private OnChannelUpdatedHandler? _sampleHandler;
     private long _totalSamples;
 
     /// <summary>
@@ -529,11 +536,31 @@ public partial class MobileShellViewModel : ObservableObject, IDisposable
     }
 
     /// <summary>
-    /// Arms sample counting for a stream that is about to start.
+    /// Arms sample counting for a stream that is about to start, on a fresh generation.
     /// </summary>
+    /// <remarks>
+    /// The handler is built here, once per stream, rather than being a method group, so that it
+    /// carries the generation it belongs to. Detaching a handler cannot cancel an invocation that
+    /// has already read the channel's delegate field, so a callback from the previous stream can
+    /// still run after <see cref="StopCountingSamples"/> — and, if the user restarts quickly
+    /// enough, after the total has been reset for the next one. Comparing generations is what
+    /// lets that callback tell it is stale and drop its sample instead of crediting it to a
+    /// stream it did not belong to.
+    /// </remarks>
     private void BeginCountingSamples()
     {
-        lock (_countedChannels) { _countingSamples = true; }
+        lock (_countedChannels)
+        {
+            var generation = Interlocked.Increment(ref _countingGeneration);
+            _sampleHandler = (_, _) =>
+            {
+                // Raised on the Core receive thread, once per channel per streaming frame —
+                // 1,600 times a second at 16 channels / 100 Hz — so this must stay a compare and
+                // an interlocked add. Anything touching bound state belongs on the render tick.
+                if (Volatile.Read(ref _countingGeneration) != generation) { return; }
+                Interlocked.Increment(ref _totalSamples);
+            };
+        }
     }
 
     /// <summary>
@@ -541,8 +568,8 @@ public partial class MobileShellViewModel : ObservableObject, IDisposable
     /// Idempotent per channel INSTANCE, so it is safe to call every render tick.
     /// </summary>
     /// <remarks>
-    /// The <see cref="_countingSamples"/> gate is what makes the render tick's re-arm safe
-    /// against a teardown running at the same time. <see cref="HandleStreamLost"/> and
+    /// The null-handler gate is what makes the render tick's re-arm safe against a teardown
+    /// running at the same time. <see cref="HandleStreamLost"/> and
     /// <see cref="HandleConnectionLost"/> can be reached from a device property-change raised on
     /// the Core thread; without the gate, a poll already inside its channel loop could re-attach
     /// a subscription immediately after <see cref="StopCountingSamples"/> had detached it, and
@@ -553,10 +580,10 @@ public partial class MobileShellViewModel : ObservableObject, IDisposable
     {
         lock (_countedChannels)
         {
-            if (!_countingSamples) { return; }
+            if (_sampleHandler == null) { return; }
             if (_countedChannels.Add(channel))
             {
-                channel.OnChannelUpdated += OnSampleAcquired;
+                channel.OnChannelUpdated += _sampleHandler;
             }
         }
     }
@@ -569,22 +596,21 @@ public partial class MobileShellViewModel : ObservableObject, IDisposable
     {
         lock (_countedChannels)
         {
-            _countingSamples = false;
-            foreach (var channel in _countedChannels)
+            // Advance first: this is what makes any callback still in flight a no-op, including
+            // the ones the detach below cannot reach.
+            Interlocked.Increment(ref _countingGeneration);
+            var handler = _sampleHandler;
+            _sampleHandler = null;
+            if (handler != null)
             {
-                channel.OnChannelUpdated -= OnSampleAcquired;
+                foreach (var channel in _countedChannels)
+                {
+                    channel.OnChannelUpdated -= handler;
+                }
             }
             _countedChannels.Clear();
         }
     }
-
-    /// <summary>
-    /// One acquired sample. Raised on the Core receive thread, once per channel per streaming
-    /// frame — 1,600 times a second at 16 channels / 100 Hz — so this must stay an interlocked
-    /// add and nothing else. Anything that touches bound state belongs on the render tick.
-    /// </summary>
-    private void OnSampleAcquired(object sender, DataSample e) =>
-        Interlocked.Increment(ref _totalSamples);
 
     /// <summary>
     /// Declares the stream dead after a run of polls across which no sample arrived.
