@@ -20,6 +20,33 @@ public static class DatabaseMigrator
     #region Constants
     private const string INITIAL_MIGRATION_ID = "20250812090000_InitialSQLiteMigration";
     private const string EF_PRODUCT_VERSION = "10.0.7";
+
+    // SQLite primary result codes that mean the FILE'S CONTENT is unusable as a database.
+    // These two, and only these two, justify moving the file aside:
+    //   SQLITE_CORRUPT (11) "database disk image is malformed" — a valid header, damaged pages.
+    //   SQLITE_NOTADB  (26) "file is not a database" — the header itself is wrong or truncated.
+    // Deliberately NOT included, because each describes the ENVIRONMENT rather than the file, and
+    // quarantining on one would move a perfectly healthy database aside over a transient fault:
+    //   SQLITE_BUSY (5) / SQLITE_LOCKED (6) — a second instance holds it.
+    //   SQLITE_CANTOPEN (14) — permission denied, missing directory, or the path is a directory.
+    //   SQLITE_READONLY (8) — the file or its directory is not writable.
+    // Codes verified against Microsoft.Data.Sqlite 10.0.10 by damaging real database files: a
+    // text file, a truncated header and a clobbered magic string all report 26; a healthy database
+    // with page 1's schema b-tree zeroed reports 11; a directory in the file's place reports 14. A
+    // ZERO-BYTE file reports nothing at all — SQLite treats it as a valid empty database, which is
+    // why "the file exists but has no content" is not a corruption case and is not treated as one.
+    private const int SQLITE_CORRUPT = 11;
+    private const int SQLITE_NOTADB = 26;
+    #endregion
+
+    #region Public Properties
+    /// <summary>
+    /// Where an unreadable <c>DAQiFiDatabase.db</c> was moved to on this run, or <c>null</c> when
+    /// the database opened normally (the overwhelmingly common case). Parked as static state so the
+    /// UI can tell the user their logged sessions were left behind — <see cref="PrepareMigration"/>
+    /// runs before any window exists, so there is nothing to show a dialog on at the time.
+    /// </summary>
+    public static string? QuarantinedDatabasePath { get; private set; }
     #endregion
 
     #region Public Methods
@@ -34,9 +61,79 @@ public static class DatabaseMigrator
     // @port: Daqifi.Desktop.Logger.DatabaseMigrator.PrepareMigration
     public static bool PrepareMigration(IDbContextFactory<LoggingContext> contextFactory, string databasePath)
     {
+        // Every read below assumes the file at databasePath, if it exists, IS a SQLite database.
+        // Nothing had ever checked. A damaged DAQiFiDatabase.db therefore threw SqliteException out
+        // of SeedMigrationHistoryIfNeeded's very first sqlite_master query, straight out of
+        // App.Initialize, out of OnFrameworkInitializationCompleted, and killed the process before
+        // a window existed — the user double-clicks the app and nothing happens, for ever, because
+        // the same file is still there on the next launch. Ask the question first instead.
+        QuarantineUnusableDatabase(databasePath);
+
         SeedMigrationHistoryIfNeeded(databasePath);
         SqliteConnection.ClearAllPools();
         return HasPendingMigrations(contextFactory);
+    }
+
+    /// <summary>
+    /// Moves the database file aside if — and only if — SQLite reports its CONTENT unusable
+    /// (<c>SQLITE_CORRUPT</c> / <c>SQLITE_NOTADB</c>), so the caller can go on to create a fresh
+    /// one. Does nothing for a healthy database, a missing file, or any environmental failure
+    /// (locked, read-only, permission denied), which must keep failing where they fail today.
+    /// </summary>
+    /// <remarks>
+    /// The damaged file is RENAMED, never deleted: it is the user's logged data, and a corrupt
+    /// SQLite file is frequently still partly recoverable with <c>sqlite3 .recover</c>. The path it
+    /// was moved to is recorded in <see cref="QuarantinedDatabasePath"/> and written to the log.
+    /// </remarks>
+    /// <param name="databasePath">Full path to the SQLite database file.</param>
+    /// <returns>The path the file was moved to, or <c>null</c> if nothing was moved.</returns>
+    public static string? QuarantineUnusableDatabase(string databasePath)
+    {
+        var fault = DiagnoseUnusableDatabase(databasePath);
+        if (fault is null)
+        {
+            return null;
+        }
+
+        // Drop any pooled handle on the file first, or the move fails on Windows.
+        SqliteConnection.ClearAllPools();
+
+        // Millisecond precision and overwrite:false together guarantee a previous quarantine is
+        // never clobbered — the whole point is that nothing the user might still recover gets
+        // destroyed. A same-millisecond collision instead fails the move, which is logged below and
+        // leaves the file untouched.
+        var quarantinePath = $"{databasePath}.corrupt-{DateTime.UtcNow:yyyyMMdd-HHmmssfff}";
+
+        try
+        {
+            File.Move(databasePath, quarantinePath, overwrite: false);
+        }
+        catch (Exception ex)
+        {
+            // Nothing was moved, so nothing is half-done: the caller proceeds into the same
+            // SqliteException it would have hit anyway, but now with two log lines saying why.
+            AppLogger.Instance.Error(ex,
+                $"Database at '{databasePath}' is unreadable and could not be moved aside to '{quarantinePath}'");
+            return null;
+        }
+
+        // The -wal/-shm sidecars belong to the file just moved. A stale -wal left beside a freshly
+        // created database is not inert: SQLite replays a wal whose header still checksums, so old
+        // pages would be written into the new database — one corrupt file traded for another.
+        //
+        // A backstop, not the usual path: measured on Microsoft.Data.Sqlite 10.0.10, closing the
+        // probe connection in DiagnoseUnusableDatabase already removes both sidecars, so there is
+        // normally nothing here to move. It runs for the cases where that cleanup did not happen —
+        // a sidecar SQLite could not delete, or one left by a process killed mid-write.
+        RelocateSidecar(databasePath + "-wal", quarantinePath + "-wal");
+        RelocateSidecar(databasePath + "-shm", quarantinePath + "-shm");
+
+        QuarantinedDatabasePath = quarantinePath;
+        AppLogger.Instance.Error(fault,
+            $"Database at '{databasePath}' could not be read and was moved to '{quarantinePath}'. " +
+            "A new, empty database will be created; previously logged sessions are not in it.");
+
+        return quarantinePath;
     }
 
     /// <summary>
@@ -70,6 +167,79 @@ public static class DatabaseMigrator
     #endregion
 
     #region Private Methods
+    /// <summary>
+    /// Asks SQLite whether the file can be read as a database at all.
+    /// </summary>
+    /// <returns>
+    /// The exception proving the file's content is unusable, or <c>null</c> when the database is
+    /// readable, absent, or failed for an environmental reason that is not this method's business.
+    /// </returns>
+    private static SqliteException? DiagnoseUnusableDatabase(string databasePath)
+    {
+        if (!File.Exists(databasePath))
+        {
+            return null;
+        }
+
+        try
+        {
+            using var connection = new SqliteConnection($"Data source={databasePath}");
+            connection.Open();
+
+            // Counting sqlite_master is the cheapest question that still forces SQLite to validate
+            // the header AND parse the schema — which is exactly the work the migrator's own first
+            // query does, so this probe fails on precisely the files that used to crash startup.
+            // PRAGMA integrity_check / quick_check would be the thorough answer, but both walk the
+            // whole file, and this runs on every launch of an app whose database routinely holds
+            // millions of samples.
+            using var command = connection.CreateCommand();
+            command.CommandText = "SELECT COUNT(*) FROM sqlite_master";
+            command.ExecuteScalar();
+            return null;
+        }
+        catch (SqliteException ex) when (ex.SqliteErrorCode is SQLITE_CORRUPT or SQLITE_NOTADB)
+        {
+            return ex;
+        }
+        finally
+        {
+            SqliteConnection.ClearAllPools();
+        }
+    }
+
+    /// <summary>
+    /// Moves a <c>-wal</c>/<c>-shm</c> sidecar along with the database it belongs to, deleting it
+    /// if it cannot be moved. Both outcomes are acceptable; leaving it in place is not.
+    /// </summary>
+    private static void RelocateSidecar(string sidecarPath, string destinationPath)
+    {
+        if (!File.Exists(sidecarPath))
+        {
+            return;
+        }
+
+        try
+        {
+            File.Move(sidecarPath, destinationPath, overwrite: false);
+            return;
+        }
+        catch (Exception ex)
+        {
+            AppLogger.Instance.Error(ex, $"Could not move '{sidecarPath}' aside; deleting it instead");
+        }
+
+        try
+        {
+            File.Delete(sidecarPath);
+        }
+        catch (Exception ex)
+        {
+            // Now genuinely stuck: report the file by name so a support log says what to remove.
+            AppLogger.Instance.Error(ex,
+                $"Could not remove '{sidecarPath}'. Delete it by hand — SQLite may otherwise replay it into the new database.");
+        }
+    }
+
     /// <summary>
     /// Checks whether there are any pending migrations to apply.
     /// </summary>

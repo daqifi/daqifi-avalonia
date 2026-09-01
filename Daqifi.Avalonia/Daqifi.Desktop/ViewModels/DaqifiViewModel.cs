@@ -719,6 +719,10 @@ public partial class DaqifiViewModel : ObservableObject, IFirmwareUpdateHost, IL
                     // user had no way to know an unplugged device would keep showing as connected.
                     ReportHotplugDetectionUnavailable();
 
+                    // Startup moved an unreadable database aside — say so, or the Logged Data pane
+                    // is simply empty with no explanation of where the sessions went.
+                    ReportQuarantinedDatabase();
+
                     // Summary Logger
                     SummaryLogger = new SummaryLogger();
                     LoggingManager.Instance.AddLogger(SummaryLogger);
@@ -1467,6 +1471,32 @@ public partial class DaqifiViewModel : ObservableObject, IFirmwareUpdateHost, IL
         {
             IsFirmwareUpdate = false,
             Message = message
+        });
+        NotificationCount = NotificationList.Count;
+    }
+
+    /// <summary>
+    /// Adds a standing notification when startup found <c>DAQiFiDatabase.db</c> unreadable and moved
+    /// it aside. Without it the app looks fine and the Logged Data pane is just empty, which reads
+    /// as "my sessions were deleted" rather than "the file was damaged and is still on disk here".
+    /// Adds nothing on the normal path, where no database was quarantined.
+    /// </summary>
+    private void ReportQuarantinedDatabase()
+    {
+        if (DatabaseMigrator.QuarantinedDatabasePath is not { } quarantinePath)
+        {
+            return;
+        }
+
+        // Null DeviceSerialNo for the same reason as ReportHotplugDetectionUnavailable above: an
+        // app-level condition with no owning device, which is what exempts it from
+        // RemoveNotification's per-device pruning so it survives the next UpdateUi pass.
+        NotificationList.Add(new Notifications
+        {
+            IsFirmwareUpdate = false,
+            Message = "The logged-data database could not be read and was moved to "
+                      + $"'{quarantinePath}'. A new, empty one is in use — previously logged "
+                      + "sessions are not in it, and the old file has not been deleted."
         });
         NotificationCount = NotificationList.Count;
     }
