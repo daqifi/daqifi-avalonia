@@ -847,9 +847,6 @@ public abstract partial class AbstractStreamingDevice : ObservableObject, IStrea
                 : timestampResult.SecondsBetweenMessages * 1000.0;
         }
 
-        var digitalCount = 0;
-        var analogCount = 0;
-
         var hasDigitalData = message.DigitalData.Length > 0;
         // USB firmware sends pre-scaled floats (AnalogInDataFloat); WiFi sends raw ADC counts (AnalogInData).
         var hasAnalogData = message.AnalogInData.Count > 0 || message.AnalogInDataFloat.Count > 0;
@@ -944,10 +941,8 @@ public abstract partial class AbstractStreamingDevice : ObservableObject, IStrea
         var deviceMessage = new DeviceMessage
         {
             DeviceName = Name,
-            AnalogChannelCount = analogCount,
             DeviceSerialNo = message.DeviceSn.ToString(CultureInfo.InvariantCulture),
             DeviceVersion = message.DeviceFwRev,
-            DigitalChannelCount = digitalCount,
             TimestampTicks = messageTimestamp.Ticks,
             AppTicks = DateTime.Now.Ticks,
             DeviceStatus = (int)message.DeviceStatus,
