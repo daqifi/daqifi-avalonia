@@ -91,12 +91,13 @@ internal static class AvaloniaCapture
         }
         catch (Exception ex)
         {
-            // Print the FULL exception chain (ToString), not just Message. A bad DAQIFI_DATA_DIR
-            // surfaces here as a doubly-wrapped TypeInitializationException (AppDataPaths' static
-            // initializer throws inside App's, since the diagnostic is built during type-init) whose
-            // own Message is generic ("The type initializer for ... threw"); the actionable message —
-            // the env var name and offending value — is on the innermost InvalidOperationException.
-            // ToString() unwraps the whole chain so that diagnostic is actually visible.
+            // Print the FULL exception chain (ToString), not just Message. A bad DAQIFI_DATA_DIR now
+            // arrives as a plain InvalidOperationException from App.Initialize's
+            // AppDataPaths.ThrowIfDataDirectoryUnusable gate, so the actionable message — the env var
+            // name and the offending value — is already on TOP (#127; before that it was a
+            // doubly-wrapped TypeInitializationException whose own Message said only "The type
+            // initializer for ... threw"). ToString() is still what prints the underlying filesystem
+            // error beneath it, and it is what keeps every OTHER boot failure legible here.
             Console.WriteLine($"[FAIL] App boot: {ex}");
             Environment.ExitCode = 1;
             return;
