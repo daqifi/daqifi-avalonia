@@ -13,8 +13,10 @@ public partial class MobileShellView : UserControl
     /// counts polls, not seconds, for its ~8 s deadline. Redrawing is the expensive half — the
     /// picture, not the data — and it is what was costing ~1.7 cores on a phone (#122). Drawing
     /// every second poll halves that at no cost to the samples plotted: they are still captured
-    /// at 20 Hz, just shown 10 times a second. At the 600-sample buffer the trace advances about
-    /// two pixels per redraw either way.
+    /// at 20 Hz, just shown 10 times a second. What it does cost is motion granularity — LivePlot
+    /// spaces the buffer across the full width, so at the 600-sample buffer the trace now steps
+    /// two samples per redraw instead of one: 2/599ths of the plot's width, about 2 px rather
+    /// than 1 px on a 700 px wide plot.
     /// </summary>
     private const int PollsPerRedraw = 2;
 
