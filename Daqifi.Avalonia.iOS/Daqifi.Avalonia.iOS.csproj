@@ -10,7 +10,10 @@
 		<ImplicitUsings>enable</ImplicitUsings>
 		<ApplicationId>com.daqifi.avalonia</ApplicationId>
 		<ApplicationVersion>1</ApplicationVersion>
-		<ApplicationDisplayVersion>3.3.0</ApplicationDisplayVersion>
+		<!-- CFBundleShortVersionString. From Directory.Build.props, the single place the app's
+		     version is declared, so the store version and the version a crash is tagged with in
+		     Sentry cannot drift apart (#126). -->
+		<ApplicationDisplayVersion>$(DaqifiAppVersion)</ApplicationDisplayVersion>
 		<!-- Declared so the lock file carries every RID this head is ever built
 		     for. An iOS build always resolves a RID (there is no RID-less iOS
 		     build), so omitting these would let the first `-r` restore prune the

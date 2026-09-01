@@ -8,7 +8,10 @@
 		<TargetFramework>net10.0</TargetFramework>
 		<Nullable>enable</Nullable>
 		<ImplicitUsings>enable</ImplicitUsings>
-		<Version>3.3.0</Version>
+		<!-- From Directory.Build.props, the single place the app's version is declared. This
+		     assembly is the one every head links in, so it is what Daqifi.Desktop.Common.AppVersion
+		     reads for the in-app version text and the Sentry release (#126). -->
+		<Version>$(DaqifiAppVersion)</Version>
 		<!-- Sentry DSN, baked into the shared assembly so every head reports crashes without
 		     shipping a config file (Android cannot have an App.config at all, which is why
 		     the upstream ConfigurationManager lookup left Sentry inert on every head here).
