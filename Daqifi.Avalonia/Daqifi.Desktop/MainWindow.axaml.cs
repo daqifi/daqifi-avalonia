@@ -3,7 +3,6 @@
 // DO NOT manually delete the `// @port:` markers — they link symbols back to
 // the correspondence map.
 
-using Daqifi.Desktop.Commands;
 using Daqifi.Desktop.Common.Loggers;
 using Daqifi.Desktop.ViewModels;
 using System;
@@ -34,11 +33,6 @@ public partial class MainWindow : Window
                 if (DataContext is DaqifiViewModel viewModel)
                 {
                     viewModel.Dispose();
-                }
-
-                if (HostCommands.ShutdownCommand.CanExecute(e))
-                {
-                    HostCommands.ShutdownCommand.Execute(e);
                 }
             };
         }

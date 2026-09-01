@@ -811,9 +811,6 @@ public partial class DaqifiViewModel : ObservableObject, IFirmwareUpdateHost, IL
         DeleteAllLoggingSessionCommand = new AsyncRelayCommand(_loggingSessionList.DeleteAllSessionsAsync, CanDeleteAllLoggingSession);
         ToggleChannelVisibilityCommand = new RelayCommand<IChannel>(ToggleChannelVisibility);
         ToggleLoggedSeriesVisibilityCommand = new RelayCommand<LoggedSeriesLegendItem>(ToggleLoggedSeriesVisibility);
-
-        // Keep registration for external commands if necessary
-        // HostCommands.ShutdownCommand.RegisterCommand(ShutdownCommand); // This would need adjustment if ShutdownCommand is generated
     }
     #endregion
 
