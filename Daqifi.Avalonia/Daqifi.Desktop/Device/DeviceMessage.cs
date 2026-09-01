@@ -22,10 +22,6 @@ public class DeviceMessage
     // @port: Daqifi.Desktop.Device.DeviceMessage.DeviceVersion
     public string DeviceVersion { get; set; }
 
-    // @port: Daqifi.Desktop.Device.DeviceMessage.DigitalChannelCount
-    public int DigitalChannelCount { get; set; }
-    // @port: Daqifi.Desktop.Device.DeviceMessage.AnalogChannelCount
-    public int AnalogChannelCount { get; set; }
     // @port: Daqifi.Desktop.Device.DeviceMessage.DeviceStatus
     public int DeviceStatus { get; set; }
     // @port: Daqifi.Desktop.Device.DeviceMessage.PowerStatus
