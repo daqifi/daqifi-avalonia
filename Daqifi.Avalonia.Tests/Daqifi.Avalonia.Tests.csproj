@@ -1,0 +1,51 @@
+<Project Sdk="Microsoft.NET.Sdk">
+
+  <!--
+    The repo's unit-test project. Plain net10.0 against the shared library, which is
+    itself platform-neutral — so this runs on every host CI has, and needs no workload,
+    no windowing platform and no device.
+
+    It deliberately tests LIBRARY code only. Nothing here constructs an Avalonia control
+    or starts an application lifetime: an Avalonia headless harness is a second set of
+    packages and a second class of flakiness, and none of the logic worth pinning first
+    needs one. If a view ever does need covering, that is a separate decision with its
+    own dependency, not something to pre-empt here.
+
+    Wired into .github/workflows/build.yml (the ubuntu `desktop` job runs `dotnet test`)
+    and into .github/scripts/refresh_lock_files.sh, which owns this project's
+    packages.lock.json like every other one in the repo.
+  -->
+
+  <PropertyGroup>
+    <TargetFramework>net10.0</TargetFramework>
+    <Nullable>enable</Nullable>
+    <ImplicitUsings>enable</ImplicitUsings>
+    <!-- Never shipped and never packed; it exists only to be run by `dotnet test`. -->
+    <IsPackable>false</IsPackable>
+    <!-- The rest of the repo carries a 297-warning desktop baseline that a PR can only
+         hold flat, not fix (hence the `warning-zero` work). This project starts empty, so
+         it starts at zero and stays there — including the xunit analyzers, which flag real
+         mistakes (an unused [Theory] parameter, an assertion that cannot fail). The cost is
+         that an analyzer added by a future SDK bump fails this job rather than warning; the
+         fix is then a NoWarn with a reason, not switching this off. -->
+    <TreatWarningsAsErrors>true</TreatWarningsAsErrors>
+  </PropertyGroup>
+
+  <ItemGroup>
+    <!-- Exact pins, like every other PackageReference in this repo — see the comment at
+         the top of Directory.Build.props. These three are the standard VSTest-based
+         xUnit trio: the test SDK provides the `dotnet test` entry point, xunit the
+         framework, and the visualstudio runner the adapter that discovers the tests. -->
+    <PackageReference Include="Microsoft.NET.Test.Sdk" Version="18.9.0" />
+    <PackageReference Include="xunit" Version="2.9.3" />
+    <PackageReference Include="xunit.runner.visualstudio" Version="3.1.5">
+      <PrivateAssets>all</PrivateAssets>
+      <IncludeAssets>runtime; build; native; contentfiles; analyzers; buildtransitive</IncludeAssets>
+    </PackageReference>
+  </ItemGroup>
+
+  <ItemGroup>
+    <ProjectReference Include="..\Daqifi.Avalonia\Daqifi.Avalonia.csproj" />
+  </ItemGroup>
+
+</Project>

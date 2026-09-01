@@ -12,6 +12,13 @@ name: Build
 # the capture harness needing Avalonia.HarfBuzz once text shaping was decoupled from
 # the renderer) that only a build could have found.
 #
+# This is also the workflow the merge queue builds. It runs on `merge_group` so that
+# its jobs can be listed as required checks on `main` — the queue evaluates required
+# checks against the tentative merge of the queued pull requests, not against any PR
+# head, which is the whole point: it catches the pair of PRs that each pass alone and
+# break together. Setup and the list of checks that are safe to require:
+# .github/merge-queue/README.md.
+#
 # tools/parity-audit/WpfCapture is deliberately absent: it targets net10.0-windows
 # and ProjectReferences the SIBLING daqifi-desktop repo, so it cannot restore here at
 # all. It is also opted out of the lock-file policy — see its csproj.
@@ -20,13 +27,27 @@ on:
   push:
     branches: [main]
   pull_request:
+  # Required for the merge queue. A queue entry is built on a synthetic
+  # `refs/heads/gh-readonly-queue/main/pr-N-<sha>` ref, and a required check with no
+  # `merge_group` trigger never reports on that ref at all — the entry then sits
+  # there until the queue's status-check timeout expires and is ejected, which reads
+  # as "the merge queue is broken" rather than as a missing trigger. Every job below
+  # is safe to run here precisely because none of them touch `github.event.pull_request`,
+  # `github.head_ref`, or `github.base_ref`; keep it that way, or gate the new use on
+  # `github.event_name`. See .github/merge-queue/README.md.
+  merge_group:
   workflow_dispatch:
 
 permissions:
   contents: read
 
 concurrency:
-  # Cancel superseded runs on a PR branch, but never on main.
+  # Cancel superseded runs on a PR branch, but never on main and never in the merge
+  # queue. This condition must stay keyed on `pull_request` alone: a cancelled
+  # `merge_group` run reports as a FAILED required check, which ejects that pull
+  # request from the queue and forces every entry queued behind it to rebuild. The
+  # group is safe as-is because `github.ref` is already unique per queue entry, so
+  # two queue runs can never collide in the first place.
   group: build-${{ github.ref }}
   cancel-in-progress: ${{ github.event_name == 'pull_request' }}
 
@@ -107,6 +128,7 @@ jobs:
         run: |
           dotnet restore Daqifi.Avalonia/Daqifi.Avalonia.csproj
           dotnet restore Daqifi.Avalonia.Desktop/Daqifi.Avalonia.Desktop.csproj
+          dotnet restore Daqifi.Avalonia.Tests/Daqifi.Avalonia.Tests.csproj
           dotnet restore tools/parity-audit/AvaloniaCapture/AvaloniaCapture.csproj
 
       # Locked mode fails a restore whose lock file has DRIFTED, but a lock file can also be
@@ -139,6 +161,45 @@ jobs:
             -c Release --no-restore
           dotnet build tools/parity-audit/AvaloniaCapture/AvaloniaCapture.csproj \
             -c Release --no-restore
+
+      # The unit suite. `dotnet test` builds Daqifi.Avalonia.Tests itself, so this is
+      # also that project's compile gate — there is no separate build line for it above.
+      #
+      # It runs HERE, on ubuntu, and not on the macos job; the note in that job says what
+      # would move it.
+      #
+      # THE EXIT CODE ALONE IS NOT TRUSTED, for the same reason the scripts job counts its
+      # self-tests before running them. The characteristic failure of a test project is not
+      # a failing test, it is a suite that DISCOVERS NOTHING: drop the runner package, let
+      # the adapter stop matching the target framework, or exclude the test file from
+      # compilation, and the run reports success having asserted nothing at all. That reads
+      # as coverage from the outside and is worse than having no suite, because it is
+      # believed. So the TRX counters are read back and a total of zero fails the job.
+      - name: Test
+        run: |
+          set -euo pipefail
+          dotnet test Daqifi.Avalonia.Tests/Daqifi.Avalonia.Tests.csproj \
+            -c Release --no-restore \
+            --logger "trx;LogFileName=results.trx" \
+            --results-directory "${RUNNER_TEMP}/testresults"
+          python3 - "${RUNNER_TEMP}/testresults/results.trx" <<'PY'
+          import sys, xml.etree.ElementTree as ET
+
+          ns = {"t": "http://microsoft.com/schemas/VisualStudio/TeamTest/2010"}
+          counters = ET.parse(sys.argv[1]).getroot().find("t:ResultSummary/t:Counters", ns)
+          if counters is None:
+              print("::error::the TRX has no ResultSummary/Counters element, so the run "
+                    "cannot be verified. The logger or its schema has changed.")
+              raise SystemExit(1)
+          total = int(counters.get("total", "0"))
+          passed = int(counters.get("passed", "0"))
+          if total == 0:
+              print("::error::the test run discovered ZERO tests and exited 0 because "
+                    "there was nothing to fail. Check that xunit.runner.visualstudio is "
+                    "still referenced and still targets this framework.")
+              raise SystemExit(1)
+          print(f"{passed}/{total} tests passed")
+          PY
 
       - name: Upload dependency graphs
         uses: actions/upload-artifact@v4
@@ -178,6 +239,11 @@ jobs:
           set -euo pipefail
           dotnet restore Daqifi.Avalonia/Daqifi.Avalonia.csproj --force-evaluate
           dotnet restore Daqifi.Avalonia.Desktop/Daqifi.Avalonia.Desktop.csproj --force-evaluate
+          # Listed in its own right: a --force-evaluate restore walks project references
+          # DOWNWARDS, so restoring Daqifi.Avalonia never reaches the test project that
+          # references it. Without this line Daqifi.Avalonia.Tests/packages.lock.json is
+          # the one lock file in the repo no job derives from scratch.
+          dotnet restore Daqifi.Avalonia.Tests/Daqifi.Avalonia.Tests.csproj --force-evaluate
           dotnet restore tools/parity-audit/AvaloniaCapture/AvaloniaCapture.csproj \
             --force-evaluate
           if ! git diff --quiet -- '**/packages.lock.json'; then
@@ -219,10 +285,16 @@ jobs:
     #   * osx-x64. The head declares it; nobody builds or ships it. macos-latest is
     #     Apple silicon, and a second RID would double a 10x-billed job for a target
     #     with no users.
-    #   * Running the app, or a test suite. The macOS QA list (RUNBOOK §1.2) is a
-    #     human checklist, and #88's "should it run the unit suite" has an awkward
-    #     answer: there is no test project in this repo to run. When one exists, it
-    #     belongs here.
+    #   * Running the app. The macOS QA list (RUNBOOK §1.2) is a human checklist.
+    #   * The unit suite. #88 asked whether this job should run it and the honest
+    #     answer then was that no test project existed; one does now, and the ubuntu
+    #     `desktop` job runs it. It is deliberately NOT repeated here. Every test in
+    #     Daqifi.Avalonia.Tests today is host-independent arithmetic over OxyPlot
+    #     DataPoints, so a second run on a 10x-billed runner would assert the same
+    #     thing twice and buy nothing. The trigger to move it is concrete rather than
+    #     a matter of taste: the first test whose VERDICT can differ by host — a path
+    #     separator, a native asset, a culture or filesystem-case assumption — is the
+    #     one that belongs here, and #88's separator bug is exactly that shape.
     #   * tools/parity-audit/AvaloniaCapture. Pinned to win-x64 and already
     #     cross-built by the `desktop` job; compiling a Windows tool on a macOS
     #     runner buys nothing.
@@ -644,8 +716,17 @@ jobs:
 
       # Simulator, not device. ios-arm64 needs an Apple signing identity and a
       # provisioning profile, which a hosted runner does not have; iossimulator-arm64
-      # compiles the same managed code and runs the same trimmer, which is the coverage
-      # this job exists for. The device RID stays covered by restore and by the lock file.
+      # compiles the same managed code, which is the coverage this job exists for. The
+      # device RID stays covered by restore and by the lock file.
+      #
+      # It no longer runs the same TRIMMER, and that is a real gap rather than a
+      # detail: the head sets MtouchInterpreter as a project property, and
+      # Xamarin.Shared.Sdk.Trimming.props answers that with _LinkMode=None on the
+      # SIMULATOR only (device stays SdkOnly). So the shipping configuration is
+      # trimmed and nothing in CI trims. It used to, by accident — UseInterpreter is
+      # translated to MtouchInterpreter too late for that file to see it. Getting it
+      # back is <MtouchLink>SdkOnly</MtouchLink> in the head plus ~1,240 IL2xxx
+      # warnings; see docs/RUNBOOK-macos-ios.md, and #102.
       #
       # --no-restore is load-bearing, not a speed-up: it is what keeps the -r above out
       # of restore, and therefore out of the lock file.

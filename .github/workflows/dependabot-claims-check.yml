@@ -21,6 +21,15 @@ name: Dependabot claims check
 # shell command.
 #
 # Background: .github/dependency-updates/README.md, and #132.
+#
+# NOT merge-queue-aware, on purpose, and therefore NOT eligible to be a required
+# check on `main`. Its entire input is `github.event.pull_request.body`, which does
+# not exist on a `merge_group` event — a merge group is a tentative merge of one or
+# more pull requests and has no single body to verify. Adding a `merge_group` trigger
+# here would produce a job that either errors or, worse, reads an empty body and
+# passes. Requiring it without that trigger would hang every queue entry until the
+# status-check timeout. It stays a pull-request-time check, which is where the claim
+# it verifies is actually made. See .github/merge-queue/README.md.
 
 on:
   pull_request:
