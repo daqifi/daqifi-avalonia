@@ -486,11 +486,17 @@ public partial class ExportDialogViewModel : ObservableObject, IDisposable
     /// anything, so a blocked export leaves the destination untouched.
     /// </summary>
     /// <remarks>
-    /// Measured on macOS 26: a chmod-444 destination raises <see cref="UnauthorizedAccessException"/>
-    /// and a destination another .NET process holds with <see cref="FileShare.None"/> raises
-    /// <see cref="IOException"/>, so the probe is meaningful off Windows too. It is not exhaustive
-    /// there — Unix has no mandatory locking, so a non-.NET program holding the file goes undetected
-    /// and is caught by the write itself.
+    /// <para>The probe asks for exactly what the export itself asks for — <see cref="FileAccess.Write"/>
+    /// with <see cref="FileShare.Read"/>, the mode <c>StreamWriter</c> uses in
+    /// <c>OptimizedLoggingSessionExporter.RunExport</c>. Anything stricter predicts failures the real
+    /// write would not hit: with <see cref="FileShare.None"/> a destination merely being *read* by
+    /// another program failed the probe while <c>StreamWriter</c> went on to succeed, which would have
+    /// aborted a perfectly good export.</para>
+    /// <para>Measured on macOS 26, holder vs. probe: a reader (either share mode) passes the probe and
+    /// the write; an exclusive writer — the "still open in Excel" case this exists for — fails both.
+    /// A chmod-444 destination raises <see cref="UnauthorizedAccessException"/>. So the probe is
+    /// meaningful off Windows, though not exhaustive: Unix has no mandatory locking, so a non-.NET
+    /// program holding the file goes undetected and is caught by the write itself.</para>
     /// </remarks>
     /// <param name="filepath">Destination to probe.</param>
     /// <param name="error">The exception the probe caught, so the caller can log it with its stack
@@ -504,7 +510,7 @@ public partial class ExportDialogViewModel : ObservableObject, IDisposable
         {
             if (!File.Exists(filepath)) { return null; }
 
-            using var probe = new FileStream(filepath, FileMode.Open, FileAccess.Write, FileShare.None);
+            using var probe = new FileStream(filepath, FileMode.Open, FileAccess.Write, FileShare.Read);
             return null;
         }
         catch (Exception ex) when (ex is IOException or UnauthorizedAccessException)
