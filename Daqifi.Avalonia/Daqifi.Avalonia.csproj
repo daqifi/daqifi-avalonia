@@ -43,6 +43,14 @@
 	</PropertyGroup>
 
 	<ItemGroup>
+		<!-- The test project reaches one internal member: LoggingManager's test-only constructor,
+		     which takes the context factory instead of resolving it from App.ServiceProvider (there
+		     is no App in a test process). Upstream does the same thing for the same reason. This is
+		     the only assembly that can see internals here, and it is never shipped. -->
+		<InternalsVisibleTo Include="Daqifi.Avalonia.Tests" />
+	</ItemGroup>
+
+	<ItemGroup>
 		<!-- Upstream ships images as WPF Resource; Avalonia loads them via avares:// URIs -->
 		<AvaloniaResource Include="Daqifi.Desktop\Images\**" />
 	</ItemGroup>

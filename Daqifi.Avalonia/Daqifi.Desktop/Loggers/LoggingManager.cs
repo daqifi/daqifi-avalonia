@@ -227,7 +227,14 @@ public partial class LoggingManager : ObservableObject
     }
 
     #region Singleton Constructor / Initalization
-    private static readonly LoggingManager instance = new();
+    // Lazy rather than an eager static field initializer -- the same shape upstream uses. The
+    // private constructor below resolves its dependency off App.ServiceProvider, and an eager
+    // initializer runs that resolve the first time ANY static member of this type is touched,
+    // which is not necessarily a moment the host has finished composing. Deferring it to the
+    // first real Instance read keeps the app behaviour identical while letting the test-only
+    // constructor create an instance without an App at all. Lazy<T>'s default mode is
+    // ExecutionAndPublication, so the one-instance guarantee is unchanged.
+    private static readonly Lazy<LoggingManager> _instance = new(() => new LoggingManager());
 
     private LoggingManager()
     {
@@ -236,7 +243,24 @@ public partial class LoggingManager : ObservableObject
         _loggingContext = App.ServiceProvider.GetRequiredService<IDbContextFactory<LoggingContext>>();
     }
 
-    public static LoggingManager Instance => instance;
+    /// <summary>
+    /// Test-only constructor. Takes the context factory directly instead of resolving it from
+    /// <c>App.ServiceProvider</c>, which does not exist outside the app host, so the channel
+    /// subscription contract can be exercised without standing up an application.
+    /// </summary>
+    /// <remarks>
+    /// Mirrors upstream's <c>internal LoggingManager(IDbContextFactory&lt;LoggingContext&gt;)</c>
+    /// (daqifi-desktop <c>Daqifi.Desktop/Loggers/LoggingManager.cs</c>). Visible to
+    /// <c>Daqifi.Avalonia.Tests</c> only, via InternalsVisibleTo in Daqifi.Avalonia.csproj.
+    /// </remarks>
+    /// <param name="loggingContext">Factory used to open <see cref="LoggingContext"/> sessions.</param>
+    internal LoggingManager(IDbContextFactory<LoggingContext> loggingContext)
+    {
+        Loggers = [];
+        _loggingContext = loggingContext;
+    }
+
+    public static LoggingManager Instance => _instance.Value;
 
     #endregion
 
