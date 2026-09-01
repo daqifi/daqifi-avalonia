@@ -44,9 +44,12 @@ internal static class AvaloniaCapture
             // down with a raw stack trace instead of the harness's diagnostic.
             //
             // Resolve ONCE and use the resolved path for everything after — including the closing
-            // "done ->" line. This project pins RuntimeIdentifier=win-x64, so launched from WSL it
-            // executes on the WINDOWS .NET runtime through interop, and GetFullPath resolves a
-            // Linux-style argument against a Windows root: `/tmp/shots` becomes `C:\tmp\shots`.
+            // "done ->" line. run.sh drives this harness with the WINDOWS dotnet when it runs from
+            // WSL (the WPF leg it runs alongside requires Windows at all), so there it executes on
+            // the Windows .NET runtime through interop and GetFullPath resolves a Linux-style
+            // argument against a Windows root: `/tmp/shots` becomes `C:\tmp\shots`.
+            // The project itself is RID-less and runs natively on macOS/Linux, where no such
+            // rewrite happens — but the WSL path is still live, so this stays.
             // Echoing the raw argument back made that invisible — the tool reported writing 18 files
             // to /tmp/shots while every byte landed on the Windows filesystem, and `ls /tmp/shots`
             // showed an empty directory (port #74).
@@ -64,9 +67,10 @@ internal static class AvaloniaCapture
                 // on the Windows console, which mangles non-ASCII (an em-dash here printed as '-').
                 if (requestedOutDir.StartsWith('/') && !_outDir.StartsWith('/'))
                 {
-                    Console.WriteLine("[INFO] under WSL a Linux-style path resolves against a " +
-                                      "Windows root (win-x64 runtime): look for output there, or " +
-                                      "pass a Windows path.");
+                    Console.WriteLine("[INFO] this process is on the Windows runtime (run.sh " +
+                                      "drives the Windows dotnet from WSL), so a Linux-style " +
+                                      "path resolves against a Windows root: look for output " +
+                                      "there, or pass a Windows path.");
                 }
             }
             Console.WriteLine($"[INFO] output directory: {_outDir}");
@@ -153,6 +157,7 @@ internal static class AvaloniaCapture
         }
 
         Set(vm, "SelectedIndex", 0);
+        Quiesce(main);
         SweepDrawer(main, vm, "IsAppSettingsOpen", "desktop-6-settings-drawer");
         SweepDrawer(main, vm, "IsNotificationsOpen", "desktop-7-notifications-flyout");
         SweepDrawer(main, vm, "IsLiveGraphSettingsOpen", "desktop-8-livegraph-settings-flyout");
@@ -164,6 +169,45 @@ internal static class AvaloniaCapture
         if (!Set(vm, prop, true)) { Console.WriteLine($"[SKIP] {name}: no prop {prop}"); return; }
         Capture(name, main);
         Set(vm, prop, false);
+        // Let the CLOSE finish before the next drawer opens. Set() pumps a fixed number of
+        // times, which is enough to get the new content on screen but nowhere near enough to
+        // finish an animation — and the last three drawers here are not three panels, they are
+        // ONE SplitView (MainWindow.axaml binds IsPaneOpen to BoolOr of the three VM flags), so
+        // whatever state a half-finished close left the pane in is the state the next open
+        // starts from, and the error accumulates across the sweep.
+        //
+        // This line and SettleSampleInterval are two DIFFERENT fixes and both are load-bearing.
+        // Ablated on macOS, repeat runs of the same binary at the same commit:
+        //
+        //   neither         (8 runs)   desktop-9-summary-flyout flipped between two encodings,
+        //                              4 each way — 6 pixels differing by 1 down the pane's left
+        //                              edge column (x=1059, the 1440-380 boundary)
+        //   interval only   (10 runs)  desktop-9 holds, but desktop-7-notifications-flyout — the
+        //                              FIRST user of that same SplitView — flips instead
+        //   both            (12 runs)  18/18 screens byte-identical
+        //
+        // (This line alone was not measured separately; the interval is what stops the mid-fade
+        // case described on SettleSampleInterval, so it is not optional regardless.)
+        //
+        // The one-pixel flips are sub-perceptual and still exactly the class of difference a
+        // visual gate must not manufacture: indistinguishable from a real one-pixel regression,
+        // and enough to fail a byte-identity baseline half the time.
+        Quiesce(main);
+    }
+
+    // Drive the window to a still frame and throw the frame away. Same settle loop the capture
+    // path uses; the point is only the side effect of pumping until nothing moves.
+    private static void Quiesce(Window w)
+    {
+        var (_, settled, _) = SettledFrame(w);
+        if (!settled)
+        {
+            // Not fatal — nothing was saved. But a window that will not stop moving between
+            // screens means the NEXT capture starts from a moving state, so say so rather
+            // than letting it turn into an unexplained difference in someone's diff.
+            Console.WriteLine($"[WARN] window still changing after {SettleMaxRounds} settle " +
+                              "rounds between screens; the next capture starts from motion");
+        }
     }
 
     // ---- Mobile: MobileMainView hosted at phone portrait + landscape sizes ----
@@ -258,6 +302,26 @@ internal static class AvaloniaCapture
     // are byte-identical. Comparing encoded PNGs is exact and needs no pixel-buffer access.
     private const int SettleMaxRounds = 40;
 
+    // ...and let REAL TIME pass between the two frames being compared, which is the half that
+    // was missing. "Two consecutive samples are identical" only means nothing changed BETWEEN
+    // THOSE SAMPLES. Avalonia's animation clock advances with wall time, not with pump count,
+    // so two samples taken microseconds apart are identical for a transition sitting at 20%
+    // opacity just as surely as for one that finished — and the loop stops on the first pair,
+    // saving a half-drawn frame while reporting "settled in 1 round".
+    //
+    // Found on macOS by running the harness eight times and hashing: one run's
+    // mobile-portrait-3-storage differed from the other seven on 81% of its pixels (249,600 of
+    // 307,200). That is not a subtle artifact, it is the whole pane at the wrong opacity, and it
+    // is the same shape as the 65.6% false positive above — which was diagnosed as a race and
+    // then fixed with a settle loop that could still lose that race. Spacing the samples is what
+    // makes them evidence: every Avalonia transition in this app is far longer than this
+    // interval, so an unfinished one is guaranteed to move between two samples.
+    //
+    // 50 ms because it must exceed a frame and stay well under the shortest transition. The cost
+    // is bounded and small: a settling screen takes 2-4 rounds (~100-200 ms), and only a screen
+    // that never settles — which fails the capture rather than saving it — pays the full 2 s.
+    private static readonly TimeSpan SettleSampleInterval = TimeSpan.FromMilliseconds(50);
+
     private static byte[] Encode(Window w)
     {
         using var buffer = new MemoryStream();
@@ -282,6 +346,7 @@ internal static class AvaloniaCapture
         var previous = Encode(w);
         for (var round = 1; round <= SettleMaxRounds; round++)
         {
+            Thread.Sleep(SettleSampleInterval);
             Pump();
             var current = Encode(w);
             if (current.Length == previous.Length && current.AsSpan().SequenceEqual(previous))
