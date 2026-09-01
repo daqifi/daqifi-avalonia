@@ -118,9 +118,15 @@
          (Application.Name, which Avalonia pushes into NSApplication and which wins over
          CFBundleName). Nothing in MSBuild can set the second — it is XAML compiled into the
          shared library that all three heads link — so instead of letting them drift, the
-         publish asserts they already agree. Text match rather than XAML parsing: an
-         attribute is what is being checked, the file is ours, and a parser here would be
-         more machinery than the invariant is worth. -->
+         publish asserts they already agree.
+
+         XmlPeek, not a text search: the invariant is about one attribute on the root
+         element, so that is what gets read. A substring match over the file would accept
+         the same text appearing in a comment or on a child element, and would reject
+         `Name = "DAQiFi"` or single quotes, which are the same XAML. XPath `/*/@Name` is
+         namespace-agnostic on the element (the root is in Avalonia's namespace) and matches
+         the unprefixed attribute; an absent attribute yields nothing and fails the same
+         comparison as a wrong one. -->
     <PropertyGroup>
       <_DaqifiAppAxamlPath>$([MSBuild]::NormalizePath('$(MSBuildThisFileDirectory)', '..', '..', 'Daqifi.Avalonia', 'App.axaml'))</_DaqifiAppAxamlPath>
     </PropertyGroup>
@@ -128,12 +134,12 @@
     <Error Condition="!Exists('$(_DaqifiAppAxamlPath)')"
            Text="macOS bundling cannot find the shared application markup at '$(_DaqifiAppAxamlPath)'. It reads Application.Name from there to check it against the bundle name; update this path if the shared project moved." />
 
-    <PropertyGroup>
-      <_DaqifiAppAxamlText>$([System.IO.File]::ReadAllText('$(_DaqifiAppAxamlPath)'))</_DaqifiAppAxamlText>
-    </PropertyGroup>
+    <XmlPeek XmlInputPath="$(_DaqifiAppAxamlPath)" Query="/*/@Name">
+      <Output TaskParameter="Result" ItemName="_DaqifiAppAxamlName" />
+    </XmlPeek>
 
-    <Error Condition="!$(_DaqifiAppAxamlText.Contains('Name=&quot;$(DaqifiMacBundleName)&quot;'))"
-           Text="macOS identity would be split: the bundle would install as '$(DaqifiMacBundleName)' but run under a different name, because Daqifi.Avalonia/App.axaml does not set Name=&quot;$(DaqifiMacBundleName)&quot; on Application. Avalonia pushes Application.Name into NSApplication at startup and it overrides CFBundleName, so change both or neither." />
+    <Error Condition="'@(_DaqifiAppAxamlName)' != '$(DaqifiMacBundleName)'"
+           Text="macOS identity would be split: the bundle would install as '$(DaqifiMacBundleName)' but run as '@(_DaqifiAppAxamlName)', because that is the Name on Application in Daqifi.Avalonia/App.axaml (empty means the attribute is missing, which makes Avalonia fall back to &quot;Avalonia Application&quot;). Avalonia pushes Application.Name into NSApplication at startup and it overrides CFBundleName, so change both or neither." />
 
     <PropertyGroup>
       <!-- Beside the publish/ directory, under the normal per-RID output path, so the path
