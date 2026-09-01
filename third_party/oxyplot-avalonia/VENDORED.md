@@ -19,6 +19,18 @@ source pinned at a commit is the safer supply chain.
 
 - `OxyPlot.Avalonia.csproj`: `GeneratePackageOnBuild` True → False (we consume
   it as a ProjectReference, not a package).
+- `OxyPlot.Avalonia.csproj`: `<PackageId>Oxyplot.Avalonia</PackageId>` dropped
+  (#106). Upstream's value differs from the project's own name only in the case
+  of one letter — `Oxyplot` vs `OxyPlot` — and NuGet resolved that mismatch
+  differently on a case-insensitive filesystem than on a case-sensitive one, so
+  the project's key in every `packages.lock.json` came out `oxyplot.avalonia`
+  when derived on macOS and `Oxyplot.Avalonia` when derived on Linux. The
+  committed files could satisfy one host or the other, never both. With the
+  property gone the id falls back to `AssemblyName`, which is already
+  `OxyPlot.Avalonia`, and both hosts derive the same key. Nothing is lost: this
+  is never packed (see above) and is referenced by path, so the property had no
+  reader. Restore it only alongside `GeneratePackageOnBuild`, and expect the
+  lock-file split to come back with it.
 - `Directory.Build.props` (this directory, not upstream): pins
   `AvaloniaVersion` to the app's exact version (currently **12.0.5**) and
   `OxyPlotCoreVersion` to 2.2.0 — upstream reads both from
