@@ -34,4 +34,9 @@
 		     ported Daqifi.Desktop logic) rides in as the shared library. -->
 		<ProjectReference Include="..\Daqifi.Avalonia\Daqifi.Avalonia.csproj" />
 	</ItemGroup>
+
+	<!-- macOS packaging: turns an `osx-*` publish into a DAQiFi.app bundle (#108). Inert
+	     for every other RID, including the RID-less build. See macOS/MacAppBundle.targets
+	     for what it emits and what it deliberately does not (signing, #109). -->
+	<Import Project="macOS\MacAppBundle.targets" />
 </Project>

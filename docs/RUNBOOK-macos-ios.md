@@ -27,6 +27,23 @@ dotnet build Daqifi.Avalonia.Desktop/Daqifi.Avalonia.Desktop.csproj \
 The app launches, the window renders, and `DAQifiAppLog.log` reports
 `Plot render tick active (first tick fired)`.
 
+**That bare Mach-O is still what `build` produces, on purpose — use `publish`
+for something a Mac user can launch.** Building is not packaging, and a loose
+executable has no name, no icon, no bundle id and, more to the point, no
+`Info.plist` to hold `NSLocalNetworkUsageDescription` (#108). Publishing an
+`osx-*` RID now assembles a real bundle:
+
+```
+dotnet publish Daqifi.Avalonia.Desktop/Daqifi.Avalonia.Desktop.csproj \
+  -c Release -r osx-arm64 --self-contained false
+→ Daqifi.Avalonia.Desktop/bin/Release/net10.0/osx-arm64/DAQiFi.app
+```
+
+It is **unsigned** — Gatekeeper quarantines it if it arrives by download, and
+the first launch then needs right-click → Open. Signing and notarization wait on
+an Apple Developer account (#109). See
+`Daqifi.Avalonia.Desktop/macOS/MacAppBundle.targets`.
+
 **macOS needs no new project.** `Daqifi.Avalonia.Desktop` already declares
 `osx-x64;osx-arm64` in its `RuntimeIdentifiers` — written during the
 shared-project split (`4489f28`) — and that declaration now has a build behind
