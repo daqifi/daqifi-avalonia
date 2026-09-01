@@ -12,6 +12,13 @@ name: Build
 # the capture harness needing Avalonia.HarfBuzz once text shaping was decoupled from
 # the renderer) that only a build could have found.
 #
+# This is also the workflow the merge queue builds. It runs on `merge_group` so that
+# its jobs can be listed as required checks on `main` — the queue evaluates required
+# checks against the tentative merge of the queued pull requests, not against any PR
+# head, which is the whole point: it catches the pair of PRs that each pass alone and
+# break together. Setup and the list of checks that are safe to require:
+# .github/merge-queue/README.md.
+#
 # tools/parity-audit/WpfCapture is deliberately absent: it targets net10.0-windows
 # and ProjectReferences the SIBLING daqifi-desktop repo, so it cannot restore here at
 # all. It is also opted out of the lock-file policy — see its csproj.
@@ -20,13 +27,27 @@ on:
   push:
     branches: [main]
   pull_request:
+  # Required for the merge queue. A queue entry is built on a synthetic
+  # `refs/heads/gh-readonly-queue/main/pr-N-<sha>` ref, and a required check with no
+  # `merge_group` trigger never reports on that ref at all — the entry then sits
+  # there until the queue's status-check timeout expires and is ejected, which reads
+  # as "the merge queue is broken" rather than as a missing trigger. Every job below
+  # is safe to run here precisely because none of them touch `github.event.pull_request`,
+  # `github.head_ref`, or `github.base_ref`; keep it that way, or gate the new use on
+  # `github.event_name`. See .github/merge-queue/README.md.
+  merge_group:
   workflow_dispatch:
 
 permissions:
   contents: read
 
 concurrency:
-  # Cancel superseded runs on a PR branch, but never on main.
+  # Cancel superseded runs on a PR branch, but never on main and never in the merge
+  # queue. This condition must stay keyed on `pull_request` alone: a cancelled
+  # `merge_group` run reports as a FAILED required check, which ejects that pull
+  # request from the queue and forces every entry queued behind it to rebuild. The
+  # group is safe as-is because `github.ref` is already unique per queue entry, so
+  # two queue runs can never collide in the first place.
   group: build-${{ github.ref }}
   cancel-in-progress: ${{ github.event_name == 'pull_request' }}
 
