@@ -3,6 +3,7 @@
 // DO NOT manually delete the `// @port:` markers — they link symbols back to
 // the correspondence map.
 
+using Daqifi.Desktop.Channel;
 using Daqifi.Desktop.Common.Loggers;
 using Daqifi.Desktop.Device;
 using Daqifi.Desktop.Device.SerialDevice;
@@ -12,6 +13,9 @@ using System.ComponentModel;
 using System.IO.Ports;
 using CommunityToolkit.Mvvm.ComponentModel;
 using Avalonia.Threading;
+using CoreDeviceErrorEventArgs = Daqifi.Core.Device.DeviceErrorEventArgs;
+using CoreSendFailedEventArgs = Daqifi.Core.Communication.Producers.MessageSendFailedEventArgs<string>;
+using DeviceErrorSource = Daqifi.Core.Device.DeviceErrorSource;
 using DeviceIdentity = Daqifi.Core.Device.DeviceIdentity;
 
 namespace Daqifi.Desktop;
@@ -19,6 +23,14 @@ namespace Daqifi.Desktop;
 // @port: Daqifi.Desktop.ConnectionManager
 public partial class ConnectionManager : ObservableObject
 {
+    #region Constants
+    /// <summary>
+    /// Longest SCPI verb written to the log when a send fails. Real verbs are far shorter; the cap
+    /// only exists so a malformed payload cannot turn one failure into a wall of log.
+    /// </summary>
+    private const int MAX_LOGGED_COMMAND_LENGTH = 64;
+    #endregion
+
     #region Private Variables
     // The ONE watcher instance the device_watcher mechanism allows; the backend behind it is
     // chosen per platform (WMI on Windows, serial-port polling on macOS/Linux, no-op elsewhere).
@@ -26,6 +38,38 @@ public partial class ConnectionManager : ObservableObject
     // already had: it must observe removals for as long as the app can hold a device, which is the
     // whole process lifetime.
     private readonly IDeviceWatcher _deviceWatcher;
+
+    /// <summary>
+    /// The logger's own view of what it is holding, and how one entry is released. Null in the
+    /// singleton, which resolves <see cref="LoggingManager"/> lazily through
+    /// <see cref="SubscribedChannels"/> and <see cref="UnsubscribeChannel"/>; set by the test
+    /// constructor.
+    /// </summary>
+    /// <remarks>
+    /// The indirection exists because <see cref="LoggingManager"/> is itself a singleton whose
+    /// constructor resolves an EF Core context factory out of <c>App.ServiceProvider</c> — i.e. it
+    /// cannot be constructed at all without a running Avalonia application. Teardown is the one
+    /// behaviour on this class worth pinning with a test, so it gets the seams that make that
+    /// possible, and production keeps the direct singleton calls it always had.
+    /// </remarks>
+    private readonly Func<IReadOnlyList<IChannel>>? _subscribedChannels;
+
+    /// <inheritdoc cref="_subscribedChannels" />
+    private readonly Action<IChannel>? _unsubscribeChannel;
+
+    /// <summary>
+    /// How teardown reaches the UI thread. Null in the singleton, which uses
+    /// <see cref="PostToUiThread"/>; set by the test constructor to run inline.
+    /// </summary>
+    /// <remarks>
+    /// <see cref="Dispatcher"/><c>.UIThread</c> outside a running Avalonia application binds to
+    /// whichever thread touched it first and queues everything else until something pumps it —
+    /// which in a test host is never. Injecting the marshal is what makes the teardown assertions
+    /// deterministic instead of dependent on the test runner's thread scheduling. The marshalling
+    /// itself is Avalonia plumbing shared with every other producer in this class; what these tests
+    /// are for is what happens once the teardown runs.
+    /// </remarks>
+    private readonly Action<Action>? _postToUiThread;
     #endregion
 
     #region Properties
@@ -43,6 +87,20 @@ public partial class ConnectionManager : ObservableObject
 
     // @port: Daqifi.Desktop.ConnectionManager.ConnectionStatusString
     public string ConnectionStatusString { get; set; } = "Disconnected";
+
+    /// <summary>
+    /// Why the most recent unexpected teardown happened, phrased for the user and naming the
+    /// device — e.g. <c>"Nq1-0123 disconnected (connection lost)."</c>. Set immediately before
+    /// <see cref="NotifyConnection"/> is raised, and cleared by the handler that shows it.
+    /// </summary>
+    /// <remarks>
+    /// Empty means "no specific reason", and the notification falls back to its generic wording.
+    /// Written and read on the UI thread only: every producer marshals through
+    /// <see cref="PostToUiThread"/> first, and the single consumer is
+    /// <c>DaqifiViewModel</c>'s <c>NotifyConnection</c> handler.
+    /// </remarks>
+    // @port: Daqifi.Desktop.ConnectionManager.LastDisconnectReason
+    public string LastDisconnectReason { get; set; } = string.Empty;
 
     /// <summary>
     /// Callback for handling duplicate device situations.
@@ -238,8 +296,78 @@ public partial class ConnectionManager : ObservableObject
         }
     }
 
+    /// <summary>
+    /// Test-only constructor: an isolated manager with its own <see cref="ConnectedDevices"/> list,
+    /// an inert device watcher, channel release routed somewhere a test can observe, and its UI
+    /// marshal run inline.
+    /// </summary>
+    /// <remarks>
+    /// Three things about the singleton make it untestable, and this constructor replaces exactly
+    /// those three. Its device watcher is a real one — on macOS and Linux a serial-port poller that
+    /// starts a background timer inside a static field initializer; its teardown path calls
+    /// <c>LoggingManager.Instance</c>, whose constructor needs a running Avalonia application; and
+    /// its UI marshal queues onto a dispatcher nothing pumps outside the app. See
+    /// <see cref="_unsubscribeChannel"/> and <see cref="_postToUiThread"/>. Nothing else differs:
+    /// the teardown, the firmware-update carve-out, the subscription bookkeeping and the
+    /// notification are all the production code.
+    /// </remarks>
+    internal ConnectionManager(
+        IDeviceWatcher watcher,
+        Func<IReadOnlyList<IChannel>> subscribedChannels,
+        Action<IChannel> unsubscribeChannel,
+        Action<Action> postToUiThread)
+    {
+        ArgumentNullException.ThrowIfNull(watcher);
+        ArgumentNullException.ThrowIfNull(subscribedChannels);
+        ArgumentNullException.ThrowIfNull(unsubscribeChannel);
+        ArgumentNullException.ThrowIfNull(postToUiThread);
+
+        ConnectedDevices = [];
+        _deviceWatcher = watcher;
+        _subscribedChannels = subscribedChannels;
+        _unsubscribeChannel = unsubscribeChannel;
+        _postToUiThread = postToUiThread;
+
+        // The same state the singleton is in until the connection dialog installs one; Connect
+        // null-checks it and rejects duplicates when it is unset. Assigned explicitly only so this
+        // constructor does not add a CS8618 to the repo's warning count.
+        DuplicateDeviceHandler = null!;
+    }
+
     // @port: Daqifi.Desktop.ConnectionManager.Instance
     public static ConnectionManager Instance => instance;
+
+    /// <summary>
+    /// Releases one channel of a device being torn down, so it stops counting as active and stops
+    /// feeding the logger. Resolves <see cref="LoggingManager"/> lazily — see
+    /// <see cref="_unsubscribeChannel"/> for why that indirection exists.
+    /// </summary>
+    private void UnsubscribeChannel(IChannel channel)
+    {
+        if (_unsubscribeChannel != null)
+        {
+            _unsubscribeChannel(channel);
+            return;
+        }
+
+        LoggingManager.Instance.Unsubscribe(channel);
+    }
+
+    /// <summary>
+    /// Everything the logger is currently holding, as the immutable copy-on-write snapshot
+    /// <see cref="LoggingManager.SubscribedChannels"/> publishes. See
+    /// <see cref="_subscribedChannels"/> for why this is indirect.
+    /// </summary>
+    private IReadOnlyList<IChannel> SubscribedChannels() =>
+        _subscribedChannels != null
+            ? _subscribedChannels()
+            : LoggingManager.Instance.SubscribedChannels;
+
+    /// <summary>
+    /// Marshals teardown onto the UI thread — see <see cref="_postToUiThread"/> for why this is
+    /// indirect rather than a direct <see cref="PostToUiThread"/> call.
+    /// </summary>
+    private void MarshalToUiThread(Action action) => (_postToUiThread ?? PostToUiThread)(action);
 
     /// <summary>
     /// Wording shown to the user when USB hotplug-removal detection is not running. Says what the
@@ -329,8 +457,53 @@ public partial class ConnectionManager : ObservableObject
                 return;
             }
             
+            // A transport that dies between device.Connect() returning and the loss handler going
+            // live below is UNOBSERVABLE: there is no subscriber yet, and even with one the handler
+            // would find the device not yet in ConnectedDevices and return. Subscribing earlier
+            // therefore does not close this window — re-reading the device's own state does. Without
+            // it, accepting a wrapper whose transport is already gone puts exactly the stale entry
+            // into ConnectedDevices that this class now exists to remove, and reports it as a
+            // successful connect. Release the transport Connect() opened rather than leaking its
+            // handle for the process lifetime.
+            if (!device.IsConnected)
+            {
+                AppLogger.Instance.Warning(
+                    $"Device {device.DeviceDisplayName} connected but its transport was already gone " +
+                    "before it could be accepted; reporting the connect as failed.");
+                device.Disconnect();
+                ConnectionStatus = DAQiFiConnectionStatus.Error;
+                return;
+            }
+
             ConnectedDevices.Add(device);
+
+            // Only now: these events bridge to the Core device, which does not exist until
+            // device.Connect() above has created it, and the teardown handler must not fire for a
+            // device that has not been accepted into ConnectedDevices yet.
+            SubscribeDeviceEvents(device);
+
             await Task.Delay(1000);
+
+            // The device can be torn down DURING that settle, and only since this PR: the loss
+            // handler goes live at the SubscribeDeviceEvents call above, and it runs on the UI
+            // thread while this continuation is suspended. If it did, the connect did not leave a
+            // usable connection — publishing "Connected" here would put the shell back into a
+            // connected state for a device that is gone, and SetDeviceContext below would tag every
+            // later Sentry event with dead hardware. Treat it as an aborted connect.
+            //
+            // Error rather than Disconnected because that is the status every other failure in this
+            // method reports, and it is what keeps the connection dialog open
+            // (ConnectionDialogViewModel:534) — reconnecting is exactly what the user does next. The
+            // accurate, device-naming message still comes from the teardown's own notification.
+            if (!ConnectedDevices.Contains(device))
+            {
+                AppLogger.Instance.Warning(
+                    $"Device {device.DeviceDisplayName} dropped while its connection was settling; " +
+                    "reporting the connect as failed rather than connected.");
+                ConnectionStatus = DAQiFiConnectionStatus.Error;
+                return;
+            }
+
             OnPropertyChanged("ConnectedDevices");
             ConnectionStatus = DAQiFiConnectionStatus.Connected;
 
@@ -356,6 +529,9 @@ public partial class ConnectionManager : ObservableObject
         var connectionType = device.ConnectionType == ConnectionType.Usb ? "usb" : "wifi";
         try
         {
+            // Before the device's own teardown, while the Core device these events bridge to is
+            // still alive to detach from.
+            UnsubscribeDeviceEvents(device);
             device.Disconnect();
             ConnectedDevices.Remove(device);
             OnPropertyChanged("ConnectedDevices");
@@ -398,6 +574,10 @@ public partial class ConnectionManager : ObservableObject
         if (device is null || ConnectedDevices.Contains(device)) { return; }
         ConnectedDevices.Add(device);
         OnPropertyChanged(nameof(ConnectedDevices));
+
+        // Diagnostics only — the mobile shell owns its own drop teardown. See
+        // SubscribeDeviceDiagnostics for why ConnectionLost is deliberately not wired here.
+        SubscribeDeviceDiagnostics(device);
 
         // Same enrichment Connect() applies. This is the path MOBILE connects through, and
         // without it every Sentry event from Android arrived with no device model, serial or
@@ -470,6 +650,11 @@ public partial class ConnectionManager : ObservableObject
     {
         if (device is null || !ConnectedDevices.Remove(device)) { return; }
         OnPropertyChanged(nameof(ConnectedDevices));
+
+        // Mirror of RegisterConnectedDevice. Runs before the caller's own device.Disconnect(),
+        // while the Core device these events bridge to is still alive to detach from.
+        UnsubscribeDeviceDiagnostics(device);
+
         EnrichTelemetry(() =>
         {
             AppLogger.Instance.AddBreadcrumb("device", $"Device unregistered: {device.Name}");
@@ -500,6 +685,7 @@ public partial class ConnectionManager : ObservableObject
     {
         try
         {
+            UnsubscribeDeviceEvents(device);
             device.Reboot();
             ConnectedDevices.Remove(device);
             OnPropertyChanged("ConnectedDevices");
@@ -523,6 +709,349 @@ public partial class ConnectionManager : ObservableObject
             _ => "Error"
         };
     }
+
+    #region Device Event Wiring
+    /// <summary>
+    /// Attaches every per-device event this class listens to. Kept as a single method with an exact
+    /// mirror in <see cref="UnsubscribeDeviceEvents"/> so a newly wired event cannot be attached at
+    /// connect and forgotten at teardown. Runs once the device has connected and been accepted into
+    /// <see cref="ConnectedDevices"/>, which is also when the Core device behind these events exists.
+    /// </summary>
+    /// <remarks>
+    /// Detach-then-attach rather than plain attach: <see cref="Connect"/> can be called twice on one
+    /// device instance (a reconnect of a device the app never explicitly disconnected), and a second
+    /// <c>+=</c> on the same handler would double every teardown and every log line. The detach is a
+    /// no-op when nothing is attached.
+    /// </remarks>
+    // Internal rather than private so the teardown tests can put a device into the same wired
+    // state Connect() leaves it in without paying Connect()'s one-second settle per case; one test
+    // still goes through Connect() itself to pin that this is what it calls.
+    // @port: Daqifi.Desktop.ConnectionManager.SubscribeDeviceEvents
+    internal void SubscribeDeviceEvents(IStreamingDevice device)
+    {
+        UnsubscribeDeviceEvents(device);
+
+        device.ConnectionLost += OnDeviceConnectionLost;
+        device.ErrorOccurred += OnDeviceErrorOccurred;
+        device.SendFailed += OnDeviceSendFailed;
+    }
+
+    /// <summary>
+    /// Detaches everything <see cref="SubscribeDeviceEvents"/> attached. Called from both teardown
+    /// paths (<see cref="Disconnect(IStreamingDevice)"/> and <see cref="Reboot"/>) before the
+    /// device's own teardown runs, while the underlying Core device is still alive to detach from.
+    /// </summary>
+    // @port: Daqifi.Desktop.ConnectionManager.UnsubscribeDeviceEvents
+    internal void UnsubscribeDeviceEvents(IStreamingDevice device)
+    {
+        device.ConnectionLost -= OnDeviceConnectionLost;
+        device.ErrorOccurred -= OnDeviceErrorOccurred;
+        device.SendFailed -= OnDeviceSendFailed;
+    }
+
+    /// <summary>
+    /// The diagnostics half of <see cref="SubscribeDeviceEvents"/>, for a device that reached
+    /// <see cref="ConnectedDevices"/> through <see cref="RegisterConnectedDevice"/> — i.e. the
+    /// mobile shell, which connects the device itself and owns its own teardown.
+    /// </summary>
+    /// <remarks>
+    /// Deliberately excludes <see cref="IDevice.ConnectionLost"/>. Mobile already tears a dropped
+    /// device down from its own <c>IsConnected</c> watcher
+    /// (<c>MobileShellViewModel.HandleConnectionLost</c>), which does more than this class can — it
+    /// also returns the shell to its device-list state. Subscribing the teardown handler here as
+    /// well would mean two teardowns racing for one drop, for no gain. Gap B (the background
+    /// failures being invisible) is not shell-specific, so those two events are wired on every
+    /// platform.
+    /// </remarks>
+    private void SubscribeDeviceDiagnostics(IStreamingDevice device)
+    {
+        device.ErrorOccurred -= OnDeviceErrorOccurred;
+        device.SendFailed -= OnDeviceSendFailed;
+
+        device.ErrorOccurred += OnDeviceErrorOccurred;
+        device.SendFailed += OnDeviceSendFailed;
+    }
+
+    /// <summary>Detaches what <see cref="SubscribeDeviceDiagnostics"/> attached.</summary>
+    private void UnsubscribeDeviceDiagnostics(IStreamingDevice device)
+    {
+        device.ErrorOccurred -= OnDeviceErrorOccurred;
+        device.SendFailed -= OnDeviceSendFailed;
+    }
+
+    /// <summary>
+    /// Handles a device's <see cref="IDevice.ConnectionLost"/> event — Core detected a spontaneous
+    /// transport drop (reboot, unplug, WiFi/TCP timeout) that this class would otherwise never
+    /// learn about. Unsubscribes the device's channels, tears the connection down via
+    /// <see cref="Disconnect(IStreamingDevice)"/>, and surfaces a notification naming the device
+    /// and the reason.
+    /// </summary>
+    /// <remarks>
+    /// <para>
+    /// This runs <em>alongside</em> <see cref="_deviceWatcher"/>, not instead of it. The watcher is
+    /// what gives this port working USB hotplug detection on macOS and Linux, and it stays. The two
+    /// paths are redundant rather than conflicting: both converge on
+    /// <see cref="Disconnect(IStreamingDevice)"/>, both skip a device under firmware update, and
+    /// whichever arrives second finds the device already gone from <see cref="ConnectedDevices"/>
+    /// and returns. What this adds is the transports the watcher cannot see — every WiFi/TCP
+    /// device, which <see cref="CheckIfSerialDeviceWasRemoved"/> filters out by construction.
+    /// </para>
+    /// </remarks>
+    // @port: Daqifi.Desktop.ConnectionManager.OnDeviceConnectionLost
+    private void OnDeviceConnectionLost(object? sender, ConnectionLostEventArgs e)
+    {
+        if (sender is not IStreamingDevice device)
+        {
+            return;
+        }
+
+        // Core raises this from its transport/reader thread. ConnectedDevices is mutated on the UI
+        // thread by Connect/Disconnect, and NotifyConnection's change notification runs
+        // DaqifiViewModel.UpdateUi synchronously — so everything below has to be marshalled, for
+        // the same reasons CheckIfSerialDeviceWasRemoved marshals its own removal.
+        MarshalToUiThread(() =>
+        {
+            // The device being flashed drops its transport when it reboots mid-update — an expected
+            // part of the flash that Core reconnects itself. Tearing it down here would dispose the
+            // Core device out from under Core's JumpingToApp reconnect and time the update out
+            // (issue #738). ReconcileDeviceAfterUpdate handles a genuinely-failed reconnect.
+            if (IsDeviceBeingUpdated(device))
+            {
+                return;
+            }
+
+            // Already torn down via another path — an explicit user disconnect, or the device
+            // watcher's serial-removal sweep, racing this event.
+            if (!ConnectedDevices.Contains(device))
+            {
+                return;
+            }
+
+            TearDownDroppedDevice(device, $"{device.DeviceDisplayName} disconnected ({e.Reason}).");
+        });
+    }
+
+    /// <summary>
+    /// The teardown both spontaneous-drop paths share: release the device's channels, disconnect
+    /// and remove it, then raise the user-visible notification with a reason that names it.
+    /// </summary>
+    /// <remarks>
+    /// Releasing the channels is not optional bookkeeping: left subscribed they stay in
+    /// <c>LoggingManager</c> marked active for the process lifetime, still counting toward
+    /// <c>CanToggleLogging</c> and still listed as live inputs for a device that is gone.
+    /// <para>
+    /// Ordered before <see cref="Disconnect(IStreamingDevice)"/> because
+    /// <c>AbstractStreamingDevice.Disconnect</c> clears <c>DataChannels</c>, which
+    /// <see cref="ChannelsToRelease"/> falls back to for a device that has no serial number —
+    /// after the disconnect there would be nothing left for that fallback to enumerate.
+    /// </para>
+    /// </remarks>
+    /// <param name="device">The device whose connection went away.</param>
+    /// <param name="reason">User-facing sentence naming the device and what happened.</param>
+    private void TearDownDroppedDevice(IStreamingDevice device, string reason)
+    {
+        foreach (var channel in ChannelsToRelease(device))
+        {
+            UnsubscribeChannel(channel);
+        }
+
+        Disconnect(device);
+
+        LastDisconnectReason = reason;
+        NotifyConnection = true;
+    }
+
+    /// <summary>
+    /// The channels teardown has to release: the entries the logger is actually still holding for
+    /// <paramref name="device"/>.
+    /// </summary>
+    /// <remarks>
+    /// <para>
+    /// Asks the LOGGER what it is holding rather than asking the device what it owns, because only
+    /// the first question can be answered atomically. <c>DataChannels</c> is a plain <c>List</c>
+    /// that Core's background events rebuild wholesale (<c>Clear</c> then <c>AddRange</c>), so a
+    /// copy of it can legitimately come back short — or empty — without throwing anything, and
+    /// every channel missed that way stays in the logger marked active for the process lifetime,
+    /// still counting toward <c>CanToggleLogging</c>. That is the leak this whole class now exists
+    /// to close, reintroduced through a race. <c>SubscribedChannels</c> has no such window: it is
+    /// published copy-on-write, so a reader always gets a complete, immutable list.
+    /// </para>
+    /// <para>
+    /// Matching is by serial number, ordinally — serials are opaque identifiers, and it is the same
+    /// discriminator <c>LoggingManager.Unsubscribe</c> resolves by. A device with no serial number
+    /// cannot be matched that way (a blank serial would sweep up every other unidentified device's
+    /// channels), so that case alone falls back to the device's own list, best-effort and guarded:
+    /// this runs inside an action posted to the dispatcher, and an escaping exception would take the
+    /// whole teardown with it and leave the device connected, with nothing to catch it.
+    /// </para>
+    /// </remarks>
+    private List<IChannel> ChannelsToRelease(IStreamingDevice device)
+    {
+        try
+        {
+            var serialNumber = device.DeviceSerialNo;
+            if (!string.IsNullOrWhiteSpace(serialNumber))
+            {
+                return SubscribedChannels()
+                    .Where(c => string.Equals(c.DeviceSerialNo, serialNumber, StringComparison.Ordinal))
+                    .ToList();
+            }
+
+            return device.DataChannels?.ToList() ?? [];
+        }
+        catch (Exception ex)
+        {
+            AppLogger.Instance.Warning(
+                ex,
+                $"Could not determine which channels belong to {device.DeviceDisplayName} while " +
+                "tearing it down after a dropped connection; disconnecting it anyway.");
+            return [];
+        }
+    }
+
+    /// <summary>
+    /// Reports a failure Core caught on one of a device's background threads. Without it a read
+    /// loop that could not read and a decoder that could not decode both present to the user as a
+    /// device that has simply stopped sending.
+    /// </summary>
+    /// <remarks>
+    /// Observability only: Core does not tear the connection down for these, and neither does this
+    /// handler. A genuinely dead link arrives separately as <see cref="IDevice.ConnectionLost"/>,
+    /// which is where teardown and the user-facing notification live. No dispatcher hop either —
+    /// nothing here touches bound state, and Core raises from a background thread.
+    /// </remarks>
+    // @port: Daqifi.Desktop.ConnectionManager.OnDeviceErrorOccurred
+    private void OnDeviceErrorOccurred(object? sender, CoreDeviceErrorEventArgs e)
+    {
+        // Core already collapses repeats per (source, exception type) and reports how many it
+        // swallowed, so this reports the count instead of adding a second throttle on top.
+        var suppressed = e.SuppressedCount > 0
+            ? $"; {e.SuppressedCount} further like failure(s) suppressed by Core's throttle"
+            : string.Empty;
+        var message =
+            $"Device {DescribeDevice(sender)} reported a background failure from {e.Source} " +
+            $"({e.Error.GetType().Name}: {e.Error.Message}){suppressed}.";
+
+        if (IsAppBug(e.Source))
+        {
+            AppLogger.Instance.Error(e.Error, message);
+            return;
+        }
+
+        AppLogger.Instance.Warning(e.Error, message);
+    }
+
+    /// <summary>
+    /// Decides whether a background device failure is an app bug (log at Error, which captures to
+    /// Sentry) or an environmental condition (log at Warning, which does not).
+    /// </summary>
+    /// <remarks>
+    /// <para>
+    /// Routing environmental conditions to Error has burned the upstream app three times: the noise
+    /// buries real bugs and the volume tracks how often users unplug things. So the sources that
+    /// describe the link are all Warnings:
+    /// </para>
+    /// <list type="bullet">
+    /// <item><description>
+    /// <c>MessageConsumer</c> — a failed transport read, parse, or subscriber dispatch. The
+    /// dominant cause by far is a link that is dying or gone, which Core independently escalates to
+    /// <c>ConnectionStatus.Lost</c>; every unplug would otherwise file a Sentry event. Core does not
+    /// separate the subscriber-dispatch subcase (which would be an app bug), so that one is
+    /// knowingly under-reported here rather than paying for it with a flood — it is still written to
+    /// the app log with its stack trace.
+    /// </description></item>
+    /// <item><description>
+    /// <c>StreamDecode</c> — one malformed streaming frame. Core drops the frame and the stream
+    /// survives, so this is firmware or link noise, not an app fault.
+    /// </description></item>
+    /// <item><description>
+    /// <c>Reconnect</c> — Core exhausted its reconnect attempts. Terminal, but the cause is a device
+    /// that is unplugged, powered off, or off the network, and the user already gets the
+    /// <see cref="IDevice.ConnectionLost"/> teardown and its notification.
+    /// </description></item>
+    /// </list>
+    /// <para>
+    /// <c>StatusNotification</c> is an app bug and is the one place this table diverges from
+    /// upstream's. Upstream enumerates the Core 1.4.0 set, where that member did not exist, and its
+    /// default arm silently routes it to Warning. Core 1.7.0 raises it for exactly one thing: a
+    /// <c>StatusChanged</c> subscriber that threw while being notified of a connection transition.
+    /// Every subscriber to that event is this app's own code, and the usual way one throws is a
+    /// cross-thread mutation of bound state from Core's transport thread — a real defect in this
+    /// repo's code, on the drop path, which is precisely where it is hardest to notice and most
+    /// expensive to miss.
+    /// </para>
+    /// <para>
+    /// <c>Unknown</c> is an app bug for the mirror-image reason: no Core path raises it, so seeing
+    /// one means Core hit a failure it could not classify — expected volume zero, and worth a look.
+    /// A source value this build does not recognise is a different thing (the app is behind Core,
+    /// not the device misbehaving) and stays a Warning.
+    /// </para>
+    /// </remarks>
+    // @port: Daqifi.Desktop.ConnectionManager.IsAppBug
+    internal static bool IsAppBug(DeviceErrorSource source) => source switch
+    {
+        DeviceErrorSource.Unknown => true,
+        DeviceErrorSource.StatusNotification => true,
+        DeviceErrorSource.MessageConsumer => false,
+        DeviceErrorSource.StreamDecode => false,
+        DeviceErrorSource.Reconnect => false,
+        _ => false
+    };
+
+    /// <summary>
+    /// Reports a command that never reached the device. Sending is fire-and-forget, so without this
+    /// a failed write is indistinguishable from a delivered one and the app's idea of device state
+    /// can silently diverge from the device's.
+    /// </summary>
+    /// <remarks>
+    /// Always a Warning: a write fails because the port closed, the device went away, or the device
+    /// stopped draining its receive buffer (<c>IsTimeout</c>) — all conditions of the link, not app
+    /// bugs. The distinction is still logged because "busy device" and "gone device" are diagnosed
+    /// differently.
+    /// </remarks>
+    // @port: Daqifi.Desktop.ConnectionManager.OnDeviceSendFailed
+    private void OnDeviceSendFailed(object? sender, CoreSendFailedEventArgs e)
+    {
+        var outcome = e.IsTimeout
+            ? "timed out on the way to"
+            : "failed to reach";
+        AppLogger.Instance.Warning(
+            e.Error,
+            $"Command '{DescribeCommand(e.Message?.Data)}' {outcome} device {DescribeDevice(sender)} " +
+            $"and was not delivered ({e.Error.GetType().Name}: {e.Error.Message}).");
+    }
+
+    /// <summary>
+    /// Names the device a background failure came from, the way the user sees it in the UI.
+    /// </summary>
+    // @port: Daqifi.Desktop.ConnectionManager.DescribeDevice
+    private static string DescribeDevice(object? sender) =>
+        sender is IStreamingDevice device ? device.DeviceDisplayName : "(unknown)";
+
+    /// <summary>
+    /// Reduces a SCPI command to its verb — everything before the first space — for logging.
+    /// </summary>
+    /// <remarks>
+    /// Arguments are dropped deliberately: <c>SYSTem:COMMunicate:LAN:PASs "..."</c> carries the
+    /// user's WiFi password in plaintext, and the app log must never contain it. The verb alone
+    /// answers the question a send failure raises — which command was lost.
+    /// </remarks>
+    // @port: Daqifi.Desktop.ConnectionManager.DescribeCommand
+    internal static string DescribeCommand(string? data)
+    {
+        if (string.IsNullOrWhiteSpace(data))
+        {
+            return "(empty)";
+        }
+
+        var trimmed = data.Trim();
+        var firstSpace = trimmed.IndexOf(' ');
+        var verb = firstSpace < 0 ? trimmed : trimmed[..firstSpace];
+
+        // A malformed or oversized payload must not turn one failure into a wall of log.
+        return verb.Length <= MAX_LOGGED_COMMAND_LENGTH ? verb : verb[..MAX_LOGGED_COMMAND_LENGTH] + "...";
+    }
+    #endregion
 
     /// <summary>
     /// True when <paramref name="device"/> is the device currently undergoing a firmware update. During
@@ -643,19 +1172,21 @@ public partial class ConnectionManager : ObservableObject
                         return;
                     }
 
-                    foreach (var channel in serialDevice.DataChannels)
+                    // Core's own port-presence poll reports the same unplug as ConnectionLost,
+                    // usually within three to four seconds, so this and OnDeviceConnectionLost race
+                    // for one removal. Whichever loses finds the device already gone from
+                    // ConnectedDevices and returns; add the same guard here so the losing side is
+                    // this one too, not a second Disconnect on a device already torn down.
+                    if (!ConnectedDevices.Contains(serialDevice))
                     {
-                        LoggingManager.Instance.Unsubscribe(channel);
+                        return;
                     }
 
-                    Disconnect(serialDevice);
-
-                    // The firmware-update case is now handled by the early-return above, so this
-                    // simplifies to the ordinary spontaneous-disconnect notification.
-                    if (!NotifyConnection)
-                    {
-                        NotifyConnection = true;
-                    }
+                    // The firmware-update case is handled by the early-return above, so this is the
+                    // ordinary spontaneous-disconnect teardown — the same one the ConnectionLost
+                    // path runs, so the two cannot drift apart.
+                    TearDownDroppedDevice(
+                        serialDevice, $"{serialDevice.DeviceDisplayName} was unplugged.");
                 });
             }
         };
