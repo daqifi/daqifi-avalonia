@@ -2,8 +2,9 @@
 
 Thanks for taking the time to contribute!
 
-This is the cross-platform DAQiFi app — one shared library plus four platform heads
-(Desktop, Android, iOS). It is a port in progress of the Windows-only WPF app
+This is the cross-platform DAQiFi app — one shared library plus three platform heads:
+Desktop (which covers Windows, Linux, and macOS), Android, and iOS. It is a port in
+progress of the Windows-only WPF app
 [daqifi-desktop](https://github.com/daqifi/daqifi-desktop), and most of the device
 logic lives in the [daqifi-core](https://github.com/daqifi/daqifi-core) package rather
 than here.

@@ -37,7 +37,7 @@ porting tool rather than part of the application, so it is not published here â€
 markers are still useful as "this symbol came from upstream and may have diverged",
 but the map they index is not in this repository.
 
-### Platform heads
+### Projects
 
 | Project | Target framework | Notes |
 | --- | --- | --- |
