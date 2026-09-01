@@ -256,7 +256,14 @@ public class BootloaderWatcherFlashStateTests
             watcher.IsFlashInProgress,
             "A preparation that threw must not leave a flash reported as in progress.");
         Assert.True(_discovery.IsRunning, "Discovery must come back when the preparation failed.");
-        Assert.Empty(edges);
+
+        // An unpaired falling edge, and it has to be there. IsFlashInProgress is POLLED as well as
+        // subscribed to: it reads true from the increment until the rollback, and a subscriber whose
+        // own pause reason cleared inside that window will have had its restart refused on the strength
+        // of it. Rolling back silently would leave that refusal with nothing to retry it — discovery
+        // stopped for good, from a flash that never began. No rising edge is announced on this path
+        // (the throw precedes it), so one `false` is exactly right.
+        Assert.Equal(new[] { false }, edges);
     }
 
     /// <summary>

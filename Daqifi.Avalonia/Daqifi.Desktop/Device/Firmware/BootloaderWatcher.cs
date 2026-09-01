@@ -118,7 +118,8 @@ public sealed class BootloaderWatcher : IBootloaderWatcher, IDisposable
     {
         ArgumentNullException.ThrowIfNull(devicePath);
 
-        bool flashStarted;
+        // Declared out here so the edge below is announced on the failure path too — see the finally.
+        var flashStarted = false;
         await _gate.WaitAsync().ConfigureAwait(false);
         try
         {
@@ -146,7 +147,8 @@ public sealed class BootloaderWatcher : IBootloaderWatcher, IDisposable
                 // throws, so nothing would ever release it. A stranded marker does not just pause HID
                 // discovery any more — the connection dialog keys its serial and WiFi discovery on
                 // IsFlashInProgress too, so it would leave the whole bus unscanned for the life of the
-                // process, for a flash that never started.
+                // process, for a flash that never started. The falling edge that tells subscribers to
+                // retry is announced by the finally below, on this path as well as the happy one.
                 ReleaseFlashSlot(devicePath);
                 ResumeDiscoveryIfIdle();
                 throw;
@@ -155,14 +157,20 @@ public sealed class BootloaderWatcher : IBootloaderWatcher, IDisposable
         finally
         {
             _gate.Release();
-        }
 
-        // Unreachable on the failure path above, which rethrows — so a flash that never started never
-        // announces a rising edge, and no subscriber is left waiting for a falling one.
-
-        if (flashStarted)
-        {
-            RaiseFlashInProgressChanged();
+            // Announced from the finally so it also fires when the release above threw and rolled the
+            // marker back. IsFlashInProgress is POLLED, not just subscribed to: between the increment
+            // and the rollback it reads true, and the connection dialog's discovery guards can refuse a
+            // restart on the strength of it in that window — a coordinator auto-update ending right
+            // there is exactly the case. Rolling back silently would leave that refusal with nothing to
+            // retry it. On the failure path no rising edge was announced, so this is an unpaired
+            // falling edge, which is precisely the signal a subscriber needs: whatever refused you is
+            // gone, ask again. Raising cannot mask the in-flight exception — RaiseFlashInProgressChanged
+            // guards every subscriber individually.
+            if (flashStarted)
+            {
+                RaiseFlashInProgressChanged();
+            }
         }
 
         return new WatcherLease(() => ResumeAfterFlashAsync(devicePath));
