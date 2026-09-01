@@ -27,20 +27,39 @@ dotnet build Daqifi.Avalonia.Desktop/Daqifi.Avalonia.Desktop.csproj \
 The app launches, the window renders, and `DAQifiAppLog.log` reports
 `Plot render tick active (first tick fired)`.
 
+**That bare Mach-O is still what `build` produces, on purpose — use `publish`
+for something a Mac user can launch.** Building is not packaging, and a loose
+executable has no name, no icon, no bundle id and, more to the point, no
+`Info.plist` to hold `NSLocalNetworkUsageDescription` (#108). Publishing an
+`osx-*` RID now assembles a real bundle:
+
+```
+dotnet publish Daqifi.Avalonia.Desktop/Daqifi.Avalonia.Desktop.csproj \
+  -c Release -r osx-arm64 --self-contained false
+→ Daqifi.Avalonia.Desktop/bin/Release/net10.0/osx-arm64/DAQiFi.app
+```
+
+It is **unsigned** — Gatekeeper quarantines it if it arrives by download, and
+the first launch then needs right-click → Open. Signing and notarization wait on
+an Apple Developer account (#109). See
+`Daqifi.Avalonia.Desktop/macOS/MacAppBundle.targets`.
+
 **macOS needs no new project.** `Daqifi.Avalonia.Desktop` already declares
 `osx-x64;osx-arm64` in its `RuntimeIdentifiers` — written during the
 shared-project split (`4489f28`) — and that declaration now has a build behind
-it. Note that CI still does not. There **is** a macOS runner in
-`.github/workflows/build.yml` now — the `ios` job, added in #105 — but it builds
-`Daqifi.Avalonia.iOS`. No job builds the Desktop head for an `osx-*` RID, so
-nothing stops a macOS regression from landing (#88).
+it — by hand, and now in CI as well. The `macos` job in
+`.github/workflows/build.yml` builds the Desktop head for `osx-arm64` and asserts
+the result is an arm64 Mach-O whose macOS native libraries are all present and all
+carry an arm64 slice (#88). It runs on every pull request and on pushes to `main`
+— which is this workflow's trigger, so a feature branch is covered from the moment
+it has a PR and not before. `osx-x64` is declared but still built by nobody.
 
 So the remaining macOS work is not "will it compile" — it is:
 
 - **Runtime behaviour under QA** (1.2). Compiling is not rendering; the
-  PlotView and icon checks are the real gate.
+  PlotView and icon checks are the real gate, and the CI job does not run the
+  app, so it cannot stand in for this.
 - **Windows-only code paths that degrade rather than crash** (1.3).
-- **A macOS CI job**, so this does not silently rot. Its own ticket.
 
 Budget: less than the day originally planned for bring-up, more than zero for QA.
 
@@ -331,12 +350,11 @@ fails to apply, `PlotView.OnApplyTemplate` silently no-ops and the plot renders
   That is a runtime check, so it covers macOS properly. This threw a
   `DllNotFoundException` on Android once; the fix generalises.
 
-**Confirmed on macOS — guarded, but degrades silently:**
+**Was confirmed on macOS, now fixed (issue #90) — USB hotplug detection:**
 
-- `ConnectionManager`'s constructor (`ConnectionManager.cs:173`) builds a
-  `ManagementEventWatcher` (WMI, Windows-only) inside a `try` whose
-  `catch (Exception ex)` only *logs*. Observed verbatim in
-  `DAQiFi/Logs/DAQifiAppLog.log` on first launch:
+- `ConnectionManager`'s constructor used to build a `ManagementEventWatcher`
+  (WMI, Windows-only) inside a `try` whose `catch (Exception ex)` only *logged*,
+  so first launch on macOS produced this in `DAQiFi/Logs/DAQifiAppLog.log`:
 
   ```
   LEVEL=ERROR: Failed to initialize ManagementEventWatcher: System.Management
@@ -345,14 +363,17 @@ fails to apply, `PlotView.OnApplyTemplate` silently no-ops and the plot renders
      at System.Management.WqlEventQuery..ctor(String queryOrEventClassName)
   ```
 
-  The app does not crash — `ConnectionManager` is a static singleton, so an
-  uncaught throw here would be a fatal `TypeInitializationException` and the
-  catch is load-bearing. But USB hotplug-removal detection is **dead on macOS
-  with no user-visible signal**. Decide whether that is acceptable for macOS v1
-  or needs a `DeviceWatcher` implementation (there is already a
-  `Services/DeviceWatcher/` abstraction with `WmiDeviceWatcher` and
-  `NoOpDeviceWatcher` — a macOS watcher belongs there, and `ConnectionManager`
-  should be routed through it rather than constructing WMI directly).
+  and USB hotplug-removal detection was dead on macOS with no user-visible
+  signal. `ConnectionManager` now goes through `Services/DeviceWatcher/`:
+  `DeviceWatcherFactory.Create()` returns `WmiDeviceWatcher` on Windows,
+  `SerialPortPollingDeviceWatcher` on macOS/Linux (it samples
+  `SerialPort.GetPortNames()` once a second and raises `DeviceRemoved` when the
+  port set shrinks), and `NoOpDeviceWatcher` on the mobile heads, which have no
+  serial transport to watch. **Expect no `PlatformNotSupportedException` at
+  startup on any head.** If the watcher ever fails to start on a platform that
+  does have USB serial, `ConnectionManager.HotplugDetectionUnavailableMessage`
+  becomes non-null and the main view model raises a standing notification, so
+  the degradation is visible rather than log-only.
 
 **Fixed in this PR — hardcoded path separators:**
 

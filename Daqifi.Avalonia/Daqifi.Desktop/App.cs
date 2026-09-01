@@ -106,6 +106,32 @@ public static class App
         AppDomain.CurrentDomain.UnhandledException += OnUnhandledException;
         TaskScheduler.UnobservedTaskException += OnUnobservedTaskException;
 
+        // A misconfigured DAQIFI_DATA_DIR must still stop the app — failing closed is the whole
+        // point of the override (AppDataPaths.ResolveDataDirectory) — but it has to stop it HERE,
+        // from a real call site, rather than from a static initializer. AppDataPaths used to throw
+        // during type init, which the CLR wraps as TypeInitializationException and which
+        // PERMANENTLY poisons the type; the first thing to touch it was AppLogger's own static
+        // initializer, so the misconfiguration took all file logging down with it and the three
+        // handlers just wired above rethrew on their own logging call, leaving no trail anywhere
+        // (#127). AppDataPaths now parks that diagnostic instead of throwing it, so by the time we
+        // reach this line the logger is alive and can record why the app is refusing to start.
+        //
+        // Written to the log EXPLICITLY, not left to the handlers above. They only fire for an
+        // exception that reaches the runtime unhandled, and the one caller that actually sets this
+        // variable — the parity-audit capture harness — wraps its whole app boot in a try/catch, so
+        // the throw below is caught synchronously and no handler ever sees it. Logging first is
+        // what puts the diagnostic in DAQifiAppLog.log on both paths. On the uncaught path this
+        // does mean OnUnhandledException logs it a second time (and raises a second Sentry event);
+        // that duplicate is a fair price for a dev-only misconfiguration that would otherwise leave
+        // the tooling path with no file trail at all — which is the whole bug being fixed.
+        if (AppDataPaths.DataDirectoryFault is { } dataDirectoryFault)
+        {
+            AppLogger.Instance.Error(dataDirectoryFault,
+                "Refusing to start: the DAQIFI_DATA_DIR override is unusable");
+        }
+
+        AppDataPaths.ThrowIfDataDirectoryUnusable();
+
         if (IsTestMode)
         {
             // Suppress any modal message boxes so UI automation is never blocked.
@@ -266,6 +292,18 @@ public static class App
             Dispatcher.UIThread.UnhandledException += OnDispatcherUnhandledException;
             TaskScheduler.UnobservedTaskException += OnUnobservedTaskException;
             _mobileCrashHandlersInstalled = true;
+        }
+
+        // Same fault as the desktop gate above, reported rather than thrown. A phone app has no
+        // process environment for anyone to set DAQIFI_DATA_DIR in, so this is defence, not a live
+        // path — and if it somehow is set and broken, killing the app at launch over a dev-only
+        // knob is worse than running against the quarantine directory (which, by construction, is
+        // never the real store). Desktop is where the override is actually settable and where
+        // refusing to start is the documented contract.
+        if (AppDataPaths.DataDirectoryFault is { } dataDirectoryFault)
+        {
+            AppLogger.Instance.Error(dataDirectoryFault,
+                "DAQIFI_DATA_DIR is unusable — this run's data is quarantined outside the normal store");
         }
 
         // Whole-body guard: this runs from the mobile bootstrap, so a failure to

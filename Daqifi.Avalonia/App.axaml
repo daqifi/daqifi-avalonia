@@ -3,7 +3,15 @@
              xmlns:helpers="using:Daqifi.Desktop.Helpers"
              xmlns:converters="using:Daqifi.Desktop.Converters"
              x:Class="Daqifi.Avalonia.App"
+             Name="DAQiFi"
              RequestedThemeVariant="Dark">
+    <!-- Name is what macOS shows in the menu bar, the Dock and Force Quit, and it is NOT
+         read from the bundle's Info.plist: Avalonia's macOS backend pushes Application.Name
+         into NSApplication at startup, so it wins over CFBundleName. Unset, it defaults to
+         the framework's "Avalonia Application" — measured, not assumed: with a correct
+         Info.plist but no Name, `lsappinfo` still reported the app as
+         "Avalonia Application" (#108). Harmless on the other heads, where the visible name
+         comes from the manifest / plist instead. -->
     <Application.Styles>
         <FluentTheme />
         <!-- Avalonia's DataGrid ships its theme in its own package (DebugWindow) -->
