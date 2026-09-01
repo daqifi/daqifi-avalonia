@@ -196,16 +196,18 @@ public partial class SummaryLogger : ObservableObject, ILogger
         /// The combined rate samples arrived from this device at, in Hz, measured against the host
         /// clock — every one of its channels together. The per-channel rates are in the rows below.
         /// </summary>
-        public double SampleRate
-        {
-            get
-            {
-                var span = _snapshot.Duration;
-                return _snapshot.TotalSampleCount > 1 && span.Ticks > 0
-                    ? (_snapshot.TotalSampleCount - 1) / span.TotalSeconds
-                    : 0.0;
-            }
-        }
+        /// <remarks>
+        /// The sum of Core's per-channel rates, not a rate derived from the combined sample count.
+        /// Deriving it was wrong: <c>(TotalSampleCount - 1) / Duration</c> assumes one evenly
+        /// spaced sequence, but a frame delivers one sample on every channel at the same instant,
+        /// so <c>C</c> channels over <c>F</c> frames give <c>C x F</c> samples spanning only
+        /// <c>F - 1</c> intervals. Subtracting a single sample overstates the rate by
+        /// <c>(CF - 1) / (CF - C)</c> — negligible over a long window, but about +94% for sixteen
+        /// channels over two frames, which is exactly the short window a small refresh interval
+        /// produces. Each per-channel rate already divides that channel's own count by its own
+        /// span, so adding them up needs no correction.
+        /// </remarks>
+        public double SampleRate => Channels.Sum(static channel => channel.SampleRate);
 
         /// <summary>
         /// The longest observed delay between the device's account of when a sample was taken and
