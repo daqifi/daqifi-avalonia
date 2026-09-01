@@ -300,10 +300,13 @@ single RID (see the warning at the top of `Directory.Build.props`).
 
 `--force-evaluate` is also the only thing that catches a lock file that is *stale* rather
 than drifted. NuGet compares ids case-insensitively when it decides an existing lock file
-is consistent, so four files here kept the project key `Oxyplot.Avalonia` long after the
-pinned SDK started writing `oxyplot.avalonia` — through locked mode and every CI check,
-until [#106] normalised them. The `desktop` job now runs this same re-derivation, so the
-next such gap fails there instead of on someone's laptop.
+is consistent, so a file whose entries are merely spelled differently from what a fresh
+derivation produces satisfies locked mode, survives the post-restore `git diff`, and stays
+stale indefinitely. [#106] is what that cost: the vendored project's key derived as
+`oxyplot.avalonia` on macOS and `Oxyplot.Avalonia` on Linux, so running this script on a
+Mac produced a one-line diff nobody could tell from churn. The cause is gone (see
+`third_party/oxyplot-avalonia/VENDORED.md`), and all three build jobs now re-derive their
+own head, so a key that is host-dependent again fails in CI rather than on a laptop.
 
 ### Why `/Daqifi.Avalonia.Android` stays in `directories`
 
