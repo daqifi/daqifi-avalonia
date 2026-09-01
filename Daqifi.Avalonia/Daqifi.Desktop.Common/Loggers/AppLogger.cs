@@ -64,6 +64,36 @@ public class AppLogger : IAppLogger
             .FirstOrDefault(a => a.Key == "SentryDsn")?.Value;
     }
 
+    /// <summary>
+    /// The environment this build reports events under.
+    /// </summary>
+    /// <remarks>
+    /// Set explicitly for the same reason <c>SendDefaultPii</c> is: it decides which events
+    /// count as real. Left to the SDK's own inference, a developer's Debug run, a CI smoke run
+    /// and a shipped store build all land in one undifferentiated stream, so the issue list —
+    /// and any alert built on it — mixes crashes nobody has hit with crashes users are hitting
+    /// right now. That is the difference between a report worth handing to someone to fix and
+    /// a report someone has to triage first.
+    /// <para>
+    /// Overridable, so a local or CI run can label itself without editing the build:
+    /// <c>DAQIFI_SENTRY_ENVIRONMENT</c> first, matching the <c>DAQIFI_SENTRY_DSN</c> override
+    /// above, then <c>SENTRY_ENVIRONMENT</c> — the variable the SDK itself would have read had
+    /// this been left unset, kept working so setting it explicitly costs nothing.
+    /// </para>
+    /// </remarks>
+    private static string ResolveEnvironment()
+    {
+        var configured = Environment.GetEnvironmentVariable("DAQIFI_SENTRY_ENVIRONMENT")
+                         ?? Environment.GetEnvironmentVariable("SENTRY_ENVIRONMENT");
+        if (!string.IsNullOrWhiteSpace(configured)) { return configured; }
+
+#if DEBUG
+        return "development";
+#else
+        return "production";
+#endif
+    }
+
     // @port: Daqifi.Desktop.Common.Loggers.AppLogger.IsRunningInTestEnvironment
     private static bool IsRunningInTestEnvironment()
     {
@@ -186,6 +216,7 @@ public class AppLogger : IAppLogger
             if (!string.IsNullOrWhiteSpace(version)) { options.Release = version; }
             options.AutoSessionTracking = true;
             options.IsGlobalModeEnabled = true;
+            options.Environment = ResolveEnvironment();
             // Explicit, not relying on the SDK default: this app ships to app stores, where
             // "what is collected" is a declaration we have to make and stand behind. No
             // usernames, no email, no IP address attached to events. Sentry's server-side
@@ -225,6 +256,7 @@ public class AppLogger : IAppLogger
     public void Warning(string message)
     {
         _logger?.Warn(message);
+        LeaveBreadcrumb(message, Sentry.BreadcrumbLevel.Warning);
     }
 
     // @port: Daqifi.Desktop.Common.Loggers.AppLogger.Warning
@@ -234,13 +266,20 @@ public class AppLogger : IAppLogger
         // exception-aware warning is to keep stack traces in the local log for
         // expected user/environmental conditions without raising a Sentry event.
         _logger?.Warn(ex, message);
+        // A breadcrumb is not an event, so this does not undo the line above: it raises no
+        // issue and costs no quota. It means that when something DOES get captured later, the
+        // expected-but-relevant condition that preceded it is visible in the timeline —
+        // the exception type included, since that is the part the message usually omits.
+        LeaveBreadcrumb($"{message} — {ex.GetType().Name}: {ex.Message}", Sentry.BreadcrumbLevel.Warning);
     }
 
     // @port: Daqifi.Desktop.Common.Loggers.AppLogger.Error
     public void Error(string message)
     {
         _logger?.Error(message);
-        SentrySdk.CaptureException(new Exception(message));
+        // A dedicated carrier type rather than the bare System.Exception the scaffold used —
+        // see AppLogErrorException for what that buys and, just as important, what it does not.
+        SentrySdk.CaptureException(new AppLogErrorException(message));
     }
 
     // @port: Daqifi.Desktop.Common.Loggers.AppLogger.Error
@@ -249,6 +288,37 @@ public class AppLogger : IAppLogger
         _logger?.Error(ex, message);
         SentrySdk.CaptureException(ex, scope => scope.SetExtra("message", message));
     }
+
+    /// <summary>
+    /// Records a warning as a Sentry breadcrumb, so an event captured later carries the
+    /// lead-up to it and not just its own stack trace.
+    /// </summary>
+    /// <remarks>
+    /// Warnings only, and the two exclusions are the point.
+    /// <para>
+    /// <b>Not errors.</b> The SDK already writes a breadcrumb for every captured exception —
+    /// verified against 6.8.0, which emits one with category "Exception" carrying the
+    /// exception's message. Adding our own would put the same failure in the timeline twice.
+    /// The contextual message that the SDK's breadcrumb does not carry is not lost either: it
+    /// travels on the event itself, via the <c>SetExtra("message", …)</c> above.
+    /// </para>
+    /// <para>
+    /// <b>Not information.</b> It is the highest-volume level and the lowest-value one, the
+    /// breadcrumb ring is bounded (SDK default 100), and the app already places explicit
+    /// <see cref="AddBreadcrumb"/> calls at the moments that actually matter — connect,
+    /// disconnect, streaming start/stop, firmware transitions, discovery, export. Letting
+    /// routine chatter push those out of the ring would trade the informative half of the
+    /// timeline for the dull half.
+    /// </para>
+    /// <para>
+    /// Warnings are the real gap: <see cref="Warning(Exception, string)"/> deliberately does
+    /// not capture, so nothing else records it, and it is exactly the expected-but-relevant
+    /// condition — a refused SD operation, a dropped connection, a retry — that explains the
+    /// crash that follows it.
+    /// </para>
+    /// </remarks>
+    private static void LeaveBreadcrumb(string message, Sentry.BreadcrumbLevel level) =>
+        SentrySdk.AddBreadcrumb(message: message, category: "log", level: level);
 
     /// <inheritdoc />
     // @port: Daqifi.Desktop.Common.Loggers.AppLogger.AddBreadcrumb

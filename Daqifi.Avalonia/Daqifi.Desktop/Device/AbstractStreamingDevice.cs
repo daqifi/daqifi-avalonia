@@ -120,6 +120,14 @@ public abstract partial class AbstractStreamingDevice : ObservableObject, IStrea
     private volatile bool _checkForLeftoverFrames;
     private int _discardedLeftoverFrameCount;
 
+    // Occurrence counters for the three per-message paths. See ReportStreamProcessingFailure —
+    // these exist so a persistent fault is reported with its frequency instead of once per
+    // streamed message. Reset when streaming starts, so each session reports afresh rather than
+    // inheriting the previous session's suppression.
+    private int _analogProcessingFailureCount;
+    private int _digitalProcessingFailureCount;
+    private int _debugDataFailureCount;
+
     // Whether the device-reported clock frequency has been applied to _timestampProcessor for the
     // current streaming session. Cleared alongside every ResetAll(), which per Core's contract also
     // drops per-device frequencies. Without an explicit frequency the processor reconstructs against
@@ -886,7 +894,8 @@ public abstract partial class AbstractStreamingDevice : ObservableObject, IStrea
             }
             catch (Exception ex)
             {
-                AppLogger.Error($"[CHANNEL_MAPPING] Error processing analog channel data: {ex.Message}");
+                ReportStreamProcessingFailure(
+                    ref _analogProcessingFailureCount, ex, "[CHANNEL_MAPPING] Error processing analog channel data");
             }
         }
 
@@ -923,7 +932,8 @@ public abstract partial class AbstractStreamingDevice : ObservableObject, IStrea
             }
             catch (Exception ex)
             {
-                AppLogger.Error($"Error processing digital channel data: {ex.Message}");
+                ReportStreamProcessingFailure(
+                    ref _digitalProcessingFailureCount, ex, "Error processing digital channel data");
             }
         }
 
@@ -1397,6 +1407,9 @@ public abstract partial class AbstractStreamingDevice : ObservableObject, IStrea
             _timestampFrequencyApplied = false;
         }
         _discardedLeftoverFrameCount = 0;
+        _analogProcessingFailureCount = 0;
+        _digitalProcessingFailureCount = 0;
+        _debugDataFailureCount = 0;
         _checkForLeftoverFrames = _hasSeenDeviceTimestamp;
         _pendingFirstFrameValidation = !_hasSeenDeviceTimestamp;
         _heldFirstFrame = null;
@@ -1404,6 +1417,83 @@ public abstract partial class AbstractStreamingDevice : ObservableObject, IStrea
         coreStreamingDevice.StartStreaming();
         IsStreaming = coreStreamingDevice.IsStreaming;
         AppLogger.AddBreadcrumb("streaming", $"Streaming started at {StreamingFrequency} Hz");
+    }
+
+    /// <summary>
+    /// Reports a failure raised inside a per-message path, which runs once per streamed message
+    /// and so cannot report every occurrence.
+    /// </summary>
+    /// <remarks>
+    /// All three call sites previously did <c>AppLogger.Error($"...: {ex.Message}")</c>, which
+    /// was wrong twice over.
+    /// <list type="number">
+    ///   <item><description>
+    ///     It passed only <c>ex.Message</c>, so the exception object — type, stack trace, inner
+    ///     exception — was discarded at the one place it was needed. What reached Sentry was a
+    ///     sentence, and the attached stack trace pointed at the catch block, which is the same
+    ///     for every possible decode fault. Passing <c>ex</c> means the report names the step
+    ///     that actually threw.
+    ///   </description></item>
+    ///   <item><description>
+    ///     It reported unconditionally from a per-message handler. A persistent fault — a
+    ///     payload shape the decode does not expect, a channel list that no longer matches the
+    ///     stream — therefore raises one event per message. At the 1 kHz this app streams at,
+    ///     that is a thousand events a second: it buries every other issue in the project and
+    ///     spends the quota that would have carried them.
+    ///   </description></item>
+    /// </list>
+    /// <para>
+    /// So Sentry gets the 1st, 10th, 100th… occurrence, with the full exception and the running
+    /// count in the message. Powers of ten because the facts worth an event are "it happened at
+    /// all" and "it is still happening two orders of magnitude later"; every occurrence in
+    /// between is the same event again. The count travels in the message, so a single report
+    /// still says how bad it is — which a suppressed-and-forgotten scheme cannot.
+    /// </para>
+    /// <para>
+    /// The occurrences in between are not all logged locally either, and the reason is the same
+    /// arithmetic one level down. <see cref="AppLogger.Warning(Exception, string)"/> raises no
+    /// Sentry event, but it does write the log file and leave a breadcrumb, and the breadcrumb
+    /// ring is bounded (SDK default 100) — so logging every occurrence of a 1 kHz fault would
+    /// flush the ring ten times a second and throw away the connect / streaming-start trail that
+    /// makes the eventual report readable, plus turn the log file into a write storm that rolls
+    /// its own archives away. The first <see cref="FullyLoggedFailureCount"/> occurrences are
+    /// logged in full, which covers a transient fault completely; past that only the reported
+    /// ones are, and the count in the next report is what conveys the true frequency.
+    /// </para>
+    /// </remarks>
+    private void ReportStreamProcessingFailure(ref int failureCount, Exception ex, string what)
+    {
+        var occurrence = Interlocked.Increment(ref failureCount);
+        var message = $"{what} (occurrence {occurrence.ToString(CultureInfo.InvariantCulture)})";
+
+        if (IsPowerOfTen(occurrence))
+        {
+            AppLogger.Error(ex, message);
+        }
+        else if (occurrence < FullyLoggedFailureCount)
+        {
+            // Local log and breadcrumb only — Warning deliberately does not capture to Sentry.
+            AppLogger.Warning(ex, message);
+        }
+
+        // Otherwise silent: the next power-of-ten report carries the count.
+    }
+
+    /// <summary>
+    /// How many occurrences of a per-message decode failure are logged in full before the
+    /// report thins out to powers of ten. Ten is enough to capture a transient fault end to
+    /// end while staying a small fraction of the bounded breadcrumb ring.
+    /// </summary>
+    private const int FullyLoggedFailureCount = 10;
+
+    /// <summary>Whether <paramref name="value"/> is 1, 10, 100, 1000, …</summary>
+    private static bool IsPowerOfTen(int value)
+    {
+        if (value < 1) { return false; }
+
+        while (value % 10 == 0) { value /= 10; }
+
+        return value == 1;
     }
 
     // @port: Daqifi.Desktop.Device.AbstractStreamingDevice.StopStreaming
@@ -2131,7 +2221,10 @@ public abstract partial class AbstractStreamingDevice : ObservableObject, IStrea
         }
         catch (Exception ex)
         {
-            AppLogger.Error($"[DEBUG_MODE] Error creating debug data: {ex.Message}");
+            // Same shape as the two decode paths: reached once per streamed message whenever
+            // debug mode is on, so it gets the same exception-preserving, throttled report.
+            ReportStreamProcessingFailure(
+                ref _debugDataFailureCount, ex, "[DEBUG_MODE] Error creating debug data");
         }
     }
     #endregion
