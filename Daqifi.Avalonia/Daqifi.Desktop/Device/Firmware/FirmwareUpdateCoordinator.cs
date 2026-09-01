@@ -717,16 +717,21 @@ public class FirmwareUpdateCoordinator
     // @port: Daqifi.Desktop.Device.Firmware.FirmwareUpdateCoordinator.HandleFirmwareUpdateException
     private void HandleFirmwareUpdateException(FirmwareUpdateException exception)
     {
-        _host.HasErrorOccured = true;
-
-        // A JumpingToApp failure is categorically different from a mid-flash failure: it is the LAST
-        // PIC32 step and only runs after erase + program + CRC-verify all succeeded, so the firmware is
-        // already installed and verified — the device just didn't re-open its serial port in time. Treat
-        // it as an expected device/environmental condition (a power-cycle finishes the job), not an app
-        // bug: log at Warning (no Sentry capture) and tell the user their firmware installed rather than
-        // claiming it failed. Mirrors the serial/WiFi connect classification (issues #589 / #740) and
-        // stops this from filing Sentry issues for a device that simply needs a power-cycle (issue #738).
-        if (exception.FailedState == FirmwareUpdateState.JumpingToApp)
+        // A post-flash reconnect timeout is categorically different from a mid-flash failure: the image
+        // was fully written and verified and only the device's return to normal serial operation timed
+        // out. On the PIC32 that is the JumpingToApp step (reached only after erase + program +
+        // CRC-verify all succeeded, upstream issue #738); on the WiFi module it is Core's dedicated
+        // ReconnectingAfterFlash step, entered only after the WINC flash tool reported its success
+        // marker (upstream issue #776, daqifi-core#398 gap 4). Treat both as an expected
+        // device/environmental condition (a power-cycle finishes the job), not an app bug: log at
+        // Warning (no Sentry capture) and tell the user their firmware installed rather than claiming it
+        // failed. Mirrors the serial/WiFi connect classification (upstream issues #589 / #740) and stops
+        // this from filing Sentry issues for a device that simply needs a power-cycle.
+        //
+        // Verifying is deliberately NOT downgraded: since Core v1.4.0 it means only the PIC32 flash CRC
+        // check, a genuine failure that keeps its Error/Sentry path and its "CRC did not match"
+        // recovery guidance.
+        if (FirmwareFailureClassifier.IsPostFlashReconnectTimeout(exception))
         {
             _appLogger.AddBreadcrumb(
                 "firmware",
@@ -734,15 +739,20 @@ public class FirmwareUpdateCoordinator
                 Common.Loggers.BreadcrumbLevel.Warning);
             _appLogger.Warning(
                 exception,
-                "Firmware was installed and verified, but the device did not automatically return to " +
-                "application mode after the flash. This is a device/environmental condition (power-cycle " +
-                "recovers it), not an app failure.");
+                $"Firmware was installed and verified ({exception.FailedState}), but the device did not " +
+                "automatically return to application mode after the flash. This is a " +
+                "device/environmental condition (power-cycle recovers it), not an app failure.");
 
             _host.ShowFirmwareError(
-                "Firmware was installed successfully, but the device did not return to normal mode on its " +
-                "own. Please power-cycle the device (unplug and replug its USB cable), then reconnect.");
+                FirmwareFailureClassifier.BuildInstalledButNotReconnectedMessage(exception.FailedState));
             return;
         }
+
+        // Set only on the genuine-failure path. The flag is the host's "something went wrong"
+        // state (UploadFirmwareAsync clears it at the start of every run), and raising it for an
+        // outcome whose own dialog says the firmware installed successfully would contradict that
+        // dialog the moment anything binds it.
+        _host.HasErrorOccured = true;
 
         _appLogger.AddBreadcrumb(
             "firmware",
