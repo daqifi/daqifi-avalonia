@@ -172,7 +172,10 @@ jobs:
                  "committed ones. They are stale rather than drifted, which is why every" \
                  "other check passed. Regenerate with .github/scripts/refresh_lock_files.sh" \
                  "and commit the result."
-            git diff --stat -- '**/packages.lock.json'
+            # The full diff, not --stat. A staleness failure is usually a handful of
+            # lines and the CONTENT is the whole diagnosis — a file name alone leaves
+            # the reader to re-derive it locally, on a host that may not reproduce it.
+            git diff -- '**/packages.lock.json'
             exit 1
           fi
           echo "lock files match a from-scratch derivation"
