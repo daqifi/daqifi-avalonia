@@ -218,6 +218,11 @@ jobs:
           set -euo pipefail
           dotnet restore Daqifi.Avalonia/Daqifi.Avalonia.csproj --force-evaluate
           dotnet restore Daqifi.Avalonia.Desktop/Daqifi.Avalonia.Desktop.csproj --force-evaluate
+          # Listed in its own right: a --force-evaluate restore walks project references
+          # DOWNWARDS, so restoring Daqifi.Avalonia never reaches the test project that
+          # references it. Without this line Daqifi.Avalonia.Tests/packages.lock.json is
+          # the one lock file in the repo no job derives from scratch.
+          dotnet restore Daqifi.Avalonia.Tests/Daqifi.Avalonia.Tests.csproj --force-evaluate
           dotnet restore tools/parity-audit/AvaloniaCapture/AvaloniaCapture.csproj \
             --force-evaluate
           if ! git diff --quiet -- '**/packages.lock.json'; then
