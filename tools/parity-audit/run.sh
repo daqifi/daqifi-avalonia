@@ -194,13 +194,22 @@ if [ "$MODE" = "baseline" ]; then
 
   # `shasum -c` only checks the names the manifest lists, so a screen the harness gained
   # since the baseline was recorded would pass unnoticed. Both directions, always.
+  #
+  # Matched as whole strings, not with grep: a screen name contains dots, and as a regex
+  # "desktop-1-livegraph.png" also matches "desktop-1-livegraphXpng" — a near-miss name
+  # would be silently accepted by the check that exists to catch exactly that. Field 2 is
+  # the filename in both shasum and sha256sum output, and screen names carry no spaces.
+  manifest_names="$(awk '{ print $2 }' "$manifest")"
   shopt -s nullglob
   for path in "$OUT/avalonia"/*.png; do
     name="$(basename "$path")"
-    if ! grep -q "  $name\$" "$manifest"; then
-      echo "!! $name: captured but absent from the baseline — the screen set has grown" >&2
-      rc=1
-    fi
+    case $'\n'"$manifest_names"$'\n' in
+      *$'\n'"$name"$'\n'*) ;;
+      *)
+        echo "!! $name: captured but absent from the baseline — the screen set has grown" >&2
+        rc=1
+        ;;
+    esac
   done
 
   if [ "$rc" -ne 0 ]; then
