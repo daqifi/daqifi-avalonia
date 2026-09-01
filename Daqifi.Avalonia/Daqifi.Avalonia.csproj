@@ -48,13 +48,6 @@
 	</ItemGroup>
 
 	<ItemGroup>
-		<!-- Mirrors upstream Daqifi.Desktop.csproj's Compile Remove list — legacy files kept in-tree but never compiled -->
-		<Compile Remove="Daqifi.Desktop\ViewModels\PlottingViewModel.cs" />
-		<Compile Remove="Daqifi.Desktop\ViewModels\PlotViewModel.cs" />
-		<Compile Remove="Daqifi.Desktop\ViewModels\ViewModelLocator.cs" />
-	</ItemGroup>
-
-	<ItemGroup>
 		<!-- Avalonia stack (replaces WPF + MahApps.Metro per the UI catalog decision log).
 		     Avalonia.Desktop (desktop windowing/startup) lives in the Desktop head, not here —
 		     this library is platform-neutral and shared with the Android/iOS heads. -->
