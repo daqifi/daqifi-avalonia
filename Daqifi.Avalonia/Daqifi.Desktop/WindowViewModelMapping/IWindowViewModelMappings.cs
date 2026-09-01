@@ -4,14 +4,12 @@
 // the correspondence map.
 
 using System;
-using System.Diagnostics.Contracts;
 
 namespace Daqifi.Desktop.WindowViewModelMapping;
 
 /// <summary>
 /// Descripes Window-ViewModel mappings used by the dialog service
 /// </summary>
-[ContractClass(typeof(IWindowViewModelMappingsContract))]
 // @port: Daqifi.Desktop.WindowViewModelMapping.IWindowViewModelMappings
 public interface IWindowViewModelMappings
 {
