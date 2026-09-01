@@ -714,6 +714,11 @@ public partial class DaqifiViewModel : ObservableObject, IFirmwareUpdateHost, IL
                     _versionNotification = new VersionNotification();
                     _ = LoggingManager.Instance.CheckApplicationVersion(_versionNotification);
 
+                    // Issue #90: when USB hotplug-removal detection isn't running on a platform that
+                    // has USB serial, say so. Previously the failure only reached the log, so the
+                    // user had no way to know an unplugged device would keep showing as connected.
+                    ReportHotplugDetectionUnavailable();
+
                     // Summary Logger
                     SummaryLogger = new SummaryLogger();
                     LoggingManager.Instance.AddLogger(SummaryLogger);
@@ -1444,21 +1449,47 @@ public partial class DaqifiViewModel : ObservableObject, IFirmwareUpdateHost, IL
     public string LatestFirmwareVersionText => _firmwareCoordinator.LatestFirmwareVersion;
 
     /// <summary>
+    /// Adds a standing notification when USB hotplug-removal detection is not running on a platform
+    /// that has USB serial hardware, so the user learns that unplugging a connected device will not
+    /// be noticed instead of being left to infer it from a stale connected state (issue #90).
+    /// Adds nothing on the platforms where detection is working, and nothing on the mobile heads,
+    /// which have no serial transport to watch.
+    /// </summary>
+    private void ReportHotplugDetectionUnavailable()
+    {
+        var message = ConnectionManager.Instance.HotplugDetectionUnavailableMessage;
+        if (string.IsNullOrEmpty(message))
+        {
+            return;
+        }
+
+        // DeviceSerialNo is deliberately left unset (null): this is an app-level condition with no
+        // owning device, and a null serial is what exempts it from RemoveNotification's per-device
+        // pruning. Link is left unset too — the flyout hides its "Click here" button when it is null.
+        NotificationList.Add(new Notifications
+        {
+            IsFirmwareUpdate = false,
+            Message = message
+        });
+        NotificationCount = NotificationList.Count;
+    }
+
+    /// <summary>
     /// Prunes notifications whose owning device is no longer connected. General-purpose
     /// (covers both app-version and firmware notifications); firmware-specific add/remove
-    /// now lives in the firmware coordinator. The app-update notice — the only notification with no
-    /// owning device, created with a null serial — is exempt so it survives this cleanup.
+    /// now lives in the firmware coordinator. Notifications with no owning device — created with a
+    /// null serial — are exempt so they survive this cleanup.
     /// </summary>
     // @port: Daqifi.Desktop.ViewModels.DaqifiViewModel.RemoveNotification
     internal void RemoveNotification()
     {
         foreach (var notification in NotificationList.ToList())
         {
-            // The app-update notice is the one notification with no owning device; it is created with a
-            // null serial (see the "NotificationCount" case in UpdateUi). Exempt exactly that — a null
-            // serial — or it would be removed on the same UpdateUi pass that adds it (this runs at the
-            // end of every UpdateUi) and never appear. Device-owned notifications still go through the
-            // disconnect check below, even if a device reports an empty serial.
+            // A null serial marks a notification with no owning device: the app-update notice (see the
+            // "NotificationCount" case in UpdateUi) and the hotplug-unavailable notice. Exempt exactly
+            // that — a null serial — or they would be removed on the same UpdateUi pass that adds them
+            // (this runs at the end of every UpdateUi) and never appear. Device-owned notifications
+            // still go through the disconnect check below, even if a device reports an empty serial.
             if (notification.DeviceSerialNo is null)
             {
                 continue;
