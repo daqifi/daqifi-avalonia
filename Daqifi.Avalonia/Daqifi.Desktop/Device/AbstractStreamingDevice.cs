@@ -50,7 +50,10 @@ public abstract partial class AbstractStreamingDevice : ObservableObject, IStrea
     private int _streamingFrequency = 1;
 
     // DeviceType property with default value of Unknown.
-    // HasWincWifiModule is derived from DeviceType, so notify it when DeviceType changes.
+    // HasWincWifiModule now reads Core's capability flag rather than DeviceType, but the two are
+    // refreshed by the same HydrateDeviceMetadata call, so this notification is still the one that
+    // covers a board becoming known. HydrateDeviceMetadata raises it explicitly as well, for the
+    // case where the capabilities are re-derived without DeviceType changing value.
     [ObservableProperty]
     [NotifyPropertyChangedFor(nameof(HasWincWifiModule))]
     private DeviceType _deviceType = DeviceType.Unknown;
@@ -317,14 +320,19 @@ public abstract partial class AbstractStreamingDevice : ObservableObject, IStrea
     public bool IsFirmwareOutdated { get; set; }
 
     /// <summary>
-    /// True only for the Nyquist family, which carries a separately-flashable WINC1500 WiFi
-    /// module. ESP32-based and unrecognized devices (DeviceType.Unknown) integrate WiFi into the
-    /// SoC and expose no WINC firmware version — for those, <c>SYSTem:COMMunicate:LAN:GETChipInfo?</c>
-    /// returns non-version data (e.g. the IP address), so the WiFi-firmware check must not run.
+    /// True only for boards that carry a separately-flashable WINC1500 WiFi module. ESP32-based
+    /// and unrecognized devices integrate WiFi into the SoC and expose no WINC firmware version —
+    /// for those, <c>SYSTem:COMMunicate:LAN:GETChipInfo?</c> returns non-version data (e.g. the IP
+    /// address), so the WiFi-firmware check must not run.
     /// </summary>
+    /// <remarks>
+    /// Reads Core's <see cref="DeviceCapabilities.HasWincWifiModule"/>, which exists (in Core's own
+    /// words) to let consumers "ask Core whether WINC-specific handling … applies to a device
+    /// instead of pattern-matching <c>DeviceType</c> themselves". The app previously kept its own
+    /// copy of that board list; Core's is the one that gets updated when a board is added.
+    /// </remarks>
     // @port: Daqifi.Desktop.Device.AbstractStreamingDevice.HasWincWifiModule
-    public bool HasWincWifiModule =>
-        DeviceType is DeviceType.Nyquist1 or DeviceType.Nyquist2 or DeviceType.Nyquist3;
+    public bool HasWincWifiModule => Metadata.Capabilities.HasWincWifiModule;
 
     /// <summary>
     /// Gets or sets whether the device's WiFi module firmware needs flashing (below the minimum
@@ -415,6 +423,16 @@ public abstract partial class AbstractStreamingDevice : ObservableObject, IStrea
             coreDevice.InitializeAsync().GetAwaiter().GetResult();
 
             OnCoreDeviceInitialized();
+
+            // Re-read Core's metadata now that initialization is complete. The only other
+            // hydrate runs from ChannelsPopulated, which Core raises while waiting for the
+            // device's first status message — i.e. BEFORE it asks the device to describe
+            // itself (DaqifiDevice.InitializeAsync: WaitForChannelsPopulatedAsync, then
+            // ReadCapabilityDocumentAsync). Without this the wrapper keeps the board-table
+            // defaults for the whole session and never sees the device's own answers: on the
+            // bench Nq1 that left MaxSamplingRate at the board table's 1000 Hz while the
+            // device itself reports 22000, and no capability document at all.
+            HydrateDeviceMetadata(coreDevice.Metadata);
 
             // Notify IsConnected on connect. Core sets Status=Connected inside CreateCoreDevice/
             // InitializeAsync — the first (and possibly only) transition can fire before the
@@ -2061,24 +2079,25 @@ public abstract partial class AbstractStreamingDevice : ObservableObject, IStrea
         return $"{channel.Type}:{channel.ChannelNumber}";
     }
 
+    /// <summary>
+    /// Copies Core's device description onto this wrapper's <see cref="Metadata"/> and raises the
+    /// bindings that read through it.
+    /// </summary>
+    /// <remarks>
+    /// The copy itself is <see cref="DeviceMetadata.CopyFrom"/> — Core's own, because a field-by-
+    /// field copy written here cannot stay correct. Two of the fields
+    /// (<c>CapabilityDocument</c> and the board the capabilities were derived from) have no public
+    /// setter, so an external copy cannot reach them at all; and the hand-written one this replaces
+    /// had already fallen behind on three more it could reach
+    /// (<see cref="DeviceCapabilities.HasWincWifiModule"/>, <c>FriendlyName</c> and <c>Health</c>),
+    /// each of which was silently dropped on every hydrate.
+    /// </remarks>
     // @port: Daqifi.Desktop.Device.AbstractStreamingDevice.HydrateDeviceMetadata
     private void HydrateDeviceMetadata(DeviceMetadata coreMetadata)
     {
         ArgumentNullException.ThrowIfNull(coreMetadata);
 
-        Metadata.PartNumber = coreMetadata.PartNumber;
-        Metadata.SerialNumber = coreMetadata.SerialNumber;
-        Metadata.FirmwareVersion = coreMetadata.FirmwareVersion;
-        Metadata.HardwareRevision = coreMetadata.HardwareRevision;
-        Metadata.DeviceType = coreMetadata.DeviceType;
-        Metadata.Capabilities = CloneCapabilities(coreMetadata.Capabilities);
-        Metadata.IpAddress = coreMetadata.IpAddress;
-        Metadata.MacAddress = coreMetadata.MacAddress;
-        Metadata.Ssid = coreMetadata.Ssid;
-        Metadata.HostName = coreMetadata.HostName;
-        Metadata.DevicePort = coreMetadata.DevicePort;
-        Metadata.WifiSecurityMode = coreMetadata.WifiSecurityMode;
-        Metadata.WifiInfrastructureMode = coreMetadata.WifiInfrastructureMode;
+        Metadata.CopyFrom(coreMetadata);
 
         // DeviceType is an [ObservableProperty] and not backed by Metadata, so set it explicitly.
         DeviceType = Metadata.DeviceType;
@@ -2090,6 +2109,11 @@ public abstract partial class AbstractStreamingDevice : ObservableObject, IStrea
         OnPropertyChanged(nameof(IpAddress));
         OnPropertyChanged(nameof(MacAddress));
         OnPropertyChanged(nameof(DisplayIdentifier));
+
+        // HasWincWifiModule reads Metadata.Capabilities, which is replaced above. DeviceType's
+        // generated setter also notifies it, but only when the board's *value* changes — a
+        // re-derived capability set on an unchanged board would otherwise go unannounced.
+        OnPropertyChanged(nameof(HasWincWifiModule));
 
         if (!string.IsNullOrWhiteSpace(Metadata.Ssid))
         {
@@ -2105,22 +2129,6 @@ public abstract partial class AbstractStreamingDevice : ObservableObject, IStrea
         }
 
         AppLogger.Information($"Detected device type: {DeviceType} from part number: {Metadata.PartNumber}");
-    }
-
-    // @port: Daqifi.Desktop.Device.AbstractStreamingDevice.CloneCapabilities
-    private static DeviceCapabilities CloneCapabilities(DeviceCapabilities capabilities)
-    {
-        return new DeviceCapabilities
-        {
-            SupportsStreaming = capabilities.SupportsStreaming,
-            HasSdCard = capabilities.HasSdCard,
-            HasWiFi = capabilities.HasWiFi,
-            HasUsb = capabilities.HasUsb,
-            AnalogInputChannels = capabilities.AnalogInputChannels,
-            AnalogOutputChannels = capabilities.AnalogOutputChannels,
-            DigitalChannels = capabilities.DigitalChannels,
-            MaxSamplingRate = capabilities.MaxSamplingRate
-        };
     }
 
     #endregion

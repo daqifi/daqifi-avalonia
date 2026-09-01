@@ -91,10 +91,10 @@ public interface IStreamingDevice : IDevice
     DeviceType DeviceType { get; }
 
     /// <summary>
-    /// Gets whether this device has a separately-flashable WINC1500 WiFi module — i.e. it is
-    /// part of the Nyquist family. ESP32-based and unrecognized devices integrate WiFi into the
-    /// SoC and have no WINC firmware to query or flash, so the WiFi-firmware check is skipped
-    /// for them.
+    /// Gets whether this device has a separately-flashable WINC1500 WiFi module, as reported by
+    /// Core's device capabilities rather than inferred from <see cref="DeviceType"/> here.
+    /// ESP32-based and unrecognized devices integrate WiFi into the SoC and have no WINC firmware
+    /// to query or flash, so the WiFi-firmware check is skipped for them.
     /// </summary>
     // @port: Daqifi.Desktop.Device.IStreamingDevice.HasWincWifiModule
     bool HasWincWifiModule { get; }
