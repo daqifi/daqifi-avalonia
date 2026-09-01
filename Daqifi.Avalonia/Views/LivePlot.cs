@@ -51,18 +51,20 @@ public sealed class LivePlot : Control
     public IReadOnlyList<ChannelSeries>? Series { get; set; }
 
     /// <summary>
-    /// Points appended to the plot — a live "is data flowing?" readout.
+    /// Samples acquired since streaming started, summed over every streamed channel.
     /// </summary>
     /// <remarks>
-    /// This is NOT the number of samples acquired, and the label says so. The view-model appends
-    /// at most one point per channel per render tick (20 Hz), so at 16 channels / 100 Hz the
-    /// device delivers ~1,600 samples/s while this counts ~320 — about a fifth. Calling it
-    /// "samples" on a data-acquisition app implied an acquisition total it was never measuring.
+    /// Set from <c>MobileShellViewModel.TotalSamples</c>, which counts every sample the device
+    /// delivers at the point the streaming frame is parsed. Until #120 it was incremented by the
+    /// 20 Hz render poll instead, so at 16 channels / 100 Hz it showed ~320/s against the ~1,600
+    /// the device was actually producing — a fifth of the truth, on a label that says "samples".
     /// <para>
-    /// Recorded data is unaffected: logging runs off the per-frame device message
-    /// (AbstractStreamingDevice.DispatchDeviceMessage), not off this poll, so a CSV export holds
-    /// every sample. Only the live view is decimated. Counting the real total, and min/max
-    /// decimation so transients survive, are tracked in #120.
+    /// It has never described what is DRAWN. The poll still appends at most one point per channel
+    /// per tick, so the trace remains a 20 Hz decimation of the stream and a spike shorter than
+    /// 50 ms is still invisible; min/max decimation is the fix for that and belongs with the rest
+    /// of the render-path work in #122. Recorded data was never affected either way: logging runs
+    /// off the per-frame device message (AbstractStreamingDevice.DispatchDeviceMessage), so a CSV
+    /// export has always held every sample.
     /// </para>
     /// </remarks>
     public long SampleCount { get; set; }
@@ -128,14 +130,16 @@ public sealed class LivePlot : Control
         // trace crosses it — at 16 channels that is most of the time (#117). The plate is darker
         // than the plot fill and nearly opaque so any trace colour still reads against it.
 
-        // Header: points plotted — the definitive "is data flowing?" readout. Deliberately not
-        // "samples": see the SampleCount remarks. The plot shows a 20 Hz decimation of the stream.
+        // Header: samples acquired — every sample the device has delivered, not the subset this
+        // control drew (see the SampleCount remarks, and #120). "acquired" is spelled out because
+        // the trace beneath it is still decimated, and a bare "samples" over a decimated plot is
+        // what made the old figure so easy to misread.
         var header = new FormattedText(
-            $"{SampleCount:N0} points plotted", CultureInfo.CurrentCulture,
+            $"{SampleCount:N0} samples acquired", CultureInfo.CurrentCulture,
             FlowDirection.LeftToRight, Typeface.Default, 13,
             HeaderText);
         // Clamp to the control. Both plates are sized from measured text, so a long enough label
-        // — and "points plotted" is longer than the "samples" it replaced — would paint past the
+        // — and "samples acquired" is the longest this header has carried — would paint past the
         // right edge on a narrow layout. Nothing local sets ClipToBounds, so it would escape the
         // plot region rather than being cut off.
         ctx.FillRectangle(
