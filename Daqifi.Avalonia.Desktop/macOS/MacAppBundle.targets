@@ -64,14 +64,16 @@
          generated Info.plist. The executable inside keeps its assembly name; the two do not
          have to match.
 
-         NOT the name macOS shows in the menu bar and the Dock — that is Application.Name,
-         set in Daqifi.Avalonia/App.axaml, which the Avalonia backend pushes into
-         NSApplication at startup where it wins over CFBundleName. Changing this property
-         alone renames the bundle in Finder but not the running app; keep the two in step.
+         It is NOT, on its own, the name macOS shows in the menu bar and the Dock — that is
+         Application.Name, set in Daqifi.Avalonia/App.axaml, which the Avalonia backend
+         pushes into NSApplication at startup where it wins over CFBundleName. A bundle
+         installed as one name and running as another is worse than either, so the two are
+         not merely documented as coupled: the target asserts they agree and fails the
+         publish if they do not. That gate also catches the drift in the other direction —
+         editing Application.Name without renaming the bundle.
 
-         Validated below rather than trusted: it is a command-line-overridable property that
-         ends up as a path fragment which this target recursively deletes, and as text
-         written into an XML document. -->
+         Validated below rather than trusted: it ends up as a path fragment which this
+         target recursively deletes, and as text written into an XML document. -->
     <DaqifiMacBundleName Condition="'$(DaqifiMacBundleName)' == ''">DAQiFi</DaqifiMacBundleName>
 
     <!-- CFBundleVersion — the macOS build number, which is a different thing from the
@@ -110,6 +112,28 @@
          substituted into, and the ';' that WriteLinesToFile reads as an item separator. -->
     <Error Condition="!$([System.Text.RegularExpressions.Regex]::IsMatch('$(DaqifiMacBundleName)', '^[A-Za-z0-9][A-Za-z0-9 ._-]*$'))"
            Text="DaqifiMacBundleName must be a plain bundle name (letters, digits, space, dot, underscore, hyphen; starting with a letter or digit). It is used as a directory name that this target deletes and rebuilds, and as text in Info.plist. Got: '$(DaqifiMacBundleName)'" />
+
+    <!-- macOS reads the app's identity from two layers that this repo keeps in different
+         files: the bundle (Info.plist, generated here) and the running process
+         (Application.Name, which Avalonia pushes into NSApplication and which wins over
+         CFBundleName). Nothing in MSBuild can set the second — it is XAML compiled into the
+         shared library that all three heads link — so instead of letting them drift, the
+         publish asserts they already agree. Text match rather than XAML parsing: an
+         attribute is what is being checked, the file is ours, and a parser here would be
+         more machinery than the invariant is worth. -->
+    <PropertyGroup>
+      <_DaqifiAppAxamlPath>$([MSBuild]::NormalizePath('$(MSBuildThisFileDirectory)', '..', '..', 'Daqifi.Avalonia', 'App.axaml'))</_DaqifiAppAxamlPath>
+    </PropertyGroup>
+
+    <Error Condition="!Exists('$(_DaqifiAppAxamlPath)')"
+           Text="macOS bundling cannot find the shared application markup at '$(_DaqifiAppAxamlPath)'. It reads Application.Name from there to check it against the bundle name; update this path if the shared project moved." />
+
+    <PropertyGroup>
+      <_DaqifiAppAxamlText>$([System.IO.File]::ReadAllText('$(_DaqifiAppAxamlPath)'))</_DaqifiAppAxamlText>
+    </PropertyGroup>
+
+    <Error Condition="!$(_DaqifiAppAxamlText.Contains('Name=&quot;$(DaqifiMacBundleName)&quot;'))"
+           Text="macOS identity would be split: the bundle would install as '$(DaqifiMacBundleName)' but run under a different name, because Daqifi.Avalonia/App.axaml does not set Name=&quot;$(DaqifiMacBundleName)&quot; on Application. Avalonia pushes Application.Name into NSApplication at startup and it overrides CFBundleName, so change both or neither." />
 
     <PropertyGroup>
       <!-- Beside the publish/ directory, under the normal per-RID output path, so the path
