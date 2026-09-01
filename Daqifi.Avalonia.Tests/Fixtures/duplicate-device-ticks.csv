@@ -1,0 +1,10 @@
+# Device: Nyquist 1
+# Serial Number: 7E2815916200E898
+# Timestamp Tick Rate: 1000 Hz
+ain0_ts,ain0_val
+41250,1024
+41250,1031
+41250,1027
+41251,1030
+41251,1022
+41251,1029
