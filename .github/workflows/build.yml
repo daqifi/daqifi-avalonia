@@ -158,10 +158,11 @@ jobs:
       # indefinitely. Nothing in this repo could see that class of difference before.
       #
       # #106 is what it cost. The vendored project's key sat as `Oxyplot.Avalonia` in
-      # five lock files while a macOS restore derived `oxyplot.avalonia`, so every Mac
-      # contributor who ran --force-evaluate — which the error text above tells them to
-      # run, and which .github/scripts/refresh_lock_files.sh runs on every project — got
-      # a one-line diff out of an untouched tree and had to know to throw it away.
+      # four of the five lock files that carry it, while a macOS restore derived
+      # `oxyplot.avalonia`. So every Mac contributor who ran --force-evaluate — which the
+      # error text above tells them to run, and which .github/scripts/refresh_lock_files.sh
+      # runs on every project — got a one-line diff out of an untouched tree and had to
+      # know to throw it away.
       #
       # The cause was a case-only mismatch between the vendored project's PackageId and
       # its project name, which macOS and Linux resolved differently; removing it is the
