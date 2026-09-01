@@ -554,6 +554,36 @@ public partial class ConnectionManager : ObservableObject
             && string.Equals(updating.DeviceSerialNo, device.DeviceSerialNo, StringComparison.OrdinalIgnoreCase);
     }
 
+    /// <summary>
+    /// Marshals a UI-state change onto the UI thread from a watcher callback, without letting a
+    /// dispatcher that is shutting down escape back into the caller.
+    /// </summary>
+    /// <remarks>
+    /// <see cref="Dispatcher.Post"/> can throw once the dispatcher is going away, and this runs on
+    /// the watcher's own thread. On Windows that thread belongs to WMI, which invokes subscribers
+    /// with no protective catch, so an escaping exception would abort the removal before the worker
+    /// that performs it is even created. Same reasoning, and the same shape, as
+    /// <c>BootloaderWatcher</c>'s UI marshal: if the dispatcher is gone the update is simply
+    /// dropped, which is the right outcome at shutdown.
+    /// </remarks>
+    private static void PostToUiThread(Action action)
+    {
+        if (Dispatcher.UIThread.CheckAccess())
+        {
+            action();
+            return;
+        }
+
+        try
+        {
+            Dispatcher.UIThread.Post(action);
+        }
+        catch (Exception)
+        {
+            // Dispatcher unavailable / shutting down — drop the UI update.
+        }
+    }
+
     // @port: Daqifi.Desktop.ConnectionManager.CheckIfSerialDeviceWasRemoved
     private void CheckIfSerialDeviceWasRemoved()
     {
@@ -564,8 +594,9 @@ public partial class ConnectionManager : ObservableObject
         // straight back into the watcher, which would swallow the removal before the worker below is
         // even started. Post rather than Invoke: the reset and the notification raised at the end of
         // this method then run in the order they were queued, and a host with no dispatcher pumping
-        // (a headless harness) cannot block the watcher thread.
-        Dispatcher.UIThread.Post(() => NotifyConnection = false);
+        // (a headless harness) cannot block the watcher thread. PostToUiThread also keeps a
+        // shutting-down dispatcher from throwing back into the watcher.
+        PostToUiThread(() => NotifyConnection = false);
 
         var bw = new BackgroundWorker();
         bw.DoWork += delegate
