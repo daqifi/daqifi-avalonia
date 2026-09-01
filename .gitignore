@@ -5,6 +5,8 @@ obj/
 *.suo
 .vs/
 artifacts/
+# `dotnet test --logger trx` and every IDE test runner drop results here.
+TestResults/
 
 # portomatic local state (map/ and plans/ ARE committed)
 .portomatic/project.yaml

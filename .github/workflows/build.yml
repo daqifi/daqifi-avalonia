@@ -107,6 +107,7 @@ jobs:
         run: |
           dotnet restore Daqifi.Avalonia/Daqifi.Avalonia.csproj
           dotnet restore Daqifi.Avalonia.Desktop/Daqifi.Avalonia.Desktop.csproj
+          dotnet restore Daqifi.Avalonia.Tests/Daqifi.Avalonia.Tests.csproj
           dotnet restore tools/parity-audit/AvaloniaCapture/AvaloniaCapture.csproj
 
       # Locked mode fails a restore whose lock file has DRIFTED, but a lock file can also be
@@ -139,6 +140,45 @@ jobs:
             -c Release --no-restore
           dotnet build tools/parity-audit/AvaloniaCapture/AvaloniaCapture.csproj \
             -c Release --no-restore
+
+      # The unit suite. `dotnet test` builds Daqifi.Avalonia.Tests itself, so this is
+      # also that project's compile gate — there is no separate build line for it above.
+      #
+      # It runs HERE, on ubuntu, and not on the macos job; the note in that job says what
+      # would move it.
+      #
+      # THE EXIT CODE ALONE IS NOT TRUSTED, for the same reason the scripts job counts its
+      # self-tests before running them. The characteristic failure of a test project is not
+      # a failing test, it is a suite that DISCOVERS NOTHING: drop the runner package, let
+      # the adapter stop matching the target framework, or exclude the test file from
+      # compilation, and the run reports success having asserted nothing at all. That reads
+      # as coverage from the outside and is worse than having no suite, because it is
+      # believed. So the TRX counters are read back and a total of zero fails the job.
+      - name: Test
+        run: |
+          set -euo pipefail
+          dotnet test Daqifi.Avalonia.Tests/Daqifi.Avalonia.Tests.csproj \
+            -c Release --no-restore \
+            --logger "trx;LogFileName=results.trx" \
+            --results-directory "${RUNNER_TEMP}/testresults"
+          python3 - "${RUNNER_TEMP}/testresults/results.trx" <<'PY'
+          import sys, xml.etree.ElementTree as ET
+
+          ns = {"t": "http://microsoft.com/schemas/VisualStudio/TeamTest/2010"}
+          counters = ET.parse(sys.argv[1]).getroot().find("t:ResultSummary/t:Counters", ns)
+          if counters is None:
+              print("::error::the TRX has no ResultSummary/Counters element, so the run "
+                    "cannot be verified. The logger or its schema has changed.")
+              raise SystemExit(1)
+          total = int(counters.get("total", "0"))
+          passed = int(counters.get("passed", "0"))
+          if total == 0:
+              print("::error::the test run discovered ZERO tests and exited 0 because "
+                    "there was nothing to fail. Check that xunit.runner.visualstudio is "
+                    "still referenced and still targets this framework.")
+              raise SystemExit(1)
+          print(f"{passed}/{total} tests passed")
+          PY
 
       - name: Upload dependency graphs
         uses: actions/upload-artifact@v4
@@ -173,10 +213,16 @@ jobs:
     #   * osx-x64. The head declares it; nobody builds or ships it. macos-latest is
     #     Apple silicon, and a second RID would double a 10x-billed job for a target
     #     with no users.
-    #   * Running the app, or a test suite. The macOS QA list (RUNBOOK §1.2) is a
-    #     human checklist, and #88's "should it run the unit suite" has an awkward
-    #     answer: there is no test project in this repo to run. When one exists, it
-    #     belongs here.
+    #   * Running the app. The macOS QA list (RUNBOOK §1.2) is a human checklist.
+    #   * The unit suite. #88 asked whether this job should run it and the honest
+    #     answer then was that no test project existed; one does now, and the ubuntu
+    #     `desktop` job runs it. It is deliberately NOT repeated here. Every test in
+    #     Daqifi.Avalonia.Tests today is host-independent arithmetic over OxyPlot
+    #     DataPoints, so a second run on a 10x-billed runner would assert the same
+    #     thing twice and buy nothing. The trigger to move it is concrete rather than
+    #     a matter of taste: the first test whose VERDICT can differ by host — a path
+    #     separator, a native asset, a culture or filesystem-case assumption — is the
+    #     one that belongs here, and #88's separator bug is exactly that shape.
     #   * tools/parity-audit/AvaloniaCapture. Pinned to win-x64 and already
     #     cross-built by the `desktop` job; compiling a Windows tool on a macOS
     #     runner buys nothing.
