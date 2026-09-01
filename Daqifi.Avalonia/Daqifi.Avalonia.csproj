@@ -43,25 +43,21 @@
 	</PropertyGroup>
 
 	<ItemGroup>
-		<!-- Upstream ships images as WPF Resource; Avalonia loads them via avares:// URIs -->
-		<AvaloniaResource Include="Daqifi.Desktop\Images\**" />
-	</ItemGroup>
-
-	<ItemGroup>
-		<!-- The unit-test project only. Some connect-path logic is deliberately internal — it is
-		     wiring inside the Connect() template, not an extension point transports may call — but
-		     it still needs covering: AbstractStreamingDevice.AdoptDeviceChannelSet and the
-		     IsConnectionFatal / IsTransportDisconnectedError classifiers decide whether a
-		     connection is reported as successful. Widening them to public or protected to make
-		     them testable would be a worse trade than this line. -->
+		<!-- The test project reaches internals that are deliberately not part of any public
+		     surface: LoggingManager's test-only constructor, which takes the context factory
+		     instead of resolving it from App.ServiceProvider (there is no App in a test process),
+		     and AbstractStreamingDevice.AdoptDeviceChannelSet plus the IsConnectionFatal /
+		     IsTransportDisconnectedError classifiers, which are wiring inside the Connect()
+		     template rather than extension points transports may call, yet decide whether a
+		     connection is reported as successful. Widening any of them to public or protected to
+		     make them testable would be a worse trade than this line. This is the only assembly
+		     that can see internals here, and it is never shipped. -->
 		<InternalsVisibleTo Include="Daqifi.Avalonia.Tests" />
 	</ItemGroup>
 
 	<ItemGroup>
-		<!-- Mirrors upstream Daqifi.Desktop.csproj's Compile Remove list — legacy files kept in-tree but never compiled -->
-		<Compile Remove="Daqifi.Desktop\ViewModels\PlottingViewModel.cs" />
-		<Compile Remove="Daqifi.Desktop\ViewModels\PlotViewModel.cs" />
-		<Compile Remove="Daqifi.Desktop\ViewModels\ViewModelLocator.cs" />
+		<!-- Upstream ships images as WPF Resource; Avalonia loads them via avares:// URIs -->
+		<AvaloniaResource Include="Daqifi.Desktop\Images\**" />
 	</ItemGroup>
 
 	<ItemGroup>

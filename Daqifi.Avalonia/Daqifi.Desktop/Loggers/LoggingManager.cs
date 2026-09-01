@@ -227,16 +227,43 @@ public partial class LoggingManager : ObservableObject
     }
 
     #region Singleton Constructor / Initalization
-    private static readonly LoggingManager instance = new();
+    // Lazy rather than an eager static field initializer -- the same shape upstream uses. The
+    // private constructor below resolves its dependency off App.ServiceProvider, and an eager
+    // initializer runs that resolve the first time ANY static member of this type is touched,
+    // which is not necessarily a moment the host has finished composing. Deferring it to the
+    // first real Instance read keeps the app behaviour identical while letting the test-only
+    // constructor create an instance without an App at all. Lazy<T>'s default mode is
+    // ExecutionAndPublication, so the one-instance guarantee is unchanged.
+    private static readonly Lazy<LoggingManager> _instance = new(() => new LoggingManager());
 
+    // Chains to the constructor below rather than repeating its body. That also keeps this file's
+    // warning count where it was: CS8618 is reported once per constructor that does NOT chain, so
+    // adding a second independent one would have duplicated the two _session/_selectedProfile
+    // warnings this type already carries.
     private LoggingManager()
+        : this(App.ServiceProvider.GetRequiredService<IDbContextFactory<LoggingContext>>())
+    {
+    }
+
+    /// <summary>
+    /// Takes the context factory directly instead of resolving it from <c>App.ServiceProvider</c>,
+    /// which does not exist outside the app host, so the channel subscription contract can be
+    /// exercised without standing up an application.
+    /// </summary>
+    /// <remarks>
+    /// Mirrors upstream's <c>internal LoggingManager(IDbContextFactory&lt;LoggingContext&gt;)</c>
+    /// (daqifi-desktop <c>Daqifi.Desktop/Loggers/LoggingManager.cs</c>). Visible to
+    /// <c>Daqifi.Avalonia.Tests</c> only, via InternalsVisibleTo in Daqifi.Avalonia.csproj.
+    /// </remarks>
+    /// <param name="loggingContext">Factory used to open <see cref="LoggingContext"/> sessions.</param>
+    internal LoggingManager(IDbContextFactory<LoggingContext> loggingContext)
     {
         Loggers = [];
         // _subscribedChannels starts empty via its field initializer; it has no setter (copy-on-write).
-        _loggingContext = App.ServiceProvider.GetRequiredService<IDbContextFactory<LoggingContext>>();
+        _loggingContext = loggingContext;
     }
 
-    public static LoggingManager Instance => instance;
+    public static LoggingManager Instance => _instance.Value;
 
     #endregion
 
@@ -533,8 +560,14 @@ public partial class LoggingManager : ObservableObject
 
             // Copy-on-write -- see SubscribedChannels' remarks. AsReadOnly so the published snapshot
             // cannot be downcast to List and mutated outside the lock.
+            //
+            // Remove by reference, not by value. The lookup above already resolved the exact
+            // instance to drop, and List.Remove would re-match it with the default comparer --
+            // which lands on AbstractChannel.Equals, and that compares Name only. Two devices
+            // both expose "AI0", so a value-based removal drops whichever same-named channel
+            // sits earliest in the list rather than the one that was just deactivated.
             var updated = new List<IChannel>(current);
-            updated.Remove(subscribedChannel);
+            updated.RemoveAll(x => ReferenceEquals(x, subscribedChannel));
             Volatile.Write(ref _subscribedChannels, updated.AsReadOnly());
         }
 
