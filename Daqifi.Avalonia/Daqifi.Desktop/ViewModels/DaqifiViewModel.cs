@@ -2263,6 +2263,29 @@ public partial class DaqifiViewModel : ObservableObject, IFirmwareUpdateHost, IL
         catch (FirmwareUpdateException ex)
         {
             HasErrorOccured = true;
+
+            // Same carve-out as the combined auto-update path (FirmwareUpdateCoordinator): a
+            // post-flash reconnect timeout means the WINC image was written and its success marker
+            // confirmed, and only the device's serial re-enumeration ran out of time. That is a
+            // device/environmental condition a power-cycle finishes — Warning (no Sentry) and an
+            // "installed, power-cycle" message, not a scary flash-failure dialog telling the user to
+            // re-flash firmware that is already on the board (upstream issue #776).
+            if (FirmwareFailureClassifier.IsPostFlashReconnectTimeout(ex))
+            {
+                _appLogger.AddBreadcrumb(
+                    "firmware",
+                    $"WiFi firmware installed but device did not reconnect: {ex.FailedState}",
+                    Common.Loggers.BreadcrumbLevel.Warning);
+                _appLogger.Warning(
+                    ex,
+                    "WiFi firmware was installed and verified, but the device did not automatically " +
+                    "return to normal mode after the flash. This is a device/environmental condition " +
+                    "(power-cycle recovers it), not an app failure.");
+
+                ShowWifiFirmwareInstalledPowerCycleDialog(ex.FailedState);
+                return;
+            }
+
             _appLogger.Error(ex, $"WiFi firmware flash failed during '{ex.Operation}' ({ex.FailedState}).");
             _appLogger.AddBreadcrumb("firmware", $"WiFi firmware update failed: {ex.FailedState}", Common.Loggers.BreadcrumbLevel.Error);
             ShowWifiFlashFailedDialog();
@@ -2382,6 +2405,36 @@ public partial class DaqifiViewModel : ObservableObject, IFirmwareUpdateHost, IL
             var errorDialogViewModel = new ErrorDialogViewModel(
                 "WiFi firmware flash failed. Disconnect the device, ensure power is cycled, and try again.");
             _ = _dialogService.ShowDialogAsync<ErrorDialog>(this, errorDialogViewModel);
+        }
+
+        if (Dispatcher.UIThread.CheckAccess())
+        {
+            ShowDialog();
+            return;
+        }
+
+        Dispatcher.UIThread.Invoke(ShowDialog);
+    }
+
+    /// <summary>
+    /// User-facing message for a WiFi flash that completed but whose post-flash serial reconnect timed
+    /// out. The image is on the module — only the device's return to normal mode is outstanding — so
+    /// the user is told it installed and asked to power-cycle, not that the flash failed (upstream
+    /// issue #776). Presented through the same dialog as a failure because the user still has an
+    /// action to take; the wording, and the Warning-level logging behind it, are what differ.
+    /// </summary>
+    /// <param name="failedState">
+    /// The state Core failed in, which selects the wording. This path only runs on a WiFi-module
+    /// flash, so it is <c>ReconnectingAfterFlash</c> in practice.
+    /// </param>
+    // @port: Daqifi.Desktop.ViewModels.DaqifiViewModel.ShowWifiFirmwareInstalledPowerCycleDialog
+    private void ShowWifiFirmwareInstalledPowerCycleDialog(FirmwareUpdateState failedState)
+    {
+        void ShowDialog()
+        {
+            var dialogViewModel = new ErrorDialogViewModel(
+                FirmwareFailureClassifier.BuildInstalledButNotReconnectedMessage(failedState));
+            _ = _dialogService.ShowDialogAsync<ErrorDialog>(this, dialogViewModel);
         }
 
         if (Dispatcher.UIThread.CheckAccess())
