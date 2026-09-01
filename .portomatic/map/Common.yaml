@@ -10,6 +10,12 @@ files:
   notes: ' (scaffolded)'
   rationale: null
   last_synced_sha: null
+- upstream: Daqifi.Desktop.Common/Loggers/AppLogErrorException.cs
+  downstream: Daqifi.Avalonia/Daqifi.Desktop.Common/Loggers/AppLogErrorException.cs
+  relation: one_to_one
+  notes: ' (hand-ported; the scaffold omitted it and Error(string) captured a bare Exception)'
+  rationale: null
+  last_synced_sha: null
 - upstream: Daqifi.Desktop.Common/Loggers/AppLogger.cs
   downstream: Daqifi.Avalonia/Daqifi.Desktop.Common/Loggers/AppLogger.cs
   relation: subset
@@ -80,6 +86,37 @@ symbols:
     last_synced_sha: null
   - upstream: ComputeIsElevated()
     downstream: ComputeIsElevated()
+    relation: one_to_one
+    notes: null
+    backlog_id: null
+    last_synced_sha: null
+- upstream:
+    kind: class
+    qualified: Daqifi.Desktop.Common.Loggers.AppLogErrorException
+    file: Daqifi.Desktop.Common/Loggers/AppLogErrorException.cs
+  downstream:
+    kind: class
+    qualified: Daqifi.Desktop.Common.Loggers.AppLogErrorException
+    file: Daqifi.Avalonia/Daqifi.Desktop.Common/Loggers/AppLogErrorException.cs
+  relation: one_to_one
+  last_synced_sha: null
+  notes: null
+  rationale: null
+  members:
+  - upstream: AppLogErrorException()
+    downstream: AppLogErrorException()
+    relation: one_to_one
+    notes: null
+    backlog_id: null
+    last_synced_sha: null
+  - upstream: AppLogErrorException(string message)
+    downstream: AppLogErrorException(string message)
+    relation: one_to_one
+    notes: null
+    backlog_id: null
+    last_synced_sha: null
+  - upstream: AppLogErrorException(string message, Exception innerException)
+    downstream: AppLogErrorException(string message, Exception innerException)
     relation: one_to_one
     notes: null
     backlog_id: null
@@ -402,6 +439,23 @@ divergences:
     assembly instead, via the downstream-only Daqifi.Desktop.Common.AppVersion, and leaves
     options.Release unset rather than sending a placeholder when it cannot be resolved. See #126.
   accepted_at: '2026-08-31'
+- id: DIV-COM-002
+  upstream_path: Daqifi.Desktop.Common/Loggers/AppLogger.cs
+  downstream_path: Daqifi.Avalonia/Daqifi.Desktop.Common/Loggers/AppLogger.cs
+  upstream_symbol: Daqifi.Desktop.Common.Loggers.AppLogger
+  downstream_symbol: Daqifi.Desktop.Common.Loggers.AppLogger
+  kind: behavioral
+  rationale: >
+    Two additions upstream does not have, both made when this port moved onto its own Sentry
+    project (it had been sharing the WPF app's, with nothing distinguishing the two once events
+    arrived). First, options.Environment is set explicitly — "development" for a DEBUG build,
+    "production" otherwise, overridable via DAQIFI_SENTRY_ENVIRONMENT or SENTRY_ENVIRONMENT —
+    so a developer run, a CI run and a shipped store build do not share one issue stream.
+    Second, Warning and Error leave a Sentry breadcrumb in addition to their existing
+    behaviour, so a captured event carries the lead-up to it rather than only its own stack
+    trace; Information deliberately does not, to keep the bounded breadcrumb ring free for the
+    app's explicit AddBreadcrumb calls. Neither changes which events are captured.
+  accepted_at: '2026-09-01'
 backlog: []
 hal_pairs: []
 mechanisms: []
