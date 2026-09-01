@@ -112,12 +112,6 @@ files:
   notes: ' (scaffolded)'
   rationale: null
   last_synced_sha: null
-- upstream: Daqifi.Desktop/Converters/BoolToConnectionStatusConverter.cs
-  downstream: Daqifi.Avalonia/Daqifi.Desktop/Converters/BoolToConnectionStatusConverter.cs
-  relation: subset
-  notes: ' (scaffolded)'
-  rationale: null
-  last_synced_sha: null
 - upstream: Daqifi.Desktop/Converters/BoolToStatusColorConverter.cs
   downstream: Daqifi.Avalonia/Daqifi.Desktop/Converters/BoolToStatusColorConverter.cs
   relation: subset
@@ -132,12 +126,6 @@ files:
   last_synced_sha: null
 - upstream: Daqifi.Desktop/Converters/ConnectionTypeToColorConverter.cs
   downstream: Daqifi.Avalonia/Daqifi.Desktop/Converters/ConnectionTypeToColorConverter.cs
-  relation: subset
-  notes: ' (scaffolded)'
-  rationale: null
-  last_synced_sha: null
-- upstream: Daqifi.Desktop/Converters/ConnectionTypeToUsbConverter.cs
-  downstream: Daqifi.Avalonia/Daqifi.Desktop/Converters/ConnectionTypeToUsbConverter.cs
   relation: subset
   notes: ' (scaffolded)'
   rationale: null
@@ -862,18 +850,6 @@ files:
   notes: ' (scaffolded)'
   rationale: null
   last_synced_sha: null
-- upstream: Daqifi.Desktop/ViewModels/PlotViewModel.cs
-  downstream: Daqifi.Avalonia/Daqifi.Desktop/ViewModels/PlotViewModel.cs
-  relation: subset
-  notes: ' (scaffolded)'
-  rationale: null
-  last_synced_sha: null
-- upstream: Daqifi.Desktop/ViewModels/PlottingViewModel.cs
-  downstream: Daqifi.Avalonia/Daqifi.Desktop/ViewModels/PlottingViewModel.cs
-  relation: subset
-  notes: ' (scaffolded)'
-  rationale: null
-  last_synced_sha: null
 - upstream: Daqifi.Desktop/ViewModels/ProfilesPaneViewModel.cs
   downstream: Daqifi.Avalonia/Daqifi.Desktop/ViewModels/ProfilesPaneViewModel.cs
   relation: subset
@@ -888,12 +864,6 @@ files:
   last_synced_sha: null
 - upstream: Daqifi.Desktop/ViewModels/SuccessDialogViewModel.cs
   downstream: Daqifi.Avalonia/Daqifi.Desktop/ViewModels/SuccessDialogViewModel.cs
-  relation: subset
-  notes: ' (scaffolded)'
-  rationale: null
-  last_synced_sha: null
-- upstream: Daqifi.Desktop/ViewModels/ViewModelLocator.cs
-  downstream: Daqifi.Avalonia/Daqifi.Desktop/ViewModels/ViewModelLocator.cs
   relation: subset
   notes: ' (scaffolded)'
   rationale: null
@@ -4369,35 +4339,6 @@ symbols:
     last_synced_sha: null
 - upstream:
     kind: class
-    qualified: Daqifi.Desktop.Converters.BoolToConnectionStatusConverter
-    file: Daqifi.Desktop/Converters/BoolToConnectionStatusConverter.cs
-  downstream:
-    kind: class
-    qualified: Daqifi.Desktop.Converters.BoolToConnectionStatusConverter
-    file: Daqifi.Avalonia/Daqifi.Desktop/Converters/BoolToConnectionStatusConverter.cs
-  relation: one_to_one
-  last_synced_sha: bbb34ffca7bbc5226469270a8732532708a2f697
-  notes: null
-  rationale: null
-  members:
-  - upstream: Convert(object value, Type targetType, object parameter, CultureInfo
-      culture)
-    downstream: Convert(object value, Type targetType, object parameter, CultureInfo
-      culture)
-    relation: one_to_one
-    notes: null
-    backlog_id: null
-    last_synced_sha: null
-  - upstream: ConvertBack(object value, Type targetType, object parameter, CultureInfo
-      culture)
-    downstream: ConvertBack(object value, Type targetType, object parameter, CultureInfo
-      culture)
-    relation: one_to_one
-    notes: null
-    backlog_id: null
-    last_synced_sha: null
-- upstream:
-    kind: class
     qualified: Daqifi.Desktop.Converters.BoolToStatusColorConverter
     file: Daqifi.Desktop/Converters/BoolToStatusColorConverter.cs
   downstream:
@@ -4461,35 +4402,6 @@ symbols:
     kind: class
     qualified: Daqifi.Desktop.Converters.ConnectionTypeToColorConverter
     file: Daqifi.Avalonia/Daqifi.Desktop/Converters/ConnectionTypeToColorConverter.cs
-  relation: one_to_one
-  last_synced_sha: bbb34ffca7bbc5226469270a8732532708a2f697
-  notes: null
-  rationale: null
-  members:
-  - upstream: Convert(object value, Type targetType, object parameter, CultureInfo
-      culture)
-    downstream: Convert(object value, Type targetType, object parameter, CultureInfo
-      culture)
-    relation: one_to_one
-    notes: null
-    backlog_id: null
-    last_synced_sha: null
-  - upstream: ConvertBack(object value, Type targetType, object parameter, CultureInfo
-      culture)
-    downstream: ConvertBack(object value, Type targetType, object parameter, CultureInfo
-      culture)
-    relation: one_to_one
-    notes: null
-    backlog_id: null
-    last_synced_sha: null
-- upstream:
-    kind: class
-    qualified: Daqifi.Desktop.Converters.ConnectionTypeToUsbConverter
-    file: Daqifi.Desktop/Converters/ConnectionTypeToUsbConverter.cs
-  downstream:
-    kind: class
-    qualified: Daqifi.Desktop.Converters.ConnectionTypeToUsbConverter
-    file: Daqifi.Avalonia/Daqifi.Desktop/Converters/ConnectionTypeToUsbConverter.cs
   relation: one_to_one
   last_synced_sha: bbb34ffca7bbc5226469270a8732532708a2f697
   notes: null
@@ -17345,194 +17257,6 @@ symbols:
     last_synced_sha: null
 - upstream:
     kind: class
-    qualified: Daqifi.Desktop.ViewModels.PlotViewModel
-    file: Daqifi.Desktop/ViewModels/PlotViewModel.cs
-  downstream:
-    kind: class
-    qualified: Daqifi.Desktop.ViewModels.PlotViewModel
-    file: Daqifi.Avalonia/Daqifi.Desktop/ViewModels/PlotViewModel.cs
-  relation: one_to_one
-  last_synced_sha: bbb34ffca7bbc5226469270a8732532708a2f697
-  notes: null
-  rationale: null
-  members:
-  - upstream: EventLogger
-    downstream: EventLogger
-    relation: one_to_one
-    notes: null
-    backlog_id: null
-    last_synced_sha: null
-  - upstream: PlotModel { get; set; }
-    downstream: PlotModel { get; set; }
-    relation: one_to_one
-    notes: null
-    backlog_id: null
-    last_synced_sha: null
-  - upstream: SessionPoints
-    downstream: SessionPoints
-    relation: one_to_one
-    notes: null
-    backlog_id: null
-    last_synced_sha: null
-  - upstream: ClearPlot()
-    downstream: ClearPlot()
-    relation: one_to_one
-    notes: null
-    backlog_id: null
-    last_synced_sha: null
-  - upstream: AddChannel(string channelName, ChannelType type, string color)
-    downstream: AddChannel(string channelName, ChannelType type, string color)
-    relation: one_to_one
-    notes: null
-    backlog_id: null
-    last_synced_sha: null
-  - upstream: SavePlot(object o)
-    downstream: SavePlot(object o)
-    relation: one_to_one
-    notes: null
-    backlog_id: null
-    last_synced_sha: null
-- upstream:
-    kind: class
-    qualified: Daqifi.Desktop.ViewModels.PlottingViewModel
-    file: Daqifi.Desktop/ViewModels/PlottingViewModel.cs
-  downstream:
-    kind: class
-    qualified: Daqifi.Desktop.ViewModels.PlottingViewModel
-    file: Daqifi.Avalonia/Daqifi.Desktop/ViewModels/PlottingViewModel.cs
-  relation: one_to_one
-  last_synced_sha: bbb34ffca7bbc5226469270a8732532708a2f697
-  notes: null
-  rationale: null
-  members:
-  - upstream: EventLogger
-    downstream: EventLogger
-    relation: one_to_one
-    notes: null
-    backlog_id: null
-    last_synced_sha: null
-  - upstream: PlotModel { get; set; }
-    downstream: PlotModel { get; set; }
-    relation: one_to_one
-    notes: null
-    backlog_id: null
-    last_synced_sha: null
-  - upstream: ZoomOutXCommand { get; set; }
-    downstream: ZoomOutXCommand { get; set; }
-    relation: one_to_one
-    notes: null
-    backlog_id: null
-    last_synced_sha: null
-  - upstream: CanZoomOutX(object o)
-    downstream: CanZoomOutX(object o)
-    relation: one_to_one
-    notes: null
-    backlog_id: null
-    last_synced_sha: null
-  - upstream: ZoomInXCommand { get; set; }
-    downstream: ZoomInXCommand { get; set; }
-    relation: one_to_one
-    notes: null
-    backlog_id: null
-    last_synced_sha: null
-  - upstream: CanZoomInX(object o)
-    downstream: CanZoomInX(object o)
-    relation: one_to_one
-    notes: null
-    backlog_id: null
-    last_synced_sha: null
-  - upstream: ZoomOutYCommand { get; set; }
-    downstream: ZoomOutYCommand { get; set; }
-    relation: one_to_one
-    notes: null
-    backlog_id: null
-    last_synced_sha: null
-  - upstream: CanZoomOutY(object o)
-    downstream: CanZoomOutY(object o)
-    relation: one_to_one
-    notes: null
-    backlog_id: null
-    last_synced_sha: null
-  - upstream: ZoomInYCommand { get; set; }
-    downstream: ZoomInYCommand { get; set; }
-    relation: one_to_one
-    notes: null
-    backlog_id: null
-    last_synced_sha: null
-  - upstream: CanZoomInY(object o)
-    downstream: CanZoomInY(object o)
-    relation: one_to_one
-    notes: null
-    backlog_id: null
-    last_synced_sha: null
-  - upstream: SaveGraphCommand { get; set; }
-    downstream: SaveGraphCommand { get; set; }
-    relation: one_to_one
-    notes: null
-    backlog_id: null
-    last_synced_sha: null
-  - upstream: CanSaveGraph(object o)
-    downstream: CanSaveGraph(object o)
-    relation: one_to_one
-    notes: null
-    backlog_id: null
-    last_synced_sha: null
-  - upstream: ResetZoomCommand { get; set; }
-    downstream: ResetZoomCommand { get; set; }
-    relation: one_to_one
-    notes: null
-    backlog_id: null
-    last_synced_sha: null
-  - upstream: CanResetZoom(object o)
-    downstream: CanResetZoom(object o)
-    relation: one_to_one
-    notes: null
-    backlog_id: null
-    last_synced_sha: null
-  - upstream: PlottingViewModel()
-    downstream: null
-    relation: not_yet_ported
-    notes: null
-    backlog_id: null
-    last_synced_sha: null
-  - upstream: SaveGraph(object o)
-    downstream: SaveGraph(object o)
-    relation: one_to_one
-    notes: null
-    backlog_id: null
-    last_synced_sha: null
-  - upstream: ResetZoom(object o)
-    downstream: ResetZoom(object o)
-    relation: one_to_one
-    notes: null
-    backlog_id: null
-    last_synced_sha: null
-  - upstream: ZoomOutX(object o)
-    downstream: ZoomOutX(object o)
-    relation: one_to_one
-    notes: null
-    backlog_id: null
-    last_synced_sha: null
-  - upstream: ZoomInX(object o)
-    downstream: ZoomInX(object o)
-    relation: one_to_one
-    notes: null
-    backlog_id: null
-    last_synced_sha: null
-  - upstream: ZoomOutY(object o)
-    downstream: ZoomOutY(object o)
-    relation: one_to_one
-    notes: null
-    backlog_id: null
-    last_synced_sha: null
-  - upstream: ZoomInY(object o)
-    downstream: ZoomInY(object o)
-    relation: one_to_one
-    notes: null
-    backlog_id: null
-    last_synced_sha: null
-- upstream:
-    kind: class
     qualified: Daqifi.Desktop.ViewModels.ProfilesPaneViewModel
     file: Daqifi.Desktop/ViewModels/ProfilesPaneViewModel.cs
   downstream:
@@ -17919,37 +17643,6 @@ symbols:
     last_synced_sha: null
   - upstream: SuccessDialogViewModel(string successmessage)
     downstream: SuccessDialogViewModel(string successmessage)
-    relation: one_to_one
-    notes: null
-    backlog_id: null
-    last_synced_sha: null
-- upstream:
-    kind: class
-    qualified: Daqifi.Desktop.ViewModels.ViewModelLocator
-    file: Daqifi.Desktop/ViewModels/ViewModelLocator.cs
-  downstream:
-    kind: class
-    qualified: Daqifi.Desktop.ViewModels.ViewModelLocator
-    file: Daqifi.Avalonia/Daqifi.Desktop/ViewModels/ViewModelLocator.cs
-  relation: one_to_one
-  last_synced_sha: bbb34ffca7bbc5226469270a8732532708a2f697
-  notes: null
-  rationale: null
-  members:
-  - upstream: ViewModelLocator()
-    downstream: null
-    relation: not_yet_ported
-    notes: null
-    backlog_id: null
-    last_synced_sha: null
-  - upstream: DaqifiViewModel { get; }
-    downstream: DaqifiViewModel { get; set; }
-    relation: one_to_one
-    notes: null
-    backlog_id: null
-    last_synced_sha: null
-  - upstream: Cleanup()
-    downstream: Cleanup()
     relation: one_to_one
     notes: null
     backlog_id: null
