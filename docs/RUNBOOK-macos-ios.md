@@ -589,6 +589,84 @@ QA mirrors the Android list in
 finds devices, **tap-to-connect works**, stream + plot 16 ch @ 100 Hz renders,
 `i:Icon` glyphs render, TextBox placeholder shows.
 
+#### The interpreter is scoped to EF Core, and cannot yet be removed (#102)
+
+The head sets `MtouchInterpreter` to a list of five EF assemblies. It used to set
+`UseInterpreter=true`, which the .NET for iOS SDK treats as the exact same
+property set to `all` (`Xamarin.Shared.props`: *"Accept 'UseInterpreter' as an
+alternative for 'MtouchInterpreter'"*), i.e. **interpret the entire app**.
+
+What that cost, measured on this head with `dotnet build -c Release
+-r iossimulator-arm64` after deleting `bin/` and `obj/`:
+
+| `MtouchInterpreter` | app binary | `.app` | build |
+|---|---|---|---|
+| `all` (what `UseInterpreter=true` means) | 6.7 MB | 103 MB | ~10 s |
+| the five EF assemblies | 35.5 MB + 5.6 MB deduped generics | 136 MB | ~120 s |
+
+The 6.7 MB binary is the tell: under `all` there is essentially **no AOT code in
+the app at all** — Avalonia's render loop, OxyPlot and our stream handling were
+all running interpreted to keep one library working. Naming assemblies buys that
+back for everything unnamed, and costs ~33 MB of bundle. Take the trade knowingly
+if you ever change it.
+
+Two side effects of the same SDK property, worth knowing before you read a diff:
+
+- **Trimming is OFF on the simulator whenever the interpreter is enabled at all**
+  (`Xamarin.Shared.Sdk.Trimming.props` sets `_DefaultLinkMode=None` when
+  `MtouchInterpreter != ''`). Both settings above are in that state, so the
+  bundled `Avalonia.Base.dll` is byte-identical to the one in the NuGet cache.
+  This is also why the iOS head reports ~1 build warning rather than the ~1,240
+  `IL2xxx` trim warnings a no-interpreter build produces. A jump to four figures
+  in the iOS warning count means the interpreter got turned off, not that
+  something regressed.
+- Dedup of generic instances is enabled for any value **except** the literal
+  `all`, which is where `aot-instances.aotdata.arm64` comes from.
+
+**Removing the interpreter entirely is blocked, and it is not a small job.** Three
+aot-only walls, each only visible once the previous one is cleared. Measured in
+order on the iPhone 17 simulator:
+
+1. **`DbContext` construction.** `DbSetFinder` built a `ClrPropertySetter` for
+   every `DbSet` property that has a setter, via `Expression.Compile()`, and the
+   interpreted lambda needed a Reflection.Emit thunk →
+   `ExecutionEngineException ... while running in aot-only mode`. **Fixed**:
+   `LoggingContext`'s DbSets are now get-only (`=> Set<T>()`), which is the branch
+   in `FindSetsNonCached` that skips setter creation entirely.
+2. **Model building.** `InvalidOperationException: Model building is not supported
+   when publishing with NativeAOT. Use a compiled model.` Solvable —
+   `dotnet ef dbcontext optimize` was run, wired through `UseModel`, and confirmed
+   to create `DAQiFiDatabase.db` with all four migrations applied and no
+   interpreter. Two gotchas if you redo it: generate into namespace
+   `Daqifi.Desktop.Channel.CompiledModels`, because `Daqifi.Core.Channel` and
+   `Daqifi.Desktop.Channel` both contain a `DataSample` and the generator emits
+   unqualified names (a namespace nested under `Daqifi.Desktop.Channel` resolves
+   them from the enclosing namespace instead); and set the
+   `Microsoft.EntityFrameworkCore.Issue31751` runtimeconfig switch, because the
+   generated model's static constructor starts a thread and joins it, which
+   **deadlocks** under Mono AOT (class init runs at method entry there, so the new
+   thread waits on the initializer that is waiting on the thread).
+3. **Every query.** `InvalidOperationException: Query wasn't precompiled and
+   dynamic code isn't supported with NativeAOT.` This is the blocker. It needs
+   EF's experimental query precompilation, and that **fails on this codebase**:
+
+   ```
+   Encountered unknown identifier name '_session', which doesn't correspond to a
+   lambda parameter or captured variable
+       at CSharpToLinqTranslator.VisitIdentifierName
+   ```
+
+   EF's C#-to-LINQ translator cannot read queries that close over instance
+   fields, and the data layer — `SessionDataRepository`, `LoggingManager`,
+   `SdCardSessionImporter`, the exporters — is written that way throughout.
+   Clearing it means rewriting those queries against an experimental feature with
+   no test project here to catch a regression. Compiled model and switch were
+   therefore **reverted**; wall 2 is worthless while wall 3 stands.
+
+**Not verified on hardware.** All of the above is the simulator. The simulator
+runs the same aot-only Mono configuration — which is why the failures reproduce
+there at all — but it is not a device, and a provisioned device run is still owed.
+
 ---
 
 ## Two traps in the build files that waste an afternoon

@@ -55,12 +55,55 @@ public class LoggingContext : DbContext
         base.OnModelCreating(modelBuilder);
     }
 
+    // The three DbSet properties below are deliberately GET-ONLY (`=> Set<T>()`), not
+    // `{ get; set; }`. That keeps DbContext construction free of runtime code generation, so
+    // the iOS head no longer needs its OWN code interpreted to open a database (#102).
+    // Do not "tidy" it back to auto-properties.
+    //
+    // Why: DbContext's constructor calls DbSetInitializer.InitializeSets, which asks
+    // DbSetFinder for every DbSet<T> property on the context type. DbSetFinder builds a
+    // ClrPropertySetter for each one — but ONLY when the property HAS a setter:
+    //
+    //     select new DbSetProperty(p.Name, ..., (p.SetMethod == null) ? null : factory.Create(p))
+    //         — EF Core 10.0.10, DbSetFinder.FindSetsNonCached
+    //
+    // ClrPropertySetterFactory builds that setter with
+    // Expression.Lambda<Action<LoggingContext, IReadOnlyList<int>, DbSet<T>>>(...).Compile().
+    // Under aot-only mode the lambda itself falls back to the expression *interpreter*, which
+    // is fine — but handing the interpreted body back as a strongly typed delegate needs a
+    // thunk for that exact signature, and there is no precompiled one, so
+    // DelegateHelpers.CreateObjectArrayDelegateRefEmit reaches for Reflection.Emit and the
+    // runtime kills it:
+    //
+    //     System.ExecutionEngineException: Attempting to JIT compile method
+    //     '(wrapper dynamic-method) void object:Thunk1_LoggingContext_IReadOnlyList`1_DbSet`1
+    //      (...)' while running in aot-only mode
+    //
+    // That threw from DbContext's CONSTRUCTOR, so every single CreateDbContext() failed:
+    // App.InitializeMobile logged "Mobile database migration failed" and no DAQiFiDatabase.db
+    // was ever created, and the Logged Data pane showed "Couldn't load logged sessions."
+    //
+    // With no setter, DbSetFinder stores a null setter, DbSetInitializer skips the property,
+    // and the Reflection.Emit path is never reached. Each access resolves through the
+    // context's own set cache (DbContext.Set<T>() -> IDbSetCache.GetOrAddSet), so behaviour
+    // and cost are unchanged: the same cached DbSet instance an initialised auto-property
+    // would have held. DbSetFinder still *discovers* the properties, so the DbSet-name
+    // conventions (table naming, model discovery) are unaffected. In a build where the
+    // trimmer actually runs it also drops 20 IL2xxx warnings (1248 -> 1228, measured on the
+    // iOS head with the interpreter off), since three generated setters stop being roots.
+    //
+    // The iOS head DOES still interpret EF Core's own assemblies — its queries need more than
+    // this (see the MtouchInterpreter comment in Daqifi.Avalonia.iOS.csproj) — but this class
+    // is ours, and it no longer contributes a reason for that. Verified by reproducing the
+    // exception above on the iPhone 17 simulator with the interpreter off, then watching it
+    // go away with only this change.
+
     // @port: Daqifi.Desktop.Logger.LoggingContext.Sessions
-    public DbSet<LoggingSession> Sessions { get; set; }
+    public DbSet<LoggingSession> Sessions => Set<LoggingSession>();
 
     // @port: Daqifi.Desktop.Logger.LoggingContext.Samples
-    public DbSet<DataSample> Samples { get; set; }
+    public DbSet<DataSample> Samples => Set<DataSample>();
 
     // @port: Daqifi.Desktop.Logger.LoggingContext.SessionDeviceMetadata
-    public DbSet<SessionDeviceMetadata> SessionDeviceMetadata { get; set; }
+    public DbSet<SessionDeviceMetadata> SessionDeviceMetadata => Set<SessionDeviceMetadata>();
 }
