@@ -17,15 +17,22 @@
 		     the upstream ConfigurationManager lookup left Sentry inert on every head here).
 
 		     A DSN is not a secret: it is an ingest endpoint, embedded in every shipped client
-		     and extractable from any binary, which is why the Windows app already commits the
-		     same value in Daqifi.Desktop/App.config. It grants no read access to Sentry data —
+		     and extractable from any binary, which is why the Windows app likewise commits its
+		     own DSN in Daqifi.Desktop/App.config. It grants no read access to Sentry data —
 		     the only abuse is sending junk events, which Sentry's rate limits and inbound
-		     filters handle. Same project as the desktop app (org o4511134234640384) so mobile
-		     and desktop crashes land together.
+		     filters handle.
+
+		     A DIFFERENT Sentry project from the WPF app, deliberately — same org
+		     (o4511134234640384), separate project. The two shared one project until now, and
+		     nothing separated the events once they arrived: neither app sets Environment, both
+		     emit the same daqifi.* tag keys, both are on 3.3.0, and this port keeps upstream's
+		     Daqifi.Desktop.* namespaces, so stack frames from the two look alike and Sentry's
+		     grouping could fold a WPF issue and an Avalonia issue into one. Separate projects
+		     also separate quota, alert rules and release timelines.
 
 		     Override with -p:SentryDsn=<other> to point a build at a different project, or
 		     -p:SentryDsn= to build with reporting disabled. -->
-		<SentryDsn Condition="'$(SentryDsn)' == ''">https://ad05b308600c8274fe69c60264114e73@o4511134234640384.ingest.us.sentry.io/4511154254512128</SentryDsn>
+		<SentryDsn Condition="'$(SentryDsn)' == ''">https://aa43d7ab9071a9b60300a32b0acd07c2@o4511134234640384.ingest.us.sentry.io/4512011823218689</SentryDsn>
 		<!-- LibraryImport (keep_awake Windows backend) generates unsafe marshalling stubs -->
 		<AllowUnsafeBlocks>true</AllowUnsafeBlocks>
 		<AvaloniaUseCompiledBindingsByDefault>false</AvaloniaUseCompiledBindingsByDefault>
