@@ -94,6 +94,7 @@ public partial class MobileShellViewModel : ObservableObject, IDisposable
     // the teardown paths can be reached from a device property-change raised off the UI thread,
     // while the render poll re-arms from the UI thread.
     private readonly HashSet<IChannel> _countedChannels = new(ReferenceEqualityComparer.Instance);
+    private bool _countingSamples;
     private long _totalSamples;
 
     /// <summary>
@@ -388,6 +389,22 @@ public partial class MobileShellViewModel : ObservableObject, IDisposable
         Interlocked.Exchange(ref _totalSamples, 0);
         _samplesAtLastPoll = 0;
         _silentPolls = 0;
+        BeginCountingSamples();
+
+        // Deselecting a channel between two streams did not actually turn it off. Stopping the
+        // stream clears each channel's sample but not its ACTIVATION, and AddChannel ORs into
+        // the enable mask built from whatever is already active — so streaming AI0+AI1, stopping,
+        // deselecting AI1 and restarting left AI1 enabled on the device. It kept being acquired
+        // and logged with no trace on the plot to show for it. Make the device's active
+        // analog-input set match the selection before enabling anything. Snapshot the list: this
+        // is a write loop over the collection it is reading.
+        foreach (var channel in device.DataChannels.ToList())
+        {
+            if (channel.Type != ChannelType.Analog || channel.IsOutput) { continue; }
+            if (!channel.IsActive || selected.Contains(channel.Name)) { continue; }
+            device.RemoveChannel(channel);
+        }
+
         var i = 0;
         foreach (var channel in analog)
         {
@@ -395,9 +412,18 @@ public partial class MobileShellViewModel : ObservableObject, IDisposable
             var s = new ChannelSeries(channel.Name, Palette[i % Palette.Length], 600);
             Series.Add(s);
             _seriesByName[channel.Name] = s;
-            // Subscribe BEFORE InitializeStreaming so no sample can arrive uncounted.
-            CountSamplesFrom(channel);
             i++;
+        }
+
+        // Count every channel the device will actually stream — driven off IsActive, not off the
+        // selection or off which channels got a series. Those three agree after the loops above,
+        // and this keeps the readout true to its label even if they ever stop agreeing: whatever
+        // the device streams is what "samples acquired" has to count. Subscribed BEFORE
+        // InitializeStreaming so no sample can arrive uncounted.
+        foreach (var channel in device.DataChannels)
+        {
+            if (channel.Type != ChannelType.Analog || channel.IsOutput || !channel.IsActive) { continue; }
+            CountSamplesFrom(channel);
         }
 
         try
@@ -414,6 +440,12 @@ public partial class MobileShellViewModel : ObservableObject, IDisposable
             return;
         }
         IsStreaming = device.IsStreaming;
+        if (!IsStreaming)
+        {
+            // Armed above, but the device never entered streaming — don't leave subscriptions
+            // on channels for a stream that is not running.
+            StopCountingSamples();
+        }
         if (IsStreaming)
         {
             // Refresh the Sentry device context: the tags were set at connect time, when no
@@ -453,13 +485,14 @@ public partial class MobileShellViewModel : ObservableObject, IDisposable
             if (channel.Type != ChannelType.Analog || channel.IsOutput) { continue; }
             if (!channel.IsActive) { continue; }
             monitored++;
-            if (!_seriesByName.TryGetValue(channel.Name, out var series)) { continue; }
             // Re-arm the sample count against the CURRENT instance. Same reasoning as reading
             // DataChannels fresh each tick: if the device re-synced its channel list, the
             // subscription taken at stream start is on an object nothing writes to any more,
             // and the count would silently stop. Idempotent, so this is a set lookup per
-            // channel per tick in the steady state.
+            // channel per tick in the steady state. Ahead of the series lookup on purpose —
+            // an active channel is streaming and must be counted whether or not it is plotted.
             CountSamplesFrom(channel);
+            if (!_seriesByName.TryGetValue(channel.Name, out var series)) { continue; }
             var sample = channel.ActiveSample;
             if (sample == null) { continue; }
             var ticks = sample.TimestampTicks;
@@ -489,13 +522,31 @@ public partial class MobileShellViewModel : ObservableObject, IDisposable
     }
 
     /// <summary>
+    /// Arms sample counting for a stream that is about to start.
+    /// </summary>
+    private void BeginCountingSamples()
+    {
+        lock (_countedChannels) { _countingSamples = true; }
+    }
+
+    /// <summary>
     /// Starts counting <paramref name="channel"/>'s samples toward <see cref="TotalSamples"/>.
     /// Idempotent per channel INSTANCE, so it is safe to call every render tick.
     /// </summary>
+    /// <remarks>
+    /// The <see cref="_countingSamples"/> gate is what makes the render tick's re-arm safe
+    /// against a teardown running at the same time. <see cref="HandleStreamLost"/> and
+    /// <see cref="HandleConnectionLost"/> can be reached from a device property-change raised on
+    /// the Core thread; without the gate, a poll already inside its channel loop could re-attach
+    /// a subscription immediately after <see cref="StopCountingSamples"/> had detached it, and
+    /// that one would keep counting — and keep this view-model reachable from the channel — for
+    /// a stream that is over.
+    /// </remarks>
     private void CountSamplesFrom(IChannel channel)
     {
         lock (_countedChannels)
         {
+            if (!_countingSamples) { return; }
             if (_countedChannels.Add(channel))
             {
                 channel.OnChannelUpdated += OnSampleAcquired;
@@ -504,13 +555,14 @@ public partial class MobileShellViewModel : ObservableObject, IDisposable
     }
 
     /// <summary>
-    /// Detaches every sample subscription. Called on every path that ends a stream, so a
-    /// stopped or lost stream cannot keep advancing the count.
+    /// Disarms counting and detaches every sample subscription. Called on every path that ends a
+    /// stream, so a stopped or lost stream cannot keep advancing the count.
     /// </summary>
     private void StopCountingSamples()
     {
         lock (_countedChannels)
         {
+            _countingSamples = false;
             foreach (var channel in _countedChannels)
             {
                 channel.OnChannelUpdated -= OnSampleAcquired;
