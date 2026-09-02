@@ -24,6 +24,12 @@ namespace Daqifi.Desktop.ViewModels;
 public partial class ExportDialogViewModel : ObservableObject, IDisposable
 {
     #region Private Variables
+    /// <summary>
+    /// What a failure message calls the destination when the path is blank — this dialog's own
+    /// name for the artefact it writes. See <see cref="DestinationFailureClassifier.Describe"/>.
+    /// </summary>
+    private const string EXPORT_FILE = "the export file";
+
     private readonly List<int> _sessionsIds;
     private string _exportFilePath = string.Empty;
 
@@ -320,7 +326,7 @@ public partial class ExportDialogViewModel : ObservableObject, IDisposable
             AppLogger.Instance.Information("Export operation was cancelled by user.");
             AppLogger.Instance.AddBreadcrumb("export", "Data export cancelled", Common.Loggers.BreadcrumbLevel.Warning);
         }
-        catch (Exception ex) when (IsDestinationBlocked(ex))
+        catch (Exception ex) when (DestinationFailureClassifier.IsBlocked(ex))
         {
             // A destination that cannot be written — held by another program, read-only, denied, or
             // on a folder that disappeared — is a user/environmental condition, not an app bug. Log
@@ -328,7 +334,7 @@ public partial class ExportDialogViewModel : ObservableObject, IDisposable
             // device layer classifies an unreachable device. Anything else, including a database-level
             // I/O error, still takes the Error/Sentry path below.
             failed = true;
-            failureReason = DescribeFileFailure(ex, currentFilepath);
+            failureReason = DestinationFailureClassifier.Describe(ex, currentFilepath, EXPORT_FILE);
             AppLogger.Instance.Warning(ex, $"Export failed writing '{currentFilepath}'.");
             AppLogger.Instance.AddBreadcrumb("export", "Data export blocked by destination file",
                 Common.Loggers.BreadcrumbLevel.Warning);
@@ -548,77 +554,10 @@ public partial class ExportDialogViewModel : ObservableObject, IDisposable
         catch (Exception ex) when (ex is IOException or UnauthorizedAccessException)
         {
             error = ex;
-            return DescribeFileFailure(ex, filepath);
+            return DestinationFailureClassifier.Describe(ex, filepath, EXPORT_FILE);
         }
     }
 
-    /// <summary>
-    /// True when an export failure is the destination's fault — denied, gone, or held by another
-    /// program. Deliberately narrow: a generic <see cref="IOException"/> (a full disk, a failing
-    /// drive, an EF/SQLite read error) keeps the default Error/Sentry treatment so real problems
-    /// stay visible.
-    /// </summary>
-    // @port: Daqifi.Desktop.ViewModels.ExportDialogViewModel.IsDestinationBlocked
-    private static bool IsDestinationBlocked(Exception ex) => ex switch
-    {
-        UnauthorizedAccessException => true,
-        DirectoryNotFoundException => true,
-        IOException io => IsSharingViolation(io),
-        _ => false,
-    };
-
-    /// <summary>
-    /// Turns a file-access failure into a message that tells the user what to do about it.
-    /// </summary>
-    // @port: Daqifi.Desktop.ViewModels.ExportDialogViewModel.DescribeFileFailure
-    private static string DescribeFileFailure(Exception ex, string filepath)
-    {
-        var name = string.IsNullOrWhiteSpace(filepath) ? "the export file" : $"'{Path.GetFileName(filepath)}'";
-
-        return ex switch
-        {
-            UnauthorizedAccessException =>
-                $"Could not write {name} — access was denied. Choose a different folder, or check that the file is not read-only.",
-            DirectoryNotFoundException =>
-                $"Could not write {name} — that folder no longer exists. Choose a different location and try again.",
-            IOException io when IsSharingViolation(io) =>
-                $"Could not write {name} — it is open in another program. Close it and try again.",
-            _ =>
-                $"Could not write {name}. {ex.Message}",
-        };
-    }
-
-    /// <summary>
-    /// True when Windows refused the handle because someone else already holds the file
-    /// (ERROR_SHARING_VIOLATION / ERROR_LOCK_VIOLATION) — the "it's still open in Excel" case, as
-    /// opposed to a full disk or an I/O error, which deserve a different message.
-    /// </summary>
-    /// <remarks>
-    /// Gated to Windows on purpose. .NET on macOS also raises file exceptions carrying FACILITY_WIN32
-    /// HResults built from the Unix errno (a missing directory measured as 0x80070003 there), so the
-    /// low word is an errno, not a Win32 status code, and 32/33 would mean something else entirely.
-    /// The genuine "held by another program" case on macOS arrives as an <see cref="IOException"/>
-    /// with no facility at all, and is caught by the pre-flight probe rather than by this check.
-    /// </remarks>
-    // @port: Daqifi.Desktop.ViewModels.ExportDialogViewModel.IsSharingViolation
-    private static bool IsSharingViolation(IOException ex)
-    {
-        const int FACILITY_WIN32 = unchecked((int)0x80070000);
-        const int ERROR_SHARING_VIOLATION = 32;
-        const int ERROR_LOCK_VIOLATION = 33;
-
-        if (!OperatingSystem.IsWindows()) { return false; }
-
-        if ((ex.HResult & unchecked((int)0xFFFF0000)) != FACILITY_WIN32) { return false; }
-
-        var win32Error = ex.HResult & 0xFFFF;
-        return win32Error is ERROR_SHARING_VIOLATION or ERROR_LOCK_VIOLATION;
-    }
-
-    /// <summary>
-    /// Replaces characters that are invalid in a file name (a session can be renamed to arbitrary
-    /// text) with '_', so per-session export to <c>{name}.csv</c> never throws on a bad path.
-    /// </summary>
     /// <summary>
     /// The production name source: the session list the Logged Data pane binds to.
     /// </summary>

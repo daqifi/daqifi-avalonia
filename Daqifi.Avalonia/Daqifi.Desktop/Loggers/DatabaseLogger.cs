@@ -19,12 +19,7 @@ using EFCore.BulkExtensions;
 using CommunityToolkit.Mvvm.ComponentModel;
 using CommunityToolkit.Mvvm.Input;
 using Avalonia;
-using Avalonia.Controls.ApplicationLifetimes;
-using Avalonia.Platform.Storage;
 using Avalonia.Threading;
-// Alias (not `using OxyPlot.Avalonia;`) — that namespace re-declares LineSeries etc.
-// and would ambiguate the OxyPlot.Series types used throughout this file.
-using PngExporter = OxyPlot.Avalonia.PngExporter;
 
 namespace Daqifi.Desktop.Logger;
 
@@ -1045,29 +1040,7 @@ public partial class DatabaseLogger : ObservableObject, ILogger, IDisposable
     #region Commands
     [RelayCommand]
     // @port: Daqifi.Desktop.Logger.DatabaseLogger.SaveGraph
-    private async Task SaveGraphAsync()
-    {
-        // Ownerless Win32 SaveFileDialog → StorageProvider picker owned by the app main
-        // window (hal: file_pickers), matching the ownerless-dialog dialect in
-        // AvaloniaMessageBoxService. OxyPlot.Wpf.PngExporter → OxyPlot.Avalonia.PngExporter.
-        if (Application.Current?.ApplicationLifetime is not IClassicDesktopStyleApplicationLifetime { MainWindow: { } main })
-        {
-            return; // headless run — nothing can own a picker
-        }
-
-        var file = await main.StorageProvider.SaveFilePickerAsync(new FilePickerSaveOptions
-        {
-            DefaultExtension = "png",
-            FileTypeChoices = new[] { FilePickerFileTypes.ImagePng }
-        });
-
-        var path = file?.TryGetLocalPath();
-        if (path == null) { return; }
-
-        var pngExporter = new PngExporter { Width = 1024, Height = 768 };
-        using var stream = System.IO.File.Create(path);
-        pngExporter.Export(PlotModel, stream);
-    }
+    private Task SaveGraphAsync() => GraphImageSaver.SaveAsync(PlotModel, "Save Graph");
 
     [RelayCommand]
     // @port: Daqifi.Desktop.Logger.DatabaseLogger.ResetZoom
