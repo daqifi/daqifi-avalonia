@@ -91,6 +91,19 @@ public partial class LoggingManager : ObservableObject
 
     [ObservableProperty]
     private ObservableCollection<LoggingSession> _loggingSessions = [];
+
+    /// <summary>
+    /// Why the last attempt to start a logging session did not produce one, or <c>null</c> when the
+    /// last attempt succeeded (the overwhelmingly common case).
+    /// </summary>
+    /// <remarks>
+    /// A plain property rather than a thrown exception because the only caller that sets
+    /// <see cref="Active"/> is a UI property setter reached from a two-way binding write, where a
+    /// throw ends the process rather than being reported (#183). The caller reads this straight
+    /// after writing <see cref="Active"/> and, when it is set, puts the toggle back to OFF and shows
+    /// the sentence — so a start that failed looks like a start that failed.
+    /// </remarks>
+    public string? SessionStartFailure { get; private set; }
     #endregion
 
     // @port: Daqifi.Desktop.Logger.LoggingManager.OnActiveChanged
@@ -147,11 +160,54 @@ public partial class LoggingManager : ObservableObject
 
             if (CurrentMode != LoggingMode.Stream)
             {
+                // SD-card mode records on the device, so there is no application session to create
+                // and nothing that can fail here.
+                SessionStartFailure = null;
                 _hasActiveApplicationSession = false;
                 _hasActiveApplicationSamples = false;
                 return;
             }
 
+            _hasActiveApplicationSession = TryCreateApplicationSession();
+            _hasActiveApplicationSamples = false;
+
+            // Resubscribe channels. Reached whether or not the session was created, so a failed
+            // start leaves the channel wiring exactly as it found it; HandleChannelUpdate's own
+            // _hasActiveApplicationSession guard is what stops samples going anywhere.
+            foreach (var channel in SubscribedChannels.ToList())
+            {
+                channel.OnChannelUpdated += HandleChannelUpdate;
+            }
+        }
+    }
+
+    /// <summary>
+    /// Creates this run's <see cref="LoggingSession"/> row (and its device metadata) and reports
+    /// whether it worked, rather than throwing.
+    /// </summary>
+    /// <remarks>
+    /// This is database work reached from a UI property setter — <c>Active</c> is written by
+    /// <c>DaqifiViewModel.IsLogging</c>, which is the target of the logging toggle's two-way
+    /// binding — so anything thrown here escapes through the binding write into the dispatcher, and
+    /// <c>App.OnDispatcherUnhandledException</c> only logs: it never sets <c>Handled</c>, so the
+    /// process ends. Every escape route was live: <c>SqliteException</c> for a locked file, a
+    /// read-only volume or (after a half-finished "Delete All") a table-less database,
+    /// <see cref="DbUpdateException"/> for a UNIQUE collision on <c>Sessions.ID</c>, and
+    /// <see cref="IOException"/>. That is the crash in #183; clicking a toggle must not be able to
+    /// end the app. The stop path already caught its own database work
+    /// (<c>DeleteLoggingSessionIfPresent</c>), which is why only the start needed this.
+    /// <para>
+    /// Reporting the failure instead also fixes the quieter half: the caller learns the session does
+    /// not exist and can leave the toggle OFF, where before <c>_isLogging</c> and its change
+    /// notification had already fired, so the toggle read ON with nothing recording and the later
+    /// stop discarded the run.
+    /// </para>
+    /// </remarks>
+    /// <returns><c>true</c> when a session row was committed and logging can proceed.</returns>
+    private bool TryCreateApplicationSession()
+    {
+        try
+        {
             using (var context = _loggingContext.CreateDbContext())
             {
                 // Pick an ID that cannot collide with any existing row in any
@@ -213,14 +269,21 @@ public partial class LoggingManager : ObservableObject
                 context.SaveChanges();
             }
 
-            _hasActiveApplicationSession = true;
-            _hasActiveApplicationSamples = false;
+            SessionStartFailure = null;
+            return true;
+        }
+        catch (Exception ex)
+        {
+            AppLogger.Error(ex, "Could not start a logging session: creating the session row failed.");
 
-            // Resubscribe channels
-            foreach (var channel in SubscribedChannels.ToList())
-            {
-                channel.OnChannelUpdated += HandleChannelUpdate;
-            }
+            // Cleared by the caller's next successful start. Session is left as it was rather than
+            // nulled: it is a non-nullable bound property, and nothing reads it while
+            // _hasActiveApplicationSession is false.
+            SessionStartFailure =
+                "Logging could not be started because the logged-data database could not be written to. "
+                + "Nothing is being recorded. Close any other copy of DAQiFi, check that the DAQiFi data "
+                + "folder exists and is writable, and try again.";
+            return false;
         }
     }
 
