@@ -98,6 +98,10 @@ internal static class GraphImageSaver
 
             path = file?.TryGetLocalPath();
         }
+        catch (OperationCanceledException)
+        {
+            return; // the user backed out of the picker — not a failure, and not worth a dialog
+        }
         catch (Exception ex)
         {
             // Defensive, and beyond what issue #182 reported: the picker is a platform component
@@ -131,11 +135,11 @@ internal static class GraphImageSaver
     /// </param>
     internal static string? SaveTo(string path, Action<Stream> render)
     {
-        // Render into memory BEFORE opening the destination. File.Create truncates, so rendering
-        // straight into it — as both copies of this code did — means a rendering failure leaves an
-        // empty file where the user's previous graph was. This way the destination is only touched
-        // once there are bytes to put in it, and it is held open for the length of a
-        // memory-to-disk copy rather than a full plot render.
+        // Render into memory before anything is opened on disk. The old code created (and so
+        // truncated) the destination first and rendered into it, which left an empty file where the
+        // user's previous graph was if the render threw. Rendering first means a render failure
+        // never reaches the file system at all — and the write below then only has to copy bytes,
+        // which is what makes it short enough to be worth doing atomically.
         using var image = new MemoryStream();
         try
         {
@@ -177,34 +181,47 @@ internal static class GraphImageSaver
     }
 
     /// <summary>
-    /// Copies the rendered bytes onto disk, cleaning up after a write that starts and then fails.
+    /// Puts the rendered bytes at <paramref name="path"/>, all of them or none of them.
     /// Throws on failure; <see cref="SaveTo"/> is what turns that into a message.
     /// </summary>
     /// <remarks>
+    /// <para>
+    /// The bytes go to a temporary file beside the destination and are moved into place only once
+    /// they are all down. Writing straight to the destination would mean
+    /// <see cref="File.Create(string)"/> truncates the user's previous graph before the first byte
+    /// of the new one is written, so a failure part-way — the full disk, the volume that went away
+    /// mid-write — would leave them with neither image. Same directory, so the move is a rename
+    /// rather than a copy, and cannot fail for crossing a volume boundary.
+    /// </para>
+    /// <para>
+    /// This is the shape the mobile export path already uses for the same reason
+    /// (<c>LoggedSessionsMobileViewModel.ExportOne</c>). It differs in one respect: the temporary
+    /// name carries a unique component instead of a fixed <c>.exporting</c> suffix, so it needs no
+    /// "delete any leftover temp first" step and two saves of the same destination cannot collide.
+    /// </para>
+    /// <para>
     /// Internal rather than private so a test can drive the mid-write failure — a destination that
     /// runs out of room after the file is created — which cannot be provoked through
     /// <see cref="SaveTo"/>, whose source stream is a <see cref="MemoryStream"/> it owns.
+    /// </para>
     /// </remarks>
     internal static void WriteFile(string path, Stream image)
     {
-        // If File.Create itself throws, nothing was created or truncated and there is nothing to
-        // clean up — so it stays outside the try below, which exists only to undo a partial write.
-        var destination = File.Create(path);
+        var temporaryPath = TemporaryPathFor(path);
         try
         {
-            using (destination)
+            using (var temporary = File.Create(temporaryPath))
             {
-                image.CopyTo(destination);
+                image.CopyTo(temporary);
             }
+
+            File.Move(temporaryPath, path, overwrite: true);
         }
         catch
         {
-            // The copy, or the flush on dispose, failed part-way — a full disk, a volume that went
-            // away mid-write. What is on disk now is a truncated husk, not a PNG; leaving it would
-            // hand the user a file that opens broken some time after they were told the save
-            // failed. (An existing file at this path was already lost to File.Create's truncation;
-            // the picker having confirmed the overwrite is what makes that acceptable.)
-            TryDeletePartialFile(path);
+            // Only ever the temporary file: the destination has either been replaced wholesale or
+            // never touched at all.
+            TryDeleteTemporaryFile(temporaryPath);
             throw;
         }
     }
@@ -218,9 +235,21 @@ internal static class GraphImageSaver
         pngExporter.Export(plotModel, stream);
     }
 
-    /// <summary>Best-effort removal of a half-written image; a failure here must not mask the
-    /// original write failure, which is the one the user needs to hear about.</summary>
-    private static void TryDeletePartialFile(string path)
+    /// <summary>
+    /// Where the image is assembled before it is moved onto <paramref name="path"/>: the same
+    /// directory (so the move is a rename), the same base name (so a leftover is recognisable as
+    /// this save's), plus a unique component and a <c>.tmp</c> extension.
+    /// </summary>
+    private static string TemporaryPathFor(string path)
+    {
+        var name = $"{Path.GetFileName(path)}.{Guid.NewGuid():N}.tmp";
+        var directory = Path.GetDirectoryName(path);
+        return string.IsNullOrEmpty(directory) ? name : Path.Combine(directory, name);
+    }
+
+    /// <summary>Best-effort removal of the half-written temporary file; a failure here must not
+    /// mask the original write failure, which is the one the user needs to hear about.</summary>
+    private static void TryDeleteTemporaryFile(string path)
     {
         try
         {

@@ -81,7 +81,7 @@ internal static class DestinationFailureClassifier
     /// this check.
     /// </remarks>
     // @port: Daqifi.Desktop.ViewModels.ExportDialogViewModel.IsSharingViolation
-    internal static bool IsSharingViolation(IOException ex)
+    private static bool IsSharingViolation(IOException ex)
     {
         const int FACILITY_WIN32 = unchecked((int)0x80070000);
         const int ERROR_SHARING_VIOLATION = 32;

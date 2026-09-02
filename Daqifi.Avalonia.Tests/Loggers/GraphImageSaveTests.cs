@@ -90,14 +90,22 @@ public sealed class GraphImageSaveTests : IDisposable
         Assert.NotNull(failure);
         Assert.Contains("access was denied", failure, StringComparison.Ordinal);
         Assert.Contains("graph.png", failure, StringComparison.Ordinal);
+        AssertNothingLeftBehind();
     }
 
     /// <summary>
-    /// The same <see cref="UnauthorizedAccessException"/> as the read-only folder, reached without
-    /// any permission bits: <see cref="File.Create(string)"/> refuses a path that names an existing
-    /// directory, on every platform and as any user. This is the test that keeps the denied-access
-    /// wording covered on CI, where the run may well be root.
+    /// A destination path that names an existing directory — the crash vector that needs no
+    /// permission bits, so it reproduces on every platform and as any user, root included.
     /// </summary>
+    /// <remarks>
+    /// The assertion is the guarantee, not a particular sentence. The old code hit this at
+    /// <see cref="File.Create(string)"/> and got <see cref="UnauthorizedAccessException"/>; the fix
+    /// writes beside the destination and moves into place, so the OS now reports it at the move as
+    /// a plain <see cref="IOException"/> ("Is a directory") and the message is the generic one. The
+    /// user still learns the save failed and what the system said, which is what matters here — the
+    /// denied-access wording itself is pinned directly, and portably, by
+    /// <c>DestinationFailureClassifierTests</c>.
+    /// </remarks>
     [Fact]
     public void Destination_that_is_a_directory_is_reported_not_thrown()
     {
@@ -109,7 +117,9 @@ public sealed class GraphImageSaveTests : IDisposable
         var failure = GraphImageSaver.SaveTo(path, WriteImage);
 
         Assert.NotNull(failure);
-        Assert.Contains("access was denied", failure, StringComparison.Ordinal);
+        Assert.Contains("Could not write", failure, StringComparison.Ordinal);
+        Assert.Contains("graph.png", failure, StringComparison.Ordinal);
+        AssertNothingLeftBehind();
     }
 
     /// <summary>
@@ -127,6 +137,7 @@ public sealed class GraphImageSaveTests : IDisposable
 
         Assert.NotNull(failure);
         Assert.Contains("no longer exists", failure, StringComparison.Ordinal);
+        AssertNothingLeftBehind();
     }
 
     /// <summary>
@@ -147,6 +158,7 @@ public sealed class GraphImageSaveTests : IDisposable
 
         Assert.NotNull(failure);
         Assert.Contains("Could not write", failure, StringComparison.Ordinal);
+        AssertNothingLeftBehind();
     }
 
     /// <summary>
@@ -162,6 +174,7 @@ public sealed class GraphImageSaveTests : IDisposable
 
         Assert.Null(failure);
         Assert.Equal(ImageBytes, File.ReadAllBytes(path));
+        AssertNothingLeftBehind();
     }
 
     /// <summary>
@@ -215,6 +228,36 @@ public sealed class GraphImageSaveTests : IDisposable
         Assert.Throws<IOException>(() => GraphImageSaver.WriteFile(path, new FailingStream()));
 
         Assert.False(File.Exists(path), "a partly-written image was left at the destination");
+        AssertNothingLeftBehind();
+    }
+
+    /// <summary>
+    /// The same mid-write failure, but overwriting a graph the user already had. Their existing
+    /// image must survive intact: losing BOTH the new save and the old file is a worse outcome than
+    /// the failure itself, and it is what writing straight to the destination would cause, since
+    /// <see cref="File.Create(string)"/> truncates before the first new byte is written.
+    /// </summary>
+    [Fact]
+    public void Write_that_fails_part_way_leaves_an_existing_image_intact()
+    {
+        var path = Path.Combine(_root, "graph.png");
+        var previous = new byte[] { 0x89, (byte)'P', (byte)'N', (byte)'G', 0xFF, 0xFE, 0xFD, 0xFC, 0xFB, 0xFA };
+        File.WriteAllBytes(path, previous);
+
+        Assert.Throws<IOException>(() => GraphImageSaver.WriteFile(path, new FailingStream()));
+
+        Assert.Equal(previous, File.ReadAllBytes(path));
+        AssertNothingLeftBehind();
+    }
+
+    /// <summary>
+    /// The temporary file the write assembles into is cleaned up on every path, so a run of failed
+    /// saves does not silently fill the user's folder with <c>.tmp</c> files.
+    /// </summary>
+    private void AssertNothingLeftBehind()
+    {
+        var strays = Directory.GetFiles(_root, "*.tmp", SearchOption.AllDirectories);
+        Assert.True(strays.Length == 0, "temporary files left behind: [" + string.Join(", ", strays.Select(Path.GetFileName)) + "]");
     }
 
     /// <summary>Fills the stream with <see cref="ImageBytes"/>, standing in for the PNG exporter.</summary>
