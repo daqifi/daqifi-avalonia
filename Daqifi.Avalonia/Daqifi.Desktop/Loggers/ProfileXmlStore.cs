@@ -8,6 +8,7 @@ using System.Xml;
 using System.Xml.Linq;
 using System.Collections.ObjectModel;
 using Daqifi.Desktop.Common.Loggers;
+using Daqifi.Desktop.Helpers;
 using Daqifi.Desktop.Models;
 
 namespace Daqifi.Desktop.Logger;
@@ -170,32 +171,15 @@ internal sealed class ProfileXmlStore
     /// <remarks>
     /// Via a temporary file and a rename, because <see cref="XDocument.Save(string)"/> truncates
     /// the real file first: a power cut, a full disk or a crash part-way through that write is
-    /// exactly how the half-written, unparseable file in #184 comes about. A rename either
-    /// happens or does not, so the file is only ever the old content or the new.
+    /// exactly how the half-written, unparseable file in #184 comes about.
+    /// <see cref="AppDataFile.WriteAtomically"/> holds that rule for every file the app owns, and
+    /// the reasons behind the temporary name.
     /// </remarks>
     /// <exception cref="IOException">The file could not be written.</exception>
     internal void Save(XDocument document)
     {
         EnsureDirectory();
-
-        // Unique per write, not a fixed ".tmp": two app instances share one data directory, and a
-        // single well-known temp path lets each truncate, move or delete the other's half-written
-        // file — reintroducing exactly the corruption this method exists to prevent. This does not
-        // make a concurrent read-modify-write safe (last writer still wins, as it always has);
-        // it makes each individual write atomic and independent.
-        var temporaryPath = $"{FilePath}.{Guid.NewGuid():N}.tmp";
-        try
-        {
-            document.Save(temporaryPath);
-            File.Move(temporaryPath, FilePath, overwrite: true);
-        }
-        catch
-        {
-            // Best-effort: do not leave a partial .tmp beside the real file. The original failure
-            // is what the caller needs, so it is rethrown untouched.
-            try { File.Delete(temporaryPath); } catch { /* nothing useful to do */ }
-            throw;
-        }
+        AppDataFile.WriteAtomically(FilePath, document.Save);
     }
 
     /// <summary>
@@ -284,11 +268,11 @@ internal sealed class ProfileXmlStore
     /// RENAMED, never deleted. It is the user's profiles: an unparseable file is very often still
     /// readable by hand (one bad character in an otherwise intact list), and a truncated one still
     /// holds most of what it held. The timestamp gives repeated recoveries different names;
-    /// <see cref="MoveFileAside"/> is what makes that a guarantee rather than a hope.
+    /// <see cref="AppDataFile.MoveAside"/> is what makes that a guarantee rather than a hope.
     /// </remarks>
     private bool Quarantine()
     {
-        if (MoveFileAside(FilePath, $"{FilePath}.corrupt-{DateTime.UtcNow:yyyyMMdd-HHmmssfff}") is not { } quarantinePath)
+        if (AppDataFile.MoveAside(FilePath, $"{FilePath}.corrupt-{DateTime.UtcNow:yyyyMMdd-HHmmssfff}") is not { } quarantinePath)
         {
             return false;
         }
@@ -298,65 +282,6 @@ internal sealed class ProfileXmlStore
             $"Your saved profiles could not be read, so the damaged file was moved to {quarantinePath}. " +
             "Profiles you create from now on will save normally.";
         return true;
-    }
-
-    /// <summary>How many names <see cref="MoveFileAside"/> will try before giving up.</summary>
-    private const int QuarantineNameAttempts = 100;
-
-    /// <summary>
-    /// Moves <paramref name="sourcePath"/> to <paramref name="preferredPath"/>, or to the first
-    /// free <c>-1</c>, <c>-2</c>, … variant of it if that name is taken.
-    /// </summary>
-    /// <remarks>
-    /// <c>overwrite: false</c>, matching <c>DatabaseMigrator.QuarantineDatabase</c> — #197. A
-    /// quarantine that clobbers an earlier quarantine destroys the very thing the rename exists to
-    /// preserve, and reports success while doing it. The millisecond timestamp in the name is not
-    /// enough on its own: two app instances share this directory and both can reach recovery on the
-    /// same damaged file inside the same millisecond.
-    /// <para>
-    /// Unlike the database, though, abandoning the move leaves the damaged file at
-    /// <see cref="FilePath"/> and restores the exact permanent failure of #184 — so a taken name is
-    /// retried under the next one rather than given up on. Retrying the move itself, rather than
-    /// testing for a free name and then using it, is also what closes the gap between the two in
-    /// which another instance can take the name.
-    /// </para>
-    /// </remarks>
-    /// <returns>The path the file was moved to, or <c>null</c> if it could not be moved.</returns>
-    internal static string? MoveFileAside(string sourcePath, string preferredPath)
-    {
-        Exception? lastFailure = null;
-
-        for (var attempt = 0; attempt < QuarantineNameAttempts; attempt++)
-        {
-            var candidate = attempt == 0 ? preferredPath : $"{preferredPath}-{attempt}";
-
-            try
-            {
-                File.Move(sourcePath, candidate, overwrite: false);
-                return candidate;
-            }
-            catch (IOException ex) when (Path.Exists(candidate))
-            {
-                // The name is taken — by another instance's quarantine, by one of this instance's
-                // own within the same millisecond, or by a directory that happens to sit there.
-                // Take the next name. Path.Exists rather than File.Exists precisely so a DIRECTORY
-                // counts as taken: File.Exists is false for one, which would send this to the catch
-                // below, abandon the quarantine, and leave the damaged file in place. Any other
-                // IOException (no space, unwritable directory) does fall through to that catch.
-                lastFailure = ex;
-            }
-            catch (Exception ex)
-            {
-                lastFailure = ex;
-                break;
-            }
-        }
-
-        var message = $"The damaged profiles file could not be moved aside: {sourcePath}";
-        if (lastFailure is null) { AppLogger.Instance.Error(message); }
-        else { AppLogger.Instance.Error(lastFailure, message); }
-
-        return null;
     }
 
     private static XDocument NewDocument() => new(new XElement(RootElementName));

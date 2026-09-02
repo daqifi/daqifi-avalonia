@@ -4,6 +4,7 @@
 // the correspondence map.
 
 using Daqifi.Desktop.Common.Loggers;
+using Daqifi.Desktop.Helpers;
 using System.Collections.ObjectModel;
 using System.IO;
 using System.Xml;
@@ -227,65 +228,7 @@ public class DaqifiSettings
     /// </summary>
     /// <returns>Where it went, or <c>null</c> when it could not be moved at all.</returns>
     private string? MoveDamagedFileAside() =>
-        MoveFileAside(_settingsXmlPath, $"{_settingsXmlPath}.corrupt-{DateTime.UtcNow:yyyyMMdd-HHmmssfff}");
-
-    /// <summary>How many names <see cref="MoveFileAside"/> will try before giving up.</summary>
-    private const int QuarantineNameAttempts = 100;
-
-    /// <summary>
-    /// Moves <paramref name="sourcePath"/> to <paramref name="preferredPath"/>, or to the first
-    /// free <c>-1</c>, <c>-2</c>, … variant of it if that name is taken.
-    /// </summary>
-    /// <remarks>
-    /// RENAMED, never deleted: it is the user's file, an unparseable one is very often still
-    /// readable by hand, and it is the only record of what they had chosen.
-    /// <para>
-    /// <c>overwrite: false</c>, matching <c>DatabaseMigrator.QuarantineDatabase</c> — a quarantine
-    /// that clobbers an earlier quarantine destroys the very thing the rename exists to preserve,
-    /// and the millisecond timestamp is not enough on its own: two app instances share this
-    /// directory and both can reach recovery on the same file. Unlike the database, though,
-    /// abandoning a settings quarantine leaves the damaged file in place and restores the exact
-    /// bug this code exists to end — so a taken name is retried under the next one rather than
-    /// given up on, which also closes the gap between testing for the name and using it.
-    /// </para>
-    /// </remarks>
-    /// <returns>The path the file was moved to, or <c>null</c> if it could not be moved.</returns>
-    internal static string? MoveFileAside(string sourcePath, string preferredPath)
-    {
-        Exception? lastFailure = null;
-
-        for (var attempt = 0; attempt < QuarantineNameAttempts; attempt++)
-        {
-            var candidate = attempt == 0 ? preferredPath : $"{preferredPath}-{attempt}";
-
-            try
-            {
-                File.Move(sourcePath, candidate, overwrite: false);
-                return candidate;
-            }
-            catch (IOException ex) when (Path.Exists(candidate))
-            {
-                // The name is taken — by another instance's quarantine, by one of this instance's
-                // own within the same millisecond, or by a directory that happens to sit there.
-                // Take the next name. Path.Exists rather than File.Exists precisely so a DIRECTORY
-                // counts as taken: File.Exists is false for one, which would send this to the catch
-                // below, abandon the quarantine, and leave the damaged file in place. Any other
-                // IOException (no space, unwritable directory) does fall through to that catch.
-                lastFailure = ex;
-            }
-            catch (Exception ex)
-            {
-                lastFailure = ex;
-                break;
-            }
-        }
-
-        var message = $"The damaged file at {sourcePath} could not be moved aside.";
-        if (lastFailure is null) { AppLogger.Instance.Error(message); }
-        else { AppLogger.Instance.Error(lastFailure, message); }
-
-        return null;
-    }
+        AppDataFile.MoveAside(_settingsXmlPath, $"{_settingsXmlPath}.corrupt-{DateTime.UtcNow:yyyyMMdd-HHmmssfff}");
 
     /// <summary>
     /// The message to show the user once, the first time they open Settings after a damaged file
@@ -375,13 +318,6 @@ public class DaqifiSettings
     // @port: Daqifi.Desktop.Models.DaqifiSettings.SaveSettings
     private bool SaveSettings()
     {
-        // Unique per write, not a fixed ".tmp": two app instances share one data directory, and a
-        // single well-known temp path lets each truncate, move or delete the other's half-written
-        // file — reintroducing exactly the damage this method exists to prevent. It does not make
-        // a concurrent read-modify-write safe (last writer still wins, as it always has); it makes
-        // each individual write atomic and independent.
-        var temporaryPath = $"{_settingsXmlPath}.{Guid.NewGuid():N}.tmp";
-
         try
         {
             EnsureSettingsDirectory();
@@ -389,22 +325,15 @@ public class DaqifiSettings
             var xml = new XElement("DAQifiSettings");
             xml.Add(new XElement("CsvDelimiter", CsvDelimiter));
 
-            // Via a temporary file and a rename, because XElement.Save truncates its target
-            // first: a power cut, a full disk or a crash part-way through that write is exactly
-            // how the unreadable file in #193 comes about. A rename either happens or does not,
-            // so the file on disk is only ever the old content or the new.
-            xml.Save(temporaryPath);
-            File.Move(temporaryPath, _settingsXmlPath, overwrite: true);
+            // Through a temporary file, because XElement.Save truncates its target first: a power
+            // cut, a full disk or a crash part-way through that write is exactly how the unreadable
+            // file in #193 comes about. AppDataFile.WriteAtomically holds the rule and the reasons.
+            AppDataFile.WriteAtomically(_settingsXmlPath, xml.Save);
             return true;
         }
         catch (Exception ex)
         {
             AppLogger.Instance.Error(ex, "Problem Saving DAQiFi Settings");
-
-            // Best-effort: do not leave a partial .tmp beside the real file. The write has already
-            // been reported, so a failure to clean up adds nothing.
-            try { File.Delete(temporaryPath); } catch { /* nothing useful to do */ }
-
             return false;
         }
     }
