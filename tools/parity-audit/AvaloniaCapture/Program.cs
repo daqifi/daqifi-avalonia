@@ -532,7 +532,10 @@ internal static class AvaloniaCapture
     {
         for (var y = 0; y < size.Height; y++)
         {
-            var row = new ReadOnlySpan<byte>((byte*)locked.Address + (y * locked.RowBytes), size.Width * 4);
+            // (nint) on the row offset, not int: at these sizes it cannot overflow, but a
+            // silently wrapped offset here would read someone else's memory rather than fail.
+            var row = new ReadOnlySpan<byte>(
+                (byte*)locked.Address + ((nint)y * locked.RowBytes), size.Width * 4);
             for (var i = 3; i < row.Length; i += 4)
             {
                 if (row[i] != byte.MaxValue)
