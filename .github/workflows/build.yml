@@ -608,8 +608,15 @@ jobs:
       #
       # The ordering is load-bearing, not just convenient. A baseline check on a host
       # whose captures race is a machine for manufacturing differences that are not
-      # regressions; placing it after --determinism means a red tick here can never be
-      # one of those, and can be reported as a real difference in the bytes.
+      # regressions; running it after --determinism means five runs have just agreed on
+      # these exact bytes, which makes a red tick here far likelier to be a real
+      # difference than a flake.
+      #
+      # Likelier, not certain, and the distinction is this workflow's own: five runs miss
+      # a 50/50 per-run flip about 6% of the time (the sample-size note on the step
+      # above). So a red tick that does not reproduce is not a nuisance to be re-run
+      # past — it is a fourth settle-loop race, which is exactly what #179 and #201 each
+      # turned out to be, and it deserves its own ticket rather than a retry.
       #
       # WHEN THIS GOES RED, the fix is never to delete the step. In order of likelihood:
       # a UI change whose PR did not re-record the manifest in the same commit; a real
@@ -633,13 +640,14 @@ jobs:
 
           if ! bash tools/parity-audit/run.sh --check-captured "${PARITY_OUT}/determinism/r1"; then
             echo "::error::this runner's capture does not match the committed" \
-                 "tools/parity-audit/baselines/macos-arm64.sha256. The step above" \
-                 "already passed, so the capture is stable here — this is a real" \
-                 "difference in the bytes, not a flake. Either the UI changed and the" \
-                 "manifest was not re-recorded in the same commit, or it is a visual" \
-                 "regression, or this runner image no longer renders what the recording" \
-                 "host does (compare the host line above against a green run's, and see" \
-                 "#188). The differing PNGs are in the parity-determinism-macos artifact."
+                 "tools/parity-audit/baselines/macos-arm64.sha256. Five runs agreed on" \
+                 "these bytes moments ago, so a real difference is the likeliest reading:" \
+                 "the UI changed and the manifest was not re-recorded in the same commit," \
+                 "or it is a visual regression, or this runner image no longer renders" \
+                 "what the recording host does (compare the host line above against a" \
+                 "green run's, and see #188). If instead it does not reproduce, that is a" \
+                 "capture race surviving five samples and wants its own ticket, not a" \
+                 "re-run. The PNGs are in the parity-determinism-macos artifact."
             exit 1
           fi
 

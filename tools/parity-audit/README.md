@@ -228,7 +228,11 @@ the same applies with one addition: the baseline step prints the runner's macOS 
 image version on **every** run, green ones included, so a red one can be read against the
 last green one instead of guessed at. In order of likelihood, red means a UI change whose
 commit did not re-record the manifest, a real visual regression, or the `macos-latest`
-image having moved under us — the third being the one your own Mac cannot reproduce. The
+image having moved under us — the third being the one your own Mac cannot reproduce.
+There is a fourth, and it is the interesting one: a red that does **not** reproduce is a
+capture race that survived five determinism samples (which miss a 50/50 per-run flip
+about 6% of the time), i.e. a fourth instance of the defect class #179 and #201 each
+turned out to be. That wants a ticket, not a re-run. The
 PNGs themselves are deliberately *not* committed: the harness is deterministic, so they
 are exactly regenerable from any commit, and 640 KB of binaries per recording would be
 permanent git weight for data that has a one-command source. Re-record after an intended
