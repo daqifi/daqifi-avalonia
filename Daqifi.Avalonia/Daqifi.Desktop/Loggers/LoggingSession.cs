@@ -15,6 +15,7 @@ public class LoggingSession : ObservableObject
     #region Private Data
     private string _name;
     private long? _sampleCount;
+    private SessionStatus _status = SessionStatus.Complete;
     #endregion
 
     #region Properties
@@ -47,6 +48,46 @@ public class LoggingSession : ObservableObject
             }
         }
     }
+
+    /// <summary>
+    /// Whether this session is finished, is being written by an import right now, or was left
+    /// behind by an import that failed. Downstream addition: see <see cref="SessionStatus"/> for
+    /// the full rule. Persisted, so the answer survives a restart — which is the point, since the
+    /// bug it fixes is a half-imported session reloading at the next launch looking complete.
+    /// </summary>
+    public SessionStatus Status
+    {
+        get => _status;
+        set
+        {
+            if (SetProperty(ref _status, value))
+            {
+                OnPropertyChanged(nameof(IsIncompleteImport));
+                OnPropertyChanged(nameof(IncompleteImportTooltip));
+                OnPropertyChanged(nameof(AccessibilitySummary));
+            }
+        }
+    }
+
+    /// <summary>
+    /// True when this row came from an import that did not finish, so what it holds is a prefix of
+    /// the log rather than the whole of it. Downstream addition: the session-list rows on both
+    /// heads show a chip on this, which is the difference between "your import failed" and "your
+    /// import failed and here is the partial session it left".
+    /// </summary>
+    [NotMapped]
+    public bool IsIncompleteImport => Status != SessionStatus.Complete;
+
+    /// <summary>
+    /// What the incomplete-import chip says on hover. Empty when the session is complete.
+    /// Downstream addition.
+    /// </summary>
+    [NotMapped]
+    public string IncompleteImportTooltip => IsIncompleteImport
+        ? "This session came from an SD card import that did not finish, so it holds only the part "
+          + "of the log that had been read when the import stopped. Import the file again to "
+          + "replace it, or delete it."
+        : string.Empty;
 
     // @port: Daqifi.Desktop.Logger.LoggingSession.Channels
     public virtual ICollection<Channel.Channel> Channels { get; set; } = new List<Channel.Channel>();
@@ -198,6 +239,13 @@ public class LoggingSession : ObservableObject
             if (HasFrequencyDisplay)
             {
                 parts.Add(FrequencyDisplay);
+            }
+
+            // Announced, not just drawn: the incomplete-import chip is the only thing telling a
+            // sighted user this session's data is a fragment, so a screen reader has to say it too.
+            if (IsIncompleteImport)
+            {
+                parts.Add("incomplete import");
             }
 
             return string.Join(", ", parts);

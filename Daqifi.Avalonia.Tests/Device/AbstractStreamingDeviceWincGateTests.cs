@@ -24,16 +24,14 @@ namespace Daqifi.Avalonia.Tests.Device;
 public class AbstractStreamingDeviceWincGateTests
 {
     /// <summary>
-    /// Minimal concrete <see cref="AbstractStreamingDevice"/>. The base class needs three members
-    /// implemented and none of them is exercised here: the gate under test is a pure read of
-    /// <see cref="AbstractStreamingDevice.Metadata"/>, and no test in this class connects, writes
-    /// or sends anything.
+    /// Minimal concrete <see cref="AbstractStreamingDevice"/>. The base class needs two members
+    /// implemented and neither is exercised here: the gate under test is a pure read of
+    /// <see cref="AbstractStreamingDevice.Metadata"/>, and no test in this class connects or
+    /// sends anything.
     /// </summary>
     private sealed class TestDevice : AbstractStreamingDevice
     {
         public override ConnectionType ConnectionType => ConnectionType.Usb;
-
-        public override bool Write(string command) => throw new NotSupportedException();
 
         protected override void SendMessage(IOutboundMessage<string> message) =>
             throw new NotSupportedException();

@@ -551,9 +551,28 @@ public partial class DeviceLogsViewModel : ObservableObject
             var result = await Task.Run(() =>
                 importer.ImportFromDeviceAsync(device, file.FileName, null, progress, CancellationToken.None));
 
-            AddImportedSession(result.Session);
+            string message;
+            if (result.SessionPersisted)
+            {
+                AddImportedSession(result.Session);
+                message = $"Successfully imported {file.FileName}";
 
-            var message = $"Successfully imported {file.FileName}";
+                // A persisted session can still owe the user a word — an overwrite whose old
+                // session could not be removed leaves a duplicate they have to clear by hand.
+                if (result.OutcomeGuidance.Length > 0)
+                {
+                    message += $"\n\n{result.OutcomeGuidance}";
+                }
+            }
+            else
+            {
+                // Nothing threw, but no finished session came of it — an empty log, or samples
+                // that could not be recorded as a completed session. The importer says which;
+                // reporting a successful import here would name a session that is not there, or
+                // is there flagged as incomplete.
+                message = $"{file.FileName}: {result.OutcomeGuidance}";
+            }
+
             var timestampWarning = result.TimestampQuality.BuildUserWarning();
             if (timestampWarning != null)
             {
@@ -630,7 +649,28 @@ public partial class DeviceLogsViewModel : ObservableObject
                     var result = await Task.Run(() =>
                         importer.ImportFromDeviceAsync(device, file.FileName, null, progress, CancellationToken.None));
 
+                    if (!result.SessionPersisted)
+                    {
+                        // Nothing threw, but no finished session came of it — usually an empty log,
+                        // which is what an interrupted logging session leaves on the card and needs
+                        // no attention paid to the device. It belongs in the skipped list; counting
+                        // it as imported would put a session in the summary's total that the user
+                        // will never find. The guidance sentence comes from the importer so this
+                        // and the single-file dialog cannot say different things, and carries no
+                        // file name so a card full of empty logs reads it out once.
+                        outcome.RecordSkip(file.FileName, result.OutcomeGuidance);
+                        continue;
+                    }
+
                     AddImportedSession(result.Session);
+
+                    // Imported, and still with something to say — an overwrite whose old session
+                    // could not be removed. Not a skip (the file did import), so it gets its own
+                    // line in the summary rather than being counted as one.
+                    if (result.OutcomeGuidance.Length > 0)
+                    {
+                        outcome.RecordNotice(result.OutcomeGuidance);
+                    }
 
                     if (result.TimestampQuality.HasDegenerateTimeAxis)
                     {
@@ -723,6 +763,13 @@ public partial class DeviceLogsViewModel : ObservableObject
             {
                 message.Append(CultureInfo.CurrentCulture, $"\n\n{guidance}");
             }
+        }
+
+        // Deduped the same way, but about files that DID import — the batch is not going to name
+        // them one by one, and the advice is the same for all of them.
+        foreach (var notice in outcome.Notices)
+        {
+            message.Append(CultureInfo.CurrentCulture, $"\n\n{notice}");
         }
 
         if (outcome.DisconnectedMidBatch)
@@ -836,6 +883,7 @@ internal sealed class ImportAllOutcome
 {
     private readonly List<string> _skippedFiles = [];
     private readonly List<string> _skipGuidance = [];
+    private readonly List<string> _notices = [];
 
     /// <summary>How many files the batch started with.</summary>
     // @port: Daqifi.Desktop.ViewModels.ImportAllOutcome.TotalCount
@@ -862,6 +910,23 @@ internal sealed class ImportAllOutcome
     /// </summary>
     // @port: Daqifi.Desktop.ViewModels.ImportAllOutcome.SkipGuidance
     public IReadOnlyList<string> SkipGuidance => _skipGuidance;
+
+    /// <summary>
+    /// Things that need saying about files that DID import, in first-seen order and deduped.
+    /// Downstream addition: an overwrite whose superseded session could not be removed leaves a
+    /// duplicate the user has to clear, which is neither a skip nor a silence.
+    /// </summary>
+    public IReadOnlyList<string> Notices => _notices;
+
+    /// <summary>Records a note about a file that imported successfully.</summary>
+    /// <param name="notice">What the user should know. Deduped, so it must carry no file name.</param>
+    public void RecordNotice(string notice)
+    {
+        if (!_notices.Contains(notice))
+        {
+            _notices.Add(notice);
+        }
+    }
 
     /// <summary>
     /// The card-wide failure that ended the batch early, or <c>null</c> if it ran to completion.

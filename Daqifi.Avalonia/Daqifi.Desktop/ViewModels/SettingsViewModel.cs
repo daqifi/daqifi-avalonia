@@ -13,6 +13,31 @@ public partial class SettingsViewModel : ObservableObject
 {
     private readonly DaqifiSettings _settings = DaqifiSettings.Instance;
 
+    /// <summary>
+    /// Downstream addition. Both heads construct this view model once, the first time their
+    /// settings pane is opened, which is the moment to hand over anything the settings load had
+    /// to report.
+    /// </summary>
+    public SettingsViewModel()
+    {
+        // Taken here rather than read on each open: it is one-shot, and this is the first place
+        // in either head that can show it. DaqifiViewModel deliberately does not touch
+        // DaqifiSettings.Instance during startup (its constructor does filesystem IO), so the
+        // desktop notification list — where the damaged-database notice from #181 goes — is not
+        // available to this one without undoing that.
+        RecoveryNotice = _settings.TakeQuarantineNotice() ?? string.Empty;
+    }
+
+    /// <summary>
+    /// What to tell the user when the settings file was found damaged and moved aside (#193);
+    /// empty on every ordinary launch. Without it their CSV delimiter silently reverts to a comma
+    /// and stays reverted, with nothing anywhere saying why.
+    /// </summary>
+    public string RecoveryNotice { get; }
+
+    /// <summary>Whether <see cref="RecoveryNotice"/> has anything to show. Drives its visibility.</summary>
+    public bool HasRecoveryNotice => !string.IsNullOrEmpty(RecoveryNotice);
+
     // @port: Daqifi.Desktop.ViewModels.SettingsViewModel.CsvDelimiter
     public string CsvDelimiter
     {

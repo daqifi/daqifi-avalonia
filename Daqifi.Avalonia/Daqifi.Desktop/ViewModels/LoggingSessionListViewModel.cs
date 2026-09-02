@@ -5,10 +5,8 @@
 
 using System.Collections.ObjectModel;
 using System.Collections.Specialized;
-using System.IO;
 using Daqifi.Desktop.Common.Loggers;
 using Daqifi.Desktop.Logger;
-using Microsoft.Data.Sqlite;
 using Microsoft.EntityFrameworkCore;
 
 namespace Daqifi.Desktop.ViewModels;
@@ -206,9 +204,24 @@ public class LoggingSessionListViewModel
     /// Deletes every session. Refuses to run while logging is active, confirms the destructive
     /// action, then purges the database storage off the UI thread under the busy flag.
     /// </summary>
+    /// <remarks>
+    /// A purge that fails now keeps the session list and tells the user, instead of clearing the
+    /// pane or leaving a log line as the only trace (#183). The two are the same decision: the
+    /// storage purge either replaced the database or left it untouched, so the list is right to go
+    /// on showing exactly what is still on disk.
+    /// <para>
+    /// There is a third outcome between those two, and it also gets said out loud: the empty
+    /// database is in place (so the list is right to clear) but the old file could not be deleted,
+    /// which means the destructive thing the user asked for has not actually happened yet.
+    /// </para>
+    /// </remarks>
     // @port: Daqifi.Desktop.ViewModels.LoggingSessionListViewModel.DeleteAllSessionsAsync
     public async Task DeleteAllSessionsAsync()
     {
+        // Held over the busy flag's finally so the dialog is shown after the pane stops saying it is
+        // deleting, rather than behind a spinner that never clears.
+        (string Title, string Message)? dialog = null;
+
         try
         {
             if (_host.LoggingSessions.Count == 0)
@@ -240,14 +253,33 @@ public class LoggingSessionListViewModel
             try
             {
                 var contextFactory = _loggingContextFactoryResolver();
-                await Task.Run(() => DeleteAllLoggingSessionsFromStorage(contextFactory));
+                var leftOnDisk = await Task.Run(() => DeleteAllLoggingSessionsFromStorage(contextFactory));
+
+                // Only past the purge. Clearing here on a failed purge is what left the pane showing
+                // sessions whose data was already gone — or, worse, hiding sessions that are still
+                // there because the purge put them back.
                 _host.LoggingSessions.Clear();
                 _host.NotifyLoggingSessionsChanged();
                 _host.ClearPlot();
+
+                // The empty database is live, so the list above is right to be empty — but the old
+                // file is still on disk, and a user deleting their sessions is entitled to know the
+                // deletion did not finish.
+                if (leftOnDisk != null)
+                {
+                    _appLogger.Warning(leftOnDisk);
+                    dialog = ("Delete Incomplete", leftOnDisk);
+                }
             }
-            catch (IOException ioEx)
+            catch (Exception ex)
             {
-                _appLogger.Error(ioEx, "Database file is in use. Please try again.");
+                _appLogger.Error(ex, "Failed to delete all logging sessions");
+
+                // The migrator's own message is already written for a user and says what became of
+                // their data, so it is shown verbatim.
+                dialog = ("Delete Failed", ex is DatabaseReplacementException replacement
+                    ? replacement.Message
+                    : "The logging sessions could not be deleted. See the application log for details.");
             }
         }
         catch (Exception ex)
@@ -259,10 +291,31 @@ public class LoggingSessionListViewModel
             _host.IsLoggedDataBusy = false;
             _host.LoggedDataBusyReason = string.Empty;
         }
+
+        if (dialog is { } toShow)
+        {
+            try
+            {
+                await _host.ShowMessageAsync(toShow.Title, toShow.Message);
+            }
+            catch (Exception ex)
+            {
+                // Outside the guard above, so its own failure would otherwise escape this method and
+                // reach the command that invoked it — which is the shape of crash #183 is about.
+                _appLogger.Error(ex, "Failed to show the delete-all result dialog");
+            }
+        }
     }
 
+    /// <summary>
+    /// Purges the database storage. Runs off the UI thread.
+    /// </summary>
+    /// <returns>
+    /// <c>null</c> when everything went, or a sentence for the user when the empty database is in
+    /// place but the old file could not be removed. Throws when nothing was deleted at all.
+    /// </returns>
     // @port: Daqifi.Desktop.ViewModels.LoggingSessionListViewModel.DeleteAllLoggingSessionsFromStorage
-    private void DeleteAllLoggingSessionsFromStorage(IDbContextFactory<LoggingContext> contextFactory)
+    private string? DeleteAllLoggingSessionsFromStorage(IDbContextFactory<LoggingContext> contextFactory)
     {
         _host.SuspendConsumer();
         var purgeSucceeded = false;
@@ -270,20 +323,14 @@ public class LoggingSessionListViewModel
         {
             _host.ClearBuffer();
 
-            // Release all pooled SQLite connections so the file is not locked.
-            SqliteConnection.ClearAllPools();
-
-            DeleteFileIfExists(_databasePath);
-            DeleteFileIfExists(_databasePath + "-wal");
-            DeleteFileIfExists(_databasePath + "-shm");
-
-            // Recreate the database schema. Constructing a context does not
-            // create tables — only Migrate() (or EnsureCreated) does. Without
-            // this, the next session-start query against Samples/Sessions
-            // throws "no such table: Samples".
-            using var context = contextFactory.CreateDbContext();
-            context.Database.Migrate();
+            // Move the old database and every journal sidecar aside, build the empty replacement,
+            // and only then delete what was moved. Deleting first — which is what this did, and it
+            // missed "-journal" while it was at it — left a table-less database behind whenever
+            // anything after the first delete failed, and the next logging toggle died on it (#183).
+            // Throws when the database is untouched or was preserved, with a message for the user.
+            var leftOnDisk = DatabaseMigrator.ReplaceWithEmptyDatabase(contextFactory, _databasePath);
             purgeSucceeded = true;
+            return leftOnDisk;
         }
         finally
         {
@@ -303,14 +350,6 @@ public class LoggingSessionListViewModel
         }
     }
 
-    // @port: Daqifi.Desktop.ViewModels.LoggingSessionListViewModel.DeleteFileIfExists
-    private static void DeleteFileIfExists(string path)
-    {
-        if (File.Exists(path))
-        {
-            File.Delete(path);
-        }
-    }
     #endregion
 
     #region Collection plumbing
