@@ -177,6 +177,27 @@ public class DatabaseMigratorUnusableDatabaseTests : IDisposable
     }
 
     /// <summary>
+    /// What the user is actually shown. The message has to name the file it preserved — an empty
+    /// Logged Data pane otherwise reads as deleted data — and it must only claim a working
+    /// replacement once one has been migrated, because moving the damaged file aside and rebuilding
+    /// are separate outcomes.
+    /// </summary>
+    [Fact]
+    public void AfterAQuarantine_TheUserIsToldWhereTheOldDatabaseWentAndThatTheNewOneWorks()
+    {
+        File.WriteAllText(DatabasePath, "not a database");
+
+        var factory = Factory();
+        Assert.True(DatabaseMigrator.PrepareMigration(factory, DatabasePath));
+        DatabaseMigrator.ApplyMigrations(factory, DatabasePath);
+
+        var message = DatabaseMigrator.DescribeQuarantineForUser();
+        Assert.NotNull(message);
+        Assert.Contains(Assert.Single(QuarantinedFiles()), message);
+        Assert.Contains("is in use", message);
+    }
+
+    /// <summary>
     /// The mobile heads never call PrepareMigration — there is no MigrationStatusWindow to drive —
     /// so they get the same recovery through their own entry point. Before it, a damaged database
     /// did not crash the phone app; it booted with every DB-backed pane broken, on that launch and

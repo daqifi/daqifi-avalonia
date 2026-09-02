@@ -37,6 +37,11 @@ public static class DatabaseMigrator
     // is why "the file exists but has no content" is not a corruption case and is not one here.
     private const int SQLITE_CORRUPT = 11;
     private const int SQLITE_NOTADB = 26;
+
+    // The database and its journal sidecars are ONE artefact and move together. Ordered so the
+    // database itself goes last: it is the file whose absence lets a replacement be created, so it
+    // is the last thing to leave and (when a quarantine is undone) the first thing to come back.
+    private static readonly string[] DatabaseFileSuffixes = ["-wal", "-shm", ""];
     #endregion
 
     #region Public Properties
@@ -47,6 +52,14 @@ public static class DatabaseMigrator
     /// runs before any window exists, so there is nothing to show a dialog on at the time.
     /// </summary>
     public static string? QuarantinedDatabasePath { get; private set; }
+
+    /// <summary>
+    /// Whether a migration has since completed against the database now at that path. Tracked apart
+    /// from <see cref="QuarantinedDatabasePath"/> because moving the damaged file aside and building
+    /// a working replacement are separate outcomes, and the mobile head reaches its UI even when the
+    /// second one failed (<c>App.InitializeMobile</c> catches a migration failure and carries on).
+    /// </summary>
+    private static bool _replacementDatabaseIsLive;
     #endregion
 
     #region Public Methods
@@ -99,33 +112,29 @@ public static class DatabaseMigrator
     {
         var backupPath = BackupDatabase(databasePath);
         CheckpointWal(databasePath);
+        var quarantinedBefore = QuarantinedDatabasePath;
 
         try
         {
-            RunMigrations(contextFactory);
-        }
-        catch (Exception ex) when (FindContentCorruption(ex) is { } corruption)
-        {
-            // Corruption the pending-migration read did not reach. That read only touches the schema
-            // catalog and __EFMigrationsHistory; damage confined to pages the migration itself
-            // rewrites surfaces here for the first time. Restoring the backup would restore the same
-            // damage — it was copied from this very file — so rebuild rather than roll back.
-            AppLogger.Instance.Error(ex, "Database migration failed: the database file is corrupt");
-            if (QuarantineDatabase(databasePath, corruption) is null)
-            {
-                RestoreBackup(backupPath, databasePath);
-                throw;
-            }
-
-            CleanupBackup(backupPath);
-            RunMigrations(contextFactory);
-            AppLogger.Instance.AddBreadcrumb("database", "Corrupt database quarantined; a new one was migrated in its place");
-            return;
+            MigrateWithCorruptionRecovery(contextFactory, databasePath);
         }
         catch (Exception ex)
         {
             AppLogger.Instance.Error(ex, "Database migration failed");
-            RestoreBackup(backupPath, databasePath);
+
+            // Roll back only onto a database that is still the user's own. If the file was
+            // quarantined during the call above then the backup is a copy of THAT damaged file, and
+            // restoring it would put the damage back on top of the replacement; the quarantined
+            // original is the copy worth keeping, so drop the redundant one instead.
+            if (QuarantinedDatabasePath == quarantinedBefore)
+            {
+                RestoreBackup(backupPath, databasePath);
+            }
+            else
+            {
+                CleanupBackup(backupPath);
+            }
+
             throw;
         }
 
@@ -134,10 +143,14 @@ public static class DatabaseMigrator
     }
 
     /// <summary>
-    /// Migrates for a host that has no migration UI to drive — the mobile heads, which cannot show
-    /// <c>MigrationStatusWindow</c> and so never call <see cref="PrepareMigration"/>. Gets the same
-    /// corruption recovery: quarantine the unreadable file and migrate a fresh one in its place.
+    /// Migrates, and if the database file's content turns out to be corrupt, quarantines it and
+    /// migrates once more against the fresh one that takes its place.
     /// </summary>
+    /// <remarks>
+    /// Public because the mobile heads call it directly: they cannot show
+    /// <c>MigrationStatusWindow</c>, so they never call <see cref="PrepareMigration"/> /
+    /// <see cref="ApplyMigrations"/> and would otherwise get no recovery at all.
+    /// </remarks>
     /// <param name="contextFactory">The DbContext factory registered in DI.</param>
     /// <param name="databasePath">Full path to the SQLite database file.</param>
     public static void MigrateWithCorruptionRecovery(IDbContextFactory<LoggingContext> contextFactory, string databasePath)
@@ -148,6 +161,9 @@ public static class DatabaseMigrator
         }
         catch (Exception ex) when (FindContentCorruption(ex) is { } corruption)
         {
+            // Corruption the pending-migration read did not reach — that read only touches the
+            // schema catalog and __EFMigrationsHistory, so damage confined to pages the migration
+            // itself rewrites surfaces here for the first time.
             AppLogger.Instance.Error(ex, "Database migration failed: the database file is corrupt");
             if (QuarantineDatabase(databasePath, corruption) is null)
             {
@@ -156,6 +172,9 @@ public static class DatabaseMigrator
 
             RunMigrations(contextFactory);
         }
+
+        // Reached only when a migration completed, so whatever is at databasePath now works.
+        _replacementDatabaseIsLive = true;
     }
 
     /// <summary>
@@ -163,10 +182,24 @@ public static class DatabaseMigrator
     /// none. Lives here so the desktop notification list and the mobile notifications overlay say
     /// the same thing.
     /// </summary>
-    public static string? DescribeQuarantineForUser() => QuarantinedDatabasePath is { } path
-        ? $"The logged-data database could not be read and was moved to '{path}'. A new, empty one "
-          + "is in use — previously logged sessions are not in it, and the old file has not been deleted."
-        : null;
+    public static string? DescribeQuarantineForUser()
+    {
+        if (QuarantinedDatabasePath is not { } path)
+        {
+            return null;
+        }
+
+        var preserved = $"The logged-data database could not be read and was moved to '{path}'. ";
+
+        // Never claim a working replacement that does not exist. The desktop dies before any window
+        // when the rebuild fails, but the mobile head carries on to its UI, so this branch is what
+        // stops that user being told everything is fine while every data-backed pane is broken.
+        return _replacementDatabaseIsLive
+            ? preserved + "A new, empty one is in use — previously logged sessions are not in it, "
+              + "and the old file has not been deleted."
+            : preserved + "Building a replacement also failed, so logged data is unavailable in this "
+              + "session. The old file has not been deleted.";
+    }
     #endregion
 
     #region Private Methods
@@ -245,33 +278,37 @@ public static class DatabaseMigrator
         // leaves the file untouched.
         var quarantinePath = $"{databasePath}.corrupt-{DateTime.UtcNow:yyyyMMdd-HHmmssfff}";
 
-        // Order matters, and the sidecars go FIRST. A stale -wal is not inert: SQLite replays a
-        // journal whose header still checksums, so one left beside the replacement database would
-        // write the old file's pages into it — one corrupt file traded for another. Moving the
-        // database first and only then failing on a sidecar produces exactly that state, so if a
-        // sidecar cannot be moved this stops before touching the database and leaves the directory
-        // as it was: the app still refuses to start, but loudly, with nothing half-done.
-        //
-        // Nothing is ever deleted. A -wal can hold the only committed copy of the user's last
-        // samples, so it is moved beside its database or not at all.
-        if (!TryRelocateSidecar(databasePath + "-wal", quarantinePath + "-wal")
-            || !TryRelocateSidecar(databasePath + "-shm", quarantinePath + "-shm"))
-        {
-            return null;
-        }
+        // All of it or none of it. Three reasons this has to be atomic rather than best-effort:
+        //   • a -wal can hold the only committed copy of the user's last samples, so it must stay
+        //     with the database it belongs to;
+        //   • a stale -wal left beside a REPLACEMENT database is not inert — SQLite replays a
+        //     journal whose header still checksums, writing the old file's pages into the new one;
+        //   • every attempt picks a fresh timestamp, so a half-moved set could never be reunited by
+        //     a later one.
+        // Nothing is ever deleted: a file that cannot be moved is put back, not removed.
+        var moved = new List<(string From, string To)>();
 
-        try
+        foreach (var suffix in DatabaseFileSuffixes)
         {
-            File.Move(databasePath, quarantinePath, overwrite: false);
-        }
-        catch (Exception ex)
-        {
-            // The sidecars (if any) are already at the quarantine name and the database is still in
-            // place — no replacement is created, so nothing can be replayed into one. The next
-            // launch retries and finds nothing left to move.
-            AppLogger.Instance.Error(ex,
-                $"Database at '{databasePath}' is unreadable and could not be moved aside to '{quarantinePath}'");
-            return null;
+            var source = databasePath + suffix;
+            if (!File.Exists(source))
+            {
+                continue;
+            }
+
+            try
+            {
+                File.Move(source, quarantinePath + suffix, overwrite: false);
+                moved.Add((source, quarantinePath + suffix));
+            }
+            catch (Exception ex)
+            {
+                AppLogger.Instance.Error(ex,
+                    $"Could not move '{source}' aside, so the quarantine of '{databasePath}' is being undone. " +
+                    "The app will refuse to open the database rather than leave a half-moved set of files behind.");
+                UndoMoves(moved);
+                return null;
+            }
         }
 
         QuarantinedDatabasePath = quarantinePath;
@@ -283,30 +320,24 @@ public static class DatabaseMigrator
     }
 
     /// <summary>
-    /// Moves a <c>-wal</c>/<c>-shm</c> sidecar to sit beside its quarantined database.
+    /// Puts every file an abandoned quarantine had already moved back where it came from, newest
+    /// move first. Best-effort by necessity — there is nothing left to try if this fails — so each
+    /// failure is logged with both paths, which is what a support log needs to say.
     /// </summary>
-    /// <returns>
-    /// <c>true</c> when the sidecar is absent or was moved — i.e. when it is safe to create a
-    /// replacement database at the original path.
-    /// </returns>
-    private static bool TryRelocateSidecar(string sidecarPath, string destinationPath)
+    private static void UndoMoves(List<(string From, string To)> moved)
     {
-        if (!File.Exists(sidecarPath))
+        for (var i = moved.Count - 1; i >= 0; i--)
         {
-            return true;
-        }
-
-        try
-        {
-            File.Move(sidecarPath, destinationPath, overwrite: false);
-            return true;
-        }
-        catch (Exception ex)
-        {
-            AppLogger.Instance.Error(ex,
-                $"Could not move '{sidecarPath}' aside, so the database it belongs to is being left in place " +
-                "rather than replaced next to a journal SQLite could replay into the replacement");
-            return false;
+            var (from, to) = moved[i];
+            try
+            {
+                File.Move(to, from, overwrite: false);
+            }
+            catch (Exception ex)
+            {
+                AppLogger.Instance.Error(ex,
+                    $"Could not put '{to}' back as '{from}' while undoing an abandoned quarantine. Move it back by hand.");
+            }
         }
     }
 
