@@ -210,34 +210,9 @@ public partial class LoggingManager : ObservableObject
         {
             using (var context = _loggingContext.CreateDbContext())
             {
-                // Pick an ID that cannot collide with any existing row in any
-                // related table. Sessions.ID is manually assigned (not IDENTITY),
-                // so reusing the max+1 across only the Sessions table can hand
-                // out an ID that is still referenced by orphan rows in
-                // SessionDeviceMetadata or Samples (e.g., from a prior crash, or
-                // a delete that ran without SQLite foreign keys enabled). The
-                // composite PK on SessionDeviceMetadata then rejects the insert
-                // with UNIQUE constraint failed and the toggle appears to do
-                // nothing on the second attempt.
-                //
-                // This runs synchronously on the UI thread (IsLogging is a
-                // UI-bound toggle), so the cost matters as the database grows.
-                // Folding the three MAXes into a single SQL statement keeps the
-                // round-trip count at one. Each inner MAX hits an index — Sessions.ID
-                // is the PK, SessionDeviceMetadata.LoggingSessionID is the leading
-                // column of the composite PK, and Samples has IX_Samples_SessionTime
-                // on (LoggingSessionID, TimestampTicks) — so SQLite resolves each
-                // MAX as an index seek rather than a table scan.
-                const string nextSessionIdSql = @"
-                    SELECT MAX(id) AS Value FROM (
-                        SELECT MAX(ID) AS id FROM Sessions
-                        UNION ALL SELECT MAX(LoggingSessionID) AS id FROM SessionDeviceMetadata
-                        UNION ALL SELECT MAX(LoggingSessionID) AS id FROM Samples
-                    )";
-                var maxKnownId = context.Database.SqlQueryRaw<int?>(nextSessionIdSql)
-                    .AsEnumerable()
-                    .FirstOrDefault() ?? -1;
-                var newId = maxKnownId + 1;
+                // Shared with SdCardSessionImporter — see SessionIdAllocator for why the ID has to
+                // clear all three related tables and not just Sessions.
+                var newId = SessionIdAllocator.NextSessionId(context);
                 var name = $"Session_{newId}";
                 Session = new LoggingSession(newId, name);
                 context.Sessions.Add(Session);
@@ -799,8 +774,15 @@ public partial class LoggingManager : ObservableObject
     {
         using var context = _loggingContext.CreateDbContext();
 
+        // A session row with no samples is litter from a logging session that was started and
+        // abandoned without recording anything — EXCEPT while an import owns the row. An import
+        // commits its Sessions row before the first sample is parsed, so without the status test
+        // this purge deletes a live import's row out from under it. That hazard is why
+        // GetLoggingSessionsSnapshot below exists at all; the test makes it impossible rather
+        // than merely avoided by which method a caller happens to pick.
         var emptySessions = context.Sessions
-            .Where(session => !context.Samples.Any(sample => sample.LoggingSessionID == session.ID))
+            .Where(session => session.Status != SessionStatus.Importing
+                              && !context.Samples.Any(sample => sample.LoggingSessionID == session.ID))
             .ToList();
 
         if (emptySessions.Count > 0)
@@ -808,6 +790,8 @@ public partial class LoggingManager : ObservableObject
             context.Sessions.RemoveRange(emptySessions);
             context.SaveChanges();
         }
+
+        MarkAbandonedImportsFailed(context);
 
         // Sweep orphan SessionDeviceMetadata rows whose Sessions row is gone.
         // SQLite cascade delete only fires when PRAGMA foreign_keys=ON for the
@@ -841,15 +825,74 @@ public partial class LoggingManager : ObservableObject
     }
 
     /// <summary>
+    /// Marks every session still recorded as <see cref="SessionStatus.Importing"/> as
+    /// <see cref="SessionStatus.ImportFailed"/>. Downstream addition.
+    /// </summary>
+    /// <param name="context">The context the caller already opened for this load.</param>
+    /// <remarks>
+    /// <para>A row is left in the importing state only while an import is writing it, so one that
+    /// is still importing when the app starts belongs to an import that never finished — the
+    /// process was killed mid-file. <c>SdCardSessionImporter</c>'s own failure path cannot cover
+    /// that case, because no catch block runs when the process dies; without this, the samples
+    /// that import did land would reload as a complete session.</para>
+    /// <para>Deliberately runs AFTER the empty-session purge above, not before: a second instance
+    /// importing right now would otherwise have its row relabelled and then immediately deleted by
+    /// that purge. As ordered, its row survives this pass untouched but for the label, which the
+    /// live import overwrites when it finishes; a genuinely abandoned empty row is purged on the
+    /// next launch. (The app has no cross-process database ownership guard of any kind — see
+    /// <c>DatabaseMigrator</c>'s quarantine notes — so ordering is the whole defence available.)
+    /// </para>
+    /// <para>One conditional UPDATE, not a read followed by a save of tracked entities: an import
+    /// finishing in another instance between the two would otherwise have its <c>Complete</c>
+    /// overwritten by a stale <c>ImportFailed</c>. As a single statement the only rows touched are
+    /// the ones the database still shows as importing at that instant, and a live import writes
+    /// its own status afterwards.</para>
+    /// <para>What this deliberately does NOT do is prove the import is dead before flagging it —
+    /// no ownership token, no lease, no expiry. The app has no cross-process database ownership
+    /// guard of any kind (no named mutex, no lock file, no single-instance gate; see
+    /// <c>DatabaseMigrator</c>'s quarantine notes), so two instances already share this database
+    /// independently of anything here, and adding ownership would be a new app-wide mechanism
+    /// governing every writer rather than part of an import fix. It would also be the wrong trade:
+    /// a lease this had to wait out would leave a session abandoned by a crashed import invisible
+    /// and unflagged until it expired, which is the bug this exists to close, with a timer on it.
+    /// What bounds the exposure is that this runs once, at startup, before this process can import
+    /// anything — so the only import it can race is another instance's, whose own finalization
+    /// then corrects the label.</para>
+    /// <para>Best-effort: a session list that loads is worth more than this bookkeeping, so a
+    /// failure here is logged and swallowed rather than taking startup down with it.</para>
+    /// </remarks>
+    private void MarkAbandonedImportsFailed(LoggingContext context)
+    {
+        try
+        {
+            var flagged = context.Sessions
+                .Where(session => session.Status == SessionStatus.Importing)
+                .ExecuteUpdate(setters => setters.SetProperty(s => s.Status, SessionStatus.ImportFailed));
+
+            if (flagged > 0)
+            {
+                AppLogger.Warning($"Marked {flagged} session(s) left mid-import as incomplete.");
+            }
+        }
+        catch (Exception ex)
+        {
+            AppLogger.Error(ex, "Failed to flag sessions left mid-import on startup.");
+        }
+    }
+
+    /// <summary>
     /// PURE read of the persisted sessions-with-samples list — no purge, no orphan sweep,
     /// no backfill (unlike <see cref="LoadPersistedLoggingSessions"/>). Safe to call
-    /// repeatedly and concurrently with a live writer: an in-flight SD-card import commits
-    /// its <c>Sessions</c> row with zero samples first, so the empty-session purge in
-    /// <see cref="LoadPersistedLoggingSessions"/> would DELETE that in-flight row and corrupt
-    /// the import. This variant only SELECTs (the 0-sample import row is naturally excluded
-    /// by the <c>Samples.Any</c> filter until it has data), so a refresh can never destroy it.
-    /// Used by the mobile Storage pane, which re-reads on every visit.
+    /// repeatedly and concurrently with a live writer, and used by the mobile Storage pane,
+    /// which re-reads on every visit.
     /// </summary>
+    /// <remarks>
+    /// An in-flight SD card import commits its <c>Sessions</c> row with zero samples before it
+    /// parses any, and this variant only SELECTs, so a refresh can never destroy it. The purge in
+    /// <see cref="LoadPersistedLoggingSessions"/> no longer would either — it exempts
+    /// <see cref="SessionStatus.Importing"/> rows — but a read that cannot write is still the
+    /// right thing for a pane that refreshes on every visit.
+    /// </remarks>
     public ObservableCollection<LoggingSession> GetLoggingSessionsSnapshot()
     {
         using var context = _loggingContext.CreateDbContext();

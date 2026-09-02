@@ -735,6 +735,25 @@
                                                                            Foreground="{DynamicResource TextTertiary}"
                                                                            VerticalAlignment="Center"/>
                                                             </Border>
+                                                            <!-- Incomplete-import chip. The one thing on the row that says
+                                                                 this session's data is a fragment: an SD import that failed
+                                                                 part way keeps the samples it managed to write, and without
+                                                                 this the row is indistinguishable from a finished session. -->
+                                                            <Border Background="{DynamicResource SurfaceRaised}"
+                                                                    BorderBrush="{DynamicResource StatusAmber}"
+                                                                    BorderThickness="1"
+                                                                    CornerRadius="3"
+                                                                    Padding="6,1"
+                                                                    Margin="6,0,0,0"
+                                                                    VerticalAlignment="Center"
+                                                                    ToolTip.Tip="{Binding IncompleteImportTooltip}"
+                                                                    IsVisible="{Binding IsIncompleteImport}">
+                                                                <TextBlock Text="INCOMPLETE IMPORT"
+                                                                           FontSize="8"
+                                                                           FontWeight="SemiBold"
+                                                                           Foreground="{DynamicResource StatusAmber}"
+                                                                           VerticalAlignment="Center"/>
+                                                            </Border>
                                                         </StackPanel>
                                                     </StackPanel>
                                                 </Button>

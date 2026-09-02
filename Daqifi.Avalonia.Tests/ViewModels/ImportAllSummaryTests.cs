@@ -26,6 +26,29 @@ public class ImportAllSummaryTests
         Assert.Equal("Imported 4 of 4 files.", summary);
     }
 
+    /// <summary>
+    /// A file can import successfully and still owe the user a word — an overwrite whose
+    /// superseded session could not be removed leaves a duplicate to clear by hand. That is not a
+    /// skip: the file imported and is counted, so it gets its own line rather than inflating the
+    /// skip list. Deduped like the skip advice, since the same sentence applies to every file it
+    /// happened to.
+    /// </summary>
+    [Fact]
+    public void A_file_that_imported_but_left_something_to_do_says_so_once()
+    {
+        var outcome = new ImportAllOutcome { TotalCount = 2, ImportedCount = 2 };
+        outcome.RecordNotice("the old one is still there");
+        outcome.RecordNotice("the old one is still there");
+
+        var summary = DeviceLogsViewModel.BuildImportAllSummary(outcome);
+
+        Assert.Contains("Imported 2 of 2 files.", summary, StringComparison.Ordinal);
+        Assert.DoesNotContain("Skipped", summary, StringComparison.Ordinal);
+        Assert.Equal(
+            "Imported 2 of 2 files.\n\nthe old one is still there",
+            summary);
+    }
+
     [Fact]
     public void Skipped_files_are_named()
     {

@@ -35,6 +35,20 @@
         <Setter Property="FontFamily" Value="{DynamicResource MonoFontFamily}"/>
         <Setter Property="FontWeight" Value="SemiBold"/>
     </Style>
+    <!--
+        A chip that warns rather than informs: amber text, to pair with an amber BorderBrush and
+        BorderThickness="1" on the Border itself (Border.chip sets no thickness, so a BorderBrush
+        alone paints nothing).
+
+        This has to be a style. Setting Foreground straight on the TextBlock does not work here:
+        `Border.chip > TextBlock` above already sets it, and a `{DynamicResource}` written inline
+        on the child loses to that setter, so the text silently comes out the ordinary muted grey
+        and the chip reads as one more metadata pill. Overriding one style with a later one — the
+        way chipValue does — is what actually takes effect.
+    -->
+    <Style Selector="Border.chip TextBlock.chipWarn">
+        <Setter Property="Foreground" Value="{DynamicResource StatusAmber}"/>
+    </Style>
 
     <!-- Section header + count (Channels sections, etc.). -->
     <Style Selector="TextBlock.sectionLabel">

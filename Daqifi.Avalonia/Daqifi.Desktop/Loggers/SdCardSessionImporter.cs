@@ -44,7 +44,12 @@ public interface ISdCardSessionImporter
 // @port: Daqifi.Desktop.Loggers.SdCardSessionImporter
 public class SdCardSessionImporter : ISdCardSessionImporter
 {
-    private const int BatchSize = 1000;
+    /// <summary>
+    /// How many samples accumulate before a batch is committed. Internal rather than private so
+    /// the atomicity tests can say "fail after exactly one committed batch" without hard-coding
+    /// the number and quietly testing nothing if it ever changes.
+    /// </summary>
+    internal const int BatchSize = 1000;
     private readonly IDbContextFactory<LoggingContext> _loggingContext;
     private readonly AppLogger _logger = AppLogger.Instance;
 
@@ -203,14 +208,18 @@ public class SdCardSessionImporter : ISdCardSessionImporter
                 fileStream, downloadResult.FileName, parseOptions, ct);
             var result = await ImportSessionAsync(logSession, options, progress, ct);
 
-            // Optionally delete from device after successful import
-            if (options.DeleteFromDeviceAfterImport)
+            // Optionally delete from device after successful import. Not for a log that produced
+            // no samples: nothing was imported and no session was kept, so deleting it would
+            // destroy the only copy of a file the user may want to look at another way.
+            if (options.DeleteFromDeviceAfterImport && result.SessionPersisted)
             {
                 _logger.Information($"Deleting '{fileName}' from device after successful import");
                 await device.DeleteSdCardFileAsync(fileName, ct);
             }
 
-            _logger.Information($"Successfully imported '{fileName}' from device {device.DeviceSerialNo}");
+            _logger.Information(
+                $"Imported '{fileName}' from device {device.DeviceSerialNo}: " +
+                $"{result.SamplesImported} sample(s)");
             return result;
         }
         finally
@@ -356,24 +365,18 @@ public class SdCardSessionImporter : ISdCardSessionImporter
         var timestampQuality = new ImportTimestampQuality();
 
         var config = logSession.DeviceConfig;
-        var deviceSerialNo = config?.DeviceSerialNumber ?? "Unknown";
-        var deviceName = config?.DevicePartNumber
-                         ?? Path.GetFileNameWithoutExtension(logSession.FileName);
-
-        // Determine channel counts from config or discover from first sample
-        var analogPortCount = config?.AnalogPortCount ?? 0;
-        var digitalPortCount = config?.DigitalPortCount ?? 0;
 
         _logger.Information(
-            $"SD card session config: AnalogPorts={analogPortCount}, DigitalPorts={digitalPortCount}, " +
-            $"Device={deviceSerialNo}, TimestampFreq={config?.TimestampFrequency ?? 0}");
+            $"SD card session config: AnalogPorts={config?.AnalogPortCount ?? 0}, " +
+            $"DigitalPorts={config?.DigitalPortCount ?? 0}, " +
+            $"Device={config?.DeviceSerialNumber ?? "Unknown"}, " +
+            $"TimestampFreq={config?.TimestampFrequency ?? 0}");
 
-        // Pre-assign colors per channel
-        var channelColors = new Dictionary<string, string>();
-        AssignChannelColors(channelColors, analogPortCount, digitalPortCount);
-
-        // Create the logging session in the database
-        var session = CreateSession(logSession, options);
+        // Create the logging session in the database. It is committed before a single sample is
+        // parsed, and marked SessionStatus.Importing until this method decides otherwise. An
+        // overwrite also names the sessions it may replace here, while it can still tell them from
+        // a concurrent import's row — see CreateSession.
+        var (session, superseded) = CreateSession(logSession, options);
 
         if ((config?.TimestampFrequency ?? 0) == 0)
         {
@@ -383,92 +386,8 @@ public class SdCardSessionImporter : ISdCardSessionImporter
                 "Device firmware may not include TimestampFreq in logged messages.");
         }
 
-        // Bulk-insert samples
-        var batch = new List<DataSample>();
-        long samplesProcessed = 0;
-        var sampleIndex = 0;
-
-        await foreach (var entry in logSession.Samples.WithCancellation(ct))
-        {
-            // Log first and second sample for diagnostics (to verify timestamps are spaced correctly)
-            if (sampleIndex < 2)
-            {
-                _logger.Information(
-                    $"Sample[{sampleIndex}]: AnalogValues.Count={entry.AnalogValues.Count}, " +
-                    $"DigitalData=0x{entry.DigitalData:X8}, Timestamp={entry.Timestamp:O}");
-            }
-
-            sampleIndex++;
-            timestampQuality.Observe(entry);
-
-            // If we didn't have config, discover channel count from first entry
-            if (analogPortCount == 0 && entry.AnalogValues.Count > 0)
-            {
-                analogPortCount = entry.AnalogValues.Count;
-                _logger.Information($"Discovered {analogPortCount} analog channels from first sample");
-                AssignChannelColors(channelColors, analogPortCount, digitalPortCount);
-            }
-
-            // Create analog samples
-            for (var i = 0; i < entry.AnalogValues.Count; i++)
-            {
-                var channelName = $"AI{i}";
-                batch.Add(new DataSample
-                {
-                    LoggingSessionID = session.ID,
-                    ChannelName = channelName,
-                    DeviceName = deviceName,
-                    DeviceSerialNo = deviceSerialNo,
-                    Color = channelColors.GetValueOrDefault(channelName, "#D32F2F"),
-                    Type = ChannelType.Analog,
-                    Value = entry.AnalogValues[i],
-                    TimestampTicks = entry.Timestamp.Ticks
-                });
-            }
-
-            // Create digital samples (one per bit)
-            for (var i = 0; i < digitalPortCount; i++)
-            {
-                var channelName = $"DI{i}";
-                var bitValue = (entry.DigitalData & (1u << i)) != 0 ? 1.0 : 0.0;
-                batch.Add(new DataSample
-                {
-                    LoggingSessionID = session.ID,
-                    ChannelName = channelName,
-                    DeviceName = deviceName,
-                    DeviceSerialNo = deviceSerialNo,
-                    Color = channelColors.GetValueOrDefault(channelName, "#757575"),
-                    Type = ChannelType.Digital,
-                    Value = bitValue,
-                    TimestampTicks = entry.Timestamp.Ticks
-                });
-            }
-
-            // Flush batch when full
-            if (batch.Count >= BatchSize)
-            {
-                await FlushBatchAsync(batch, ct);
-                samplesProcessed += batch.Count;
-                batch.Clear();
-                progress?.Report(new ImportProgress(samplesProcessed, null));
-            }
-        }
-
-        // Flush remaining samples
-        if (batch.Count > 0)
-        {
-            await FlushBatchAsync(batch, ct);
-            samplesProcessed += batch.Count;
-            batch.Clear();
-            progress?.Report(new ImportProgress(samplesProcessed, null));
-        }
-
-        if (samplesProcessed == 0)
-        {
-            _logger.Warning(
-                $"No samples found in SD card file '{logSession.FileName}'. " +
-                $"DeviceConfig present: {config != null}");
-        }
+        var samplesProcessed = await WriteSamplesAsync(
+            logSession, session, timestampQuality, progress, ct);
 
         _logger.Information($"Imported {samplesProcessed} samples for session '{session.Name}' (ID={session.ID})");
 
@@ -480,75 +399,442 @@ public class SdCardSessionImporter : ISdCardSessionImporter
                 "entries arrived without a device timestamp and were placed at the session start time.");
         }
 
-        // Record the sample count on the session so the list view can show it
-        // without falling back to the lazy backfill on the next reload. We
-        // already have the exact count locally, so no extra query is needed.
-        try
-        {
-            using var ctx = _loggingContext.CreateDbContext();
-            var tracked = ctx.Sessions.FirstOrDefault(s => s.ID == session.ID);
-            if (tracked != null)
-            {
-                tracked.SampleCount = samplesProcessed;
-                ctx.SaveChanges();
-            }
+        bool sessionPersisted;
+        string outcomeGuidance;
 
-            // Marshal the in-memory mutation onto the UI thread: this importer
-            // is invoked from background tasks, and SampleCount raises
-            // PropertyChanged for bindings (WPF Application.Current.Dispatcher -> Dispatcher.UIThread).
-            if (!Dispatcher.UIThread.CheckAccess())
+        if (samplesProcessed == 0)
+        {
+            // A log that parsed to nothing. The file itself may be perfectly legitimate — a 0-byte
+            // log is what an interrupted logging session leaves on a FAT card — so this is not an
+            // error, and the caller is told the count so it can say "no samples" rather than
+            // "successfully imported". What the row must NOT do is persist: every reader of the
+            // Sessions table filters zero-sample sessions out, and the startup purge in
+            // LoggingManager.LoadPersistedLoggingSessions deletes them, so keeping it means
+            // showing the user a session that quietly disappears on the next launch.
+            _logger.Warning(
+                $"No samples found in SD card file '{logSession.FileName}'. " +
+                $"DeviceConfig present: {config != null}. Removing the empty session row.");
+
+            sessionPersisted = false;
+            outcomeGuidance = RemoveSessions([session.ID])
+                ? "The log contained no samples, so no session was created."
+                : "The log contained no samples. The empty session entry it had already created "
+                  + "could not be removed, so it will appear in the session list as an incomplete "
+                  + "import until you delete it.";
+        }
+        else
+        {
+            // Record the sample count on the session so the list view can show it without falling
+            // back to the lazy backfill on the next reload — we already have the exact count
+            // locally — and, in the same write, retire the Importing marker.
+            sessionPersisted = FinalizeSession(session, samplesProcessed, SessionStatus.Complete);
+
+            if (sessionPersisted)
             {
-                Dispatcher.UIThread.Invoke(() => session.SampleCount = samplesProcessed);
+                // The replacement is complete, so the sessions it supersedes can go. A failure
+                // here is not a failed import — the new session is committed and correct — but it
+                // does mean the user asked for a replacement and got a duplicate, so say so.
+                outcomeGuidance = ReplaceOverwrittenSessions(session, superseded)
+                    ? string.Empty
+                    : "The log imported, but the session it was meant to replace could not be "
+                      + "removed, so both are now in the list. Delete the older one by hand.";
             }
             else
             {
-                session.SampleCount = samplesProcessed;
+                // The samples are committed but the session could not be marked finished, so the
+                // row still reads as an import in progress. Reporting success here would let the
+                // device path delete the source file and put a session in the list that the next
+                // launch flags as incomplete with no explanation.
+                outcomeGuidance =
+                    "The samples were imported, but the session could not be recorded as finished. "
+                    + "It will appear in the session list as an incomplete import; import the file "
+                    + "again to replace it.";
             }
-        }
-        catch (Exception ex)
-        {
-            _logger.Error(ex, $"Failed to persist SampleCount for imported session {session.ID}");
         }
 
         return new SdCardImportResult
         {
             Session = session,
-            TimestampQuality = timestampQuality
+            TimestampQuality = timestampQuality,
+            SamplesImported = samplesProcessed,
+            SessionPersisted = sessionPersisted,
+            OutcomeGuidance = outcomeGuidance
         };
     }
 
+    /// <summary>
+    /// Parses <paramref name="logSession"/> and bulk-inserts its samples against
+    /// <paramref name="session"/>, returning how many were committed.
+    /// </summary>
+    /// <remarks>
+    /// Extracted from <see cref="ImportSessionAsync"/> so the whole parse can sit inside one
+    /// try/catch. It had none: the <c>Sessions</c> row is committed before parsing starts and each
+    /// batch commits on its own, so a parser that threw part way through a truncated or garbage
+    /// file left both behind with nothing recording that the import never finished — and the next
+    /// launch reloaded that as an ordinary, complete-looking session with silently truncated data.
+    /// </remarks>
+    private async Task<long> WriteSamplesAsync(
+        SdCardLogSession logSession,
+        LoggingSession session,
+        ImportTimestampQuality timestampQuality,
+        IProgress<ImportProgress>? progress,
+        CancellationToken ct)
+    {
+        var config = logSession.DeviceConfig;
+        var deviceSerialNo = config?.DeviceSerialNumber ?? "Unknown";
+        var deviceName = config?.DevicePartNumber
+                         ?? Path.GetFileNameWithoutExtension(logSession.FileName);
+
+        // Determine channel counts from config or discover from first sample
+        var analogPortCount = config?.AnalogPortCount ?? 0;
+        var digitalPortCount = config?.DigitalPortCount ?? 0;
+
+        // Pre-assign colors per channel
+        var channelColors = new Dictionary<string, string>();
+        AssignChannelColors(channelColors, analogPortCount, digitalPortCount);
+
+        // Bulk-insert samples
+        var batch = new List<DataSample>();
+        long samplesProcessed = 0;
+        var sampleIndex = 0;
+
+        try
+        {
+            await foreach (var entry in logSession.Samples.WithCancellation(ct))
+            {
+                // Log first and second sample for diagnostics (to verify timestamps are spaced correctly)
+                if (sampleIndex < 2)
+                {
+                    _logger.Information(
+                        $"Sample[{sampleIndex}]: AnalogValues.Count={entry.AnalogValues.Count}, " +
+                        $"DigitalData=0x{entry.DigitalData:X8}, Timestamp={entry.Timestamp:O}");
+                }
+
+                sampleIndex++;
+                timestampQuality.Observe(entry);
+
+                // If we didn't have config, discover channel count from first entry
+                if (analogPortCount == 0 && entry.AnalogValues.Count > 0)
+                {
+                    analogPortCount = entry.AnalogValues.Count;
+                    _logger.Information($"Discovered {analogPortCount} analog channels from first sample");
+                    AssignChannelColors(channelColors, analogPortCount, digitalPortCount);
+                }
+
+                // Create analog samples
+                for (var i = 0; i < entry.AnalogValues.Count; i++)
+                {
+                    var channelName = $"AI{i}";
+                    batch.Add(new DataSample
+                    {
+                        LoggingSessionID = session.ID,
+                        ChannelName = channelName,
+                        DeviceName = deviceName,
+                        DeviceSerialNo = deviceSerialNo,
+                        Color = channelColors.GetValueOrDefault(channelName, "#D32F2F"),
+                        Type = ChannelType.Analog,
+                        Value = entry.AnalogValues[i],
+                        TimestampTicks = entry.Timestamp.Ticks
+                    });
+                }
+
+                // Create digital samples (one per bit)
+                for (var i = 0; i < digitalPortCount; i++)
+                {
+                    var channelName = $"DI{i}";
+                    var bitValue = (entry.DigitalData & (1u << i)) != 0 ? 1.0 : 0.0;
+                    batch.Add(new DataSample
+                    {
+                        LoggingSessionID = session.ID,
+                        ChannelName = channelName,
+                        DeviceName = deviceName,
+                        DeviceSerialNo = deviceSerialNo,
+                        Color = channelColors.GetValueOrDefault(channelName, "#757575"),
+                        Type = ChannelType.Digital,
+                        Value = bitValue,
+                        TimestampTicks = entry.Timestamp.Ticks
+                    });
+                }
+
+                // Flush batch when full
+                if (batch.Count >= BatchSize)
+                {
+                    await FlushBatchAsync(batch, ct);
+                    samplesProcessed += batch.Count;
+                    batch.Clear();
+                    progress?.Report(new ImportProgress(samplesProcessed, null));
+                }
+            }
+
+            // Flush remaining samples
+            if (batch.Count > 0)
+            {
+                await FlushBatchAsync(batch, ct);
+                samplesProcessed += batch.Count;
+                batch.Clear();
+                progress?.Report(new ImportProgress(samplesProcessed, null));
+            }
+        }
+        catch (Exception ex)
+        {
+            // The import is over and it did not finish — a truncated or garbage file, a device
+            // that died mid-transfer, or the user cancelling. Whatever landed before this point
+            // stays: batches commit as they go, the source log is usually damaged in a way a
+            // re-import cannot get past, and destroying the prefix would be the one outcome the
+            // user cannot undo. What must not survive is the session pretending to be finished.
+            if (samplesProcessed == 0)
+            {
+                // Nothing was written, so there is nothing to preserve and nothing for a marker to
+                // point at. The failure dialog is the report; the database goes back to how it was.
+                _logger.Error(ex,
+                    $"SD card import of '{logSession.FileName}' failed before any sample was written; " +
+                    $"removing session {session.ID}");
+                RemoveSessions([session.ID]);
+            }
+            else
+            {
+                _logger.Error(ex,
+                    $"SD card import of '{logSession.FileName}' failed after {samplesProcessed} samples; " +
+                    $"session {session.ID} keeps them and is flagged as an incomplete import");
+                FinalizeSession(session, samplesProcessed, SessionStatus.ImportFailed);
+            }
+
+            throw;
+        }
+
+        return samplesProcessed;
+    }
+
+    /// <summary>
+    /// Commits the <c>Sessions</c> row this import will write into, and — for an overwrite — the
+    /// list of sessions it is entitled to replace once it finishes.
+    /// </summary>
     // @port: Daqifi.Desktop.Loggers.SdCardSessionImporter.CreateSession
-    private LoggingSession CreateSession(SdCardLogSession logSession, ImportOptions options)
+    private (LoggingSession Session, IReadOnlyList<int> Superseded) CreateSession(
+        SdCardLogSession logSession,
+        ImportOptions options)
     {
         using var context = _loggingContext.CreateDbContext();
 
         var sessionName = options.SessionNameOverride
                           ?? $"SD Import - {Path.GetFileNameWithoutExtension(logSession.FileName)}";
 
-        // Check for existing session with same name
-        if (options.OverwriteExistingSession)
-        {
-            var existing = context.Sessions.FirstOrDefault(s => s.Name == sessionName);
-            if (existing != null)
-            {
-                context.Sessions.Remove(existing);
-                context.SaveChanges();
-            }
-        }
+        // An OverwriteExistingSession import does NOT delete the session it replaces here. It used
+        // to, before a sample was parsed, which meant an import that then failed or produced
+        // nothing had destroyed the user's existing session and put nothing in its place. The
+        // replacement is imported alongside the original and the original dropped only once the
+        // new one is complete — see ReplaceOverwrittenSessions.
+        //
+        // The targets are nevertheless chosen HERE, not there, and this is the load-bearing half.
+        // Two imports of the same file produce the same session name, so a list gathered after the
+        // fact would include any concurrent import's row — and deleting that destroys the batches
+        // it has already committed. Taken now, before this session exists, the list can only name
+        // rows that predate this import; excluding the ones an import owns right now covers the
+        // concurrent import that started first. Nothing puts an existing row back into Importing,
+        // so a row that is not importing at this instant cannot become so later.
+        var superseded = options.OverwriteExistingSession
+            ? context.Sessions
+                .AsNoTracking()
+                .Where(s => s.Name == sessionName && s.Status != SessionStatus.Importing)
+                .Select(s => s.ID)
+                .ToList()
+            : [];
 
-        // Generate new session ID (same pattern as LoggingManager.OnActiveChanged)
-        var ids = context.Sessions.AsNoTracking().Select(s => s.ID).ToList();
-        var newId = ids.Count > 0 ? ids.Max() + 1 : 0;
+        // Shared with LoggingManager.OnActiveChanged. This used to be MAX(Sessions.ID) + 1, the
+        // narrow version LoggingManager's own comment warns against: it can hand out an ID orphan
+        // rows in Samples or SessionDeviceMetadata still reference, and the composite PK on
+        // SessionDeviceMetadata then rejects the insert.
+        var newId = SessionIdAllocator.NextSessionId(context);
 
         var session = new LoggingSession(newId, sessionName)
         {
-            SessionStart = logSession.FileCreatedDate ?? DateTime.Now
+            SessionStart = logSession.FileCreatedDate ?? DateTime.Now,
+
+            // Committed BEFORE a single sample is parsed, so from this moment until the import
+            // finishes the row must not read as a finished session. Everything that reads the
+            // Sessions table keys off this: the startup purge leaves the row alone while it says
+            // Importing, and startup flags any row still saying it as failed.
+            Status = SessionStatus.Importing
         };
 
         context.Sessions.Add(session);
         context.SaveChanges();
 
-        return session;
+        return (session, superseded);
+    }
+
+    /// <summary>
+    /// Records how an import ended on its own session row: the sample count it actually wrote and
+    /// whether it finished. Downstream addition.
+    /// </summary>
+    /// <param name="session">The session the import created.</param>
+    /// <param name="samplesProcessed">Samples committed for it.</param>
+    /// <param name="status">
+    /// <see cref="SessionStatus.Complete"/> when the parse ran to the end of the file,
+    /// <see cref="SessionStatus.ImportFailed"/> when it did not.
+    /// </param>
+    /// <returns>
+    /// <c>true</c> when the row was found and updated. <c>false</c> means the write did not land —
+    /// the row was gone, or the database refused it — and the caller must not report a finished
+    /// import: a row whose status write does not land stays <see cref="SessionStatus.Importing"/>,
+    /// which the next launch flags as failed, and the samples belong to a session nobody has been
+    /// told is incomplete.
+    /// </returns>
+    /// <remarks>
+    /// A single conditional UPDATE rather than read-modify-write, so nothing can be lost to a
+    /// concurrent writer between the read and the save, and the row count answers the "did it
+    /// actually happen" question the return value reports.
+    /// </remarks>
+    private bool FinalizeSession(LoggingSession session, long samplesProcessed, SessionStatus status)
+    {
+        var recorded = false;
+
+        try
+        {
+            using var ctx = _loggingContext.CreateDbContext();
+            recorded = ctx.Sessions
+                .Where(s => s.ID == session.ID)
+                .ExecuteUpdate(setters => setters
+                    .SetProperty(s => s.SampleCount, samplesProcessed)
+                    .SetProperty(s => s.Status, status)) > 0;
+
+            if (!recorded)
+            {
+                _logger.Error(null,
+                    $"Session {session.ID} was gone by the time its import finished; " +
+                    $"{samplesProcessed} sample(s) may be left without a session.");
+                return false;
+            }
+        }
+        catch (Exception ex)
+        {
+            _logger.Error(ex, $"Failed to record the outcome of the import into session {session.ID}");
+            return false;
+        }
+
+        // Only once the database agrees, and outside the try: the in-memory copy must not claim an
+        // outcome the row does not have, and a dispatcher fault is not a reason to call a
+        // successful, committed import unrecorded.
+        //
+        // Marshal onto the UI thread: this importer is invoked from background tasks, and both
+        // properties raise PropertyChanged for bindings (WPF Application.Current.Dispatcher ->
+        // Dispatcher.UIThread).
+        //
+        // Post, not Invoke. Nothing waits on this — it is a notification for whatever ends up
+        // bound to the session, and the caller only adds it to the session list AFTER this method
+        // returns, itself on the UI thread, so the queued mutation is applied first either way.
+        // Invoke blocks the importing thread until a dispatcher loop drains the job, which is a
+        // hang wherever no loop is running: a headless test host is the obvious one, and it is
+        // what made the import untestable at all.
+        try
+        {
+            if (!Dispatcher.UIThread.CheckAccess())
+            {
+                Dispatcher.UIThread.Post(() => ApplyToSession(session, samplesProcessed, status));
+            }
+            else
+            {
+                ApplyToSession(session, samplesProcessed, status);
+            }
+        }
+        catch (Exception ex)
+        {
+            _logger.Warning(
+                $"Imported session {session.ID} was recorded, but its in-memory copy could not be " +
+                $"refreshed: {ex}");
+        }
+
+        return true;
+    }
+
+    private static void ApplyToSession(LoggingSession session, long samplesProcessed, SessionStatus status)
+    {
+        session.SampleCount = samplesProcessed;
+        session.Status = status;
+    }
+
+    /// <summary>
+    /// Deletes the session row this import created, for an import that ends with nothing in it.
+    /// Downstream addition.
+    /// </summary>
+    /// <param name="sessionIds">The sessions to remove.</param>
+    /// <returns><c>true</c> when the rows are gone; <c>false</c> when the delete failed, in which
+    /// case the caller must not tell the user the session does not exist.</returns>
+    /// <remarks>
+    /// <para>Three callers, all leaving the database with no half-state. A parse that threw before
+    /// the first batch landed has nothing worth keeping and no reason to leave a marker the user
+    /// cannot act on — the failure dialog is the report. A log that parsed to zero entries is a
+    /// legitimately empty file, and the caller is told so; what it must not do is persist a row
+    /// that every reader in the app treats as nonexistent and the startup purge silently deletes
+    /// at the next launch. And an overwrite drops the session it replaces, once the replacement is
+    /// complete.</para>
+    /// <para>All three tables, in one transaction, even for a session with no samples: SQLite's
+    /// cascade only fires with <c>PRAGMA foreign_keys=ON</c> for the connection, so a delete must
+    /// not assume it can leave orphans behind — an orphan <c>Samples</c> or
+    /// <c>SessionDeviceMetadata</c> row is exactly what makes a later session ID collide (see
+    /// <see cref="SessionIdAllocator"/>).</para>
+    /// <para>Deleting nothing is success: the goal is that the rows are not there, and another
+    /// process may have removed them already.</para>
+    /// </remarks>
+    private bool RemoveSessions(IReadOnlyCollection<int> sessionIds)
+    {
+        if (sessionIds.Count == 0)
+        {
+            return true;
+        }
+
+        try
+        {
+            using var context = _loggingContext.CreateDbContext();
+            using var transaction = context.Database.BeginTransaction();
+
+            context.Samples.Where(s => sessionIds.Contains(s.LoggingSessionID)).ExecuteDelete();
+            context.SessionDeviceMetadata.Where(m => sessionIds.Contains(m.LoggingSessionID)).ExecuteDelete();
+            context.Sessions.Where(s => sessionIds.Contains(s.ID)).ExecuteDelete();
+
+            transaction.Commit();
+            return true;
+        }
+        catch (Exception ex)
+        {
+            _logger.Error(ex,
+                $"Failed to remove session(s) {string.Join(", ", sessionIds)} left behind by an import");
+            return false;
+        }
+    }
+
+    /// <summary>
+    /// Drops the sessions an <see cref="ImportOptions.OverwriteExistingSession"/> import replaces,
+    /// now that the replacement is complete. Downstream addition.
+    /// </summary>
+    /// <param name="session">The session this import just finished writing.</param>
+    /// <param name="superseded">
+    /// The sessions <see cref="CreateSession"/> recorded as replaceable when this import started —
+    /// empty for a non-overwrite import. Chosen then rather than now so this can never target a
+    /// concurrent import's row: two imports of one file share a session name, and deleting the
+    /// other one's row destroys the batches it has already committed.
+    /// </param>
+    /// <returns><c>true</c> when nothing is left to replace.</returns>
+    /// <remarks>
+    /// The deletion used to happen in <c>CreateSession</c>, before anything had been parsed. An
+    /// overwrite whose replacement then failed, or turned out to hold no samples, therefore
+    /// destroyed the user's existing session and put nothing in its place. Doing it here means the
+    /// original survives every path but the one where a complete replacement exists.
+    /// </remarks>
+    private bool ReplaceOverwrittenSessions(LoggingSession session, IReadOnlyList<int> superseded)
+    {
+        if (superseded.Count == 0)
+        {
+            return true;
+        }
+
+        _logger.Information(
+            $"Overwrite import finished; replacing session(s) {string.Join(", ", superseded)} " +
+            $"named '{session.Name}' with {session.ID}");
+
+        // A failure is reported, not swallowed: the replacement is committed and correct either
+        // way, but the user asked for a replacement and would be left with a duplicate.
+        return RemoveSessions(superseded);
     }
 
     // @port: Daqifi.Desktop.Loggers.SdCardSessionImporter.FlushBatchAsync
@@ -642,10 +928,48 @@ public class SdCardSessionImporter : ISdCardSessionImporter
 public sealed class SdCardImportResult
 {
     /// <summary>
-    /// The logging session the import created.
+    /// The logging session the import created. Persisted only when
+    /// <see cref="SessionPersisted"/> says so.
     /// </summary>
     // @port: Daqifi.Desktop.Loggers.SdCardImportResult.Session
     public required LoggingSession Session { get; init; }
+
+    /// <summary>
+    /// How many samples the import wrote. Downstream addition.
+    /// </summary>
+    public required long SamplesImported { get; init; }
+
+    /// <summary>
+    /// Whether <see cref="Session"/> is a finished row in the database. Downstream addition.
+    /// </summary>
+    /// <remarks>
+    /// False in two cases. The log held no samples, so the row the import had already committed
+    /// was removed again — every reader of the table filters zero-sample sessions out and the
+    /// startup purge deletes them, so persisting one means telling the user an import succeeded
+    /// and then having the session vanish at the next launch. Or the samples landed but the
+    /// session could not be marked finished, which leaves a row the next launch will flag as an
+    /// incomplete import. Callers must not add a non-persisted session to the session list, must
+    /// not treat the import as a success (in particular, must not delete the source file from the
+    /// device), and should show <see cref="OutcomeGuidance"/>, which says which case it is.
+    /// </remarks>
+    public required bool SessionPersisted { get; init; }
+
+    /// <summary>
+    /// One sentence for the user about anything this import needs to say beyond "it worked".
+    /// Empty when it was a plain success. Downstream addition.
+    /// </summary>
+    /// <remarks>
+    /// Non-empty for every <see cref="SessionPersisted"/> of <c>false</c> — an empty log, an empty
+    /// row that could not be cleaned up, or samples that could not be recorded as a finished
+    /// session — and also for the one case that persists a good session and still owes the user a
+    /// word: an overwrite whose superseded session could not be removed, leaving a duplicate. So
+    /// callers must show it whenever it has content, not only on failure.
+    /// <para>Written here rather than at each of the three import call sites so they cannot drift,
+    /// and deliberately free of the file name so <c>ImportAllFiles</c> can dedupe it across a card
+    /// full of empty logs — the same reason <c>DatabaseMigrator.DescribeQuarantineForUser</c>
+    /// exists.</para>
+    /// </remarks>
+    public required string OutcomeGuidance { get; init; }
 
     /// <summary>
     /// Timestamp statistics observed across the imported entries.

@@ -1347,12 +1347,32 @@ public partial class DaqifiViewModel : ObservableObject, IFirmwareUpdateHost, IL
             var result = await Task.Run(() =>
                 importer.ImportFromFileAsync(selectedPath, null, progress, CancellationToken.None));
 
-            Dispatcher.UIThread.Invoke(() =>
+            string message;
+            if (result.SessionPersisted)
             {
-                LoggingManager.Instance.LoggingSessions.Add(result.Session);
-            });
+                Dispatcher.UIThread.Invoke(() =>
+                {
+                    LoggingManager.Instance.LoggingSessions.Add(result.Session);
+                });
 
-            var message = $"Successfully imported {System.IO.Path.GetFileName(selectedPath)}";
+                message = $"Successfully imported {System.IO.Path.GetFileName(selectedPath)}";
+
+                // A persisted session can still owe the user a word — an overwrite whose old
+                // session could not be removed leaves a duplicate they have to clear by hand.
+                if (result.OutcomeGuidance.Length > 0)
+                {
+                    message += $"\n\n{result.OutcomeGuidance}";
+                }
+            }
+            else
+            {
+                // Nothing threw, but no finished session came of it — an empty log, or samples
+                // that could not be recorded as a completed session. The message must not claim a
+                // session was created; the importer supplies the sentence that says which it was,
+                // so this and the device-import dialogs cannot drift apart.
+                message = $"{System.IO.Path.GetFileName(selectedPath)}: {result.OutcomeGuidance}";
+            }
+
             var timestampWarning = result.TimestampQuality.BuildUserWarning();
             if (timestampWarning != null)
             {
