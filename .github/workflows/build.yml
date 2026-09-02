@@ -485,6 +485,23 @@ jobs:
           fi
           echo "arm64 apphost and all five macOS natives present, each with an arm64 slice"
 
+      # TEMPORARY, FOR #201 ONLY — reverted before that PR is final. The permanent gate
+      # is #199's; this exists because #201's fix cannot be reproduced on the baseline
+      # Mac (60 local runs, none failing) and therefore has to be watched here instead.
+      # 15 runs, the same count as the job that failed three times pre-fix.
+      - name: Capture determinism (temporary, #201)
+        id: determinism
+        env:
+          DETERMINISM_RUNS: '15'
+        run: bash tools/parity-audit/run.sh --determinism "$RUNNER_TEMP/parity-audit"
+
+      - name: Upload determinism captures on failure
+        if: failure() && steps.determinism.outcome == 'failure'
+        uses: actions/upload-artifact@v4
+        with:
+          name: parity-determinism-201
+          path: ${{ runner.temp }}/parity-audit/determinism/
+
   android:
     name: Android head
     runs-on: ubuntu-latest
