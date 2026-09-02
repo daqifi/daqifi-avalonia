@@ -283,20 +283,13 @@ internal sealed class ProfileXmlStore
     /// <remarks>
     /// RENAMED, never deleted. It is the user's profiles: an unparseable file is very often still
     /// readable by hand (one bad character in an otherwise intact list), and a truncated one still
-    /// holds most of what it held. The timestamp keeps repeated recoveries from overwriting each
-    /// other.
+    /// holds most of what it held. The timestamp gives repeated recoveries different names;
+    /// <see cref="MoveFileAside"/> is what makes that a guarantee rather than a hope.
     /// </remarks>
     private bool Quarantine()
     {
-        var quarantinePath = $"{FilePath}.corrupt-{DateTime.UtcNow:yyyyMMdd-HHmmssfff}";
-
-        try
+        if (MoveFileAside(FilePath, $"{FilePath}.corrupt-{DateTime.UtcNow:yyyyMMdd-HHmmssfff}") is not { } quarantinePath)
         {
-            File.Move(FilePath, quarantinePath, overwrite: true);
-        }
-        catch (Exception ex)
-        {
-            _appLogger.Error(ex, $"The damaged profiles file could not be moved aside: {FilePath}");
             return false;
         }
 
@@ -305,6 +298,62 @@ internal sealed class ProfileXmlStore
             $"Your saved profiles could not be read, so the damaged file was moved to {quarantinePath}. " +
             "Profiles you create from now on will save normally.";
         return true;
+    }
+
+    /// <summary>How many names <see cref="MoveFileAside"/> will try before giving up.</summary>
+    private const int QuarantineNameAttempts = 100;
+
+    /// <summary>
+    /// Moves <paramref name="sourcePath"/> to <paramref name="preferredPath"/>, or to the first
+    /// free <c>-1</c>, <c>-2</c>, … variant of it if that name is taken.
+    /// </summary>
+    /// <remarks>
+    /// <c>overwrite: false</c>, matching <c>DatabaseMigrator.QuarantineDatabase</c> — #197. A
+    /// quarantine that clobbers an earlier quarantine destroys the very thing the rename exists to
+    /// preserve, and reports success while doing it. The millisecond timestamp in the name is not
+    /// enough on its own: two app instances share this directory and both can reach recovery on the
+    /// same damaged file inside the same millisecond.
+    /// <para>
+    /// Unlike the database, though, abandoning the move leaves the damaged file at
+    /// <see cref="FilePath"/> and restores the exact permanent failure of #184 — so a taken name is
+    /// retried under the next one rather than given up on. Retrying the move itself, rather than
+    /// testing for a free name and then using it, is also what closes the gap between the two in
+    /// which another instance can take the name.
+    /// </para>
+    /// </remarks>
+    /// <returns>The path the file was moved to, or <c>null</c> if it could not be moved.</returns>
+    internal static string? MoveFileAside(string sourcePath, string preferredPath)
+    {
+        Exception? lastFailure = null;
+
+        for (var attempt = 0; attempt < QuarantineNameAttempts; attempt++)
+        {
+            var candidate = attempt == 0 ? preferredPath : $"{preferredPath}-{attempt}";
+
+            try
+            {
+                File.Move(sourcePath, candidate, overwrite: false);
+                return candidate;
+            }
+            catch (IOException ex) when (File.Exists(candidate))
+            {
+                // The name is taken — by another instance's quarantine, or by one of this
+                // instance's own within the same millisecond. Take the next name. Any other
+                // IOException (no space, unwritable directory) falls to the catch below.
+                lastFailure = ex;
+            }
+            catch (Exception ex)
+            {
+                lastFailure = ex;
+                break;
+            }
+        }
+
+        var message = $"The damaged profiles file could not be moved aside: {sourcePath}";
+        if (lastFailure is null) { AppLogger.Instance.Error(message); }
+        else { AppLogger.Instance.Error(lastFailure, message); }
+
+        return null;
     }
 
     private static XDocument NewDocument() => new(new XElement(RootElementName));
