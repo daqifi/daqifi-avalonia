@@ -619,7 +619,7 @@ public partial class DaqifiViewModel : ObservableObject, IFirmwareUpdateHost, IL
     /// Initializes a new instance of the view model using services from the desktop application container.
     /// </summary>
     public DaqifiViewModel() : this(
-        ServiceLocator.Resolve<IDialogService>(),
+        App.ServiceProvider.GetRequiredService<IDialogService>(),
         App.ServiceProvider?.GetService<IFirmwareUpdateService>(),
         App.ServiceProvider?.GetService<IFirmwareDownloadService>(),
         App.ServiceProvider?.GetService<ILogger<FirmwareUpdateService>>(),

@@ -160,7 +160,7 @@ public partial class ConnectionDialogViewModel : ObservableObject
     #region Constructor
     /// <summary>Creates the connection dialog view model using services resolved from the app container.</summary>
     public ConnectionDialogViewModel()
-        : this(ServiceLocator.Resolve<IDialogService>(), App.ServiceProvider?.GetService<IBootloaderWatcher>()) { }
+        : this(App.ServiceProvider.GetRequiredService<IDialogService>(), App.ServiceProvider?.GetService<IBootloaderWatcher>()) { }
 
     /// <summary>Creates the connection dialog view model.</summary>
     /// <param name="dialogService">Dialog service used to display modal dialogs.</param>
