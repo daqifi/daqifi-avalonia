@@ -218,9 +218,10 @@ names it was given, so the extra-file direction is checked separately).
 silicon, .NET SDK 10.0.302, Avalonia 12.1.1), after 20 consecutive `--determinism` runs
 on that host. Fifteen of the eighteen hashes are unchanged from the 2026-09-01 recording
 against `6834469`; the three `SplitView` flyouts moved by the six pixels each that #201
-is about. No other host has a baseline **file** yet — a second host does not need one, it
-needs to match this one, which since #188 is what CI checks — and the mode tells you how
-to record one for a genuinely new OS+arch and refuses to invent a comparison without it.
+is about. No other host has a baseline **file**, and a second Apple-silicon host does not
+want one: it wants to match this one, which since #188 is what CI checks on every pull
+request. The mode still tells you how to record a baseline for a genuinely new OS+arch,
+and still refuses to invent a comparison without it.
 
 **A mismatch is a prompt, not a verdict** — re-read that environment line first. In CI
 the same applies with one addition: the baseline step prints the runner's macOS build and

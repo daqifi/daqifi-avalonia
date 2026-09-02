@@ -606,10 +606,10 @@ jobs:
       # ONE set of bytes, rather than about a further capture nothing has vouched for.
       # It also costs nothing: capturing is the expensive part and it already happened.
       #
-      # Ordering matters and is the other half of why it is cheap. A baseline check on a
-      # host whose captures race is a machine for producing differences that are not
-      # regressions; running it only after --determinism has passed means a red tick here
-      # can never be that.
+      # The ordering is load-bearing, not just convenient. A baseline check on a host
+      # whose captures race is a machine for manufacturing differences that are not
+      # regressions; placing it after --determinism means a red tick here can never be
+      # one of those, and can be reported as a real difference in the bytes.
       #
       # WHEN THIS GOES RED, the fix is never to delete the step. In order of likelihood:
       # a UI change whose PR did not re-record the manifest in the same commit; a real
