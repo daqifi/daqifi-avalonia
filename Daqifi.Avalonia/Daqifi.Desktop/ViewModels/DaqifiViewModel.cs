@@ -1332,12 +1332,24 @@ public partial class DaqifiViewModel : ObservableObject, IFirmwareUpdateHost, IL
             var result = await Task.Run(() =>
                 importer.ImportFromFileAsync(selectedPath, null, progress, CancellationToken.None));
 
-            Dispatcher.UIThread.Invoke(() =>
+            string message;
+            if (result.SessionPersisted)
             {
-                LoggingManager.Instance.LoggingSessions.Add(result.Session);
-            });
+                Dispatcher.UIThread.Invoke(() =>
+                {
+                    LoggingManager.Instance.LoggingSessions.Add(result.Session);
+                });
 
-            var message = $"Successfully imported {System.IO.Path.GetFileName(selectedPath)}";
+                message = $"Successfully imported {System.IO.Path.GetFileName(selectedPath)}";
+            }
+            else
+            {
+                // Parsed to no samples. No session row is kept for that (one would be deleted by
+                // the startup purge anyway), so the message must not claim one was created.
+                message = $"{System.IO.Path.GetFileName(selectedPath)} contained no samples, " +
+                          "so no session was created.";
+            }
+
             var timestampWarning = result.TimestampQuality.BuildUserWarning();
             if (timestampWarning != null)
             {

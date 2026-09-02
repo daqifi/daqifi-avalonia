@@ -551,9 +551,21 @@ public partial class DeviceLogsViewModel : ObservableObject
             var result = await Task.Run(() =>
                 importer.ImportFromDeviceAsync(device, file.FileName, null, progress, CancellationToken.None));
 
-            AddImportedSession(result.Session);
+            string message;
+            if (result.SessionPersisted)
+            {
+                AddImportedSession(result.Session);
+                message = $"Successfully imported {file.FileName}";
+            }
+            else
+            {
+                // The log parsed to no samples — a 0-byte file is what an interrupted logging
+                // session leaves on a FAT card. Not a failure, and no session is kept, so say that
+                // rather than reporting a successful import of a session that would not be there
+                // at the next launch.
+                message = $"{file.FileName} contained no samples, so no session was created.";
+            }
 
-            var message = $"Successfully imported {file.FileName}";
             var timestampWarning = result.TimestampQuality.BuildUserWarning();
             if (timestampWarning != null)
             {
@@ -629,6 +641,19 @@ public partial class DeviceLogsViewModel : ObservableObject
 
                     var result = await Task.Run(() =>
                         importer.ImportFromDeviceAsync(device, file.FileName, null, progress, CancellationToken.None));
+
+                    if (!result.SessionPersisted)
+                    {
+                        // A log that parsed to no samples. Nothing failed and nothing was kept, so
+                        // it belongs in the skipped list — counting it as imported would put a
+                        // session in the summary's total that the user will never find.
+                        outcome.RecordSkip(
+                            file.FileName,
+                            "One or more logs contained no samples, so no session was created for "
+                            + "them. That is what an interrupted logging session leaves on the card; "
+                            + "the device does not need attention.");
+                        continue;
+                    }
 
                     AddImportedSession(result.Session);
 
