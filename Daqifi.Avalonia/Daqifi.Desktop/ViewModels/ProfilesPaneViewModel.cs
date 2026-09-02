@@ -203,7 +203,7 @@ public partial class ProfilesPaneViewModel : ObservableObject
             _logger.AddBreadcrumb("profile", "Blocked opening profile drawer while logging active");
             return;
         }
-        DrawerError = string.Empty;
+        DrawerError = ProfileRecoveryNotice();
         SelectedProfile = profile;
         IsNewProfile = false;
         IsDrawerOpen = true;
@@ -217,7 +217,7 @@ public partial class ProfilesPaneViewModel : ObservableObject
             _logger.AddBreadcrumb("profile", "Blocked opening new-profile drawer while logging active");
             return;
         }
-        DrawerError = string.Empty;
+        DrawerError = ProfileRecoveryNotice();
         SelectedProfile = null;
         IsNewProfile = true;
         NewProfileName = $"DAQiFi Profile {DateTime.Now:M/d/yyyy h:mm tt}";
@@ -243,7 +243,15 @@ public partial class ProfilesPaneViewModel : ObservableObject
         if (!IsNewProfile && SelectedProfile != null &&
             !string.IsNullOrWhiteSpace(SelectedProfile.Name))
         {
-            LoggingManager.Instance.UpdateProfileInXml(SelectedProfile);
+            // Closing IS how an edit is saved, so a failed write must not close: doing so would
+            // discard the user's edit while showing them a pane that says it was applied, which is
+            // the silent data loss #184 is about. The drawer stays open with the reason, and the
+            // close button retries.
+            if (!LoggingManager.Instance.UpdateProfileInXml(SelectedProfile))
+            {
+                DrawerError = ProfileWriteFailureMessage("save your changes to this profile");
+                return;
+            }
         }
 
         IsDrawerOpen = false;
@@ -436,8 +444,15 @@ public partial class ProfilesPaneViewModel : ObservableObject
             return;
         }
 
+        // Drop the pending edit before closing rather than writing it back: this profile is being
+        // deleted, so persisting it first is work that can only fail for nothing.
+        SelectedProfile = null;
         CloseDrawer();
-        LoggingManager.Instance.UnsubscribeProfile(profile);
+
+        if (!LoggingManager.Instance.UnsubscribeProfile(profile))
+        {
+            ShowError(profile, ProfileWriteFailureMessage("delete this profile"));
+        }
     }
 
     // @port: Daqifi.Desktop.ViewModels.ProfilesPaneViewModel.SaveNewProfile
@@ -481,7 +496,12 @@ public partial class ProfilesPaneViewModel : ObservableObject
             profile.Devices.Add(pd);
         }
 
-        LoggingManager.Instance.SubscribeProfile(profile);
+        if (!LoggingManager.Instance.SubscribeProfile(profile))
+        {
+            DrawerError = ProfileWriteFailureMessage("save this profile");
+            return;
+        }
+
         CloseDrawer();
     }
 
@@ -531,9 +551,30 @@ public partial class ProfilesPaneViewModel : ObservableObject
             profile.Devices.Add(pd);
         }
 
-        LoggingManager.Instance.SubscribeProfile(profile);
+        if (!LoggingManager.Instance.SubscribeProfile(profile))
+        {
+            DrawerError = ProfileWriteFailureMessage("save this profile");
+            return;
+        }
+
         CloseDrawer();
     }
+
+    /// <summary>
+    /// What the drawer says when a profile could not be written. The pane used to say nothing at
+    /// all: the write failed, the drawer closed, and the profile sat in the list looking saved
+    /// until the next launch removed it (#184).
+    /// </summary>
+    private static string ProfileWriteFailureMessage(string attempt) =>
+        $"Could not {attempt} — the profiles file could not be written. " +
+        "Check that you have permission to write it and that the disk is not full, then try again.";
+
+    /// <summary>
+    /// The one-shot notice about a damaged profiles file, shown the first time the drawer opens
+    /// after one was moved aside; empty the rest of the time, which is every other open.
+    /// </summary>
+    private static string ProfileRecoveryNotice() =>
+        LoggingManager.Instance.TakeProfileRecoveryNotice() ?? string.Empty;
     #endregion
 
     #region Helpers

@@ -36,6 +36,14 @@ public partial class LoggingManager : ObservableObject
     private readonly IDbContextFactory<LoggingContext> _loggingContext;
 
     /// <summary>
+    /// The profiles file, behind one object that owns reading it, writing it and recovering a
+    /// damaged one — see <see cref="ProfileXmlStore"/> for why (#184). Constructed with a path
+    /// rather than reading the static one itself, which is what lets a test point it at a
+    /// throwaway directory instead of the developer's real profiles.
+    /// </summary>
+    private readonly ProfileXmlStore _profileStore;
+
+    /// <summary>
     /// Serializes writers of <see cref="SubscribedChannels"/>. Readers never take it -- they read a
     /// published snapshot -- so it is never held while calling into a logger or raising a
     /// notification, and it cannot nest inside any other lock.
@@ -256,11 +264,16 @@ public partial class LoggingManager : ObservableObject
     /// <c>Daqifi.Avalonia.Tests</c> only, via InternalsVisibleTo in Daqifi.Avalonia.csproj.
     /// </remarks>
     /// <param name="loggingContext">Factory used to open <see cref="LoggingContext"/> sessions.</param>
-    internal LoggingManager(IDbContextFactory<LoggingContext> loggingContext)
+    /// <param name="profileSettingsPath">
+    /// Profiles XML file to read and write. Defaults to the real one under the application data
+    /// directory; a test passes a throwaway path so it never touches the developer's profiles.
+    /// </param>
+    internal LoggingManager(IDbContextFactory<LoggingContext> loggingContext, string? profileSettingsPath = null)
     {
         Loggers = [];
         // _subscribedChannels starts empty via its field initializer; it has no setter (copy-on-write).
         _loggingContext = loggingContext;
+        _profileStore = new ProfileXmlStore(profileSettingsPath ?? ProfileSettingsXmlPath);
     }
 
     public static LoggingManager Instance => _instance.Value;
@@ -287,17 +300,34 @@ public partial class LoggingManager : ObservableObject
     #endregion
 
     // @port: Daqifi.Desktop.Logger.LoggingManager.SubscribeProfile
-    public void SubscribeProfile(Profile profile)
+    /// <summary>
+    /// Saves a profile and adds it to <see cref="SubscribedProfiles"/>.
+    /// </summary>
+    /// <returns><c>true</c> when the profile was written to disk.</returns>
+    /// <remarks>
+    /// Diverges from upstream, which returns void and adds to the collection unconditionally. That
+    /// is #184's silent data loss: <see cref="AddAndRemoveProfileXml"/> swallowed its own failure,
+    /// so a profile that had never been persisted still appeared in the pane, looked saved, and
+    /// was gone at the next launch.
+    /// </remarks>
+    public bool SubscribeProfile(Profile profile)
     {
         try
         {
-            if (SubscribedProfiles.Contains(profile)) { return; }
-            AddAndRemoveProfileXml(profile, true);
+            if (SubscribedProfiles.Contains(profile)) { return true; }
+
+            if (!AddAndRemoveProfileXml(profile, true))
+            {
+                return false;
+            }
+
             SubscribedProfiles.Add(profile);
+            return true;
         }
         catch (Exception ex)
         {
             AppLogger.Error(ex, "Error Subscribe Profile");
+            return false;
         }
     }
 
@@ -307,202 +337,201 @@ public partial class LoggingManager : ObservableObject
         OnPropertyChanged("SelectedProfileChannels");
     }
 
+    /// <summary>
+    /// The one-shot message telling the user that their profiles file was damaged and where it
+    /// went, or <c>null</c> when there is nothing to report. Surfaced by the Profiles pane, which
+    /// is where someone wondering what happened to their profiles is looking.
+    /// </summary>
+    public string? TakeProfileRecoveryNotice() => _profileStore.TakeQuarantineNotice();
+
     // @port: Daqifi.Desktop.Logger.LoggingManager.UpdateProfileInXml
-    public void UpdateProfileInXml(Profile profile)
+    /// <summary>
+    /// Writes an edited profile back to the file.
+    /// </summary>
+    /// <returns><c>true</c> when the edit reached disk.</returns>
+    /// <remarks>
+    /// Upstream edits the existing element field by field and gives up when the profile is not in
+    /// the file. This replaces the element wholesale, and ADDS it when it is missing, for two
+    /// reasons. Upstream's version silently dropped every device edit whenever the element had no
+    /// <c>&lt;Devices&gt;</c> child, because <c>devicesElement?.RemoveAll()</c> and
+    /// <c>devicesElement?.Add(...)</c> both no-op on a null. And once a damaged file has been
+    /// quarantined the file is empty while the pane still holds the user's profiles, so "not in
+    /// the file" is a state the app has to write its way out of rather than refuse for ever —
+    /// which is the whole complaint in #184.
+    /// </remarks>
+    public bool UpdateProfileInXml(Profile profile)
     {
         try
         {
-            if (!File.Exists(ProfileSettingsXmlPath))
+            var doc = _profileStore.Open();
+            var updated = BuildProfileElement(profile);
+            var existing = FindProfileElement(doc, profile.ProfileId);
+
+            if (existing != null)
             {
-                AppLogger.Error("Profile settings XML file does not exist.");
-                return;
-            }
-            var doc = XDocument.Load(ProfileSettingsXmlPath);
-            var profileToUpdate = doc.Descendants("Profile")
-                .FirstOrDefault(p => (Guid)p.Element("ProfileID") == profile.ProfileId);
-            if (profileToUpdate != null)
-            {
-                profileToUpdate.Element("Name")?.SetValue(profile.Name);
-                profileToUpdate.Element("CreatedOn")?.SetValue(profile.CreatedOn);
-                var devicesElement = profileToUpdate.Element("Devices");
-                devicesElement?.RemoveAll();
-                foreach (var device in profile.Devices)
-                {
-                    var deviceElement = new XElement("Device",
-                        new XElement("DeviceName", device.DeviceName),
-                        new XElement("DevicePartNumber", device.DevicePartName),
-                        new XElement("MACAddress", device.MacAddress),
-                        new XElement("DeviceSerialNo", device.DeviceSerialNo),
-                        new XElement("SamplingFrequency", device.SamplingFrequency)
-                    );
-
-                    var activeChannels = device.Channels
-                        .Where(channel => channel.IsChannelActive)
-                        .Select(channel => new XElement("Channel",
-                            new XElement("Name", channel.Name),
-                            new XElement("Type", channel.Type),
-                            new XElement("IsActive", channel.IsChannelActive)
-                        )).ToList();
-
-                    if (activeChannels.Any())
-                    {
-                        deviceElement.Add(new XElement("Channels", activeChannels));
-                    }
-
-                    devicesElement?.Add(deviceElement);
-                }
-                doc.Save(ProfileSettingsXmlPath);
+                existing.ReplaceWith(updated);
             }
             else
             {
-                AppLogger.Error($"Profile with ID {profile.ProfileId} not found for updating.");
+                AppLogger.Warning($"Profile with ID {profile.ProfileId} was not in the profiles file; writing it back.");
+                doc.Root?.Add(updated);
             }
+
+            _profileStore.Save(doc);
+            return true;
         }
         catch (Exception ex)
         {
             AppLogger.Error(ex, "Error updating profile in XML");
+            return false;
         }
     }
 
     // @port: Daqifi.Desktop.Logger.LoggingManager.AddAndRemoveProfileXml
-    public void AddAndRemoveProfileXml(Profile profile, bool AddProfileFlag)
+    /// <summary>
+    /// Adds or removes a profile in the file. A null <paramref name="profile"/> only ensures the
+    /// file exists — how startup creates it on a fresh install.
+    /// </summary>
+    /// <returns><c>true</c> when the file was written.</returns>
+    /// <remarks>
+    /// Diverges from upstream by reporting failure to the caller instead of swallowing it into a
+    /// log line, and by no longer touching <see cref="SubscribedProfiles"/>: the removal used to
+    /// happen here, BEFORE the save, so a failed write left the profile gone from the pane and
+    /// still in the file, reappearing at the next launch (#184). The collection is the caller's
+    /// business now, and it is updated only once the write has actually succeeded.
+    /// </remarks>
+    public bool AddAndRemoveProfileXml(Profile? profile, bool AddProfileFlag)
     {
         try
         {
-            if (!Directory.Exists(ProfileAppDirectory))
-            {
-                Directory.CreateDirectory(ProfileAppDirectory);
-            }
-            if (!File.Exists(ProfileSettingsXmlPath))
-            {
-                var newDoc = new XDocument(
-                    new XElement("Profiles")
-                );
-                newDoc.Save(ProfileSettingsXmlPath);
-            }
-            var doc = XDocument.Load(ProfileSettingsXmlPath);
+            var doc = _profileStore.Open();
+
             if (profile != null)
             {
                 if (AddProfileFlag)
                 {
-                    var newProfile = new XElement("Profile",
-                        new XElement("Name", profile.Name),
-                        new XElement("ProfileID", profile.ProfileId),
-                        new XElement("CreatedOn", profile.CreatedOn),
-                        new XElement("Devices",
-                            from device in profile.Devices
-                            select new XElement("Device",
-                                new XElement("DeviceName", device.DeviceName),
-                                new XElement("DevicePartNumber", device.DevicePartName),
-                                new XElement("MACAddress", device.MacAddress),
-                                new XElement("DeviceSerialNo", device.DeviceSerialNo),
-                                new XElement("Channels",
-                                    from channel in device.Channels
-                                    where channel.IsChannelActive
-                                    select new XElement("Channel",
-                                        new XElement("Name", channel.Name),
-                                        new XElement("Type", channel.Type),
-                                        new XElement("IsActive", channel.IsChannelActive)
-                                    )
-                                ),
-                                new XElement("SamplingFrequency", device.SamplingFrequency)
-                            )
-                        )
-                    );
-
-                    doc.Root?.Add(newProfile);
+                    doc.Root?.Add(BuildProfileElement(profile));
                 }
                 else
                 {
-                    var profileToRemove = doc.Descendants("Profile")
-                        .FirstOrDefault(p => (Guid)p.Element("ProfileID") == profile.ProfileId);
-                    profileToRemove?.Remove();
-                    SubscribedProfiles.Remove(profile);
+                    FindProfileElement(doc, profile.ProfileId)?.Remove();
                 }
             }
-            doc.Save(ProfileSettingsXmlPath);
+
+            _profileStore.Save(doc);
+            return true;
         }
         catch (Exception ex)
         {
             AppLogger.Error(ex, "Error Setting Selected profile");
+            return false;
         }
     }
 
     // @port: Daqifi.Desktop.Logger.LoggingManager.LoadProfilesFromXml
+    /// <summary>
+    /// Replaces <see cref="SubscribedProfiles"/> with what the profiles file holds, and returns it.
+    /// </summary>
+    /// <remarks>
+    /// The collection is NOT cleared up front. Upstream cleared it before attempting the load, so
+    /// a file that failed to parse emptied the Profiles pane while the file on disk still held
+    /// every profile — a load destroying state it never successfully replaced (#184). A failed
+    /// load now leaves the pane exactly as it was, and the unreadable file has been moved aside so
+    /// that saving works again.
+    /// </remarks>
     public List<Profile> LoadProfilesFromXml()
     {
+        if (!_profileStore.TryLoad(out var loadedProfiles))
+        {
+            return SubscribedProfiles.ToList();
+        }
+
         SubscribedProfiles.Clear();
-
-        try
+        foreach (var profile in loadedProfiles)
         {
-            // Check if the profile settings file exists
-            if (File.Exists(ProfileSettingsXmlPath))
-            {
-                // Load the XML document
-                var doc = XDocument.Load(ProfileSettingsXmlPath);
-
-                // Parse the XML and retrieve the profiles
-                var loadedProfiles = doc.Descendants("Profile").Select(p => new Profile
-                {
-                    Name = (string)p.Element("Name"),
-                    ProfileId = (Guid)p.Element("ProfileID"),
-                    CreatedOn = (DateTime)p.Element("CreatedOn"),
-                    Devices = new ObservableCollection<ProfileDevice>(p.Element("Devices")?.Elements("Device").Select(d => new ProfileDevice
-                    {
-                        DeviceName = (string)d.Element("DeviceName"),
-                        DevicePartName = (string)d.Element("DevicePartNumber"),
-                        MacAddress = (string)d.Element("MACAddress"),
-                        DeviceSerialNo = (string)d.Element("DeviceSerialNo"),
-                        SamplingFrequency = (int)d.Element("SamplingFrequency"),
-                        // The writer omits <Channels> when the device has no active channels
-                        // (see UpdateProfileInXml / AddAndRemoveProfileXml). Default to an empty
-                        // list so downstream code can call .Where/.Select without a null check.
-                        Channels = d.Element("Channels")?.Elements("Channel").Select(c => new ProfileChannel
-                        {
-                            Name = (string)c.Element("Name"),
-                            Type = (string)c.Element("Type"),
-                            IsChannelActive = (bool)c.Element("IsActive"),
-                            SerialNo = (string)d.Element("DeviceSerialNo")
-                        }).ToList() ?? []
-                    }).ToList())
-                }).ToList();
-
-                // Add each profile to the existing collection
-                foreach (var profile in loadedProfiles)
-                {
-                    SubscribedProfiles.Add(profile);
-                }
-
-                return loadedProfiles;
-            }
-        }
-        catch (Exception ex)
-        {
-            AppLogger.Error(ex, "Error Loading Profiles from XML");
+            SubscribedProfiles.Add(profile);
         }
 
-        return SubscribedProfiles.ToList();
+        return loadedProfiles;
     }
 
     // @port: Daqifi.Desktop.Logger.LoggingManager.UnsubscribeProfile
-    public void UnsubscribeProfile(Profile profile)
+    /// <summary>
+    /// Deletes a profile from the file and from <see cref="SubscribedProfiles"/>.
+    /// </summary>
+    /// <returns><c>true</c> when the profile is gone from both.</returns>
+    public bool UnsubscribeProfile(Profile profile)
     {
         try
         {
             var subscribedProfile = SubscribedProfiles.FirstOrDefault(x => x.ProfileId == profile.ProfileId);
             if (subscribedProfile == null)
             {
-                return;
+                // Already not subscribed: nothing to do, and nothing failed.
+                return true;
             }
 
-            AddAndRemoveProfileXml(subscribedProfile, false);
+            if (!AddAndRemoveProfileXml(subscribedProfile, false))
+            {
+                return false;
+            }
+
+            SubscribedProfiles.Remove(subscribedProfile);
             ClearChannelList();
+            return true;
         }
         catch (Exception ex)
         {
             AppLogger.Error(ex, "Error Unsubscribe Profile");
+            return false;
         }
     }
+
+    /// <summary>
+    /// Builds the <c>&lt;Profile&gt;</c> element written to the file.
+    /// </summary>
+    /// <remarks>
+    /// ONE builder for both writers. They used to be separate and disagreed about the same file:
+    /// the add path always emitted <c>&lt;Channels&gt;</c> and put <c>&lt;SamplingFrequency&gt;</c>
+    /// after it, while the update path omitted <c>&lt;Channels&gt;</c> when no channel was active
+    /// and ordered the two the other way round. The reader carried a comment explaining the
+    /// difference; it now only has to explain the older files.
+    /// </remarks>
+    private static XElement BuildProfileElement(Profile profile) =>
+        new("Profile",
+            new XElement("Name", profile.Name),
+            new XElement("ProfileID", profile.ProfileId),
+            new XElement("CreatedOn", profile.CreatedOn),
+            new XElement("Devices",
+                from device in profile.Devices
+                select new XElement("Device",
+                    new XElement("DeviceName", device.DeviceName),
+                    new XElement("DevicePartNumber", device.DevicePartName),
+                    new XElement("MACAddress", device.MacAddress),
+                    new XElement("DeviceSerialNo", device.DeviceSerialNo),
+                    new XElement("Channels",
+                        from channel in device.Channels
+                        where channel.IsChannelActive
+                        select new XElement("Channel",
+                            new XElement("Name", channel.Name),
+                            new XElement("Type", channel.Type),
+                            new XElement("IsActive", channel.IsChannelActive)
+                        )
+                    ),
+                    new XElement("SamplingFrequency", device.SamplingFrequency)
+                )
+            )
+        );
+
+    /// <summary>
+    /// Finds a profile element by id, tolerating entries with no <c>&lt;ProfileID&gt;</c> at all —
+    /// a cast to <c>Guid</c> throws on those, which would take out the whole operation over one
+    /// damaged entry.
+    /// </summary>
+    private static XElement? FindProfileElement(XDocument document, Guid profileId) =>
+        document.Descendants("Profile")
+            .FirstOrDefault(p => (Guid?)p.Element("ProfileID") == profileId);
+
     #endregion
 
     #region Channel Subscription
