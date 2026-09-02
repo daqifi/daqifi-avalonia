@@ -12,14 +12,8 @@ using OxyPlot.Axes;
 using OxyPlot.Series;
 using System.Diagnostics;
 using System.Globalization;
-using System.IO;
 using Avalonia;
 using Avalonia.Threading;
-using Avalonia.Controls.ApplicationLifetimes;
-using Avalonia.Platform.Storage;
-// Alias (not `using OxyPlot.Avalonia;`) — that namespace re-declares LineSeries etc.
-// and would ambiguate the OxyPlot.Series types used throughout this file.
-using PngExporter = OxyPlot.Avalonia.PngExporter;
 using CommunityToolkit.Mvvm.ComponentModel;
 using CommunityToolkit.Mvvm.Input;
 using TickStyle = OxyPlot.Axes.TickStyle;
@@ -583,28 +577,6 @@ public partial class PlotLogger : ObservableObject, ILogger
 
     [RelayCommand]
     // @port: Daqifi.Desktop.Logger.PlotLogger.SaveLiveGraph
-    private async Task SaveLiveGraphAsync()
-    {
-        // Ownerless Win32 SaveFileDialog → StorageProvider picker owned by the app main
-        // window (hal: file_pickers), matching the ownerless-dialog dialect in
-        // AvaloniaMessageBoxService. OxyPlot.Wpf.PngExporter → OxyPlot.Avalonia.PngExporter.
-        if (Application.Current?.ApplicationLifetime is not IClassicDesktopStyleApplicationLifetime { MainWindow: { } main })
-        {
-            return; // headless run — nothing can own a picker
-        }
-
-        var file = await main.StorageProvider.SaveFilePickerAsync(new FilePickerSaveOptions
-        {
-            DefaultExtension = "png",
-            FileTypeChoices = new[] { FilePickerFileTypes.ImagePng }
-        });
-
-        var path = file?.TryGetLocalPath();
-        if (path == null) { return; }
-
-        var pngExporter = new PngExporter { Width = 1024, Height = 768 };
-        using var stream = File.Create(path);
-        pngExporter.Export(PlotModel, stream);
-    }
+    private Task SaveLiveGraphAsync() => GraphImageSaver.SaveAsync(PlotModel, "Save Live Graph");
     #endregion
 }
