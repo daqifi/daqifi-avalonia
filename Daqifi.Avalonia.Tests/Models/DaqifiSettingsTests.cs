@@ -211,6 +211,64 @@ public sealed class DaqifiSettingsTests : IDisposable
     }
 
     /// <summary>
+    /// The rename must never clobber a file already sitting at the quarantine name. Two app
+    /// instances share the data directory and can both reach recovery, and the name carries only a
+    /// millisecond, so a collision is possible — and overwriting would destroy the one copy of the
+    /// user's settings the rename exists to preserve.
+    /// </summary>
+    /// <remarks>
+    /// Driven through <c>MoveFileAside</c> with an explicit destination rather than through a
+    /// recovery, because the production name is <c>DateTime.UtcNow</c> and a collision cannot be
+    /// arranged from outside.
+    /// </remarks>
+    [Fact]
+    public void Moving_a_damaged_file_aside_never_overwrites_an_earlier_one()
+    {
+        const string earlier = "the file an earlier recovery moved aside";
+        var taken = Path.Combine(_directory, "DAQifiConfiguration.xml.corrupt-20260902-120000000");
+        File.WriteAllText(taken, earlier);
+        File.WriteAllText(SettingsPath, TruncatedSettingsXml);
+
+        var moved = DaqifiSettings.MoveFileAside(SettingsPath, taken);
+
+        Assert.Equal(taken + "-1", moved);
+        Assert.Equal(earlier, File.ReadAllText(taken));
+        Assert.Equal(TruncatedSettingsXml, File.ReadAllText(moved!));
+        Assert.False(File.Exists(SettingsPath));
+    }
+
+    /// <summary>
+    /// A file that is not there cannot be moved, and the caller has to be told so rather than
+    /// handed a path nothing was written to.
+    /// </summary>
+    [Fact]
+    public void Moving_a_file_that_is_not_there_reports_failure()
+    {
+        Assert.Null(DaqifiSettings.MoveFileAside(SettingsPath, Path.Combine(_directory, "target")));
+    }
+
+    /// <summary>
+    /// Moving the damaged file aside and getting a working one back in its place are two outcomes,
+    /// and the write can fail on exactly the conditions that damaged the file. Telling the user
+    /// settings save normally when nothing on disk holds them is the false reassurance #181 had to
+    /// fix; the message has to say which of the two actually happened.
+    /// </summary>
+    [Fact]
+    public void The_recovery_notice_promises_working_settings_only_when_a_replacement_was_written()
+    {
+        const string quarantined = "/data/DAQifiConfiguration.xml.corrupt-20260902-120000000";
+
+        var written = DaqifiSettings.DescribeQuarantineForUser(quarantined, replacementWritten: true);
+        var notWritten = DaqifiSettings.DescribeQuarantineForUser(quarantined, replacementWritten: false);
+
+        Assert.Contains(quarantined, written);
+        Assert.Contains(quarantined, notWritten);
+        Assert.Contains("has been reset", written);
+        Assert.DoesNotContain("could not be written", written);
+        Assert.Contains("could not be written", notWritten);
+    }
+
+    /// <summary>
     /// The write goes to a temporary file and is renamed over the real one — that is what stops an
     /// interrupted write producing the truncated file this whole ticket starts from. The temporary
     /// file must not survive the write that used it.

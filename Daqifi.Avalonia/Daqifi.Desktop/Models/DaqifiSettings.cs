@@ -100,7 +100,7 @@ public class DaqifiSettings
             // supports. The Settings UI only ever offers the two in CsvDelimiterOptions, so this
             // changes nothing about how the app behaves; it makes the guarantee a property of the
             // type rather than of who happens to be calling it.
-            _csvDelimiter = SupportedDelimiterOrDefault(value, "the delimiter it was given");
+            _csvDelimiter = SupportedDelimiterOrDefault(value, "A caller");
             SaveSettings();
         }
     }
@@ -150,7 +150,7 @@ public class DaqifiSettings
             // is not complained about; the default simply stands.
             if (xml.Element("CsvDelimiter") is { } element)
             {
-                _csvDelimiter = SupportedDelimiterOrDefault(element.Value, "the settings file");
+                _csvDelimiter = SupportedDelimiterOrDefault(element.Value, "The settings file");
             }
         }
         catch (Exception ex) when (IsUnreadableContent(ex))
@@ -182,34 +182,106 @@ public class DaqifiSettings
         AppLogger.Instance.Error(
             cause, $"The settings file could not be read and is being moved aside: {_settingsXmlPath}");
 
-        var quarantinePath = $"{_settingsXmlPath}.corrupt-{DateTime.UtcNow:yyyyMMdd-HHmmssfff}";
-
-        try
-        {
-            // RENAMED, never deleted. It is the user's file, an unparseable one is very often
-            // still readable by hand, and it is the only record of what they had chosen. The
-            // timestamp keeps repeated recoveries from overwriting each other.
-            File.Move(_settingsXmlPath, quarantinePath, overwrite: true);
-        }
-        catch (Exception ex)
+        if (MoveDamagedFileAside() is not { } quarantinePath)
         {
             // The damaged file is still sitting there, so the next launch will fail on it again.
             // That is an environmental fault — an unwritable data directory — reported until
             // someone fixes it, rather than the self-inflicted permanent condition this method
             // exists to end. Writing a replacement is not an option: with the original still in
             // place there is nowhere to put one that does not destroy it.
-            AppLogger.Instance.Error(ex, $"The damaged settings file could not be moved aside: {_settingsXmlPath}");
             return;
         }
 
-        AppLogger.Instance.Warning(
-            $"The damaged settings file was moved to {quarantinePath}; settings load and save normally from now on.");
+        // Moving the file aside and getting a working one back in its place are two outcomes, not
+        // one, and SaveSettings can fail on exactly the conditions that damage the file in the
+        // first place (a full disk, an unwritable directory). Announcing the second before
+        // attempting it told the user settings were saving again when nothing on disk held them.
+        var replacementWritten = LoadDefaultValues();
 
-        _pendingQuarantineNotice =
-            $"Your export settings could not be read, so the damaged file was moved to {quarantinePath}. " +
-            $"The CSV delimiter has been reset to \"{DefaultCsvDelimiter}\".";
+        AppLogger.Instance.Warning(replacementWritten
+            ? $"The damaged settings file was moved to {quarantinePath}; settings load and save normally from now on."
+            : $"The damaged settings file was moved to {quarantinePath}, but a replacement could not be written.");
 
-        LoadDefaultValues();
+        _pendingQuarantineNotice = DescribeQuarantineForUser(quarantinePath, replacementWritten);
+    }
+
+    /// <summary>
+    /// What to tell the user about a settings file that was moved aside.
+    /// </summary>
+    /// <param name="quarantinePath">Where the damaged file went.</param>
+    /// <param name="replacementWritten">
+    /// Whether a working settings file was written in its place. When it was not, the delimiter is
+    /// still correct for this session but nothing on disk holds it, and saying otherwise is the
+    /// same false reassurance #181 had to fix.
+    /// </param>
+    internal static string DescribeQuarantineForUser(string quarantinePath, bool replacementWritten) =>
+        replacementWritten
+            ? $"Your export settings could not be read, so the damaged file was moved to {quarantinePath}. " +
+              $"The CSV delimiter has been reset to \"{DefaultCsvDelimiter}\"."
+            : $"Your export settings could not be read, so the damaged file was moved to {quarantinePath}. " +
+              $"The CSV delimiter is \"{DefaultCsvDelimiter}\" for this session, but a replacement settings " +
+              "file could not be written — check that DAQiFi can write to its data folder.";
+
+    /// <summary>
+    /// Renames the damaged settings file out of the way.
+    /// </summary>
+    /// <returns>Where it went, or <c>null</c> when it could not be moved at all.</returns>
+    private string? MoveDamagedFileAside() =>
+        MoveFileAside(_settingsXmlPath, $"{_settingsXmlPath}.corrupt-{DateTime.UtcNow:yyyyMMdd-HHmmssfff}");
+
+    /// <summary>How many names <see cref="MoveFileAside"/> will try before giving up.</summary>
+    private const int QuarantineNameAttempts = 100;
+
+    /// <summary>
+    /// Moves <paramref name="sourcePath"/> to <paramref name="preferredPath"/>, or to the first
+    /// free <c>-1</c>, <c>-2</c>, … variant of it if that name is taken.
+    /// </summary>
+    /// <remarks>
+    /// RENAMED, never deleted: it is the user's file, an unparseable one is very often still
+    /// readable by hand, and it is the only record of what they had chosen.
+    /// <para>
+    /// <c>overwrite: false</c>, matching <c>DatabaseMigrator.QuarantineDatabase</c> — a quarantine
+    /// that clobbers an earlier quarantine destroys the very thing the rename exists to preserve,
+    /// and the millisecond timestamp is not enough on its own: two app instances share this
+    /// directory and both can reach recovery on the same file. Unlike the database, though,
+    /// abandoning a settings quarantine leaves the damaged file in place and restores the exact
+    /// bug this code exists to end — so a taken name is retried under the next one rather than
+    /// given up on, which also closes the gap between testing for the name and using it.
+    /// </para>
+    /// </remarks>
+    /// <returns>The path the file was moved to, or <c>null</c> if it could not be moved.</returns>
+    internal static string? MoveFileAside(string sourcePath, string preferredPath)
+    {
+        Exception? lastFailure = null;
+
+        for (var attempt = 0; attempt < QuarantineNameAttempts; attempt++)
+        {
+            var candidate = attempt == 0 ? preferredPath : $"{preferredPath}-{attempt}";
+
+            try
+            {
+                File.Move(sourcePath, candidate, overwrite: false);
+                return candidate;
+            }
+            catch (IOException ex) when (File.Exists(candidate))
+            {
+                // The name is taken — by another instance's quarantine, or by one of this
+                // instance's own within the same millisecond. Take the next name. Any other
+                // IOException (no space, unwritable directory) falls to the catch below.
+                lastFailure = ex;
+            }
+            catch (Exception ex)
+            {
+                lastFailure = ex;
+                break;
+            }
+        }
+
+        var message = $"The damaged file at {sourcePath} could not be moved aside.";
+        if (lastFailure is null) { AppLogger.Instance.Error(message); }
+        else { AppLogger.Instance.Error(lastFailure, message); }
+
+        return null;
     }
 
     /// <summary>
@@ -267,23 +339,38 @@ public class DaqifiSettings
         }
 
         AppLogger.Instance.Warning(
-            $"The CSV delimiter \"{candidate}\" from {source} is not one this app supports, " +
-            $"so \"{DefaultCsvDelimiter}\" is being used instead.");
+            $"{source} supplied the CSV delimiter \"{candidate}\", which this app does not support; " +
+            $"using \"{DefaultCsvDelimiter}\" instead.");
 
         return DefaultCsvDelimiter;
     }
 
+    /// <summary>
+    /// Resets to the shipped defaults and writes them.
+    /// </summary>
+    /// <returns>
+    /// Whether the file was written. Upstream returns void; the recovery needs the answer, because
+    /// moving the damaged file aside and getting a working one back are separate outcomes and only
+    /// one of them means settings will persist again.
+    /// </returns>
     // @port: Daqifi.Desktop.Models.DaqifiSettings.LoadDefaultValues
-    private void LoadDefaultValues()
+    private bool LoadDefaultValues()
     {
         // The field, not the property: the property's setter saves, and SaveSettings is called
         // immediately below anyway. Upstream sets both and writes the file twice.
         _csvDelimiter = DefaultCsvDelimiter;
-        SaveSettings();
+        return SaveSettings();
     }
 
+    /// <summary>
+    /// Writes the current settings to the file.
+    /// </summary>
+    /// <returns>
+    /// Whether the write reached disk. Still logs on failure exactly as before — the return value
+    /// is for callers that must not claim more than happened, not a change of reporting.
+    /// </returns>
     // @port: Daqifi.Desktop.Models.DaqifiSettings.SaveSettings
-    private void SaveSettings()
+    private bool SaveSettings()
     {
         // Unique per write, not a fixed ".tmp": two app instances share one data directory, and a
         // single well-known temp path lets each truncate, move or delete the other's half-written
@@ -305,6 +392,7 @@ public class DaqifiSettings
             // so the file on disk is only ever the old content or the new.
             xml.Save(temporaryPath);
             File.Move(temporaryPath, _settingsXmlPath, overwrite: true);
+            return true;
         }
         catch (Exception ex)
         {
@@ -313,6 +401,8 @@ public class DaqifiSettings
             // Best-effort: do not leave a partial .tmp beside the real file. The write has already
             // been reported, so a failure to clean up adds nothing.
             try { File.Delete(temporaryPath); } catch { /* nothing useful to do */ }
+
+            return false;
         }
     }
 
