@@ -31,9 +31,24 @@ public sealed class BootloaderWatcher : IBootloaderWatcher, IDisposable
     private bool _started;
     private bool _disposed;
 
-    // The single device currently being flashed (its hold is released so the flasher can open it); new
-    // grabs for this path are suppressed until the flash lease is disposed.
-    private string? _flashingPath;
+    // The devices currently being flashed (each one's hold is released so the flasher can open it);
+    // new grabs for these paths are suppressed until their flash leases are disposed. Counted, so a
+    // repeated PrepareFlashAsync for the same path still needs one disposal each.
+    //
+    // Upstream keeps a single nullable path here, which is exactly right for the one caller that
+    // exists — FirmwareDialogViewModel, reachable only through a modal dialog opened from another
+    // modal dialog, so two flashes cannot overlap today. But PrepareFlashAsync hands out an
+    // independent lease per call and IsFlashInProgress now publishes "a write is in flight" to the
+    // connection dialog's discovery guards, and with one shared slot the FIRST disposal of two
+    // overlapping leases would clear that state and let discovery probe the bus into the second,
+    // still-running write. Counting is a no-op on the reachable path and keeps the published state
+    // honest if a second caller ever appears.
+    private readonly Dictionary<string, int> _flashingPaths = new(StringComparer.Ordinal);
+
+    // Total outstanding flash leases — a single-field mirror of the summed counts above, written under
+    // _gate. IsFlashInProgress is polled by callers that hold no gate (the connection dialog's
+    // Start*Discovery guards), so it has to read one field rather than walk a dictionary.
+    private int _outstandingFlashes;
 
     // Set while an auto-update is in progress: discovery is paused and new grabs are suppressed, but
     // existing holds stay alive so other sitting bootloaders remain wedge-proof.
@@ -73,6 +88,16 @@ public sealed class BootloaderWatcher : IBootloaderWatcher, IDisposable
     public event EventHandler<BootloaderHoldDroppedEventArgs>? HoldDropped;
 
     /// <inheritdoc />
+    public event EventHandler? FlashInProgressChanged;
+
+    /// <inheritdoc />
+    // @port: Daqifi.Desktop.Device.Firmware.BootloaderWatcher.IsFlashInProgress
+    // Volatile read: _outstandingFlashes is written under _gate, but this is polled from callers that
+    // hold no gate (the connection dialog's Start*Discovery guards), so the read must not be
+    // hoisted/cached.
+    public bool IsFlashInProgress => Volatile.Read(ref _outstandingFlashes) > 0;
+
+    /// <inheritdoc />
     // @port: Daqifi.Desktop.Device.Firmware.BootloaderWatcher.Start
     public void Start()
     {
@@ -93,25 +118,59 @@ public sealed class BootloaderWatcher : IBootloaderWatcher, IDisposable
     {
         ArgumentNullException.ThrowIfNull(devicePath);
 
+        // Declared out here so the edge below is announced on the failure path too — see the finally.
+        var flashStarted = false;
         await _gate.WaitAsync().ConfigureAwait(false);
         try
         {
-            // Pause discovery and mark this device as the flash target so it isn't re-grabbed while the
+            // Pause discovery and mark this device as a flash target so it isn't re-grabbed while the
             // flasher owns it. Other holds are left untouched (they stay wedge-proof).
             _discovery.Stop();
-            _flashingPath = devicePath;
+            flashStarted = _outstandingFlashes == 0;
+            _flashingPaths[devicePath] = _flashingPaths.GetValueOrDefault(devicePath) + 1;
+            Volatile.Write(ref _outstandingFlashes, _outstandingFlashes + 1);
 
-            if (_holds.TryGetValue(devicePath, out var hold))
+            try
             {
-                // Release ONLY the target so the flasher's transport can open it by path. Graceful release
-                // (no HoldDropped); the hold object is kept so the lease can re-grab the same device after.
-                await hold.ReleaseAsync().ConfigureAwait(false);
-                _logger.Information($"Released hold on {devicePath} for flashing; other bootloaders stay held.");
+                if (_holds.TryGetValue(devicePath, out var hold))
+                {
+                    // Release ONLY the target so the flasher's transport can open it by path. Graceful release
+                    // (no HoldDropped); the hold object is kept so the lease can re-grab the same device after.
+                    await hold.ReleaseAsync().ConfigureAwait(false);
+                    _logger.Information($"Released hold on {devicePath} for flashing; other bootloaders stay held.");
+                }
+            }
+            catch
+            {
+                // The marker is raised before this await (a concurrent auto-update ending must not see a
+                // gap), so a failure here has to roll it back by hand: no lease is returned when this
+                // throws, so nothing would ever release it. A stranded marker does not just pause HID
+                // discovery any more — the connection dialog keys its serial and WiFi discovery on
+                // IsFlashInProgress too, so it would leave the whole bus unscanned for the life of the
+                // process, for a flash that never started. The falling edge that tells subscribers to
+                // retry is announced by the finally below, on this path as well as the happy one.
+                ReleaseFlashSlot(devicePath);
+                ResumeDiscoveryIfIdle();
+                throw;
             }
         }
         finally
         {
             _gate.Release();
+
+            // Announced from the finally so it also fires when the release above threw and rolled the
+            // marker back. IsFlashInProgress is POLLED, not just subscribed to: between the increment
+            // and the rollback it reads true, and the connection dialog's discovery guards can refuse a
+            // restart on the strength of it in that window — a coordinator auto-update ending right
+            // there is exactly the case. Rolling back silently would leave that refusal with nothing to
+            // retry it. On the failure path no rising edge was announced, so this is an unpaired
+            // falling edge, which is precisely the signal a subscriber needs: whatever refused you is
+            // gone, ask again. Raising cannot mask the in-flight exception — RaiseFlashInProgressChanged
+            // guards every subscriber individually.
+            if (flashStarted)
+            {
+                RaiseFlashInProgressChanged();
+            }
         }
 
         return new WatcherLease(() => ResumeAfterFlashAsync(devicePath));
@@ -141,28 +200,108 @@ public sealed class BootloaderWatcher : IBootloaderWatcher, IDisposable
     // @port: Daqifi.Desktop.Device.Firmware.BootloaderWatcher.ResumeAfterFlashAsync
     private async Task ResumeAfterFlashAsync(string devicePath)
     {
+        var flashEnded = false;
         await _gate.WaitAsync().ConfigureAwait(false);
         try
         {
-            _flashingPath = null;
-
-            if (_holds.TryGetValue(devicePath, out var hold))
+            // Re-grab only when this lease is the last one outstanding for THIS path: reopening the
+            // handle while another write to the same device is still running would fight it. Read
+            // before the release below, which is deliberately deferred past the await.
+            var lastLeaseForThisPath = _flashingPaths.GetValueOrDefault(devicePath) <= 1;
+            try
             {
-                // Re-grab the exact device by path. A failed/cancelled flash leaves it a bootloader →
-                // re-held. A successful flash left it in application mode → the open fails and we drop it.
-                await hold.BeginHoldAsync().ConfigureAwait(false);
-                if (!hold.IsHolding)
+                if (lastLeaseForThisPath && _holds.TryGetValue(devicePath, out var hold))
                 {
-                    RemoveHold(devicePath, hold);
-                    _logger.Information($"{devicePath} is no longer a bootloader after flashing; dropped from the held list.");
+                    // Re-grab the exact device by path. A failed/cancelled flash leaves it a bootloader →
+                    // re-held. A successful flash left it in application mode → the open fails and we drop it.
+                    await hold.BeginHoldAsync().ConfigureAwait(false);
+                    if (!hold.IsHolding)
+                    {
+                        RemoveHold(devicePath, hold);
+                        _logger.Information($"{devicePath} is no longer a bootloader after flashing; dropped from the held list.");
+                    }
                 }
             }
+            finally
+            {
+                // Drop the marker only once the handoff is complete. IsFlashInProgress is polled with no
+                // gate held (the connection dialog's discovery guards), so clearing it before awaiting the
+                // re-grab would advertise "flash over" while the HID handle is still being reopened and let
+                // the dialog resume bus probing into it. The finally is what keeps an unexpected re-grab
+                // failure from stranding the marker set, which would pause that discovery for good.
+                flashEnded = ReleaseFlashSlot(devicePath);
 
-            ResumeDiscoveryIfIdle();
+                ResumeDiscoveryIfIdle();
+            }
         }
         finally
         {
             _gate.Release();
+
+            if (flashEnded)
+            {
+                RaiseFlashInProgressChanged();
+            }
+        }
+    }
+
+    /// <summary>
+    /// Drops one outstanding flash lease for <paramref name="devicePath"/>, returning true when it was
+    /// the last outstanding lease of any kind — i.e. when <see cref="IsFlashInProgress"/> just went
+    /// false and the falling edge is owed. Must be called under <see cref="_gate"/>.
+    /// </summary>
+    private bool ReleaseFlashSlot(string devicePath)
+    {
+        if (!_flashingPaths.TryGetValue(devicePath, out var outstanding))
+        {
+            // Nothing to release. Reachable only if a lease were disposed twice, which WatcherLease
+            // already prevents; returning false keeps a spurious falling edge out of the event.
+            return false;
+        }
+
+        if (outstanding <= 1)
+        {
+            _flashingPaths.Remove(devicePath);
+        }
+        else
+        {
+            _flashingPaths[devicePath] = outstanding - 1;
+        }
+
+        var remaining = _outstandingFlashes - 1;
+        Volatile.Write(ref _outstandingFlashes, remaining);
+        return remaining == 0;
+    }
+
+    /// <summary>
+    /// Raises <see cref="FlashInProgressChanged"/>. Always called with <see cref="_gate"/> released:
+    /// subscribers react by marshalling onto the UI thread, and doing that under the gate could
+    /// lock-invert with a UI-thread gate acquisition (the same reason <see cref="HoldDropped"/> is raised
+    /// outside it). Guarded so a faulting subscriber cannot propagate into the flash lease's disposal and
+    /// mask the flash's own outcome.
+    /// </summary>
+    // @port: Daqifi.Desktop.Device.Firmware.BootloaderWatcher.RaiseFlashInProgressChanged
+    private void RaiseFlashInProgressChanged()
+    {
+        var handlers = FlashInProgressChanged;
+        if (handlers == null)
+        {
+            return;
+        }
+
+        // Invoke each subscriber independently rather than wrapping the multicast delegate in one
+        // try/catch: a single throwing subscriber would otherwise swallow the edge for every handler
+        // registered after it, and for a connection dialog the falling edge is its only resume trigger.
+        foreach (var handler in handlers.GetInvocationList().Cast<EventHandler>())
+        {
+            try
+            {
+                handler(this, EventArgs.Empty);
+            }
+            catch (Exception ex)
+            {
+                _logger.Error(ex, "A FlashInProgressChanged subscriber threw while the flash state changed.");
+            }
         }
     }
 
@@ -183,11 +322,11 @@ public sealed class BootloaderWatcher : IBootloaderWatcher, IDisposable
     }
 
     /// <summary>
-    /// Restarts discovery only when no operation still needs it paused. A manual flash
-    /// (<see cref="_flashingPath"/>) and an auto-update (<see cref="_grabSuppressed"/>) can overlap on a
-    /// multi-device bench; whichever lease disposes first must NOT resume discovery while the other is
-    /// still flashing — a live finder cycle could re-open the in-flight device during the flasher's
-    /// reconnect window. Must be called under <see cref="_gate"/>.
+    /// Restarts discovery only when no operation still needs it paused. Manual flashes
+    /// (<see cref="_outstandingFlashes"/>) and an auto-update (<see cref="_grabSuppressed"/>) can
+    /// overlap on a multi-device bench; whichever lease disposes first must NOT resume discovery while
+    /// another is still flashing — a live finder cycle could re-open an in-flight device during the
+    /// flasher's reconnect window. Must be called under <see cref="_gate"/>.
     /// </summary>
     // @port: Daqifi.Desktop.Device.Firmware.BootloaderWatcher.ResumeDiscoveryIfIdle
     private void ResumeDiscoveryIfIdle()
@@ -198,7 +337,7 @@ public sealed class BootloaderWatcher : IBootloaderWatcher, IDisposable
         // that would start HID discovery the gate exists to prevent, and half-initialized at that
         // (BootloaderDiscovered is subscribed only inside Start(), so devices would be probed every
         // pass but never held). Harmless upstream/in production, where Start() always runs first.
-        if (_started && !_disposed && _flashingPath == null && !_grabSuppressed)
+        if (_started && !_disposed && _outstandingFlashes == 0 && !_grabSuppressed)
         {
             _discovery.Start();
         }
@@ -222,7 +361,7 @@ public sealed class BootloaderWatcher : IBootloaderWatcher, IDisposable
         IBootloaderHoldService? created = null;
         try
         {
-            if (_disposed || _grabSuppressed || devicePath == _flashingPath || _holds.ContainsKey(devicePath))
+            if (_disposed || _grabSuppressed || _flashingPaths.ContainsKey(devicePath) || _holds.ContainsKey(devicePath))
             {
                 return;
             }

@@ -47,6 +47,34 @@ public partial class ConnectionDialogViewModel : ObservableObject
     /// </summary>
     private readonly IBootloaderWatcher? _watcher;
 
+    /// <summary>
+    /// True from the moment <see cref="ConnectHid"/> starts quiescing discovery until the HID firmware
+    /// dialog it opened has closed. The watcher's own <see cref="IBootloaderWatcher.IsFlashInProgress"/>
+    /// only covers the write itself (<c>PrepareFlashAsync</c> → lease disposal), so this covers the rest
+    /// of the window <see cref="ConnectHid"/> deliberately quiesced — most importantly the time the user
+    /// spends picking a .hex before the write starts, during which an auto-update ending would otherwise
+    /// restart discovery and leave it running when they hit Upload (issue #777).
+    /// <para>
+    /// Volatile: the quiesce window spans awaits, so the write that clears it can land on a thread-pool
+    /// thread when no dispatcher is present (unit tests), while a restart continuation reads it.
+    /// </para>
+    /// </summary>
+    private volatile bool _hidFirmwareDialogOpen;
+
+    /// <summary>
+    /// How this view model marshals onto the UI thread. Nothing in the app ever reassigns it — it is an
+    /// instance field rather than a direct call to <see cref="InvokeOnUiThread"/> only so a test can
+    /// replace it by reflection (not <c>readonly</c>, because reflection may refuse an init-only field).
+    /// <para>
+    /// The seam is not cosmetic. Outside a running Avalonia application <c>Dispatcher.UIThread</c> binds
+    /// itself to whichever thread touches it first and nothing ever pumps it, so
+    /// <see cref="InvokeOnUiThread"/>'s blocking <c>Invoke</c> never returns when it is reached from any
+    /// other thread — and xUnit gives no thread affinity across tests. Without this, the firmware-pause
+    /// tests would deadlock the test host instead of failing.
+    /// </para>
+    /// </summary>
+    private Action<Action> _marshalToUiThread = InvokeOnUiThread;
+
     [ObservableProperty]
     private bool _hasNoWiFiDevices = true;
 
@@ -157,6 +185,12 @@ public partial class ConnectionDialogViewModel : ObservableObject
             HasNoHidDevices = _watcher.Bootloaders.Count == 0;
             ((System.Collections.Specialized.INotifyCollectionChanged)_watcher.Bootloaders).CollectionChanged
                 += OnHidDevicesChanged;
+
+            // A HID bootloader write can outlive the modal firmware dialog (closing it mid-flash only
+            // cancels; the watcher's flash lease is released asynchronously afterwards). Subscribe so the
+            // end of the write is a restart trigger of its own — without it, a resume refused while the
+            // write was still running would never be retried (issue #777).
+            _watcher.FlashInProgressChanged += OnBootloaderFlashInProgressChanged;
         }
 
         // Set up the duplicate device handler
@@ -174,7 +208,7 @@ public partial class ConnectionDialogViewModel : ObservableObject
     {
         // Marshal onto the UI thread: the event is raised from the firmware coordinator's async flow,
         // and the discovery start/stop paths mutate bound collections.
-        InvokeOnUiThread(() =>
+        _marshalToUiThread(() =>
         {
             if (_closed) { return; }
 
@@ -185,17 +219,65 @@ public partial class ConnectionDialogViewModel : ObservableObject
             }
             else
             {
-                // Flash finished — bring discovery back so the dialog keeps listing devices. The stop we
-                // issued at flash start may still be draining (a wedged port can hold the discovery loop
-                // task past its cancellation, leaving _*DiscoveryTask incomplete), and Start*Discovery
-                // refuses to start while that drain is in flight. So retry the start once the drain
-                // completes rather than dropping it — otherwise discovery could stay stopped for the rest
-                // of the dialog.
-                RestartDiscoveryWhenDrained(_wifiDiscoveryTask, StartWiFiDiscovery);
-                RestartDiscoveryWhenDrained(_serialDiscoveryTask, StartSerialDiscovery);
+                // Auto-update finished — bring discovery back so the dialog keeps listing devices. The
+                // restart carries the IsDiscoveryPausedForFirmware guard, so it is correctly refused when
+                // a concurrent HID bootloader flash still needs the bus quiet (issue #777); that flash's
+                // own release path calls the restart again.
+                RestartDiscoveryAfterFirmwarePause();
             }
         });
     }
+
+    /// <summary>
+    /// Reacts to a HID bootloader write starting or finishing on the app-global watcher. Only the falling
+    /// edge needs work: <see cref="ConnectHid"/> already drained both transports before the write could
+    /// start, and <see cref="IsDiscoveryPausedForFirmware"/> keeps them from restarting while it runs.
+    /// When it ends, retry the restart — the firmware dialog may already have closed (and had its own
+    /// restart refused) while the write was still unwinding (issue #777).
+    /// </summary>
+    // @port: Daqifi.Desktop.ViewModels.ConnectionDialogViewModel.OnBootloaderFlashInProgressChanged
+    private void OnBootloaderFlashInProgressChanged(object? sender, EventArgs e)
+    {
+        _marshalToUiThread(() =>
+        {
+            if (_closed || _watcher == null || _watcher.IsFlashInProgress) { return; }
+
+            RestartDiscoveryAfterFirmwarePause();
+        });
+    }
+
+    /// <summary>
+    /// Brings serial + WiFi discovery back after one of the firmware pause reasons cleared. Both starts
+    /// re-check <see cref="IsDiscoveryPausedForFirmware"/>, so calling this while another reason is still
+    /// active is a harmless no-op — and because every reason calls this when it clears, whichever one
+    /// clears last performs the actual restart. That is what stops a guard from leaving discovery paused
+    /// for the rest of the dialog's life.
+    /// </summary>
+    // @port: Daqifi.Desktop.ViewModels.ConnectionDialogViewModel.RestartDiscoveryAfterFirmwarePause
+    private void RestartDiscoveryAfterFirmwarePause()
+    {
+        // The stop issued when the pause began may still be draining (a wedged port can hold the
+        // discovery loop task past its cancellation, leaving _*DiscoveryTask incomplete), and
+        // Start*Discovery refuses to start while that drain is in flight. So retry the start once the
+        // drain completes rather than dropping it — otherwise discovery could stay stopped for the rest
+        // of the dialog (issue #738).
+        RestartDiscoveryWhenDrained(_wifiDiscoveryTask, StartWiFiDiscovery);
+        RestartDiscoveryWhenDrained(_serialDiscoveryTask, StartSerialDiscovery);
+    }
+
+    /// <summary>
+    /// True while some firmware operation needs this dialog's serial + WiFi discovery quiesced: a
+    /// coordinator auto-update (<see cref="ConnectionManager.IsFirmwareUpdateInProgress"/>), an open HID
+    /// firmware dialog, or a HID bootloader write still in flight on the app-global watcher. The last two
+    /// are invisible to the connection manager — a manual flash never sets <c>DeviceBeingUpdated</c> — so
+    /// gating on the connection manager alone let one device's auto-update ending re-open COM ports and
+    /// resume WiFi broadcasts in the middle of another device's HID flash (issue #777).
+    /// </summary>
+    // @port: Daqifi.Desktop.ViewModels.ConnectionDialogViewModel.IsDiscoveryPausedForFirmware
+    private bool IsDiscoveryPausedForFirmware =>
+        ConnectionManager.Instance.IsFirmwareUpdateInProgress
+        || _hidFirmwareDialogOpen
+        || _watcher?.IsFlashInProgress == true;
 
     /// <summary>
     /// Starts a discovery transport, deferring the start until any in-flight stop/drain for that
@@ -210,7 +292,7 @@ public partial class ConnectionDialogViewModel : ObservableObject
         if (drainTask is { IsCompleted: false })
         {
             drainTask.ContinueWith(
-                _ => InvokeOnUiThread(start),
+                _ => _marshalToUiThread(start),
                 CancellationToken.None,
                 TaskContinuationOptions.None,
                 TaskScheduler.Default);
@@ -244,10 +326,11 @@ public partial class ConnectionDialogViewModel : ObservableObject
         // it was drained around a firmware flash), otherwise a stale task reference blocks discovery.
         if (_closed || _wifiDiscoveryTask is { IsCompleted: false }) { return; }
 
-        // Don't run discovery during a firmware update: its per-cycle bus probing can starve the
-        // flash / steal the reconnecting COM port (issue #738). Covers a dialog opened mid-flash;
-        // OnFirmwareUpdateInProgressChanged restarts discovery when the flash ends.
-        if (ConnectionManager.Instance.IsFirmwareUpdateInProgress) { return; }
+        // Don't run discovery during any firmware operation: its per-cycle bus probing can starve the
+        // flash / steal the reconnecting COM port (issue #738) and can starve a HID bootloader's I/O
+        // mid-write (issue #777). Covers a dialog opened mid-flash; the release path of whichever pause
+        // reason clears last restarts discovery.
+        if (IsDiscoveryPausedForFirmware) { return; }
 
         // Restart-after-drain: dispose the prior finder/CTS before replacing them so we never leak a
         // subscribed finder or an undisposed CancellationTokenSource.
@@ -262,8 +345,8 @@ public partial class ConnectionDialogViewModel : ObservableObject
         // Core's dedup set is per-sweep, so a device already listed can re-fire on a later sweep (e.g.
         // after a transient receive-socket error ends a sweep early), and this clear, which runs only
         // on finder recreate, would not stop that duplicate. (issue #621)
-        // Routed through InvokeOnUiThread like every other AvailableWiFiDevices mutation.
-        InvokeOnUiThread(() =>
+        // Routed through the UI marshal like every other AvailableWiFiDevices mutation.
+        _marshalToUiThread(() =>
         {
             AvailableWiFiDevices.Clear();
             HasNoWiFiDevices = true;
@@ -293,9 +376,10 @@ public partial class ConnectionDialogViewModel : ObservableObject
         // Don't probe COM ports during a firmware update: Core opens/reconnects the device's port
         // itself across the flash, and the SerialDeviceFinder opens every DAQiFi VID/PID port each
         // cycle — a probe landing in Core's JumpingToApp reconnect window steals the port and strands
-        // the update in a timeout (issue #738). Covers a dialog opened mid-flash;
-        // OnFirmwareUpdateInProgressChanged restarts discovery when the flash ends.
-        if (ConnectionManager.Instance.IsFirmwareUpdateInProgress) { return; }
+        // the update in a timeout (issue #738), and the same probing can starve a HID bootloader's I/O
+        // mid-write on another device (issue #777). Covers a dialog opened mid-flash; the release path
+        // of whichever pause reason clears last restarts discovery.
+        if (IsDiscoveryPausedForFirmware) { return; }
 
         if (_serialFinder != null) { _serialFinder.DeviceDiscovered -= HandleCoreSerialDeviceDiscovered; _serialFinder.Dispose(); }
         _serialDiscoveryCts?.Dispose();
@@ -663,6 +747,25 @@ public partial class ConnectionDialogViewModel : ObservableObject
         var bootloader = enumerable.Cast<HeldBootloader>().FirstOrDefault();
         if (bootloader == null) { return; }
 
+        await RunWithHidFlashQuiescedAsync(() =>
+        {
+            var firmwareDialogViewModel = new FirmwareDialogViewModel(bootloader.DisplayName, bootloader.DevicePath);
+            return _dialogService.ShowDialogAsync<FirmwareDialog>(this, firmwareDialogViewModel);
+        });
+    }
+
+    /// <summary>
+    /// Runs the (modal) HID firmware dialog with WiFi + serial discovery quiesced for the whole window,
+    /// then restores discovery.
+    /// </summary>
+    /// <param name="showFirmwareDialogAsync">
+    /// Shows the modal firmware dialog; the returned task completes once it has closed. Upstream takes a
+    /// plain <c>Action</c> because WPF's <c>ShowDialog</c> blocks — Avalonia's dialogs are async-only, so
+    /// the same "run this while quiesced" contract needs a <see cref="Func{Task}"/> here.
+    /// </param>
+    // @port: Daqifi.Desktop.ViewModels.ConnectionDialogViewModel.RunWithHidFlashQuiescedAsync
+    private async Task RunWithHidFlashQuiescedAsync(Func<Task> showFirmwareDialogAsync)
+    {
         // Pause WiFi + serial discovery while the firmware dialog is open: their per-cycle bus probing
         // (serial opens/probes every COM port; WiFi UDP-broadcasts) can starve the bootloader's HID I/O
         // mid-flash. HID discovery and the per-device holds belong to the app-global watcher — it pauses
@@ -671,20 +774,26 @@ public partial class ConnectionDialogViewModel : ObservableObject
         // bootloader stays wedge-proof. Awaiting the drains matters: cancel/dispose does NOT abort an
         // in-flight DiscoverAsync cycle, so a still-running probe could otherwise hold a handle when the
         // flasher fires.
-        await StopWiFiDiscoveryAsync();
-        await StopSerialDiscoveryAsync();
-
+        //
+        // The flag goes up BEFORE the drains: a coordinator auto-update of a different device can finish
+        // while we are awaiting them, and its FirmwareUpdateInProgressChanged handler would otherwise
+        // restart the very discovery we are tearing down (issue #777).
+        _hidFirmwareDialogOpen = true;
         try
         {
-            var firmwareDialogViewModel = new FirmwareDialogViewModel(bootloader.DisplayName, bootloader.DevicePath);
-            await _dialogService.ShowDialogAsync<FirmwareDialog>(this, firmwareDialogViewModel);
+            await StopWiFiDiscoveryAsync();
+            await StopSerialDiscoveryAsync();
+
+            await showFirmwareDialogAsync();
         }
         finally
         {
             // Resume discovery once the flash dialog closes so the device list stays live. The watcher
-            // keeps holding the bootloader (or drops it if the flash succeeded) on its own.
-            StartWiFiDiscovery();
-            StartSerialDiscovery();
+            // keeps holding the bootloader (or drops it if the flash succeeded) on its own. If an
+            // auto-update or a still-unwinding bootloader write is holding the bus, this restart is
+            // refused and that operation's own release path retries it.
+            _hidFirmwareDialogOpen = false;
+            RestartDiscoveryAfterFirmwarePause();
         }
     }
     #endregion
@@ -729,7 +838,7 @@ public partial class ConnectionDialogViewModel : ObservableObject
             return;
         }
 
-        InvokeOnUiThread(() =>
+        _marshalToUiThread(() =>
         {
             var existing = FindSerialDeviceByPortName(portName);
             if (existing == null)
@@ -805,7 +914,7 @@ public partial class ConnectionDialogViewModel : ObservableObject
             return;
         }
 
-        InvokeOnUiThread(() =>
+        _marshalToUiThread(() =>
         {
             // Dedup by MAC: Core's WiFiDeviceFinder dedups only within a single DiscoverAsync sweep
             // (its discovered set is per-call), but RunContinuousWiFiDiscoveryAsync reuses this finder
@@ -839,6 +948,7 @@ public partial class ConnectionDialogViewModel : ObservableObject
         {
             ((System.Collections.Specialized.INotifyCollectionChanged)_watcher.Bootloaders).CollectionChanged
                 -= OnHidDevicesChanged;
+            _watcher.FlashInProgressChanged -= OnBootloaderFlashInProgressChanged;
         }
     }
 
