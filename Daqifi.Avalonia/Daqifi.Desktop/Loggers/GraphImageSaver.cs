@@ -56,6 +56,9 @@ internal static class GraphImageSaver
     /// <summary>Shown when the destination is fine but the plot itself could not be rendered.</summary>
     private const string RENDER_FAILED =
         "Could not save the graph — the image could not be created. Please try again.";
+
+    /// <summary>How many names to draw before giving up on finding an unused temporary one.</summary>
+    private const int TEMPORARY_NAME_ATTEMPTS = 5;
     #endregion
 
     #region Private Variables
@@ -207,21 +210,27 @@ internal static class GraphImageSaver
     /// </remarks>
     internal static void WriteFile(string path, Stream image)
     {
-        var temporaryPath = TemporaryPathFor(path);
+        // Through any symbolic link first. The file the user believes they are saving is the link's
+        // target, and replacing a directory entry would destroy the link and leave that target
+        // untouched — whereas the File.Create this replaces followed the link, as every other
+        // writer of a user-chosen path does.
+        var destination = ResolveLink(path);
+
+        var temporary = CreateTemporaryFile(destination);
         try
         {
-            using (var temporary = File.Create(temporaryPath))
+            using (temporary.Stream)
             {
-                image.CopyTo(temporary);
+                image.CopyTo(temporary.Stream);
             }
 
-            File.Move(temporaryPath, path, overwrite: true);
+            PlaceOver(temporary.Path, destination);
         }
         catch
         {
             // Only ever the temporary file: the destination has either been replaced wholesale or
             // never touched at all.
-            TryDeleteTemporaryFile(temporaryPath);
+            TryDeleteTemporaryFile(temporary.Path);
             throw;
         }
     }
@@ -236,15 +245,90 @@ internal static class GraphImageSaver
     }
 
     /// <summary>
-    /// Where the image is assembled before it is moved onto <paramref name="path"/>: the same
-    /// directory (so the move is a rename), the same base name (so a leftover is recognisable as
-    /// this save's), plus a unique component and a <c>.tmp</c> extension.
+    /// The destination with any symbolic link followed to the file it finally names; the path
+    /// itself when it is not a link, does not exist, or the link cannot be resolved.
     /// </summary>
-    private static string TemporaryPathFor(string path)
+    private static string ResolveLink(string path)
     {
-        var name = $"{Path.GetFileName(path)}.{Guid.NewGuid():N}.tmp";
-        var directory = Path.GetDirectoryName(path);
-        return string.IsNullOrEmpty(directory) ? name : Path.Combine(directory, name);
+        try
+        {
+            return File.ResolveLinkTarget(path, returnFinalTarget: true)?.FullName ?? path;
+        }
+        catch (IOException)
+        {
+            // Broken or circular link. Nothing useful to resolve to, so hand back the pathname and
+            // let the write below report whatever the file system says about it.
+            return path;
+        }
+    }
+
+    /// <summary>
+    /// Opens the file the image is assembled in before it is put over
+    /// <paramref name="destination"/>. Beside the destination, so the eventual replacement is a
+    /// rename within one directory rather than a copy across volumes.
+    /// </summary>
+    /// <remarks>
+    /// <para>
+    /// The name is a fixed short one, and deliberately does <b>not</b> embed the destination's file
+    /// name. A file name may legally run right up to the file system's per-component limit (255
+    /// bytes on Linux and macOS), so appending to it would make a destination the user could
+    /// previously save to suddenly unsaveable — a failure introduced purely by the temporary file.
+    /// </para>
+    /// <para>
+    /// <see cref="FileMode.CreateNew"/> rather than <see cref="FileMode.Create"/>: this must never
+    /// adopt and truncate a file that is already there, since the failure path deletes whatever it
+    /// opened. A name collision is vanishingly unlikely and costs one more draw.
+    /// </para>
+    /// </remarks>
+    private static (FileStream Stream, string Path) CreateTemporaryFile(string destination)
+    {
+        var directory = Path.GetDirectoryName(destination);
+
+        for (var attempt = 1; ; attempt++)
+        {
+            var name = $".daqifi-graph-{Guid.NewGuid().ToString("N")[..12]}.tmp";
+            var temporaryPath = string.IsNullOrEmpty(directory) ? name : Path.Combine(directory, name);
+
+            try
+            {
+                return (new FileStream(temporaryPath, FileMode.CreateNew, FileAccess.Write, FileShare.None), temporaryPath);
+            }
+            catch (IOException) when (attempt < TEMPORARY_NAME_ATTEMPTS && File.Exists(temporaryPath))
+            {
+                // The name was taken. Anything else — a missing directory, a denied one — is not a
+                // collision and propagates to the classifier, which is the whole point of the
+                // File.Exists check in this filter.
+            }
+        }
+    }
+
+    /// <summary>
+    /// Puts the finished temporary file at <paramref name="destination"/>, replacing whatever is
+    /// there in one step.
+    /// </summary>
+    /// <remarks>
+    /// <see cref="File.Replace(string, string, string?)"/> when the destination already exists,
+    /// because it carries that file's own permissions and ACLs onto the replacement. A plain move
+    /// would install a freshly created file with the directory's defaults instead, so a graph the
+    /// user had deliberately restricted would come back readable by anyone — a protection lost to
+    /// an ordinary re-save. <c>File.Replace</c> requires the destination to exist, hence the split.
+    /// </remarks>
+    private static void PlaceOver(string temporaryPath, string destination)
+    {
+        if (!File.Exists(destination))
+        {
+            File.Move(temporaryPath, destination);
+            return;
+        }
+
+        // Belt and braces on Unix, where the mode is not part of what Replace is specified to
+        // carry: copy it explicitly before the swap so the assertion holds on every platform.
+        if (!OperatingSystem.IsWindows())
+        {
+            File.SetUnixFileMode(temporaryPath, File.GetUnixFileMode(destination));
+        }
+
+        File.Replace(temporaryPath, destination, destinationBackupFileName: null);
     }
 
     /// <summary>Best-effort removal of the half-written temporary file; a failure here must not

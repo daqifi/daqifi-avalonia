@@ -260,6 +260,87 @@ public sealed class GraphImageSaveTests : IDisposable
         Assert.True(strays.Length == 0, "temporary files left behind: [" + string.Join(", ", strays.Select(Path.GetFileName)) + "]");
     }
 
+    /// <summary>
+    /// A file name may legally run right up to the file system's per-component limit (255 bytes on
+    /// Linux and macOS). The image is assembled in a temporary file beside the destination, so if
+    /// that temporary name were built by appending to the destination's, a name the user could
+    /// previously save to would become unsaveable — a failure caused purely by the mechanism meant
+    /// to make saving safer.
+    /// </summary>
+    /// <remarks>
+    /// Unix-only. The point is the 255-byte per-component limit; on Windows a name this long also
+    /// pushes the full path past <c>MAX_PATH</c>, which would fail for an unrelated reason and
+    /// prove nothing.
+    /// </remarks>
+    [Fact]
+    public void A_destination_name_at_the_length_limit_still_saves()
+    {
+        if (OperatingSystem.IsWindows()) { return; }
+
+        // 251 + ".png" = 255, the longest legal name. Anything appended to it fails.
+        var path = Path.Combine(_root, new string('g', 251) + ".png");
+
+        var failure = GraphImageSaver.SaveTo(path, WriteImage);
+
+        Assert.Null(failure);
+        Assert.Equal(ImageBytes, File.ReadAllBytes(path));
+        AssertNothingLeftBehind();
+    }
+
+    /// <summary>
+    /// Overwriting must not hand the file broader access than it had. Replacing a directory entry
+    /// installs a newly created file carrying the directory's defaults, so a graph the user had
+    /// deliberately restricted to themselves would come back world-readable after an ordinary
+    /// re-save — a protection lost silently, to a successful operation.
+    /// </summary>
+    /// <remarks>Unix-only: <see cref="UnixFileMode"/> does not exist on Windows, where the
+    /// equivalent guarantee is the ACL carried by <c>File.Replace</c>.</remarks>
+    [Fact]
+    public void Overwriting_keeps_the_destinations_own_permissions()
+    {
+        if (OperatingSystem.IsWindows()) { return; }
+
+        var path = Path.Combine(_root, "graph.png");
+        File.WriteAllBytes(path, [0x00, 0x01]);
+        const UnixFileMode ownerOnly = UnixFileMode.UserRead | UnixFileMode.UserWrite;
+        File.SetUnixFileMode(path, ownerOnly);
+
+        var failure = GraphImageSaver.SaveTo(path, WriteImage);
+
+        Assert.Null(failure);
+        Assert.Equal(ImageBytes, File.ReadAllBytes(path));
+        Assert.Equal(ownerOnly, File.GetUnixFileMode(path));
+        AssertNothingLeftBehind();
+    }
+
+    /// <summary>
+    /// A destination that is a symbolic link names the target, not the link. Replacing the link's
+    /// own directory entry would destroy the link and leave the file the user actually meant to
+    /// overwrite untouched — while reporting success. The <c>File.Create</c> this replaced followed
+    /// the link, so that behaviour has to survive the move to an atomic write.
+    /// </summary>
+    /// <remarks>Unix-only: creating a symbolic link on Windows needs elevation or developer
+    /// mode, so the test would report an environment problem rather than a code one.</remarks>
+    [Fact]
+    public void Saving_onto_a_symbolic_link_writes_through_to_its_target()
+    {
+        if (OperatingSystem.IsWindows()) { return; }
+
+        var target = Path.Combine(_root, "real-graph.png");
+        File.WriteAllBytes(target, [0x00, 0x01]);
+        var link = Path.Combine(_root, "link-to-graph.png");
+        File.CreateSymbolicLink(link, target);
+
+        var failure = GraphImageSaver.SaveTo(link, WriteImage);
+
+        Assert.Null(failure);
+        Assert.Equal(ImageBytes, File.ReadAllBytes(target));
+        // The link must still BE a link, still pointing where it did — not a regular file that has
+        // quietly taken the image and orphaned the target.
+        Assert.Equal(target, File.ResolveLinkTarget(link, returnFinalTarget: true)?.FullName);
+        AssertNothingLeftBehind();
+    }
+
     /// <summary>Fills the stream with <see cref="ImageBytes"/>, standing in for the PNG exporter.</summary>
     private static void WriteImage(Stream stream) => stream.Write(ImageBytes);
 
