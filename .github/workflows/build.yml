@@ -289,6 +289,11 @@ jobs:
     #     to be byte-identical across the five (#191, the determinism step at the end
     #     of this job). That is the first thing in this workflow that executes any of
     #     this repo's UI code rather than compiling it.
+    #   * It then requires those same captures to match the committed
+    #     tools/parity-audit/baselines/macos-arm64.sha256, byte for byte (#188, the
+    #     baseline step after it). The manifest is recorded on a developer's Mac, so
+    #     this is the check that makes its OS+arch name mean something: a second
+    #     Apple-silicon machine, on every pull request, reproducing the same bytes.
     #
     # A green compile does NOT catch the separator bug above, or anything else that is
     # wrong only at runtime. What this job buys is that the macOS target stops being a
@@ -314,18 +319,11 @@ jobs:
     #     a matter of taste: the first test whose VERDICT can differ by host — a path
     #     separator, a native asset, a culture or filesystem-case assumption — is the
     #     one that belongs here, and #88's separator bug is exactly that shape.
-    #   * `tools/parity-audit/run.sh --check-baseline`. HALF of the visual gate now
-    #     runs here — see the determinism step at the end of this job (#191) — and
-    #     this is the half that still does not, for the reason #89 and #179 both gave:
-    #     the committed baselines/macos-arm64.sha256 has been reproduced on exactly
-    #     one Mac, and whether a GitHub macOS runner produces those same bytes is
-    #     untested. A baseline check added on that assumption would fail on its first
-    #     run and read as a UI regression, which is precisely the false positive #89
-    #     exists to stop. #188 is the ticket that measures a second Apple-silicon
-    #     machine; gating the baseline is a third one, and if the bytes disagree it is
-    #     the manifest's OS+arch NAME that needs fixing rather than the gate.
-    #     `--determinism` carries none of that risk: it compares this runner against
-    #     ITSELF, so nothing in its verdict depends on another machine's bytes.
+    #   * The WPF side, and therefore parity itself. `tools/parity-audit/WpfCapture`
+    #     targets net10.0-windows and hosts the sibling daqifi-desktop app, so the only
+    #     half of the parity comparison that exists on this runner is the Avalonia one.
+    #     What runs here is a REGRESSION gate over that half — the port against its own
+    #     recorded bytes — not the WPF-vs-Avalonia diff the directory is named for.
     #   * A dependency-graph upload for `avalonia-graph`. That gate reads the
     #     `libraries` section, which comes from a RID-LESS restore and so is
     #     byte-identical to the one `desktop` already uploads. Uploading it would add
@@ -526,9 +524,11 @@ jobs:
       # taste: two runs miss a 50/50 per-run flip half the time, five miss it ~6% of
       # the time. DETERMINISM_RUNS raises it when someone is chasing a flake.
       #
-      # This asserts NOTHING about cross-machine reproducibility — it compares this
-      # runner against itself — which is exactly why it can be here while
-      # --check-baseline cannot. See the job header, and #188.
+      # This step asserts NOTHING about cross-machine reproducibility: it compares this
+      # runner against itself. That is deliberate, and it is also why it has to come
+      # first — the baseline step below is the one that compares this runner against
+      # another machine's bytes, and it is only meaningful once the capture here is
+      # known to be stable. See the job header, and #188.
       #
       # `bash tools/parity-audit/run.sh`, not `./run.sh`: the script is committed mode
       # 644, so invoking it through its exec bit would fail on a fresh checkout. It
@@ -584,6 +584,65 @@ jobs:
           fi
           echo "${actual} screens, byte-identical across every run"
 
+      # ---- The visual gate's baseline half (#188) ----
+      #
+      # The step above proves this runner agrees with ITSELF. This one proves it agrees
+      # with the bytes committed in tools/parity-audit/baselines/macos-arm64.sha256,
+      # which were recorded on a developer's Mac. That is the claim the manifest's name
+      # has been making since #179 and that nothing had ever measured: a file keyed on
+      # OS+arch asserts any osx-arm64 host reproduces it, and it had only ever been
+      # reproduced on the one machine that produced it.
+      #
+      # It is measurable now because of two changes that landed on 2026-09-02. #199 put
+      # the harness on macos-latest at all, and #202 fixed the reason its output was not
+      # a function of the visual tree (Encode read the persistent headless framebuffer,
+      # so the bytes depended on the redraw history). Before #202 this step could not
+      # have been added: ~1 capture run in 5 on this runner carried a six-pixel flip on
+      # the SplitView pane edge, which is exactly the false positive #89 exists to stop.
+      #
+      # Deliberately NOT a sixth capture. It verifies `determinism/r1`, one of the sets
+      # the step above just proved every other run byte-matched — so the verdict is
+      # "these five runs agreed with each other AND with the committed baseline" about
+      # ONE set of bytes, rather than about a further capture nothing has vouched for.
+      # It also costs nothing: capturing is the expensive part and it already happened.
+      #
+      # Ordering matters and is the other half of why it is cheap. A baseline check on a
+      # host whose captures race is a machine for producing differences that are not
+      # regressions; running it only after --determinism has passed means a red tick here
+      # can never be that.
+      #
+      # WHEN THIS GOES RED, the fix is never to delete the step. In order of likelihood:
+      # a UI change whose PR did not re-record the manifest in the same commit; a real
+      # visual regression; or the macos-latest image moving under us. The third is the
+      # one a developer's own Mac cannot reproduce, which is why the runner's OS build
+      # and image version are printed on every run, green ones included — a mismatch is
+      # diagnosed by comparing the host that failed against the hosts that passed, and
+      # that comparison needs both sides on record.
+      - name: Committed baseline must be reproduced on this runner
+        id: baseline
+        env:
+          PARITY_OUT: ${{ runner.temp }}/parity-audit
+        run: |
+          set -euo pipefail
+
+          # The second machine, named. ImageOS/ImageVersion are set by the runner image
+          # itself, so they say which macos-latest this was even after the label moves.
+          echo "host: $(sw_vers -productName) $(sw_vers -productVersion)" \
+               "($(sw_vers -buildVersion)), $(uname -m)," \
+               "runner image ${ImageOS:-unknown}/${ImageVersion:-unknown}"
+
+          if ! bash tools/parity-audit/run.sh --check-captured "${PARITY_OUT}/determinism/r1"; then
+            echo "::error::this runner's capture does not match the committed" \
+                 "tools/parity-audit/baselines/macos-arm64.sha256. The step above" \
+                 "already passed, so the capture is stable here — this is a real" \
+                 "difference in the bytes, not a flake. Either the UI changed and the" \
+                 "manifest was not re-recorded in the same commit, or it is a visual" \
+                 "regression, or this runner image no longer renders what the recording" \
+                 "host does (compare the host line above against a green run's, and see" \
+                 "#188). The differing PNGs are in the parity-determinism-macos artifact."
+            exit 1
+          fi
+
       # The capture logs, so the artifact is never empty when it matters most.
       #
       # run.sh's run_capture() sends each pass's whole stdout+stderr to
@@ -616,7 +675,10 @@ jobs:
       # The leading dot is the only thing dropped, so `capture-determinism-3.log` here
       # is the `.capture-determinism-3.log` the failing step named on screen.
       - name: Collect the capture logs
-        if: ${{ failure() && steps.determinism.outcome == 'failure' }}
+        # Either capture check failing wants the same evidence, and the baseline step
+        # verifies determinism/r1 — one of the very sets this collects — so the two
+        # share one artifact rather than growing a second, near-identical upload path.
+        if: ${{ failure() && (steps.determinism.outcome == 'failure' || steps.baseline.outcome == 'failure') }}
         env:
           PARITY_OUT: ${{ runner.temp }}/parity-audit
         run: |
@@ -656,9 +718,11 @@ jobs:
       # screens that differed and is close to unactionable without the two encodings in
       # hand — and #179 already had to fix a cleanup that destroyed the very evidence
       # its own failure message told you to go and fetch. Not a thing to leave for
-      # later.
+      # later. A baseline failure (#188) needs the same PNGs for the same reason: the
+      # message names the screens, and the bytes are the only thing that can say what
+      # moved. The name still fits — this is `determinism/`, r1..rN, in both cases.
       #
-      # Conditioned on THIS step rather than a bare `failure()`. `failure()` is
+      # Conditioned on THOSE steps rather than a bare `failure()`. `failure()` is
       # required — an `if:` with no status function has an implicit `success()` and
       # would never run here — but on its own it would also fire after an earlier
       # failure (restore, the arm64 check), uploading nothing and adding a second,
@@ -673,7 +737,7 @@ jobs:
       # Hidden files are still excluded by upload-artifact's own default, which is what
       # keeps each run's throwaway .appdata (SQLite DB + logs) out of the artifact.
       - name: Upload the determinism captures
-        if: ${{ failure() && steps.determinism.outcome == 'failure' }}
+        if: ${{ failure() && (steps.determinism.outcome == 'failure' || steps.baseline.outcome == 'failure') }}
         uses: actions/upload-artifact@v4
         with:
           name: parity-determinism-macos

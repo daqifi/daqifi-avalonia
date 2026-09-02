@@ -23,11 +23,19 @@
 #          ./run.sh --determinism [out-dir]          # 5 runs by default
 #          DETERMINISM_RUNS=10 ./run.sh --determinism [out-dir]
 #          ./run.sh --check-baseline [out-dir]       # capture once, diff vs the manifest
+#          ./run.sh --check-captured <capture-dir>   # diff an EXISTING capture, no capture
 #
 # --check-baseline captures once and verifies every screen against the committed
 # baselines/<os>-<arch>.sha256, failing on a changed screen, a missing one, or one the
 # baseline does not list. Run --determinism first on a host you have not captured from:
 # a baseline check on a non-deterministic host reports differences that are not regressions.
+#
+# --check-captured runs that same verification against a directory that has ALREADY been
+# captured, so the two checks can be chained over ONE capture set instead of two. CI runs
+# --determinism and then points this at determinism/r1 (#188), which makes the verdict
+# "these runs agreed with each other AND with the committed baseline" a statement about
+# the same bytes, rather than about a further capture nothing has vouched for. It also
+# costs nothing: the capture is the expensive part and it has already happened.
 #
 # --determinism captures the Avalonia side N times into <out>/determinism/r1..rN and
 # requires every PNG to be byte-identical to the first run's. Run it before you trust
@@ -46,18 +54,38 @@ MODE="capture"
 case "${1:-}" in
   --determinism)    MODE="determinism"; shift ;;
   --check-baseline) MODE="baseline";    shift ;;
-  --*) echo "unknown option '$1' (expected --determinism or --check-baseline)" >&2; exit 1 ;;
+  --check-captured) MODE="captured";    shift ;;
+  --*) echo "unknown option '$1' (expected --determinism, --check-baseline" \
+            "or --check-captured)" >&2; exit 1 ;;
 esac
 
-OUT="${1:-$HERE/out}"
-mkdir -p "$OUT"
-# Canonicalize to an absolute real path and refuse a root/empty target BEFORE the
-# cleanup rm -rf below — so a stray `./run.sh /` (or an empty arg) can never delete
-# outside the intended output dir.
-OUT="$(cd "$OUT" && pwd)"
-case "$OUT" in
-  ""|"/") echo "Refusing to use unsafe output dir '$OUT'" >&2; exit 1 ;;
-esac
+if [ "$MODE" = "captured" ]; then
+  # This mode READS a directory that already exists and writes nothing at all, so its
+  # argument is required and is taken as given. `mkdir -p` here would happily create a
+  # mistyped path, and the run would then fail as eighteen missing screens rather than
+  # as the typo it is — a diagnosis pointing at the UI for a mistake in an argument.
+  OUT="${1:-}"
+  if [ -z "$OUT" ]; then
+    echo "!! --check-captured needs the capture directory to verify, e.g." >&2
+    echo "     ./run.sh --check-captured out/determinism/r1" >&2
+    exit 1
+  fi
+  if [ ! -d "$OUT" ]; then
+    echo "!! --check-captured: '$OUT' is not a directory, so there is nothing to verify" >&2
+    exit 1
+  fi
+  OUT="$(cd "$OUT" && pwd)"
+else
+  OUT="${1:-$HERE/out}"
+  mkdir -p "$OUT"
+  # Canonicalize to an absolute real path and refuse a root/empty target BEFORE the
+  # cleanup rm -rf below — so a stray `./run.sh /` (or an empty arg) can never delete
+  # outside the intended output dir.
+  OUT="$(cd "$OUT" && pwd)"
+  case "$OUT" in
+    ""|"/") echo "Refusing to use unsafe output dir '$OUT'" >&2; exit 1 ;;
+  esac
+fi
 # Start from clean output dirs so stale PNGs from a prior run can't be mistaken for this run's
 # captures (a failed/partial capture would otherwise be masked by old images).
 #
@@ -172,33 +200,48 @@ sha256_verify() {   # $1 = manifest path; cwd must be the capture dir
   fi
 }
 
-if [ "$MODE" = "baseline" ]; then
-  # Compare a fresh capture against the committed manifest for this host. The manifest is a
-  # record of what the UI looked like at a known commit; this is the step that turns it from
-  # documentation into something with an exit code.
-  #
-  # Run --determinism FIRST on any host you have not captured from. A baseline check on a
-  # host whose captures are not deterministic reports differences that are not regressions,
-  # which is the failure this whole tool exists to avoid.
-  if ! id="$(platform_id)"; then
+# Which committed manifest this host is measured against, or a non-zero exit and the
+# reason there is none. Sets BASELINE_ID and BASELINE_MANIFEST.
+#
+# Kept separate from the comparison itself so both baseline modes run it as a PREFLIGHT,
+# before anything is captured or deleted: --check-baseline on a host with no committed
+# manifest used to wipe the capture dir first and exit second, destroying the determinism
+# evidence its own failure message then told you to go and produce (#179's trap).
+resolve_baseline() {
+  if ! BASELINE_ID="$(platform_id)"; then
     echo "!! no baseline naming for $(uname -s)/$(uname -m); baselines are per OS+arch" >&2
-    exit 1
+    return 1
   fi
-  manifest="$HERE/baselines/$id.sha256"
-  if [ ! -f "$manifest" ]; then
-    echo "!! no committed baseline for '$id' ($manifest)." >&2
+  BASELINE_MANIFEST="$HERE/baselines/$BASELINE_ID.sha256"
+  if [ ! -f "$BASELINE_MANIFEST" ]; then
+    echo "!! no committed baseline for '$BASELINE_ID' ($BASELINE_MANIFEST)." >&2
     echo "   Record one only after './run.sh --determinism' passes on this host:" >&2
-    echo "     cd <out>/avalonia && shasum -a 256 *.png > $manifest" >&2
+    echo "     cd <capture-dir> && shasum -a 256 *.png > $BASELINE_MANIFEST" >&2
     echo "   and state the host in tools/parity-audit/README.md, as the macOS entry does." >&2
-    exit 1
+    return 1
+  fi
+}
+
+# Verify one capture directory against that manifest, in both directions. $1 = the
+# directory holding the PNGs.
+baseline_check() {
+  local dir="$1" rc=0 manifest_names name path
+  local -a pngs
+
+  # A comparison of nothing must never read as success. `shasum -c` on an empty
+  # directory does fail — every listed name is missing — but it fails as eighteen
+  # unrelated-looking lines rather than as the one fact that matters, and a caller
+  # pointing this at the wrong directory deserves to be told that instead.
+  shopt -s nullglob
+  pngs=("$dir"/*.png)
+  if [ "${#pngs[@]}" -eq 0 ]; then
+    echo "!! $dir holds no PNGs at all, so there is nothing to verify against" \
+         "$BASELINE_MANIFEST" >&2
+    return 1
   fi
 
-  clean_dirs "$OUT/avalonia"
-  run_capture "avalonia" "$AVALONIA_CSPROJ" "$OUT/avalonia"
-
-  echo "== baseline ($id) =="
-  rc=0
-  ( cd "$OUT/avalonia" && sha256_verify "$manifest" ) || rc=1
+  echo "== baseline ($BASELINE_ID) =="
+  ( cd "$dir" && sha256_verify "$BASELINE_MANIFEST" ) || rc=1
 
   # `shasum -c` only checks the names the manifest lists, so a screen the harness gained
   # since the baseline was recorded would pass unnoticed. Both directions, always.
@@ -207,9 +250,8 @@ if [ "$MODE" = "baseline" ]; then
   # "desktop-1-livegraph.png" also matches "desktop-1-livegraphXpng" — a near-miss name
   # would be silently accepted by the check that exists to catch exactly that. Field 2 is
   # the filename in both shasum and sha256sum output, and screen names carry no spaces.
-  manifest_names="$(awk '{ print $2 }' "$manifest")"
-  shopt -s nullglob
-  for path in "$OUT/avalonia"/*.png; do
+  manifest_names="$(awk '{ print $2 }' "$BASELINE_MANIFEST")"
+  for path in "${pngs[@]}"; do
     name="$(basename "$path")"
     case $'\n'"$manifest_names"$'\n' in
       *$'\n'"$name"$'\n'*) ;;
@@ -221,12 +263,38 @@ if [ "$MODE" = "baseline" ]; then
   done
 
   if [ "$rc" -ne 0 ]; then
-    echo "!! baseline check FAILED against $manifest." >&2
+    echo "!! baseline check FAILED against $BASELINE_MANIFEST." >&2
     echo "   If the UI changed on purpose, re-record it (see README 'Baselines') and say so" >&2
-    echo "   in the same commit. If it did not, this is a visual regression." >&2
-    exit 1
+    echo "   in the same commit. If it did not, this is a visual regression — or, on a host" >&2
+    echo "   that has not produced these bytes before, a difference between the hosts." >&2
+    return 1
   fi
-  echo "baseline OK: every screen matches $manifest"
+  echo "baseline OK: every screen in $dir matches $BASELINE_MANIFEST"
+}
+
+if [ "$MODE" = "captured" ]; then
+  # Verify captures somebody else already produced. The caller owns the question of
+  # whether they are trustworthy — in CI that is the --determinism run immediately
+  # before this one, which is the whole point of splitting the mode out (#188).
+  resolve_baseline
+  baseline_check "$OUT"
+  exit 0
+fi
+
+if [ "$MODE" = "baseline" ]; then
+  # Compare a fresh capture against the committed manifest for this host. The manifest is a
+  # record of what the UI looked like at a known commit; this is the step that turns it from
+  # documentation into something with an exit code.
+  #
+  # Run --determinism FIRST on any host you have not captured from. A baseline check on a
+  # host whose captures are not deterministic reports differences that are not regressions,
+  # which is the failure this whole tool exists to avoid.
+  resolve_baseline
+
+  clean_dirs "$OUT/avalonia"
+  run_capture "avalonia" "$AVALONIA_CSPROJ" "$OUT/avalonia"
+
+  baseline_check "$OUT/avalonia"
   exit 0
 fi
 
