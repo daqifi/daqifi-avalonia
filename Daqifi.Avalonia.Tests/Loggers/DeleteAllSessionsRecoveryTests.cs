@@ -175,6 +175,40 @@ public class DeleteAllSessionsRecoveryTests : IDisposable
         Assert.Empty(RelocatedFiles());
     }
 
+    /// <summary>
+    /// The success contract the caller depends on: a purge that left nothing behind says so with
+    /// <c>null</c>, so a "your data is still on disk" warning can never be shown over a clean run.
+    /// </summary>
+    [Fact]
+    public void ReplaceWithEmptyDatabase_OnSuccess_ReportsNothingLeftOnDisk()
+    {
+        var factory = Factory();
+        SeedDatabaseWithOneSession(factory, DatabasePath);
+
+        Assert.Null(DatabaseMigrator.ReplaceWithEmptyDatabase(factory, DatabasePath));
+        Assert.Empty(RelocatedFiles());
+    }
+
+    /// <summary>
+    /// The failure contract, driven without a mock: a directory sitting where the database file
+    /// belongs is unmovable (there is no file to move) and unopenable by SQLite, so the rebuild
+    /// fails with nothing relocated. The exception must then say the sessions are untouched AND
+    /// leave <c>RelocatedDatabasePath</c> null — a claim it is only entitled to make because the
+    /// rollback reports what it could not put back rather than assuming it worked.
+    /// </summary>
+    [Fact]
+    public void ReplaceWithEmptyDatabase_WhenTheReplacementCannotBeBuilt_DoesNotClaimARelocation()
+    {
+        Directory.CreateDirectory(DatabasePath);
+
+        var fault = Assert.Throws<DatabaseReplacementException>(
+            () => DatabaseMigrator.ReplaceWithEmptyDatabase(Factory(), DatabasePath));
+
+        Assert.Null(fault.RelocatedDatabasePath);
+        Assert.Contains("exactly as they were", fault.Message);
+        Assert.Empty(RelocatedFiles());
+    }
+
     /// <summary>Files a purge moved aside and has not cleaned up, in the test's own directory.</summary>
     private string[] RelocatedFiles() => Directory.GetFiles(_directory, "*.deleted-*");
 
