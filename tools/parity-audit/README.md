@@ -111,6 +111,26 @@ Both are in `Program.cs` with the measurements attached. The lesson generalises:
 settle loop is only as good as the evidence that it settled, and "two samples agreed"
 is not evidence unless something could have changed between them.
 
+**The third one was not a settle problem at all** (#201), and it is why `Encode` no
+longer calls `CaptureRenderedFrame`. That reads the headless *framebuffer* — one
+persistent surface the compositor updates in place, a dirty region at a time — so what
+came back depended on the sequence of partial redraws that built it, not only on what
+the window looked like. A settle loop cannot see that: a picture assembled by one
+sequence of redraws is exactly as *still* as the same picture assembled by another.
+Concretely, with the `SplitView` pane open the column immediately left of it (x=1059,
+the 1440-minus-380 edge) was covered by more than one redraw, and 8-bit quantisation
+between passes left ±1 on the six pixels per screen where a content divider crosses it
+— on three screens, always the same values, sub-perceptual, and enough to fail byte
+identity **~1 capture run in 5 on `macos-latest`** while never failing in 40 on the
+baseline Mac. Waiting longer made it worse, because more time means more redraws.
+
+`Encode` now renders the window into a fresh `RenderTargetBitmap`, which starts blank
+and is drawn once, so the bytes are a function of the visual tree and nothing else.
+Switching left 15 of the 18 screens byte-identical; the three that moved are the
+`SplitView` flyouts, by those 18 pixels, and their new hashes are the ones CI had been
+intermittently producing all along. The settle loop stays — it fixes a tree that is
+genuinely still moving, which this does nothing about.
+
 **Why five runs and not two.** Both defects above were roughly coin-flips per run, and
 two runs miss a 50/50 flip half the time; five gets that to ~6%, ten to ~0.2%, at about
 15 s a run. portomatic's own `--determinism` captures twice — this is the same check at
@@ -169,9 +189,12 @@ captures once and verifies against the one for the current host, failing on a ch
 screen, a missing one, and one the baseline does not list (`shasum -c` only checks the
 names it was given, so the extra-file direction is checked separately).
 
-`macos-arm64.sha256` was recorded 2026-09-01 against `6834469` (macOS 26.5, Apple
-silicon, .NET SDK 10.0.302, Avalonia 12.1.1). No other host has one yet; the mode tells
-you how to record one and refuses to invent a comparison without it.
+`macos-arm64.sha256` was re-recorded 2026-09-02 for #201 (macOS 26.5, Apple silicon,
+.NET SDK 10.0.302, Avalonia 12.1.1), after 20 consecutive `--determinism` runs on that
+host. Fifteen of the eighteen hashes are unchanged from the 2026-09-01 recording against
+`6834469`; the three `SplitView` flyouts moved by the six pixels each that #201 is about.
+No other host has a baseline yet; the mode tells you how to record one and refuses to
+invent a comparison without it.
 
 **A mismatch is a prompt, not a verdict** — re-read that environment line first. The
 PNGs themselves are deliberately *not* committed: the harness is deterministic, so they
@@ -212,7 +235,10 @@ These cost real time to discover — leaving them here:
   window loads instead of crashing the leg with "Cannot locate resource images/daqifi.png".
   If the app grows a third startup-window entry-relative URI, shim it here too.
 - Faithful pixels need `UseSkia()` + `UseHeadless(new AvaloniaHeadlessPlatformOptions
-  { UseHeadlessDrawing = false })`; capture with `window.CaptureRenderedFrame()`.
+  { UseHeadlessDrawing = false })`. Capture with a fresh `RenderTargetBitmap`, **not**
+  `window.CaptureRenderedFrame()` — that one reads the headless framebuffer, which the
+  compositor updates in place a dirty region at a time, so its contents depend on the
+  redraw history and not only on the tree (#201, and the long note on `Encode`).
 - **`AvaloniaCapture` declares no `RuntimeIdentifier`, and that is load-bearing.** A
   pinned RID does not merely bias the pixels — it makes the harness unrunnable on
   every other host, because the build produces that platform's apphost and only that
