@@ -65,6 +65,42 @@ public class DeleteAllSessionsRecoveryTests : IDisposable
     }
 
     /// <summary>
+    /// The revert itself, at the only level that can hold it. <c>DaqifiViewModel.IsLogging</c>
+    /// answers a failed start by writing <c>Active = false</c> straight back — which re-enters
+    /// <c>OnActiveChanged</c>, this time down the STOP path, against the very database that just
+    /// refused to open. If that path went looking for the session that was never created, the crash
+    /// would simply have moved one line down and the revert would be the thing that killed the app.
+    /// It must not: no session exists, so there is nothing to finalize and nothing to delete.
+    ///
+    /// <para>The view model's own half of this is not reachable from a test host — see the class
+    /// remarks on <see cref="LoggingManager"/> usage in the PR — so what is pinned here is the
+    /// contract it depends on: the exact pair of writes it makes, in order, on a database that
+    /// cannot serve either of them.</para>
+    /// </summary>
+    [Fact]
+    public void AFailedStart_FollowedByTheTogglesRevert_DoesNotThrowAndFinalizesNothing()
+    {
+        File.WriteAllBytes(DatabasePath, []);
+
+        var manager = new LoggingManager(Factory()) { CurrentMode = LoggingMode.Stream };
+
+        manager.Active = true;
+        Assert.NotNull(manager.SessionStartFailure);
+
+        // The revert. Throwing here would be the same crash one line later.
+        manager.Active = false;
+
+        Assert.False(manager.Active);
+
+        // No half-started run was recorded: the list the pane binds to is untouched, so a start that
+        // failed cannot leave a phantom session behind for the user to wonder about.
+        Assert.Empty(manager.LoggingSessions);
+
+        // Still readable after the revert, because the caller reports it AFTER writing Active back.
+        Assert.NotNull(manager.SessionStartFailure);
+    }
+
+    /// <summary>
     /// The guard on the above: <see cref="LoggingManager.SessionStartFailure"/> is what the toggle
     /// reads to decide whether to revert, so a session that DID start must never leave it set.
     /// </summary>
@@ -176,6 +212,61 @@ public class DeleteAllSessionsRecoveryTests : IDisposable
     }
 
     /// <summary>
+    /// The fourth outcome, and the one that is easiest to get wrong: the replacement database IS
+    /// live and empty — so clearing the pane is correct — but a file the purge moved aside could not
+    /// be removed, which means the destructive thing the user asked for has NOT happened. An empty
+    /// pane over a full disk is exactly the silent half-success #183 is about, so the user is told,
+    /// and told WHICH path still holds their sessions.
+    ///
+    /// <para>The obstacle is synthetic and deliberately so: there is no portable way to make a real
+    /// file undeletable. A read-only parent directory is the genuine Unix cause, but this repo
+    /// compiles <c>CA1416</c> as an error, so <c>File.SetUnixFileMode</c> cannot be called without a
+    /// platform guard that would make the test vanish on Windows — and the directory has to stay
+    /// writable for the replacement to be built in it anyway. What is put in the file's way instead
+    /// is a DIRECTORY at exactly its path, still holding the relocated database inside it: no
+    /// process can <c>unlink</c> that on any platform, at any privilege level, and the sentence the
+    /// user is shown is literally true of it. The branch does not care why the delete failed —
+    /// <c>DeleteRelocatedSet</c> catches every exception alike — so what is under test is the whole
+    /// of what this outcome promises.</para>
+    /// </summary>
+    [Fact]
+    public async Task DeleteAll_WhenTheOldFileCannotBeDeleted_ClearsTheListAndNamesWhatIsStillOnDisk()
+    {
+        var factory = new FailableContextFactory(DatabasePath);
+        SeedDatabaseWithOneSession(factory, DatabasePath);
+        File.WriteAllText(DatabasePath + "-journal", "stale rollback journal");
+
+        // Fires between the move and the delete: the purge builds the replacement through this very
+        // factory, which is the one moment both relocated files exist and neither has been removed.
+        string? undeletable = null;
+        factory.BeforeNextCreate = () => undeletable = MakeTheRelocatedDatabaseUndeletable();
+
+        var host = new FakeHost(new LoggingSession(0, "Session_0"));
+        var listViewModel = new LoggingSessionListViewModel(host, () => factory, DatabasePath, new SilentLogger());
+
+        await listViewModel.DeleteAllSessionsAsync();
+
+        // The live database really is empty, so the pane is right to be empty too — this outcome is
+        // NOT a rollback, and pretending it was would leave the user staring at deleted sessions.
+        Assert.Empty(host.LoggingSessions);
+        using (var context = factory.CreateDbContext())
+        {
+            Assert.Empty(context.Sessions.ToList());
+        }
+
+        // ...and the half that did not happen is said out loud, under its own title, naming the path.
+        var message = Assert.Single(host.MessagesShown);
+        Assert.StartsWith("Delete Incomplete:", message);
+        Assert.Contains(undeletable!, message);
+        Assert.True(File.Exists(Path.Combine(undeletable!, "DAQiFiDatabase.db")));
+
+        // Only what actually survived is named. The journal sidecar was deleted, and listing it
+        // would send the user hunting for a file that is not there.
+        Assert.DoesNotContain(undeletable + "-journal", message);
+        Assert.False(File.Exists(undeletable + "-journal"));
+    }
+
+    /// <summary>
     /// The success contract the caller depends on: a purge that left nothing behind says so with
     /// <c>null</c>, so a "your data is still on disk" warning can never be shown over a clean run.
     /// </summary>
@@ -213,6 +304,32 @@ public class DeleteAllSessionsRecoveryTests : IDisposable
     private string[] RelocatedFiles() => Directory.GetFiles(_directory, "*.deleted-*");
 
     /// <summary>
+    /// Makes the relocated database — and only it, not its sidecars — impossible to delete, by
+    /// putting a directory at its path and parking the database inside. Returns that path.
+    /// </summary>
+    /// <remarks>
+    /// The sidecars are left alone on purpose: the interesting assertion is that the message names
+    /// the one path that survived rather than everything the purge touched.
+    /// </remarks>
+    private string MakeTheRelocatedDatabaseUndeletable()
+    {
+        // The relocated set is "<db>.deleted-<stamp>" plus one entry per sidecar suffix; the bare
+        // one is the database itself.
+        var relocatedDatabase = Assert.Single(
+            RelocatedFiles(),
+            path => !path.EndsWith("-journal", StringComparison.Ordinal)
+                && !path.EndsWith("-wal", StringComparison.Ordinal)
+                && !path.EndsWith("-shm", StringComparison.Ordinal));
+
+        var parked = relocatedDatabase + ".parked";
+        File.Move(relocatedDatabase, parked);
+        Directory.CreateDirectory(relocatedDatabase);
+        File.Move(parked, Path.Combine(relocatedDatabase, "DAQiFiDatabase.db"));
+
+        return relocatedDatabase;
+    }
+
+    /// <summary>
     /// A migrated database with one session in it, through the app's own migrator, so a test can
     /// tell "left alone" from "wiped".
     /// </summary>
@@ -240,8 +357,22 @@ public class DeleteAllSessionsRecoveryTests : IDisposable
     {
         internal bool FailNextCreate { get; set; }
 
+        /// <summary>
+        /// Runs once, on the next <see cref="CreateDbContext"/>, then clears itself. The purge builds
+        /// its replacement through this factory, so this is the seam a test uses to reach the moment
+        /// after the old set has been moved aside and before any of it has been deleted.
+        /// </summary>
+        internal Action? BeforeNextCreate { get; set; }
+
         public LoggingContext CreateDbContext()
         {
+            if (BeforeNextCreate is { } hook)
+            {
+                // Cleared first so a hook that throws cannot fire again on a retry.
+                BeforeNextCreate = null;
+                hook();
+            }
+
             if (FailNextCreate)
             {
                 throw new IOException("The process cannot access the file because it is being used by another process.");
