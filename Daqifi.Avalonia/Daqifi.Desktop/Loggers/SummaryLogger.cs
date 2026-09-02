@@ -6,7 +6,6 @@
 using Daqifi.Desktop.Channel;
 using Daqifi.Desktop.Device;
 using System.Globalization;
-using System.Text;
 using CommunityToolkit.Mvvm.ComponentModel;
 using CommunityToolkit.Mvvm.Input;
 using CoreAcquisitionStatistics = Daqifi.Core.Device.AcquisitionStatistics;
@@ -515,28 +514,15 @@ public partial class SummaryLogger : ObservableObject, ILogger
 
     /// <summary>
     /// Renders the status codes seen for one device, or "-" when none have been.
+    /// Internal rather than private so the rendering can be pinned by a test, the same seam
+    /// <c>DeviceLogsViewModel.BuildImportAllSummary</c> and <c>DiskSpaceMonitor.ClassifyLevel</c>
+    /// already use.
     /// </summary>
-    private static string FormatStatuses(HashSet<int> statuses)
+    internal static string FormatStatuses(HashSet<int> statuses)
     {
-        if (statuses.Count == 0)
-        {
-            return "-";
-        }
-
-        var builder = new StringBuilder();
-        var first = true;
-        foreach (var status in statuses)
-        {
-            if (!first)
-            {
-                builder.Append(", ");
-            }
-
-            first = false;
-            builder.Append(status.ToString(CultureInfo.CurrentCulture));
-        }
-
-        return builder.ToString();
+        return statuses.Count == 0
+            ? "-"
+            : string.Join(", ", statuses.Select(status => status.ToString(CultureInfo.CurrentCulture)));
     }
 
     /// <summary>

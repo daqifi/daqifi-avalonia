@@ -460,7 +460,6 @@ public partial class PlotLogger : ObservableObject, ILogger
         var last = double.NaN;
         var firstX = double.NaN;
         var lastX = double.NegativeInfinity;
-        var any = false;
 
         foreach (var pointList in pointLists)
         {
@@ -482,22 +481,17 @@ public partial class PlotLogger : ObservableObject, ILogger
                     continue;
                 }
 
-                if (!any)
+                // y is finite here (the non-finite values were counted and skipped above), so the
+                // NaN test is only ever true before the first value lands — the same
+                // nothing-seen-yet sentinel firstX uses on the next line.
+                if (double.IsNaN(min) || y < min)
                 {
-                    min = max = y;
-                    any = true;
+                    min = y;
                 }
-                else
-                {
-                    if (y < min)
-                    {
-                        min = y;
-                    }
 
-                    if (y > max)
-                    {
-                        max = y;
-                    }
+                if (double.IsNaN(max) || y > max)
+                {
+                    max = y;
                 }
 
                 if (double.IsNaN(firstX) || point.X < firstX)
