@@ -6,6 +6,8 @@ using Avalonia.Layout;
 using Avalonia.Media;
 using Daqifi.Avalonia.Views.Mobile;
 using Daqifi.Desktop.Common.Loggers;
+using Daqifi.Desktop.Logger;
+using Daqifi.Desktop.Models;
 using Daqifi.Desktop.ViewModels;
 
 namespace Daqifi.Avalonia.Views;
@@ -32,7 +34,7 @@ public partial class MobileMainView : UserControl
     private Button[] _railButtons = Array.Empty<Button>();
 
     // Standalone, WPF-free notifications VM (like the mobile SettingsViewModel). Shared between the
-    // top-bar bell badge and the Notifications overlay list; starts empty (no mobile producer yet, #11).
+    // top-bar bell badge and the Notifications overlay list (#11).
     private readonly MobileNotificationsViewModel _notifications = new();
 
     public MobileMainView()
@@ -41,6 +43,15 @@ public partial class MobileMainView : UserControl
         // Both the bell badge (in TopCommandBar) and the overlay list bind to the one VM instance.
         TopCommandBar.DataContext = _notifications;
         NotificationsOverlay.DataContext = _notifications;
+
+        // App.InitializeMobile has already run by the time this view is constructed, so if it found
+        // DAQiFiDatabase.db unreadable and moved it aside, that is settled and can be reported now.
+        // Without this the phone's Storage pane is simply empty, which reads as deleted data rather
+        // than a damaged file the app preserved. Same sentence the desktop notification uses.
+        if (DatabaseMigrator.DescribeQuarantineForUser() is { } quarantineNotice)
+        {
+            _notifications.Add(new Notifications { Message = quarantineNotice });
+        }
         _navButtons = [NavStream, NavStorage, NavChannels, NavProfiles];
         _railButtons = [RailStream, RailStorage, RailChannels, RailProfiles];
         ShowStream();

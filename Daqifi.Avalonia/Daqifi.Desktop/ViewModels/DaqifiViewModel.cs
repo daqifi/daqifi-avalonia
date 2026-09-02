@@ -1483,7 +1483,7 @@ public partial class DaqifiViewModel : ObservableObject, IFirmwareUpdateHost, IL
     /// </summary>
     private void ReportQuarantinedDatabase()
     {
-        if (DatabaseMigrator.QuarantinedDatabasePath is not { } quarantinePath)
+        if (DatabaseMigrator.DescribeQuarantineForUser() is not { } message)
         {
             return;
         }
@@ -1494,9 +1494,7 @@ public partial class DaqifiViewModel : ObservableObject, IFirmwareUpdateHost, IL
         NotificationList.Add(new Notifications
         {
             IsFirmwareUpdate = false,
-            Message = "The logged-data database could not be read and was moved to "
-                      + $"'{quarantinePath}'. A new, empty one is in use — previously logged "
-                      + "sessions are not in it, and the old file has not been deleted."
+            Message = message
         });
         NotificationCount = NotificationList.Count;
     }

@@ -13,15 +13,15 @@ namespace Daqifi.Avalonia.Tests.Loggers;
 /// touch the database file, and every read it makes assumed the file was a SQLite database. When it
 /// was not, the <see cref="SqliteException"/> travelled straight out of <c>App.Initialize</c> and
 /// <c>OnFrameworkInitializationCompleted</c> and killed the process before a window existed — and
-/// the next launch found the same file and did the same thing. These tests drive that entry point
-/// with damaged files.</para>
+/// the next launch found the same file and did the same thing. These tests drive the real entry
+/// points with damaged files.</para>
 ///
 /// <para>The other half of the contract matters just as much: a quarantine MOVES the user's logged
 /// data, so it must fire on damaged content and on nothing else. The healthy and zero-byte cases
-/// below are the guard on that, and the code discriminates on SQLite's primary result code
-/// (<c>SQLITE_CORRUPT</c>/<c>SQLITE_NOTADB</c> only), never on the mere fact that something threw.
-/// The environmental codes — busy, locked, read-only, permission denied — cannot be provoked
-/// portably from a unit test and are excluded by that filter rather than by a case here.</para>
+/// below are the guard on that. The code discriminates on SQLite's primary result code
+/// (<c>SQLITE_CORRUPT</c>/<c>SQLITE_NOTADB</c> only), never on the mere fact that something threw;
+/// the environmental codes — busy, locked, read-only, permission denied — are excluded by that
+/// filter rather than by a case here, because none can be provoked portably from a unit test.</para>
 /// </summary>
 public class DatabaseMigratorUnusableDatabaseTests : IDisposable
 {
@@ -41,41 +41,40 @@ public class DatabaseMigratorUnusableDatabaseTests : IDisposable
 
     /// <summary>
     /// A file whose header is not SQLite's at all — what a truncated copy, a half-written file from
-    /// a full disk, or a sync-tool conflict artefact looks like. SQLite reports SQLITE_NOTADB (26).
+    /// a full disk, or a sync-tool conflict artefact looks like. SQLite reports SQLITE_NOTADB (26)
+    /// from the migrator's very first <c>sqlite_master</c> query.
     /// </summary>
     [Fact]
     public void PrepareMigration_OnAFileThatIsNotADatabase_DoesNotThrow()
     {
-        var original = "<!DOCTYPE html><html><body>not your database</body></html>";
+        const string original = "<!DOCTYPE html><html><body>not your database</body></html>";
         File.WriteAllText(DatabasePath, original);
 
-        // Before the fix this threw SqliteException 26 'file is not a database' out of
-        // SeedMigrationHistoryIfNeeded's first sqlite_master query, and the app died on launch.
         var hasPending = DatabaseMigrator.PrepareMigration(Factory(), DatabasePath);
 
-        // The migrations all read as pending because the file in play is now a brand new one:
-        // PrepareMigration's own pending-migration probe re-creates DAQiFiDatabase.db (SQLite's
-        // default open mode creates), which is exactly the fresh start this is meant to produce.
+        // Every migration reads as pending because the file in play is now a brand new one:
+        // the pending-migration probe re-creates DAQiFiDatabase.db (SQLite's default open mode
+        // creates), which is exactly the fresh start this is meant to produce.
         Assert.True(hasPending);
         Assert.Equal(original, File.ReadAllText(Assert.Single(QuarantinedFiles())));
     }
 
     /// <summary>
-    /// A database with a valid header whose schema b-tree has been clobbered — the shape real
-    /// corruption usually takes, and a different SQLite result code (SQLITE_CORRUPT, 11) from the
-    /// case above, so both branches of the filter are covered.
+    /// The case a cheap pre-flight probe cannot see, and the reason the recovery hangs off the read
+    /// that actually fails rather than off a probe: a database whose header and schema catalog (page
+    /// 1) are intact but whose remaining pages are overwritten. <c>SELECT COUNT(*) FROM
+    /// sqlite_master</c> answers happily; the very next table read — here EF's own
+    /// <c>__EFMigrationsHistory</c> lookup inside the pending-migration check — throws
+    /// SQLITE_CORRUPT (11).
     /// </summary>
     [Fact]
-    public void PrepareMigration_OnADatabaseWithACorruptSchemaPage_DoesNotThrow()
+    public void PrepareMigration_OnADatabaseCorruptPastItsHeader_DoesNotThrow()
     {
-        WriteRealDatabase(DatabasePath);
-        using (var file = new FileStream(DatabasePath, FileMode.Open, FileAccess.Write))
-        {
-            file.Seek(100, SeekOrigin.Begin);   // past the 100-byte header, into page 1's b-tree
-            file.Write(new byte[512]);
-        }
+        var factory = Factory();
+        WriteMigratedDatabase(factory, DatabasePath);
+        CorruptEveryPageAfterTheFirst(DatabasePath);
 
-        var hasPending = DatabaseMigrator.PrepareMigration(Factory(), DatabasePath);
+        var hasPending = DatabaseMigrator.PrepareMigration(factory, DatabasePath);
 
         Assert.True(hasPending);
         Assert.Single(QuarantinedFiles());
@@ -86,55 +85,52 @@ public class DatabaseMigratorUnusableDatabaseTests : IDisposable
     /// still partly recoverable, and it is the user's data either way.
     /// </summary>
     [Fact]
-    public void QuarantineUnusableDatabase_PreservesTheDamagedFileByteForByte()
+    public void PrepareMigration_PreservesTheDamagedFileByteForByte()
     {
         var original = new byte[] { 0x00, 0x01, 0x02, 0xFF, 0xFE, 0x2A };
         File.WriteAllBytes(DatabasePath, original);
 
-        var quarantinePath = DatabaseMigrator.QuarantineUnusableDatabase(DatabasePath);
+        DatabaseMigrator.PrepareMigration(Factory(), DatabasePath);
 
-        Assert.NotNull(quarantinePath);
+        var quarantinePath = Assert.Single(QuarantinedFiles());
         Assert.Equal(original, File.ReadAllBytes(quarantinePath));
         Assert.Equal(quarantinePath, DatabaseMigrator.QuarantinedDatabasePath);
     }
 
     /// <summary>
-    /// The invariant that protects the replacement database: nothing that belonged to the damaged
-    /// file is left beside the live path. A stale <c>-wal</c> is not inert — SQLite replays a
-    /// journal whose header still checksums, writing the old file's pages into the new one.
-    ///
-    /// <para>Asserted as "gone from the live path", not "present at the quarantine path", because
-    /// on Microsoft.Data.Sqlite 10.0.10 the sidecars are usually removed by SQLite itself when the
-    /// readability probe closes its connection; the migrator's own relocation is the backstop for
-    /// when they are not.</para>
+    /// The invariant that protects the replacement database: nothing belonging to the damaged file
+    /// is left beside the live path. A stale <c>-wal</c> is not inert — SQLite replays a journal
+    /// whose header still checksums, writing the old file's pages into the new one.
     /// </summary>
     [Fact]
-    public void QuarantineUnusableDatabase_LeavesNoSidecarBesideTheReplacementDatabase()
+    public void PrepareMigration_LeavesNoSidecarBesideTheReplacementDatabase()
     {
         File.WriteAllText(DatabasePath, "not a database");
         File.WriteAllText(DatabasePath + "-wal", "stale journal");
         File.WriteAllText(DatabasePath + "-shm", "stale shared memory");
 
-        Assert.NotNull(DatabaseMigrator.QuarantineUnusableDatabase(DatabasePath));
+        DatabaseMigrator.PrepareMigration(Factory(), DatabasePath);
 
+        Assert.Single(QuarantinedFiles());
         Assert.False(File.Exists(DatabasePath + "-wal"));
         Assert.False(File.Exists(DatabasePath + "-shm"));
     }
 
     /// <summary>
-    /// The guard that matters most: a quarantine moves the user's logged sessions out of the way,
-    /// so a readable database must never trigger one.
+    /// The guard that matters most: a quarantine moves the user's logged sessions out of the way, so
+    /// a readable database must never trigger one — and its rows must still be there afterwards.
     /// </summary>
     [Fact]
-    public void QuarantineUnusableDatabase_LeavesAHealthyDatabaseAlone()
+    public void PrepareMigration_LeavesAHealthyDatabaseAlone()
     {
-        WriteRealDatabase(DatabasePath);
-        var before = File.ReadAllBytes(DatabasePath);
+        var factory = Factory();
+        WriteMigratedDatabase(factory, DatabasePath);
 
-        Assert.Null(DatabaseMigrator.QuarantineUnusableDatabase(DatabasePath));
+        Assert.False(DatabaseMigrator.PrepareMigration(factory, DatabasePath));
 
-        Assert.Equal(before, File.ReadAllBytes(DatabasePath));
         Assert.Empty(QuarantinedFiles());
+        using var context = factory.CreateDbContext();
+        Assert.Equal("Session_0", Assert.Single(context.Sessions.ToList()).Name);
     }
 
     /// <summary>
@@ -143,11 +139,11 @@ public class DatabaseMigratorUnusableDatabaseTests : IDisposable
     /// would be wrong, and would litter a fresh install with .corrupt- files.
     /// </summary>
     [Fact]
-    public void QuarantineUnusableDatabase_LeavesAZeroByteFileAlone()
+    public void PrepareMigration_LeavesAZeroByteFileAlone()
     {
         File.WriteAllBytes(DatabasePath, Array.Empty<byte>());
 
-        Assert.Null(DatabaseMigrator.QuarantineUnusableDatabase(DatabasePath));
+        Assert.True(DatabaseMigrator.PrepareMigration(Factory(), DatabasePath));
 
         Assert.True(File.Exists(DatabasePath));
         Assert.Empty(QuarantinedFiles());
@@ -155,15 +151,16 @@ public class DatabaseMigratorUnusableDatabaseTests : IDisposable
 
     /// <summary>Nothing to diagnose and nothing to move on a first run.</summary>
     [Fact]
-    public void QuarantineUnusableDatabase_DoesNothingWhenThereIsNoDatabaseYet()
+    public void PrepareMigration_QuarantinesNothingWhenThereIsNoDatabaseYet()
     {
-        Assert.Null(DatabaseMigrator.QuarantineUnusableDatabase(DatabasePath));
+        Assert.True(DatabaseMigrator.PrepareMigration(Factory(), DatabasePath));
         Assert.Empty(QuarantinedFiles());
     }
 
     /// <summary>
-    /// The end state the user actually gets: startup completes, and the app is left with a working,
-    /// fully migrated database rather than a poisoned one it will fail on again tomorrow.
+    /// The end state the user actually gets on the desktop path: startup completes, and the app is
+    /// left with a working, fully migrated database rather than a poisoned one it will fail on again
+    /// tomorrow.
     /// </summary>
     [Fact]
     public void AfterAQuarantine_MigrationRebuildsAUsableDatabase()
@@ -179,23 +176,68 @@ public class DatabaseMigratorUnusableDatabaseTests : IDisposable
         Assert.Empty(context.Sessions.ToList());
     }
 
-    /// <summary>Files the quarantine left behind in the test's own directory.</summary>
-    private string[] QuarantinedFiles() =>
-        Directory.GetFiles(_directory, "*.corrupt-*");
-
-    /// <summary>A genuine, readable SQLite database with one table and one row in it.</summary>
-    private static void WriteRealDatabase(string databasePath)
+    /// <summary>
+    /// The mobile heads never call PrepareMigration — there is no MigrationStatusWindow to drive —
+    /// so they get the same recovery through their own entry point. Before it, a damaged database
+    /// did not crash the phone app; it booted with every DB-backed pane broken, on that launch and
+    /// every later one, because nothing moved the bad file aside.
+    /// </summary>
+    [Fact]
+    public void MigrateWithCorruptionRecovery_RebuildsFromADamagedDatabase()
     {
-        using (var connection = new SqliteConnection($"Data source={databasePath}"))
+        File.WriteAllText(DatabasePath, "not a database");
+
+        var factory = Factory();
+        DatabaseMigrator.MigrateWithCorruptionRecovery(factory, DatabasePath);
+
+        Assert.Single(QuarantinedFiles());
+        using var context = factory.CreateDbContext();
+        Assert.Empty(context.Database.GetPendingMigrations());
+    }
+
+    /// <summary>Files a quarantine left behind in the test's own directory.</summary>
+    private string[] QuarantinedFiles() => Directory.GetFiles(_directory, "*.corrupt-*");
+
+    /// <summary>
+    /// A genuine, fully migrated DAQiFi database — the app's own schema, through the app's own
+    /// migrator — with one session row in it, so a test can tell "left alone" from "rebuilt".
+    /// </summary>
+    private static void WriteMigratedDatabase(IDbContextFactory<LoggingContext> factory, string databasePath)
+    {
+        DatabaseMigrator.ApplyMigrations(factory, databasePath);
+
+        using (var context = factory.CreateDbContext())
         {
-            connection.Open();
-            using var command = connection.CreateCommand();
-            command.CommandText = "CREATE TABLE Samples (Id INTEGER PRIMARY KEY, Value REAL); "
-                                  + "INSERT INTO Samples (Value) VALUES (1.5);";
-            command.ExecuteNonQuery();
+            context.Sessions.Add(new LoggingSession(0, "Session_0"));
+            context.SaveChanges();
         }
 
         SqliteConnection.ClearAllPools();
+    }
+
+    /// <summary>
+    /// Overwrites everything after page 1, leaving the file header and the schema catalog readable.
+    /// SQLite then answers schema questions normally and fails SQLITE_CORRUPT on the first read of
+    /// any actual table.
+    /// </summary>
+    private static void CorruptEveryPageAfterTheFirst(string databasePath)
+    {
+        SqliteConnection.ClearAllPools();
+
+        using var file = new FileStream(databasePath, FileMode.Open, FileAccess.ReadWrite);
+
+        // Bytes 16-17 of the header are the page size, big-endian, with 1 meaning 65536.
+        var header = new byte[18];
+        file.ReadExactly(header);
+        var pageSize = (header[16] << 8) | header[17];
+        if (pageSize == 1) { pageSize = 65536; }
+
+        Assert.True(file.Length > pageSize, "the fixture database is a single page, so there is nothing past it to damage");
+
+        var junk = new byte[file.Length - pageSize];
+        Array.Fill(junk, (byte)0xA5);
+        file.Seek(pageSize, SeekOrigin.Begin);
+        file.Write(junk);
     }
 
     private TestContextFactory Factory() => new(DatabasePath);

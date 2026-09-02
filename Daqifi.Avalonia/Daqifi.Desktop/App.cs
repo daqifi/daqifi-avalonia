@@ -328,16 +328,13 @@ public static class App
             // factory) — only DB-backed features degrade.
             try
             {
-                // Same protection the desktop path gets inside DatabaseMigrator.PrepareMigration,
-                // which mobile does not call (there is no MigrationStatusWindow to drive). Without
-                // it an unreadable DAQiFiDatabase.db is caught below and merely logged — so the app
-                // boots, but every DB-backed pane stays broken on this and EVERY later launch,
-                // because nothing ever moves the bad file out of the way.
-                DatabaseMigrator.QuarantineUnusableDatabase(DatabasePath);
-
+                // Same corruption recovery the desktop path gets inside PrepareMigration/
+                // ApplyMigrations, which mobile does not call (there is no MigrationStatusWindow to
+                // drive). Without it an unreadable DAQiFiDatabase.db is caught below and merely
+                // logged — so the app boots, but every DB-backed pane stays broken on this and EVERY
+                // later launch, because nothing ever moves the bad file out of the way.
                 var factory = ServiceProvider.GetRequiredService<IDbContextFactory<LoggingContext>>();
-                using var context = factory.CreateDbContext();
-                context.Database.Migrate();
+                DatabaseMigrator.MigrateWithCorruptionRecovery(factory, DatabasePath);
             }
             catch (Exception ex)
             {
