@@ -784,6 +784,17 @@ public partial class LoggingManager : ObservableObject
     /// overwritten by a stale <c>ImportFailed</c>. As a single statement the only rows touched are
     /// the ones the database still shows as importing at that instant, and a live import writes
     /// its own status afterwards.</para>
+    /// <para>What this deliberately does NOT do is prove the import is dead before flagging it —
+    /// no ownership token, no lease, no expiry. The app has no cross-process database ownership
+    /// guard of any kind (no named mutex, no lock file, no single-instance gate; see
+    /// <c>DatabaseMigrator</c>'s quarantine notes), so two instances already share this database
+    /// independently of anything here, and adding ownership would be a new app-wide mechanism
+    /// governing every writer rather than part of an import fix. It would also be the wrong trade:
+    /// a lease this had to wait out would leave a session abandoned by a crashed import invisible
+    /// and unflagged until it expired, which is the bug this exists to close, with a timer on it.
+    /// What bounds the exposure is that this runs once, at startup, before this process can import
+    /// anything — so the only import it can race is another instance's, whose own finalization
+    /// then corrects the label.</para>
     /// <para>Best-effort: a session list that loads is worth more than this bookkeeping, so a
     /// failure here is logged and swallowed rather than taking startup down with it.</para>
     /// </remarks>
