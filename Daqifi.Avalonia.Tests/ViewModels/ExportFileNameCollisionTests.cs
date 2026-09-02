@@ -1,5 +1,6 @@
 using System.Globalization;
 using Daqifi.Desktop.Channel;
+using Daqifi.Desktop.Exporter;
 using Daqifi.Desktop.Logger;
 using Daqifi.Desktop.ViewModels;
 using Microsoft.Data.Sqlite;
@@ -148,6 +149,50 @@ public sealed class ExportFileNameCollisionTests : IDisposable
         Assert.Equal(
             new[] { "Afternoon run.csv", "Morning run.csv" },
             Directory.GetFiles(destination).Select(Path.GetFileName).Order(StringComparer.Ordinal).ToArray());
+    }
+
+    /// <summary>
+    /// Two spellings of the same word — <c>Café</c> composed (U+00E9) and decomposed (e + U+0301) —
+    /// are one file on macOS, whose volumes resolve canonically equivalent names to the same entry,
+    /// but two distinct UTF-16 strings to an ordinal comparer. Left unhandled that is this whole
+    /// bug again, one encoding removed.
+    ///
+    /// <para>
+    /// Asserted against <see cref="ExportFileNamer"/> directly rather than by exporting and looking
+    /// for the files: the file-existence form of this check only fails on a normalization-insensitive
+    /// volume, so it would pass on CI's Linux runner with the fix reverted and pin nothing.
+    /// </para>
+    /// </summary>
+    [Fact]
+    public void Canonically_equivalent_names_are_treated_as_a_collision()
+    {
+        // Spelled with escapes, not literal characters: the two forms are indistinguishable in an
+        // editor, and a tool that normalized this file would quietly gut the test.
+        const string composedName = "Caf\u00E9";     // é as a single code point
+        const string decomposedName = "Cafe\u0301";  // e followed by a combining acute
+        var namer = new ExportFileNamer();
+
+        var composed = namer.NextName(composedName, 1);
+        var decomposed = namer.NextName(decomposedName, 2);
+
+        Assert.Equal(composedName, composed);
+        Assert.NotEqual(composed, decomposed);
+        // The written name keeps the caller's own spelling — only the collision key is normalized.
+        Assert.Equal(decomposedName + " (2)", decomposed);
+    }
+
+    /// <summary>
+    /// The compatibility-equivalent pair the normalization deliberately does NOT fold: no file
+    /// system treats <c>ﬁ</c> (U+FB01) and <c>fi</c> as one name, so disambiguating them would
+    /// suffix a file that was never in conflict.
+    /// </summary>
+    [Fact]
+    public void Compatibility_equivalent_names_are_left_alone()
+    {
+        var namer = new ExportFileNamer();
+
+        Assert.Equal("\uFB01le", namer.NextName("\uFB01le", 1));
+        Assert.Equal("file", namer.NextName("file", 2));
     }
 
     /// <summary>Writes one session with a single sample into the temp database and returns the

@@ -1,4 +1,5 @@
 using System.IO;
+using System.Text;
 
 namespace Daqifi.Desktop.Exporter;
 
@@ -26,7 +27,8 @@ namespace Daqifi.Desktop.Exporter;
 internal sealed class ExportFileNamer
 {
     /// <summary>
-    /// Base names already handed out by this instance — i.e. by this one export.
+    /// Base names already handed out by this instance — i.e. by this one export — each held in the
+    /// form <see cref="CollisionKey"/> reduces it to.
     /// </summary>
     /// <remarks>
     /// Case-INSENSITIVE, so <c>Run</c> and <c>run</c> are disambiguated even though a
@@ -55,12 +57,49 @@ internal sealed class ExportFileNamer
         var n = 2;
         // The disambiguated name is itself recorded, so a session genuinely called "Run (2)"
         // alongside two called "Run" still gets a file of its own.
-        while (!_used.Add(name))
+        while (!_used.Add(CollisionKey(name)))
         {
             name = $"{baseName} ({n++})";
         }
 
         return name;
+    }
+
+    /// <summary>
+    /// The form a name is REMEMBERED by, which is not the form it is written as.
+    /// </summary>
+    /// <remarks>
+    /// <para>
+    /// Composed to NFC, because macOS resolves canonically equivalent names to the same file — HFS+
+    /// and, since 10.13, APFS are normalization-insensitive — while ordinal comparison of the UTF-16
+    /// does not. Without this, a session renamed by typing <c>Café</c> (composed) and one renamed by
+    /// pasting the decomposed spelling of the same word are two distinct strings that open ONE file,
+    /// and the truncating write loses the first: the very failure this type exists to prevent.
+    /// </para>
+    /// <para>
+    /// Canonical (FormC), not compatibility (FormKC): no file system folds <c>ﬁ</c> into <c>fi</c>,
+    /// so treating them as one name would disambiguate two files that were never in conflict.
+    /// </para>
+    /// <para>
+    /// Only the key is normalized. The name actually written stays exactly as the user spelled it,
+    /// so a file system that preserves the distinction keeps their spelling; the cost is that on
+    /// such a file system the second of an equivalent pair takes a " (2)" it did not strictly need,
+    /// which is the same conservative trade the case-insensitive comparer above makes.
+    /// </para>
+    /// </remarks>
+    private static string CollisionKey(string name)
+    {
+        try
+        {
+            return name.Normalize(NormalizationForm.FormC);
+        }
+        catch (ArgumentException)
+        {
+            // Not well-formed UTF-16 — a session name carrying an unpaired surrogate. There is
+            // nothing to canonicalize, and faulting the whole export over a malformed name would be
+            // a worse outcome than comparing it verbatim.
+            return name;
+        }
     }
 
     /// <summary>
