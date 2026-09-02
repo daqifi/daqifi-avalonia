@@ -39,6 +39,14 @@ public partial class ExportDialogViewModel : ObservableObject, IDisposable
     // the interactive dialog leaves this false and keeps the file/directory-per-count behaviour.
     private bool _forceDirectoryLayout;
 
+    /// <summary>
+    /// How a selected session's id becomes the display name its CSV is named after. Defaults to
+    /// <see cref="LoggingManager"/>'s UI-bound session list — the same list the row the user
+    /// selected came from, so the file matches what that row says even if it was renamed after the
+    /// dialog opened. Replaced only by the multi-session test constructor; see its remarks.
+    /// </summary>
+    private readonly Func<int, string?> _sessionNameLookup = SessionNameFromLoggingManager;
+
     [ObservableProperty]
     private bool _exportAllSelected = true;
     [ObservableProperty]
@@ -128,6 +136,24 @@ public partial class ExportDialogViewModel : ObservableObject, IDisposable
         _loggingContext = loggingContext;
         _sessionsIds = [sessionId];
         BrowseCommand = BrowseExportPathCommand;
+    }
+
+    /// <summary>
+    /// Test seam for the multi-session ("Export All") shape: as above, and additionally names the
+    /// sessions from <paramref name="sessions"/> instead of from <see cref="LoggingManager"/>.
+    /// </summary>
+    /// <remarks>
+    /// The name source has to be substitutable because <c>LoggingManager.Instance</c> is a lazy
+    /// singleton whose factory resolves <c>App.ServiceProvider</c>, so merely reading it outside the
+    /// app host throws. Everything downstream of the name — target resolution, the pre-flight, the
+    /// real exporter writing real CSVs — is the production path.
+    /// </remarks>
+    internal ExportDialogViewModel(IDbContextFactory<LoggingContext> loggingContext, IReadOnlyList<LoggingSession> sessions)
+    {
+        _loggingContext = loggingContext;
+        _sessionsIds = sessions.Select(s => s.ID).ToList();
+        _sessionNameLookup = id => sessions.FirstOrDefault(s => s.ID == id)?.Name;
+        BrowseCommand = BrowseExportDirectoryCommand;
     }
     #endregion
 
@@ -454,20 +480,26 @@ public partial class ExportDialogViewModel : ObservableObject, IDisposable
     /// single-file export writes straight to <see cref="ExportFilePath"/> and so doesn't depend on
     /// LoggingManager. Sessions no longer in the in-memory list fall back to "Session_{id}".
     /// </summary>
+    /// <remarks>
+    /// Materialising every target here is also what makes the export's promise — N selected
+    /// sessions produce N files — enforceable, so the shared <see cref="ExportFileNamer"/> that
+    /// keeps two sessions off one path lives on this loop. Without it, two rows sharing a name
+    /// resolved to the same path and the second write truncated the first, silently, under an
+    /// "Export complete" (issue #186).
+    /// </remarks>
     // @port: Daqifi.Desktop.ViewModels.ExportDialogViewModel.ResolveExportTargets
     private List<ExportTarget> ResolveExportTargets()
     {
         var targets = new List<ExportTarget>(_sessionsIds.Count);
         var perSessionFiles = _forceDirectoryLayout || _sessionsIds.Count > 1;
+        var namer = new ExportFileNamer();
 
         foreach (var sessionId in _sessionsIds)
         {
             string filepath;
             if (perSessionFiles)
             {
-                var sessionName = LoggingManager.Instance.LoggingSessions
-                    .FirstOrDefault(s => s.ID == sessionId)?.Name ?? $"Session_{sessionId}";
-                filepath = Path.Combine(ExportFilePath, $"{MakeSafeFileName(sessionName)}.csv");
+                filepath = namer.NextCsvPath(ExportFilePath, _sessionNameLookup(sessionId), sessionId);
             }
             else
             {
@@ -587,16 +619,11 @@ public partial class ExportDialogViewModel : ObservableObject, IDisposable
     /// Replaces characters that are invalid in a file name (a session can be renamed to arbitrary
     /// text) with '_', so per-session export to <c>{name}.csv</c> never throws on a bad path.
     /// </summary>
-    // @port: Daqifi.Desktop.ViewModels.ExportDialogViewModel.MakeSafeFileName
-    private static string MakeSafeFileName(string name)
-    {
-        foreach (var invalid in Path.GetInvalidFileNameChars())
-        {
-            name = name.Replace(invalid, '_');
-        }
-
-        return name;
-    }
+    /// <summary>
+    /// The production name source: the session list the Logged Data pane binds to.
+    /// </summary>
+    private static string? SessionNameFromLoggingManager(int sessionId) =>
+        LoggingManager.Instance.LoggingSessions.FirstOrDefault(s => s.ID == sessionId)?.Name;
 
     // @port: Daqifi.Desktop.ViewModels.ExportDialogViewModel.GetLoggingSessionFromId
     private async Task<LoggingSession?> GetLoggingSessionFromId(int sessionId)
