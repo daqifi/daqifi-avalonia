@@ -170,6 +170,75 @@ public sealed class SdCardImportAtomicityTests : IDisposable
 
     #endregion
 
+    #region Overwriting an existing session
+
+    /// <summary>
+    /// The overwrite used to delete the session it replaces up front, before anything had been
+    /// parsed. Combined with removing the row an empty or immediately-failed import leaves, that
+    /// destroyed the user's existing session and put nothing in its place.
+    /// </summary>
+    [Fact]
+    public async Task An_overwrite_that_imports_nothing_leaves_the_existing_session_alone()
+    {
+        var importer = new SdCardSessionImporter(Factory());
+        var options = new ImportOptions { OverwriteExistingSession = true };
+
+        var original = await importer.ImportSessionAsync(
+            Log("log_good.bin", Entries(4)), options, progress: null, ct: CancellationToken.None);
+
+        var replaced = await importer.ImportSessionAsync(
+            Log("log_good.bin", Entries(0)), options, progress: null, ct: CancellationToken.None);
+
+        Assert.False(replaced.SessionPersisted);
+
+        var survivor = Assert.Single(AllSessions());
+        Assert.Equal(original.Session.ID, survivor.ID);
+        Assert.Equal(SessionStatus.Complete, survivor.Status);
+        Assert.Equal(4, SampleCountFor(survivor.ID));
+    }
+
+    [Fact]
+    public async Task An_overwrite_that_fails_before_writing_anything_leaves_the_existing_session_alone()
+    {
+        var importer = new SdCardSessionImporter(Factory());
+        var options = new ImportOptions { OverwriteExistingSession = true };
+
+        var original = await importer.ImportSessionAsync(
+            Log("log_good.bin", Entries(4)), options, progress: null, ct: CancellationToken.None);
+
+        await Assert.ThrowsAsync<InvalidDataException>(() => importer.ImportSessionAsync(
+            Log("log_good.bin", ThrowAfter(0)), options, progress: null, ct: CancellationToken.None));
+
+        var survivor = Assert.Single(AllSessions());
+        Assert.Equal(original.Session.ID, survivor.ID);
+        Assert.Equal(4, SampleCountFor(survivor.ID));
+    }
+
+    /// <summary>And when the replacement IS complete, it replaces — which is the whole option.</summary>
+    [Fact]
+    public async Task An_overwrite_that_completes_replaces_the_session_it_supersedes()
+    {
+        var importer = new SdCardSessionImporter(Factory());
+        var options = new ImportOptions { OverwriteExistingSession = true };
+
+        var original = await importer.ImportSessionAsync(
+            Log("log_good.bin", Entries(4)), options, progress: null, ct: CancellationToken.None);
+
+        var replacement = await importer.ImportSessionAsync(
+            Log("log_good.bin", Entries(7)), options, progress: null, ct: CancellationToken.None);
+
+        var survivor = Assert.Single(AllSessions());
+        Assert.Equal(replacement.Session.ID, survivor.ID);
+        Assert.Equal(7, survivor.SampleCount);
+
+        // Not just the Sessions row: the superseded session's samples go with it, or they become
+        // orphans that make a later session ID collide.
+        Assert.Equal(0, SampleCountFor(original.Session.ID));
+        Assert.Equal(7, TotalSampleRows());
+    }
+
+    #endregion
+
     #region What a reload does with the result
 
     /// <summary>

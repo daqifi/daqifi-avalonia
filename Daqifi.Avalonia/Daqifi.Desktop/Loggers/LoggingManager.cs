@@ -779,6 +779,11 @@ public partial class LoggingManager : ObservableObject
     /// next launch. (The app has no cross-process database ownership guard of any kind — see
     /// <c>DatabaseMigrator</c>'s quarantine notes — so ordering is the whole defence available.)
     /// </para>
+    /// <para>One conditional UPDATE, not a read followed by a save of tracked entities: an import
+    /// finishing in another instance between the two would otherwise have its <c>Complete</c>
+    /// overwritten by a stale <c>ImportFailed</c>. As a single statement the only rows touched are
+    /// the ones the database still shows as importing at that instant, and a live import writes
+    /// its own status afterwards.</para>
     /// <para>Best-effort: a session list that loads is worth more than this bookkeeping, so a
     /// failure here is logged and swallowed rather than taking startup down with it.</para>
     /// </remarks>
@@ -786,25 +791,14 @@ public partial class LoggingManager : ObservableObject
     {
         try
         {
-            var abandoned = context.Sessions
+            var flagged = context.Sessions
                 .Where(session => session.Status == SessionStatus.Importing)
-                .ToList();
+                .ExecuteUpdate(setters => setters.SetProperty(s => s.Status, SessionStatus.ImportFailed));
 
-            if (abandoned.Count == 0)
+            if (flagged > 0)
             {
-                return;
+                AppLogger.Warning($"Marked {flagged} session(s) left mid-import as incomplete.");
             }
-
-            foreach (var session in abandoned)
-            {
-                session.Status = SessionStatus.ImportFailed;
-            }
-
-            context.SaveChanges();
-
-            AppLogger.Warning(
-                $"Marked {abandoned.Count} session(s) left mid-import as incomplete: " +
-                string.Join(", ", abandoned.Select(session => session.ID)));
         }
         catch (Exception ex)
         {

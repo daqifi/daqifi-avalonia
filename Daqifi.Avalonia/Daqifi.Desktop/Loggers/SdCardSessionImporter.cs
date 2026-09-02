@@ -397,6 +397,9 @@ public class SdCardSessionImporter : ISdCardSessionImporter
                 "entries arrived without a device timestamp and were placed at the session start time.");
         }
 
+        bool sessionPersisted;
+        string outcomeGuidance;
+
         if (samplesProcessed == 0)
         {
             // A log that parsed to nothing. The file itself may be perfectly legitimate — a 0-byte
@@ -409,21 +412,46 @@ public class SdCardSessionImporter : ISdCardSessionImporter
             _logger.Warning(
                 $"No samples found in SD card file '{logSession.FileName}'. " +
                 $"DeviceConfig present: {config != null}. Removing the empty session row.");
-            RemoveSessionRow(session);
+
+            sessionPersisted = false;
+            outcomeGuidance = RemoveSessions([session.ID])
+                ? "The log contained no samples, so no session was created."
+                : "The log contained no samples. The empty session entry it had already created "
+                  + "could not be removed, so it will appear in the session list as an incomplete "
+                  + "import until you delete it.";
         }
         else
         {
             // Record the sample count on the session so the list view can show it without falling
             // back to the lazy backfill on the next reload — we already have the exact count
             // locally — and, in the same write, retire the Importing marker.
-            FinalizeSession(session, samplesProcessed, SessionStatus.Complete);
+            sessionPersisted = FinalizeSession(session, samplesProcessed, SessionStatus.Complete);
+
+            if (sessionPersisted)
+            {
+                ReplaceOverwrittenSessions(session, options);
+                outcomeGuidance = string.Empty;
+            }
+            else
+            {
+                // The samples are committed but the session could not be marked finished, so the
+                // row still reads as an import in progress. Reporting success here would let the
+                // device path delete the source file and put a session in the list that the next
+                // launch flags as incomplete with no explanation.
+                outcomeGuidance =
+                    "The samples were imported, but the session could not be recorded as finished. "
+                    + "It will appear in the session list as an incomplete import; import the file "
+                    + "again to replace it.";
+            }
         }
 
         return new SdCardImportResult
         {
             Session = session,
             TimestampQuality = timestampQuality,
-            SamplesImported = samplesProcessed
+            SamplesImported = samplesProcessed,
+            SessionPersisted = sessionPersisted,
+            OutcomeGuidance = outcomeGuidance
         };
     }
 
@@ -554,7 +582,7 @@ public class SdCardSessionImporter : ISdCardSessionImporter
                 _logger.Error(ex,
                     $"SD card import of '{logSession.FileName}' failed before any sample was written; " +
                     $"removing session {session.ID}");
-                RemoveSessionRow(session);
+                RemoveSessions([session.ID]);
             }
             else
             {
@@ -578,16 +606,11 @@ public class SdCardSessionImporter : ISdCardSessionImporter
         var sessionName = options.SessionNameOverride
                           ?? $"SD Import - {Path.GetFileNameWithoutExtension(logSession.FileName)}";
 
-        // Check for existing session with same name
-        if (options.OverwriteExistingSession)
-        {
-            var existing = context.Sessions.FirstOrDefault(s => s.Name == sessionName);
-            if (existing != null)
-            {
-                context.Sessions.Remove(existing);
-                context.SaveChanges();
-            }
-        }
+        // NOTE: an OverwriteExistingSession import does NOT delete the session it replaces here.
+        // It used to, before a sample was parsed, which meant an import that then failed or
+        // produced nothing had destroyed the user's existing session and put nothing in its place.
+        // The replacement is now imported alongside the original and the original is dropped only
+        // once the new one is complete — see ReplaceOverwrittenSessions.
 
         // Shared with LoggingManager.OnActiveChanged. This used to be MAX(Sessions.ID) + 1, the
         // narrow version LoggingManager's own comment warns against: it can hand out an ID orphan
@@ -622,35 +645,61 @@ public class SdCardSessionImporter : ISdCardSessionImporter
     /// <see cref="SessionStatus.Complete"/> when the parse ran to the end of the file,
     /// <see cref="SessionStatus.ImportFailed"/> when it did not.
     /// </param>
+    /// <returns>
+    /// <c>true</c> when the row was found and updated. <c>false</c> means the write did not land —
+    /// the row was gone, or the database refused it — and the caller must not report a finished
+    /// import: a row whose status write does not land stays <see cref="SessionStatus.Importing"/>,
+    /// which the next launch flags as failed, and the samples belong to a session nobody has been
+    /// told is incomplete.
+    /// </returns>
     /// <remarks>
-    /// Best-effort, and safe to fail: a row whose status write does not land stays
-    /// <see cref="SessionStatus.Importing"/>, which the next launch flags as failed. That errs
-    /// toward calling a finished session incomplete rather than the reverse, which is the whole
-    /// point of the exercise.
+    /// A single conditional UPDATE rather than read-modify-write, so nothing can be lost to a
+    /// concurrent writer between the read and the save, and the row count answers the "did it
+    /// actually happen" question the return value reports.
     /// </remarks>
-    private void FinalizeSession(LoggingSession session, long samplesProcessed, SessionStatus status)
+    private bool FinalizeSession(LoggingSession session, long samplesProcessed, SessionStatus status)
     {
+        var recorded = false;
+
         try
         {
             using var ctx = _loggingContext.CreateDbContext();
-            var tracked = ctx.Sessions.FirstOrDefault(s => s.ID == session.ID);
-            if (tracked != null)
-            {
-                tracked.SampleCount = samplesProcessed;
-                tracked.Status = status;
-                ctx.SaveChanges();
-            }
+            recorded = ctx.Sessions
+                .Where(s => s.ID == session.ID)
+                .ExecuteUpdate(setters => setters
+                    .SetProperty(s => s.SampleCount, samplesProcessed)
+                    .SetProperty(s => s.Status, status)) > 0;
 
-            // Marshal the in-memory mutation onto the UI thread: this importer is invoked from
-            // background tasks, and both properties raise PropertyChanged for bindings (WPF
-            // Application.Current.Dispatcher -> Dispatcher.UIThread).
-            //
-            // Post, not Invoke. Nothing waits on this — it is a notification for whatever ends up
-            // bound to the session, and the caller only adds it to the session list AFTER this
-            // method returns, itself on the UI thread, so the queued mutation is applied first
-            // either way. Invoke blocks the importing thread until a dispatcher loop drains the
-            // job, which is a hang wherever no loop is running: a headless test host is the
-            // obvious one, and it is what made the import untestable at all.
+            if (!recorded)
+            {
+                _logger.Error(null,
+                    $"Session {session.ID} was gone by the time its import finished; " +
+                    $"{samplesProcessed} sample(s) may be left without a session.");
+                return false;
+            }
+        }
+        catch (Exception ex)
+        {
+            _logger.Error(ex, $"Failed to record the outcome of the import into session {session.ID}");
+            return false;
+        }
+
+        // Only once the database agrees, and outside the try: the in-memory copy must not claim an
+        // outcome the row does not have, and a dispatcher fault is not a reason to call a
+        // successful, committed import unrecorded.
+        //
+        // Marshal onto the UI thread: this importer is invoked from background tasks, and both
+        // properties raise PropertyChanged for bindings (WPF Application.Current.Dispatcher ->
+        // Dispatcher.UIThread).
+        //
+        // Post, not Invoke. Nothing waits on this — it is a notification for whatever ends up
+        // bound to the session, and the caller only adds it to the session list AFTER this method
+        // returns, itself on the UI thread, so the queued mutation is applied first either way.
+        // Invoke blocks the importing thread until a dispatcher loop drains the job, which is a
+        // hang wherever no loop is running: a headless test host is the obvious one, and it is
+        // what made the import untestable at all.
+        try
+        {
             if (!Dispatcher.UIThread.CheckAccess())
             {
                 Dispatcher.UIThread.Post(() => ApplyToSession(session, samplesProcessed, status));
@@ -662,8 +711,12 @@ public class SdCardSessionImporter : ISdCardSessionImporter
         }
         catch (Exception ex)
         {
-            _logger.Error(ex, $"Failed to record the outcome of the import into session {session.ID}");
+            _logger.Warning(
+                $"Imported session {session.ID} was recorded, but its in-memory copy could not be " +
+                $"refreshed: {ex}");
         }
+
+        return true;
     }
 
     private static void ApplyToSession(LoggingSession session, long samplesProcessed, SessionStatus status)
@@ -676,38 +729,98 @@ public class SdCardSessionImporter : ISdCardSessionImporter
     /// Deletes the session row this import created, for an import that ends with nothing in it.
     /// Downstream addition.
     /// </summary>
-    /// <param name="session">The session the import created.</param>
+    /// <param name="sessionIds">The sessions to remove.</param>
+    /// <returns><c>true</c> when the rows are gone; <c>false</c> when the delete failed, in which
+    /// case the caller must not tell the user the session does not exist.</returns>
     /// <remarks>
-    /// <para>Two callers, both leaving the database exactly as they found it. A parse that threw
-    /// before the first batch landed has nothing worth keeping and no reason to leave a marker the
-    /// user cannot act on — the failure dialog is the report. A log that parsed to zero entries is
-    /// a legitimately empty file, and the caller is told so; what it must not do is persist a row
-    /// that every reader in the app treats as nonexistent and the startup purge silently deletes at
-    /// the next launch.</para>
-    /// <para>All three tables, in one transaction, even though a session with no samples has no
-    /// rows in two of them: SQLite's cascade only fires with <c>PRAGMA foreign_keys=ON</c> for the
-    /// connection, so a delete that assumes it can leave orphans behind — and an orphan
-    /// <c>Samples</c> or <c>SessionDeviceMetadata</c> row is exactly what makes a later session ID
-    /// collide (see <see cref="SessionIdAllocator"/>).</para>
+    /// <para>Three callers, all leaving the database with no half-state. A parse that threw before
+    /// the first batch landed has nothing worth keeping and no reason to leave a marker the user
+    /// cannot act on — the failure dialog is the report. A log that parsed to zero entries is a
+    /// legitimately empty file, and the caller is told so; what it must not do is persist a row
+    /// that every reader in the app treats as nonexistent and the startup purge silently deletes
+    /// at the next launch. And an overwrite drops the session it replaces, once the replacement is
+    /// complete.</para>
+    /// <para>All three tables, in one transaction, even for a session with no samples: SQLite's
+    /// cascade only fires with <c>PRAGMA foreign_keys=ON</c> for the connection, so a delete must
+    /// not assume it can leave orphans behind — an orphan <c>Samples</c> or
+    /// <c>SessionDeviceMetadata</c> row is exactly what makes a later session ID collide (see
+    /// <see cref="SessionIdAllocator"/>).</para>
+    /// <para>Deleting nothing is success: the goal is that the rows are not there, and another
+    /// process may have removed them already.</para>
     /// </remarks>
-    private void RemoveSessionRow(LoggingSession session)
+    private bool RemoveSessions(IReadOnlyCollection<int> sessionIds)
     {
+        if (sessionIds.Count == 0)
+        {
+            return true;
+        }
+
         try
         {
             using var context = _loggingContext.CreateDbContext();
             using var transaction = context.Database.BeginTransaction();
 
-            context.Samples.Where(s => s.LoggingSessionID == session.ID).ExecuteDelete();
-            context.SessionDeviceMetadata.Where(m => m.LoggingSessionID == session.ID).ExecuteDelete();
-            context.Sessions.Where(s => s.ID == session.ID).ExecuteDelete();
+            context.Samples.Where(s => sessionIds.Contains(s.LoggingSessionID)).ExecuteDelete();
+            context.SessionDeviceMetadata.Where(m => sessionIds.Contains(m.LoggingSessionID)).ExecuteDelete();
+            context.Sessions.Where(s => sessionIds.Contains(s.ID)).ExecuteDelete();
 
             transaction.Commit();
+            return true;
         }
         catch (Exception ex)
         {
-            // Leaves the row saying Importing, which the next launch flags as an incomplete
-            // import. Visible and wrong-ish rather than invisible and wrong.
-            _logger.Error(ex, $"Failed to remove the empty session row {session.ID} left by an import");
+            _logger.Error(ex,
+                $"Failed to remove session(s) {string.Join(", ", sessionIds)} left behind by an import");
+            return false;
+        }
+    }
+
+    /// <summary>
+    /// Drops the sessions an <see cref="ImportOptions.OverwriteExistingSession"/> import replaces,
+    /// now that the replacement is complete. Downstream addition.
+    /// </summary>
+    /// <param name="session">The session this import just finished writing.</param>
+    /// <param name="options">The options the import ran with.</param>
+    /// <remarks>
+    /// The deletion used to happen in <c>CreateSession</c>, before anything had been parsed. An
+    /// overwrite whose replacement then failed, or turned out to hold no samples, therefore
+    /// destroyed the user's existing session and put nothing in its place. Doing it here means the
+    /// original survives every path but the one where a complete replacement exists.
+    /// </remarks>
+    private void ReplaceOverwrittenSessions(LoggingSession session, ImportOptions options)
+    {
+        if (!options.OverwriteExistingSession)
+        {
+            return;
+        }
+
+        try
+        {
+            List<int> superseded;
+            using (var context = _loggingContext.CreateDbContext())
+            {
+                superseded = context.Sessions
+                    .AsNoTracking()
+                    .Where(s => s.Name == session.Name && s.ID != session.ID)
+                    .Select(s => s.ID)
+                    .ToList();
+            }
+
+            if (superseded.Count == 0)
+            {
+                return;
+            }
+
+            _logger.Information(
+                $"Overwrite import finished; replacing session(s) {string.Join(", ", superseded)} " +
+                $"named '{session.Name}' with {session.ID}");
+            RemoveSessions(superseded);
+        }
+        catch (Exception ex)
+        {
+            // The replacement is complete and persisted either way; the worst case is two sessions
+            // with the same name, which is a duplicate, not a loss.
+            _logger.Error(ex, $"Failed to replace the sessions superseded by import {session.ID}");
         }
     }
 
@@ -814,17 +927,31 @@ public sealed class SdCardImportResult
     public required long SamplesImported { get; init; }
 
     /// <summary>
-    /// Whether <see cref="Session"/> is a row in the database. Downstream addition.
+    /// Whether <see cref="Session"/> is a finished row in the database. Downstream addition.
     /// </summary>
     /// <remarks>
-    /// False when the log held no samples. The import creates its <c>Sessions</c> row before
-    /// parsing anything, and removes it again in that case rather than leaving behind a
-    /// zero-sample row: every reader of the table filters those out and the startup purge deletes
-    /// them, so persisting one means telling the user an import succeeded and then having the
-    /// session vanish at the next launch. Callers must not add a non-persisted session to the
-    /// session list, and should say the log was empty rather than that it imported.
+    /// False in two cases. The log held no samples, so the row the import had already committed
+    /// was removed again — every reader of the table filters zero-sample sessions out and the
+    /// startup purge deletes them, so persisting one means telling the user an import succeeded
+    /// and then having the session vanish at the next launch. Or the samples landed but the
+    /// session could not be marked finished, which leaves a row the next launch will flag as an
+    /// incomplete import. Callers must not add a non-persisted session to the session list, must
+    /// not treat the import as a success (in particular, must not delete the source file from the
+    /// device), and should show <see cref="OutcomeGuidance"/>, which says which case it is.
     /// </remarks>
-    public bool SessionPersisted => SamplesImported > 0;
+    public required bool SessionPersisted { get; init; }
+
+    /// <summary>
+    /// One sentence for the user explaining a <see cref="SessionPersisted"/> of <c>false</c>;
+    /// empty otherwise. Downstream addition.
+    /// </summary>
+    /// <remarks>
+    /// Written here rather than at each of the three import call sites so they cannot drift, and
+    /// deliberately free of the file name so <c>ImportAllFiles</c> can dedupe it across a card
+    /// full of empty logs — the same reason <c>DatabaseMigrator.DescribeQuarantineForUser</c>
+    /// exists.
+    /// </remarks>
+    public required string OutcomeGuidance { get; init; }
 
     /// <summary>
     /// Timestamp statistics observed across the imported entries.

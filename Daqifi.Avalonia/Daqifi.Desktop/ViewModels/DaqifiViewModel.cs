@@ -1344,10 +1344,11 @@ public partial class DaqifiViewModel : ObservableObject, IFirmwareUpdateHost, IL
             }
             else
             {
-                // Parsed to no samples. No session row is kept for that (one would be deleted by
-                // the startup purge anyway), so the message must not claim one was created.
-                message = $"{System.IO.Path.GetFileName(selectedPath)} contained no samples, " +
-                          "so no session was created.";
+                // Nothing threw, but no finished session came of it — an empty log, or samples
+                // that could not be recorded as a completed session. The message must not claim a
+                // session was created; the importer supplies the sentence that says which it was,
+                // so this and the device-import dialogs cannot drift apart.
+                message = $"{System.IO.Path.GetFileName(selectedPath)}: {result.OutcomeGuidance}";
             }
 
             var timestampWarning = result.TimestampQuality.BuildUserWarning();

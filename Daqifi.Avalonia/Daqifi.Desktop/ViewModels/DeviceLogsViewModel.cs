@@ -559,11 +559,11 @@ public partial class DeviceLogsViewModel : ObservableObject
             }
             else
             {
-                // The log parsed to no samples — a 0-byte file is what an interrupted logging
-                // session leaves on a FAT card. Not a failure, and no session is kept, so say that
-                // rather than reporting a successful import of a session that would not be there
-                // at the next launch.
-                message = $"{file.FileName} contained no samples, so no session was created.";
+                // Nothing threw, but no finished session came of it — an empty log, or samples
+                // that could not be recorded as a completed session. The importer says which;
+                // reporting a successful import here would name a session that is not there, or
+                // is there flagged as incomplete.
+                message = $"{file.FileName}: {result.OutcomeGuidance}";
             }
 
             var timestampWarning = result.TimestampQuality.BuildUserWarning();
@@ -644,14 +644,14 @@ public partial class DeviceLogsViewModel : ObservableObject
 
                     if (!result.SessionPersisted)
                     {
-                        // A log that parsed to no samples. Nothing failed and nothing was kept, so
-                        // it belongs in the skipped list — counting it as imported would put a
-                        // session in the summary's total that the user will never find.
-                        outcome.RecordSkip(
-                            file.FileName,
-                            "One or more logs contained no samples, so no session was created for "
-                            + "them. That is what an interrupted logging session leaves on the card; "
-                            + "the device does not need attention.");
+                        // Nothing threw, but no finished session came of it — usually an empty log,
+                        // which is what an interrupted logging session leaves on the card and needs
+                        // no attention paid to the device. It belongs in the skipped list; counting
+                        // it as imported would put a session in the summary's total that the user
+                        // will never find. The guidance sentence comes from the importer so this
+                        // and the single-file dialog cannot say different things, and carries no
+                        // file name so a card full of empty logs reads it out once.
+                        outcome.RecordSkip(file.FileName, result.OutcomeGuidance);
                         continue;
                     }
 
