@@ -542,7 +542,12 @@ jobs:
         env:
           # Under RUNNER_TEMP rather than the workspace: each pass writes a throwaway
           # DAQIFI_DATA_DIR and ~3.5 MB of PNGs, and none of that should be anywhere a
-          # later `git diff` check can see it. Must stay in step with the upload path.
+          # later `git diff` check can see it.
+          #
+          # This path is spelled out in THREE places in this job — here, the collect
+          # step below, and the upload's `path:` — and they must stay in step. It
+          # cannot be hoisted to a job-level `env:`, because the `runner` context is
+          # not available there; only steps can read `runner.temp`.
           PARITY_OUT: ${{ runner.temp }}/parity-audit
         run: |
           set -euo pipefail
