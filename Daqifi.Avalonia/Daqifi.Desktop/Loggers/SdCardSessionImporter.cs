@@ -373,8 +373,10 @@ public class SdCardSessionImporter : ISdCardSessionImporter
             $"TimestampFreq={config?.TimestampFrequency ?? 0}");
 
         // Create the logging session in the database. It is committed before a single sample is
-        // parsed, and marked SessionStatus.Importing until this method decides otherwise.
-        var session = CreateSession(logSession, options);
+        // parsed, and marked SessionStatus.Importing until this method decides otherwise. An
+        // overwrite also names the sessions it may replace here, while it can still tell them from
+        // a concurrent import's row — see CreateSession.
+        var (session, superseded) = CreateSession(logSession, options);
 
         if ((config?.TimestampFrequency ?? 0) == 0)
         {
@@ -429,8 +431,13 @@ public class SdCardSessionImporter : ISdCardSessionImporter
 
             if (sessionPersisted)
             {
-                ReplaceOverwrittenSessions(session, options);
-                outcomeGuidance = string.Empty;
+                // The replacement is complete, so the sessions it supersedes can go. A failure
+                // here is not a failed import — the new session is committed and correct — but it
+                // does mean the user asked for a replacement and got a duplicate, so say so.
+                outcomeGuidance = ReplaceOverwrittenSessions(session, superseded)
+                    ? string.Empty
+                    : "The log imported, but the session it was meant to replace could not be "
+                      + "removed, so both are now in the list. Delete the older one by hand.";
             }
             else
             {
@@ -598,19 +605,40 @@ public class SdCardSessionImporter : ISdCardSessionImporter
         return samplesProcessed;
     }
 
+    /// <summary>
+    /// Commits the <c>Sessions</c> row this import will write into, and — for an overwrite — the
+    /// list of sessions it is entitled to replace once it finishes.
+    /// </summary>
     // @port: Daqifi.Desktop.Loggers.SdCardSessionImporter.CreateSession
-    private LoggingSession CreateSession(SdCardLogSession logSession, ImportOptions options)
+    private (LoggingSession Session, IReadOnlyList<int> Superseded) CreateSession(
+        SdCardLogSession logSession,
+        ImportOptions options)
     {
         using var context = _loggingContext.CreateDbContext();
 
         var sessionName = options.SessionNameOverride
                           ?? $"SD Import - {Path.GetFileNameWithoutExtension(logSession.FileName)}";
 
-        // NOTE: an OverwriteExistingSession import does NOT delete the session it replaces here.
-        // It used to, before a sample was parsed, which meant an import that then failed or
-        // produced nothing had destroyed the user's existing session and put nothing in its place.
-        // The replacement is now imported alongside the original and the original is dropped only
-        // once the new one is complete — see ReplaceOverwrittenSessions.
+        // An OverwriteExistingSession import does NOT delete the session it replaces here. It used
+        // to, before a sample was parsed, which meant an import that then failed or produced
+        // nothing had destroyed the user's existing session and put nothing in its place. The
+        // replacement is imported alongside the original and the original dropped only once the
+        // new one is complete — see ReplaceOverwrittenSessions.
+        //
+        // The targets are nevertheless chosen HERE, not there, and this is the load-bearing half.
+        // Two imports of the same file produce the same session name, so a list gathered after the
+        // fact would include any concurrent import's row — and deleting that destroys the batches
+        // it has already committed. Taken now, before this session exists, the list can only name
+        // rows that predate this import; excluding the ones an import owns right now covers the
+        // concurrent import that started first. Nothing puts an existing row back into Importing,
+        // so a row that is not importing at this instant cannot become so later.
+        var superseded = options.OverwriteExistingSession
+            ? context.Sessions
+                .AsNoTracking()
+                .Where(s => s.Name == sessionName && s.Status != SessionStatus.Importing)
+                .Select(s => s.ID)
+                .ToList()
+            : [];
 
         // Shared with LoggingManager.OnActiveChanged. This used to be MAX(Sessions.ID) + 1, the
         // narrow version LoggingManager's own comment warns against: it can hand out an ID orphan
@@ -632,7 +660,7 @@ public class SdCardSessionImporter : ISdCardSessionImporter
         context.Sessions.Add(session);
         context.SaveChanges();
 
-        return session;
+        return (session, superseded);
     }
 
     /// <summary>
@@ -780,48 +808,33 @@ public class SdCardSessionImporter : ISdCardSessionImporter
     /// now that the replacement is complete. Downstream addition.
     /// </summary>
     /// <param name="session">The session this import just finished writing.</param>
-    /// <param name="options">The options the import ran with.</param>
+    /// <param name="superseded">
+    /// The sessions <see cref="CreateSession"/> recorded as replaceable when this import started —
+    /// empty for a non-overwrite import. Chosen then rather than now so this can never target a
+    /// concurrent import's row: two imports of one file share a session name, and deleting the
+    /// other one's row destroys the batches it has already committed.
+    /// </param>
+    /// <returns><c>true</c> when nothing is left to replace.</returns>
     /// <remarks>
     /// The deletion used to happen in <c>CreateSession</c>, before anything had been parsed. An
     /// overwrite whose replacement then failed, or turned out to hold no samples, therefore
     /// destroyed the user's existing session and put nothing in its place. Doing it here means the
     /// original survives every path but the one where a complete replacement exists.
     /// </remarks>
-    private void ReplaceOverwrittenSessions(LoggingSession session, ImportOptions options)
+    private bool ReplaceOverwrittenSessions(LoggingSession session, IReadOnlyList<int> superseded)
     {
-        if (!options.OverwriteExistingSession)
+        if (superseded.Count == 0)
         {
-            return;
+            return true;
         }
 
-        try
-        {
-            List<int> superseded;
-            using (var context = _loggingContext.CreateDbContext())
-            {
-                superseded = context.Sessions
-                    .AsNoTracking()
-                    .Where(s => s.Name == session.Name && s.ID != session.ID)
-                    .Select(s => s.ID)
-                    .ToList();
-            }
+        _logger.Information(
+            $"Overwrite import finished; replacing session(s) {string.Join(", ", superseded)} " +
+            $"named '{session.Name}' with {session.ID}");
 
-            if (superseded.Count == 0)
-            {
-                return;
-            }
-
-            _logger.Information(
-                $"Overwrite import finished; replacing session(s) {string.Join(", ", superseded)} " +
-                $"named '{session.Name}' with {session.ID}");
-            RemoveSessions(superseded);
-        }
-        catch (Exception ex)
-        {
-            // The replacement is complete and persisted either way; the worst case is two sessions
-            // with the same name, which is a duplicate, not a loss.
-            _logger.Error(ex, $"Failed to replace the sessions superseded by import {session.ID}");
-        }
+        // A failure is reported, not swallowed: the replacement is committed and correct either
+        // way, but the user asked for a replacement and would be left with a duplicate.
+        return RemoveSessions(superseded);
     }
 
     // @port: Daqifi.Desktop.Loggers.SdCardSessionImporter.FlushBatchAsync
@@ -942,14 +955,19 @@ public sealed class SdCardImportResult
     public required bool SessionPersisted { get; init; }
 
     /// <summary>
-    /// One sentence for the user explaining a <see cref="SessionPersisted"/> of <c>false</c>;
-    /// empty otherwise. Downstream addition.
+    /// One sentence for the user about anything this import needs to say beyond "it worked".
+    /// Empty when it was a plain success. Downstream addition.
     /// </summary>
     /// <remarks>
-    /// Written here rather than at each of the three import call sites so they cannot drift, and
-    /// deliberately free of the file name so <c>ImportAllFiles</c> can dedupe it across a card
+    /// Non-empty for every <see cref="SessionPersisted"/> of <c>false</c> — an empty log, an empty
+    /// row that could not be cleaned up, or samples that could not be recorded as a finished
+    /// session — and also for the one case that persists a good session and still owes the user a
+    /// word: an overwrite whose superseded session could not be removed, leaving a duplicate. So
+    /// callers must show it whenever it has content, not only on failure.
+    /// <para>Written here rather than at each of the three import call sites so they cannot drift,
+    /// and deliberately free of the file name so <c>ImportAllFiles</c> can dedupe it across a card
     /// full of empty logs — the same reason <c>DatabaseMigrator.DescribeQuarantineForUser</c>
-    /// exists.
+    /// exists.</para>
     /// </remarks>
     public required string OutcomeGuidance { get; init; }
 

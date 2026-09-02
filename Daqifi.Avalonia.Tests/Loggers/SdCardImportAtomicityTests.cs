@@ -235,6 +235,36 @@ public sealed class SdCardImportAtomicityTests : IDisposable
         // orphans that make a later session ID collide.
         Assert.Equal(0, SampleCountFor(original.Session.ID));
         Assert.Equal(7, TotalSampleRows());
+        Assert.Equal(string.Empty, replacement.OutcomeGuidance);
+    }
+
+    /// <summary>
+    /// Two imports of one file share a session name, so an overwrite that chose its targets after
+    /// finishing would find, and delete, a concurrent import's row — destroying the batches it had
+    /// already committed. The targets are chosen when the import starts instead, and rows an
+    /// import owns are excluded even then.
+    /// </summary>
+    [Fact]
+    public async Task An_overwrite_never_replaces_a_session_another_import_is_writing()
+    {
+        var importer = new SdCardSessionImporter(Factory());
+        var options = new ImportOptions { OverwriteExistingSession = true };
+
+        // A concurrent import of the same file: its row exists, marked Importing, with samples
+        // already committed against it.
+        var inFlight = InsertSession(Factory(), id: 900, status: SessionStatus.Importing,
+            name: "SD Import - log_good");
+        InsertSampleRow(loggingSessionId: 900);
+
+        var replacement = await importer.ImportSessionAsync(
+            Log("log_good.bin", Entries(3)), options, progress: null, ct: CancellationToken.None);
+
+        Assert.NotEqual(inFlight, replacement.Session.ID);
+
+        var survivors = AllSessions().Select(s => s.ID).ToList();
+        Assert.Contains(inFlight, survivors);
+        Assert.Contains(replacement.Session.ID, survivors);
+        Assert.Equal(1, SampleCountFor(inFlight));
     }
 
     #endregion
@@ -308,7 +338,7 @@ public sealed class SdCardImportAtomicityTests : IDisposable
     {
         var factory = Factory();
         InsertSession(factory, id: 4, status: SessionStatus.Importing);
-        InsertOrphanSample(loggingSessionId: 4);
+        InsertSampleRow(loggingSessionId: 4);
 
         var loaded = NewManager(factory).LoadPersistedLoggingSessions();
 
@@ -330,7 +360,7 @@ public sealed class SdCardImportAtomicityTests : IDisposable
     public async Task An_import_does_not_reuse_an_id_that_orphan_sample_rows_still_reference()
     {
         // No Sessions row anywhere, so MAX(Sessions.ID) + 1 would hand out 0 and collide.
-        InsertOrphanSample(loggingSessionId: 41);
+        InsertSampleRow(loggingSessionId: 41);
 
         var importer = new SdCardSessionImporter(Factory());
         var result = await importer.ImportSessionAsync(
@@ -425,19 +455,26 @@ public sealed class SdCardImportAtomicityTests : IDisposable
         return context.Samples.LongCount();
     }
 
-    private static void InsertSession(IDbContextFactory<LoggingContext> factory, int id, SessionStatus status)
+    private static int InsertSession(
+        IDbContextFactory<LoggingContext> factory,
+        int id,
+        SessionStatus status,
+        string? name = null)
     {
         using var context = factory.CreateDbContext();
-        context.Sessions.Add(new LoggingSession(id, $"Session_{id}") { Status = status });
+        context.Sessions.Add(new LoggingSession(id, name ?? $"Session_{id}") { Status = status });
         context.SaveChanges();
+        return id;
     }
 
     /// <summary>
-    /// A <c>Samples</c> row whose session does not exist — what a crash, or a delete that ran
-    /// without SQLite foreign keys enabled, leaves behind. Written with foreign keys off for the
-    /// duration, since the point is to produce a row the schema would normally forbid.
+    /// One <c>Samples</c> row against the given session id, with foreign keys off for the
+    /// duration. That is what lets a test write an ORPHAN — a sample whose session does not exist,
+    /// which is what a crash, or a delete that ran without SQLite foreign keys enabled, leaves
+    /// behind and the schema would normally forbid. It is also used to give an existing session
+    /// some data without going through an import.
     /// </summary>
-    private void InsertOrphanSample(int loggingSessionId)
+    private void InsertSampleRow(int loggingSessionId)
     {
         using var connection = new SqliteConnection($"Data source={DatabasePath}");
         connection.Open();

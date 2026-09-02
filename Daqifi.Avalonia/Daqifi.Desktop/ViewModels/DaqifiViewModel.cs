@@ -1341,6 +1341,13 @@ public partial class DaqifiViewModel : ObservableObject, IFirmwareUpdateHost, IL
                 });
 
                 message = $"Successfully imported {System.IO.Path.GetFileName(selectedPath)}";
+
+                // A persisted session can still owe the user a word — an overwrite whose old
+                // session could not be removed leaves a duplicate they have to clear by hand.
+                if (result.OutcomeGuidance.Length > 0)
+                {
+                    message += $"\n\n{result.OutcomeGuidance}";
+                }
             }
             else
             {

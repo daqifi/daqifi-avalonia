@@ -556,6 +556,13 @@ public partial class DeviceLogsViewModel : ObservableObject
             {
                 AddImportedSession(result.Session);
                 message = $"Successfully imported {file.FileName}";
+
+                // A persisted session can still owe the user a word — an overwrite whose old
+                // session could not be removed leaves a duplicate they have to clear by hand.
+                if (result.OutcomeGuidance.Length > 0)
+                {
+                    message += $"\n\n{result.OutcomeGuidance}";
+                }
             }
             else
             {
@@ -657,6 +664,14 @@ public partial class DeviceLogsViewModel : ObservableObject
 
                     AddImportedSession(result.Session);
 
+                    // Imported, and still with something to say — an overwrite whose old session
+                    // could not be removed. Not a skip (the file did import), so it gets its own
+                    // line in the summary rather than being counted as one.
+                    if (result.OutcomeGuidance.Length > 0)
+                    {
+                        outcome.RecordNotice(result.OutcomeGuidance);
+                    }
+
                     if (result.TimestampQuality.HasDegenerateTimeAxis)
                     {
                         outcome.TimestampWarningCount++;
@@ -748,6 +763,13 @@ public partial class DeviceLogsViewModel : ObservableObject
             {
                 message.Append(CultureInfo.CurrentCulture, $"\n\n{guidance}");
             }
+        }
+
+        // Deduped the same way, but about files that DID import — the batch is not going to name
+        // them one by one, and the advice is the same for all of them.
+        foreach (var notice in outcome.Notices)
+        {
+            message.Append(CultureInfo.CurrentCulture, $"\n\n{notice}");
         }
 
         if (outcome.DisconnectedMidBatch)
@@ -861,6 +883,7 @@ internal sealed class ImportAllOutcome
 {
     private readonly List<string> _skippedFiles = [];
     private readonly List<string> _skipGuidance = [];
+    private readonly List<string> _notices = [];
 
     /// <summary>How many files the batch started with.</summary>
     // @port: Daqifi.Desktop.ViewModels.ImportAllOutcome.TotalCount
@@ -887,6 +910,23 @@ internal sealed class ImportAllOutcome
     /// </summary>
     // @port: Daqifi.Desktop.ViewModels.ImportAllOutcome.SkipGuidance
     public IReadOnlyList<string> SkipGuidance => _skipGuidance;
+
+    /// <summary>
+    /// Things that need saying about files that DID import, in first-seen order and deduped.
+    /// Downstream addition: an overwrite whose superseded session could not be removed leaves a
+    /// duplicate the user has to clear, which is neither a skip nor a silence.
+    /// </summary>
+    public IReadOnlyList<string> Notices => _notices;
+
+    /// <summary>Records a note about a file that imported successfully.</summary>
+    /// <param name="notice">What the user should know. Deduped, so it must carry no file name.</param>
+    public void RecordNotice(string notice)
+    {
+        if (!_notices.Contains(notice))
+        {
+            _notices.Add(notice);
+        }
+    }
 
     /// <summary>
     /// The card-wide failure that ended the batch early, or <c>null</c> if it ran to completion.
