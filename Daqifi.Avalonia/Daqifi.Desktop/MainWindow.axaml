@@ -455,6 +455,24 @@
                                           Padding="24,0,24,24">
                                 <StackPanel>
 
+                                    <!-- Recovery notice (#193). Shown once, the first time this
+                                         drawer is opened after startup found DAQifiConfiguration.xml
+                                         unreadable and moved it aside. Without it the delimiter has
+                                         silently reverted to a comma with nothing saying why. Absent
+                                         on every ordinary launch. -->
+                                    <Border Margin="0,4,0,16"
+                                            Padding="10,8"
+                                            CornerRadius="3"
+                                            Background="#3D2A0A"
+                                            BorderBrush="{DynamicResource StatusAmber}"
+                                            BorderThickness="1"
+                                            IsVisible="{Binding AppSettings.HasRecoveryNotice}">
+                                        <TextBlock Text="{Binding AppSettings.RecoveryNotice}"
+                                                   FontSize="11"
+                                                   TextWrapping="Wrap"
+                                                   Foreground="{DynamicResource StatusAmber}"/>
+                                    </Border>
+
                                     <!-- EXPORT section -->
                                     <TextBlock Text="EXPORT"
                                                Classes="appSettingsSectionLabel"

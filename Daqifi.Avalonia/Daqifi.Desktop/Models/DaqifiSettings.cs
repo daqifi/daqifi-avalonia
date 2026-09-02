@@ -6,15 +6,60 @@
 using Daqifi.Desktop.Common.Loggers;
 using System.Collections.ObjectModel;
 using System.IO;
+using System.Xml;
 using System.Xml.Linq;
 
 namespace Daqifi.Desktop.Models;
 
+/// <summary>
+/// The app's own settings — today just the CSV delimiter — and the file they live in.
+/// </summary>
+/// <remarks>
+/// <para>
+/// The recovery in here exists because of #193. Every repair path was keyed on
+/// <c>DAQifiConfiguration.xml</c> being <b>absent</b>, so a file that was present but unparseable
+/// was never repaired: <see cref="XElement.Load(string)"/> threw on it, the catch called
+/// <c>AppLogger.Error</c> — which captures to Sentry — and the file was left exactly where it
+/// was. One damaged settings file therefore became a fresh crash-report event on every launch for
+/// the life of that file, while the user's delimiter silently reverted and stayed reverted. An
+/// interrupted <c>xml.Save</c> (a plain in-place truncate-and-write) was enough to produce it.
+/// </para>
+/// <para>
+/// Three rules follow, the same three <c>ProfileXmlStore</c> applies to the profiles file for the
+/// same reason (#184/#192):
+/// </para>
+/// <list type="number">
+/// <item><description>
+/// A file that cannot be read is <b>quarantined</b> — renamed aside, never deleted — and a
+/// working one written in its place, so the failure is reported once instead of for ever.
+/// </description></item>
+/// <item><description>
+/// A write goes to a temporary file and is renamed over the real one, so an interrupted write
+/// cannot leave the truncated file that starts this story.
+/// </description></item>
+/// <item><description>
+/// What comes out of the file is validated against <see cref="CsvDelimiterOptions"/> rather than
+/// trusted, so an empty or absurd delimiter cannot reach the exporter and concatenate every
+/// column of a CSV.
+/// </description></item>
+/// </list>
+/// <para>
+/// Still a singleton, and still resolved from a static initializer, so nothing here may throw:
+/// the first touch of <see cref="Instance"/> would arrive at its caller as a
+/// <c>TypeInitializationException</c>.
+/// </para>
+/// </remarks>
 // @port: Daqifi.Desktop.Models.DaqifiSettings
 public class DaqifiSettings
 {
     #region Private Data
-    private string _csvDelimiter = ",";
+    /// <summary>
+    /// What a fresh install gets, and what a file that cannot supply a supported delimiter falls
+    /// back to. Comma because that is what CSV means to a spreadsheet in most locales.
+    /// </summary>
+    private const string DefaultCsvDelimiter = ",";
+
+    private string _csvDelimiter = DefaultCsvDelimiter;
     // Use the shared, elevation-aware data directory (AppDataPaths): machine-wide for
     // elevated production runs, per-user for un-elevated runs. Keeps settings writable
     // (and consistent with the database/logs) instead of failing on an admin-owned file.
@@ -24,7 +69,20 @@ public class DaqifiSettings
     // a file literally named `DAQiFi\DAQifiConfiguration.xml` NEXT TO the data directory
     // instead of inside it, splitting settings away from the database and logs. Path.Combine
     // produces the identical string on Windows, so this is a no-op there.
-    private static readonly string SettingsXmlPath = Path.Combine(AppDirectory, "DAQifiConfiguration.xml");
+    private static readonly string DefaultSettingsXmlPath = Path.Combine(AppDirectory, "DAQifiConfiguration.xml");
+
+    /// <summary>
+    /// The settings file this instance reads and writes. An instance field rather than the static
+    /// it used to be, so a test can point one at a throwaway directory instead of the developer's
+    /// real <c>~/Library/Application Support/DAQiFi</c>.
+    /// </summary>
+    private readonly string _settingsXmlPath;
+
+    /// <summary>
+    /// Set when a damaged file has been moved aside and not yet reported to anyone. Read once, by
+    /// <see cref="TakeQuarantineNotice"/> — see that method for why it is one-shot.
+    /// </summary>
+    private string? _pendingQuarantineNotice;
     #endregion
 
     #region Properties
@@ -37,17 +95,28 @@ public class DaqifiSettings
         get => _csvDelimiter;
         set
         {
-            _csvDelimiter = value;
+            // Validated on the way in as well as on the way out of the file, so what
+            // OptimizedLoggingSessionExporter reads from here is always a delimiter this app
+            // supports. The Settings UI only ever offers the two in CsvDelimiterOptions, so this
+            // changes nothing about how the app behaves; it makes the guarantee a property of the
+            // type rather than of who happens to be calling it.
+            _csvDelimiter = SupportedDelimiterOrDefault(value, "the delimiter it was given");
             SaveSettings();
         }
     }
     #endregion
 
     #region Singleton Constructor / Initalization
-    private static readonly DaqifiSettings _instance = new();
+    private static readonly DaqifiSettings _instance = new(DefaultSettingsXmlPath);
 
-    private DaqifiSettings()
+    /// <summary>
+    /// Downstream addition — upstream's constructor takes nothing and reads a static path.
+    /// Visible to <c>Daqifi.Avalonia.Tests</c> only, via InternalsVisibleTo in
+    /// Daqifi.Avalonia.csproj.
+    /// </summary>
+    internal DaqifiSettings(string settingsXmlPath)
     {
+        _settingsXmlPath = settingsXmlPath;
         LoadDAQiFiSettings();
     }
 
@@ -62,48 +131,210 @@ public class DaqifiSettings
     {
         try
         {
-            if (!Directory.Exists(AppDirectory))
-            {
-                Directory.CreateDirectory(AppDirectory);
-            }
+            EnsureSettingsDirectory();
 
-            if (!File.Exists(SettingsXmlPath))
+            // No file at all is the ordinary fresh-install case, not damage: nothing to recover
+            // and nothing to quarantine (a new install must not be littered with .corrupt-
+            // files). Write the defaults so there is a file from here on, and stop — upstream
+            // fell through to re-read the file it had just written, which only ever returned the
+            // value already in hand.
+            if (!File.Exists(_settingsXmlPath))
             {
                 LoadDefaultValues();
+                return;
             }
 
-            var xml = XElement.Load(SettingsXmlPath);
+            var xml = XElement.Load(_settingsXmlPath);
 
-            if (xml.Element("CsvDelimiter") != null)
+            // A file with no <CsvDelimiter> at all — older, or hand-trimmed — is not damaged and
+            // is not complained about; the default simply stands.
+            if (xml.Element("CsvDelimiter") is { } element)
             {
-                _csvDelimiter = xml.Element("CsvDelimiter").Value;
+                _csvDelimiter = SupportedDelimiterOrDefault(element.Value, "the settings file");
             }
         }
-        catch(Exception ex)
+        catch (Exception ex) when (IsUnreadableContent(ex))
         {
+            RecoverFromUnreadableSettingsFile(ex);
+        }
+        catch (Exception ex)
+        {
+            // Reached the file but could not read it — locked by another process, a permission
+            // problem, a volume that went away. The CONTENT is not implicated, so it is
+            // emphatically not quarantined: this run uses the defaults and the next attempt may
+            // well work. This is the one path that can still log on every launch, and correctly
+            // so — it describes a condition outside the app that is still true.
             AppLogger.Instance.Error(ex, "Problem Loading DAQiFi Settings");
         }
+    }
+
+    /// <summary>
+    /// Moves an unreadable settings file aside and writes a working one in its place.
+    /// </summary>
+    /// <remarks>
+    /// This is the whole of #193. The <c>Error</c> below is a Sentry event, and it is only the
+    /// right level BECAUSE the file that caused it is about to stop existing: raising it once per
+    /// damaged file is a report worth having, raising it once per launch for ever is noise that
+    /// buries real crashes.
+    /// </remarks>
+    private void RecoverFromUnreadableSettingsFile(Exception cause)
+    {
+        AppLogger.Instance.Error(
+            cause, $"The settings file could not be read and is being moved aside: {_settingsXmlPath}");
+
+        var quarantinePath = $"{_settingsXmlPath}.corrupt-{DateTime.UtcNow:yyyyMMdd-HHmmssfff}";
+
+        try
+        {
+            // RENAMED, never deleted. It is the user's file, an unparseable one is very often
+            // still readable by hand, and it is the only record of what they had chosen. The
+            // timestamp keeps repeated recoveries from overwriting each other.
+            File.Move(_settingsXmlPath, quarantinePath, overwrite: true);
+        }
+        catch (Exception ex)
+        {
+            // The damaged file is still sitting there, so the next launch will fail on it again.
+            // That is an environmental fault — an unwritable data directory — reported until
+            // someone fixes it, rather than the self-inflicted permanent condition this method
+            // exists to end. Writing a replacement is not an option: with the original still in
+            // place there is nowhere to put one that does not destroy it.
+            AppLogger.Instance.Error(ex, $"The damaged settings file could not be moved aside: {_settingsXmlPath}");
+            return;
+        }
+
+        AppLogger.Instance.Warning(
+            $"The damaged settings file was moved to {quarantinePath}; settings load and save normally from now on.");
+
+        _pendingQuarantineNotice =
+            $"Your export settings could not be read, so the damaged file was moved to {quarantinePath}. " +
+            $"The CSV delimiter has been reset to \"{DefaultCsvDelimiter}\".";
+
+        LoadDefaultValues();
+    }
+
+    /// <summary>
+    /// The message to show the user once, the first time they open Settings after a damaged file
+    /// was moved aside; <c>null</c> when there is nothing to report.
+    /// </summary>
+    /// <remarks>
+    /// One-shot — reading it clears it. The user needs telling once why their delimiter changed
+    /// and where their old file went; repeating it every time the pane opens would be noise they
+    /// cannot dismiss. Downstream addition, so no <c>@port</c> marker.
+    /// </remarks>
+    internal string? TakeQuarantineNotice() => Interlocked.Exchange(ref _pendingQuarantineNotice, null);
+
+    /// <summary>
+    /// Whether an exception means the settings file's CONTENT is unusable — as opposed to the
+    /// file being momentarily out of reach, which must never cost the user their file.
+    /// </summary>
+    /// <remarks>
+    /// A shorter list than <c>ProfileXmlStore.IsUnreadableContent</c>'s, and deliberately so: this
+    /// reader makes no conversions. It reads one element's <c>Value</c> as the string it already
+    /// is and validates it against <see cref="CsvDelimiterOptions"/>, so the FormatException /
+    /// InvalidCastException / OverflowException family that a profile's Guid, DateTime, int and
+    /// bool casts can raise cannot arise here. Listing them would be a claim about code that does
+    /// not exist.
+    /// <para>
+    /// <see cref="IOException"/> and <see cref="UnauthorizedAccessException"/> are absent for the
+    /// opposite reason: a locked or unreachable file is a perfectly good file the process cannot
+    /// see right now, and quarantining on one would move a healthy file aside.
+    /// </para>
+    /// </remarks>
+    internal static bool IsUnreadableContent(Exception exception) => exception is XmlException;
+
+    /// <summary>
+    /// The given delimiter if this app supports it, otherwise the default.
+    /// </summary>
+    /// <remarks>
+    /// The second half of #193: <c>CsvDelimiter</c>'s value went straight into
+    /// <c>OptimizedLoggingSessionExporter</c>, so a well-formed file holding
+    /// <c>&lt;CsvDelimiter&gt;&lt;/CsvDelimiter&gt;</c> produced CSVs with every column
+    /// concatenated. Nothing in the UI can create that — it offers only the two options — but the
+    /// file is hand-editable and nothing rejected it.
+    /// <para>
+    /// <c>Warning</c>, not <c>Error</c>: it raises no Sentry event. A hand-edited file is a user
+    /// condition, not a fault in the app, and reporting a standing condition as a fresh error on
+    /// every launch is the exact thing this ticket is about. The file is deliberately NOT
+    /// rewritten either — it is well-formed and it is the user's; choosing a delimiter in Settings
+    /// is what makes it valid again.
+    /// </para>
+    /// </remarks>
+    private string SupportedDelimiterOrDefault(string? candidate, string source)
+    {
+        if (candidate is not null && CsvDelimiterOptions.Contains(candidate))
+        {
+            return candidate;
+        }
+
+        AppLogger.Instance.Warning(
+            $"The CSV delimiter \"{candidate}\" from {source} is not one this app supports, " +
+            $"so \"{DefaultCsvDelimiter}\" is being used instead.");
+
+        return DefaultCsvDelimiter;
     }
 
     // @port: Daqifi.Desktop.Models.DaqifiSettings.LoadDefaultValues
     private void LoadDefaultValues()
     {
-        CsvDelimiter = ",";
+        // The field, not the property: the property's setter saves, and SaveSettings is called
+        // immediately below anyway. Upstream sets both and writes the file twice.
+        _csvDelimiter = DefaultCsvDelimiter;
         SaveSettings();
     }
 
     // @port: Daqifi.Desktop.Models.DaqifiSettings.SaveSettings
     private void SaveSettings()
     {
+        // Unique per write, not a fixed ".tmp": two app instances share one data directory, and a
+        // single well-known temp path lets each truncate, move or delete the other's half-written
+        // file — reintroducing exactly the damage this method exists to prevent. It does not make
+        // a concurrent read-modify-write safe (last writer still wins, as it always has); it makes
+        // each individual write atomic and independent.
+        var temporaryPath = $"{_settingsXmlPath}.{Guid.NewGuid():N}.tmp";
+
         try
         {
+            EnsureSettingsDirectory();
+
             var xml = new XElement("DAQifiSettings");
             xml.Add(new XElement("CsvDelimiter", CsvDelimiter));
-            xml.Save(SettingsXmlPath);
+
+            // Via a temporary file and a rename, because XElement.Save truncates its target
+            // first: a power cut, a full disk or a crash part-way through that write is exactly
+            // how the unreadable file in #193 comes about. A rename either happens or does not,
+            // so the file on disk is only ever the old content or the new.
+            xml.Save(temporaryPath);
+            File.Move(temporaryPath, _settingsXmlPath, overwrite: true);
         }
         catch (Exception ex)
         {
             AppLogger.Instance.Error(ex, "Problem Saving DAQiFi Settings");
+
+            // Best-effort: do not leave a partial .tmp beside the real file. The write has already
+            // been reported, so a failure to clean up adds nothing.
+            try { File.Delete(temporaryPath); } catch { /* nothing useful to do */ }
+        }
+    }
+
+    /// <summary>
+    /// Creates the directory the settings file lives in, if it is not there already.
+    /// </summary>
+    /// <remarks>
+    /// Derived from the file's own path rather than referring to <see cref="AppDirectory"/>, so
+    /// the directory created is always the one about to be written to. Identical in production,
+    /// where the path is built from <see cref="AppDirectory"/> anyway.
+    /// <para>
+    /// <c>Path.GetDirectoryName</c> returns null for a root path and empty for a bare filename;
+    /// neither is a directory anything needs created, and <c>Directory.CreateDirectory("")</c>
+    /// throws.
+    /// </para>
+    /// </remarks>
+    private void EnsureSettingsDirectory()
+    {
+        var directory = Path.GetDirectoryName(_settingsXmlPath);
+        if (!string.IsNullOrEmpty(directory))
+        {
+            Directory.CreateDirectory(directory);
         }
     }
     #endregion
