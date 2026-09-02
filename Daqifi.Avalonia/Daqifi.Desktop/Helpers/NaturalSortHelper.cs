@@ -11,10 +11,31 @@ namespace Daqifi.Desktop.Helpers;
 /// Provides natural sorting functionality for strings containing numeric values.
 /// This ensures proper ordering of items like AI0, AI1, AI2, ..., AI10, AI11 instead of alphabetical AI0, AI1, AI10, AI11, AI2.
 /// </summary>
+/// <remarks>
+/// This is the app's single answer for ordering channel names, and every place that shows a
+/// channel list reaches it — the Channels pane, the Profiles drawer, the active-channel
+/// collections behind the live plot, a reopened session's series and legend, and the column
+/// order of an exported CSV. Reach it through <see cref="Comparer"/> or
+/// <see cref="NaturalOrderBy{T}"/> rather than restating the rule: the CSV exporter used to
+/// state it itself, got it wrong, and shipped mis-ordered columns for every board with ten or
+/// more channels.
+/// <para>
+/// Daqifi.Core has its own <c>ChannelNameComparer</c>, which is where this belongs — but it is
+/// not in Core 1.7.0, the version this app pins and the latest Core release. When a Core release
+/// carries it, this type should be deleted and its callers pointed at Core's.
+/// </para>
+/// </remarks>
 // @port: Daqifi.Desktop.Helpers.NaturalSortHelper
 public static class NaturalSortHelper
 {
     private static readonly Regex NumberRegex = new(@"(\d+)", RegexOptions.Compiled);
+
+    /// <summary>
+    /// The shared <see cref="IComparer{T}"/> form of <see cref="NaturalCompare"/>, for the call
+    /// sites that order something other than a bare sequence of names — a LINQ
+    /// <c>ThenBy</c> key, say. Stateless, so one instance serves every caller.
+    /// </summary>
+    public static IComparer<string> Comparer { get; } = new NaturalStringComparer();
 
     /// <summary>
     /// Compares two strings using natural sorting algorithm.
@@ -69,7 +90,7 @@ public static class NaturalSortHelper
     // @port: Daqifi.Desktop.Helpers.NaturalSortHelper.NaturalOrderBy<T>
     public static IEnumerable<T> NaturalOrderBy<T>(this IEnumerable<T> source, Func<T, string> keySelector)
     {
-        return source.OrderBy(keySelector, new NaturalStringComparer());
+        return source.OrderBy(keySelector, Comparer);
     }
 
     /// <summary>
