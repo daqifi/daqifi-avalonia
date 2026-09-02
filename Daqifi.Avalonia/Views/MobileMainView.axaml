@@ -190,6 +190,18 @@
                     Foreground="{DynamicResource TextSecondary}" Click="OnCloseSettings" />
           </Grid>
 
+          <!-- Recovery notice (#193) — the phone's copy of the desktop drawer's. Shown once, the
+               first time Settings is opened after startup found DAQifiConfiguration.xml unreadable
+               and moved it aside; absent on every ordinary launch. Same SettingsViewModel, so the
+               sentence cannot drift between the two heads. -->
+          <Border Margin="0,18,0,0" Padding="10,8" CornerRadius="3"
+                  Background="#3D2A0A"
+                  BorderBrush="{DynamicResource StatusAmber}" BorderThickness="1"
+                  IsVisible="{Binding HasRecoveryNotice}">
+            <TextBlock Text="{Binding RecoveryNotice}" FontSize="11" TextWrapping="Wrap"
+                       Foreground="{DynamicResource StatusAmber}" />
+          </Border>
+
           <TextBlock Text="EXPORT" Classes="sectionLabel" Margin="0,22,0,10" />
           <Rectangle Height="1" Fill="{DynamicResource BorderDim}" Margin="0,0,0,16" />
 
