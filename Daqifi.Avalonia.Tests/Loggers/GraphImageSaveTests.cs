@@ -1,0 +1,436 @@
+using System.Runtime.InteropServices;
+using Daqifi.Desktop.Logger;
+using Xunit;
+
+namespace Daqifi.Avalonia.Tests.Loggers;
+
+/// <summary>
+/// Pins that saving a graph to a destination that cannot be written reports the failure instead of
+/// killing the application.
+///
+/// <para>
+/// The regression (issue #182): <c>DatabaseLogger.SaveGraphAsync</c> and
+/// <c>PlotLogger.SaveLiveGraphAsync</c> each carried their own byte-identical copy of
+/// <c>using var stream = File.Create(path); pngExporter.Export(PlotModel, stream);</c> with no
+/// <c>try</c> anywhere. Both are <c>[RelayCommand]</c> methods on default
+/// <c>AsyncRelayCommandOptions</c>, so the exception was rethrown on the UI
+/// <c>SynchronizationContext</c>, reached <c>Dispatcher.UIThread.UnhandledException</c>, and — since
+/// <c>App.OnDispatcherUnhandledException</c> logs without setting <c>e.Handled</c> — terminated the
+/// process. The user picked a folder they could not write to and the app simply vanished.
+/// </para>
+///
+/// <para>
+/// Every test below therefore does two things: it first asserts that the RAW operation the old code
+/// performed still throws — that is the crash, reproduced, and it keeps these vectors honest if a
+/// future .NET changes which exception a bad destination raises — and then asserts that
+/// <see cref="GraphImageSaver"/> turns the same vector into a sentence for the user.
+/// </para>
+/// </summary>
+public sealed class GraphImageSaveTests : IDisposable
+{
+    /// <summary>Throwaway root for this test's destinations. Never the real DAQiFi data directory
+    /// (see <see cref="TestDataDirectory"/>).</summary>
+    private readonly string _root;
+
+    /// <summary>Stands in for a rendered PNG. The bytes are the real PNG magic number so a
+    /// success assertion is about identifiable content rather than "the file is non-empty".</summary>
+    private static readonly byte[] ImageBytes = [0x89, (byte)'P', (byte)'N', (byte)'G', 0x0D, 0x0A, 0x1A, 0x0A];
+
+    public GraphImageSaveTests()
+    {
+        _root = Path.Combine(Path.GetTempPath(), "daqifi-graph-save-" + Guid.NewGuid().ToString("N"));
+        Directory.CreateDirectory(_root);
+    }
+
+    public void Dispose()
+    {
+        // A test may have left a directory read-only; make it removable again before cleanup, or
+        // the throwaway root survives the run.
+        if (!OperatingSystem.IsWindows())
+        {
+            foreach (var directory in Directory.EnumerateDirectories(_root, "*", SearchOption.AllDirectories))
+            {
+                try { File.SetUnixFileMode(directory, UnixFileMode.UserRead | UnixFileMode.UserWrite | UnixFileMode.UserExecute); }
+                catch (IOException) { /* best effort */ }
+                catch (UnauthorizedAccessException) { /* best effort */ }
+            }
+        }
+
+        try { Directory.Delete(_root, recursive: true); }
+        catch (IOException) { /* a leftover temp directory must not fail a test */ }
+        catch (UnauthorizedAccessException) { /* ditto */ }
+    }
+
+    /// <summary>
+    /// The issue's headline vector: a folder the user cannot write to. Chosen by a picker that
+    /// happily lets them pick it, because the picker asks the platform for a path, not for
+    /// permission to use it.
+    /// </summary>
+    /// <remarks>
+    /// Skipped where the environment does not actually enforce the mode — Windows, which has no
+    /// <c>UnixFileMode</c>, and any run as root, where 0555 is advisory. Rather than guessing at
+    /// the identity, the helper verifies enforcement by trying a write. The exception type this
+    /// vector produces is pinned unconditionally by
+    /// <see cref="Destination_that_is_a_directory_is_reported_not_thrown"/>, which needs no
+    /// permissions at all, so CI still covers the wording when this one stands down.
+    /// </remarks>
+    [Fact]
+    public void Read_only_destination_folder_is_reported_not_thrown()
+    {
+        var directory = CreateEnforcedReadOnlyDirectory();
+        if (directory == null) { return; }
+
+        var path = Path.Combine(directory, "graph.png");
+
+        // The crash: this is verbatim what both commands used to do, unguarded.
+        Assert.Throws<UnauthorizedAccessException>(() => File.Create(path));
+
+        var failure = GraphImageSaver.SaveTo(path, WriteImage);
+
+        Assert.NotNull(failure);
+        Assert.Contains("access was denied", failure, StringComparison.Ordinal);
+        Assert.Contains("graph.png", failure, StringComparison.Ordinal);
+        AssertNothingLeftBehind();
+    }
+
+    /// <summary>
+    /// A destination path that names an existing directory — the crash vector that needs no
+    /// permission bits, so it reproduces on every platform and as any user, root included.
+    /// </summary>
+    /// <remarks>
+    /// The assertion is the guarantee, not a particular sentence. The old code hit this at
+    /// <see cref="File.Create(string)"/> and got <see cref="UnauthorizedAccessException"/>; the fix
+    /// writes beside the destination and moves into place, so the OS now reports it at the move as
+    /// a plain <see cref="IOException"/> ("Is a directory") and the message is the generic one. The
+    /// user still learns the save failed and what the system said, which is what matters here — the
+    /// denied-access wording itself is pinned directly, and portably, by
+    /// <c>DestinationFailureClassifierTests</c>.
+    /// </remarks>
+    [Fact]
+    public void Destination_that_is_a_directory_is_reported_not_thrown()
+    {
+        var path = Path.Combine(_root, "graph.png");
+        Directory.CreateDirectory(path);
+
+        Assert.Throws<UnauthorizedAccessException>(() => File.Create(path));
+
+        var failure = GraphImageSaver.SaveTo(path, WriteImage);
+
+        Assert.NotNull(failure);
+        Assert.Contains("Could not write", failure, StringComparison.Ordinal);
+        Assert.Contains("graph.png", failure, StringComparison.Ordinal);
+        AssertNothingLeftBehind();
+    }
+
+    /// <summary>
+    /// The issue's "unmounted between picking the path and the write" vector: the folder the user
+    /// chose is not there any more by the time the bytes are written.
+    /// </summary>
+    [Fact]
+    public void Destination_folder_that_disappeared_is_reported_not_thrown()
+    {
+        var path = Path.Combine(_root, "gone", "graph.png");
+
+        Assert.Throws<DirectoryNotFoundException>(() => File.Create(path));
+
+        var failure = GraphImageSaver.SaveTo(path, WriteImage);
+
+        Assert.NotNull(failure);
+        Assert.Contains("no longer exists", failure, StringComparison.Ordinal);
+        AssertNothingLeftBehind();
+    }
+
+    /// <summary>
+    /// A path whose parent is a regular file. Unlike the vectors above this one's exception type is
+    /// not the same everywhere, so the assertion is the guarantee that actually matters — the call
+    /// returns a message rather than throwing — instead of a specific sentence.
+    /// </summary>
+    [Fact]
+    public void Destination_whose_parent_is_a_file_is_reported_not_thrown()
+    {
+        var parent = Path.Combine(_root, "not-a-folder");
+        File.WriteAllText(parent, "this is a file");
+        var path = Path.Combine(parent, "graph.png");
+
+        Assert.ThrowsAny<IOException>(() => File.Create(path));
+
+        var failure = GraphImageSaver.SaveTo(path, WriteImage);
+
+        Assert.NotNull(failure);
+        Assert.Contains("Could not write", failure, StringComparison.Ordinal);
+        AssertNothingLeftBehind();
+    }
+
+    /// <summary>
+    /// The ordinary case, so the fix cannot be "always fail": a writable destination reports no
+    /// failure and receives exactly the rendered bytes.
+    /// </summary>
+    [Fact]
+    public void Writable_destination_receives_the_rendered_image()
+    {
+        var path = Path.Combine(_root, "graph.png");
+
+        var failure = GraphImageSaver.SaveTo(path, WriteImage);
+
+        Assert.Null(failure);
+        Assert.Equal(ImageBytes, File.ReadAllBytes(path));
+        AssertNothingLeftBehind();
+    }
+
+    /// <summary>
+    /// Overwriting an existing graph still works — the picker's own "replace?" prompt is what
+    /// authorises it, and this pins that the guarded path did not turn overwrite into a failure.
+    /// </summary>
+    [Fact]
+    public void Existing_file_is_replaced_by_the_new_image()
+    {
+        var path = Path.Combine(_root, "graph.png");
+        File.WriteAllBytes(path, [0x00, 0x01, 0x02, 0x03, 0x04, 0x05, 0x06, 0x07, 0x08, 0x09]);
+
+        var failure = GraphImageSaver.SaveTo(path, WriteImage);
+
+        Assert.Null(failure);
+        // Equality, not "starts with": File.Create truncates, and a shorter new image must not
+        // leave the tail of the old one behind.
+        Assert.Equal(ImageBytes, File.ReadAllBytes(path));
+    }
+
+    /// <summary>
+    /// A rendering failure is reported too — it was the other half of the unguarded block — and,
+    /// because the plot is rendered into memory before the destination is opened, it leaves the
+    /// destination untouched. The old code opened the file first, so a render that threw left an
+    /// empty file where the user's previous graph had been.
+    /// </summary>
+    [Fact]
+    public void Failed_render_is_reported_and_leaves_the_destination_untouched()
+    {
+        var path = Path.Combine(_root, "graph.png");
+        File.WriteAllBytes(path, ImageBytes);
+
+        var failure = GraphImageSaver.SaveTo(path, _ => throw new InvalidOperationException("render blew up"));
+
+        Assert.NotNull(failure);
+        Assert.Contains("image could not be created", failure, StringComparison.Ordinal);
+        // The previously saved graph is still exactly as it was.
+        Assert.Equal(ImageBytes, File.ReadAllBytes(path));
+    }
+
+    /// <summary>
+    /// A write that starts and then fails part-way — the issue's "fill the disk while the PNG is
+    /// being written" case — must not leave a truncated husk behind. Half a PNG is a file the user
+    /// opens later and finds broken, some time after being told the save failed.
+    /// </summary>
+    [Fact]
+    public void Write_that_fails_part_way_leaves_no_husk()
+    {
+        var path = Path.Combine(_root, "graph.png");
+
+        Assert.Throws<IOException>(() => GraphImageSaver.WriteFile(path, new FailingStream()));
+
+        Assert.False(File.Exists(path), "a partly-written image was left at the destination");
+        AssertNothingLeftBehind();
+    }
+
+    /// <summary>
+    /// The same mid-write failure, but overwriting a graph the user already had. Their existing
+    /// image must survive intact: losing BOTH the new save and the old file is a worse outcome than
+    /// the failure itself, and it is what writing straight to the destination would cause, since
+    /// <see cref="File.Create(string)"/> truncates before the first new byte is written.
+    /// </summary>
+    [Fact]
+    public void Write_that_fails_part_way_leaves_an_existing_image_intact()
+    {
+        var path = Path.Combine(_root, "graph.png");
+        var previous = new byte[] { 0x89, (byte)'P', (byte)'N', (byte)'G', 0xFF, 0xFE, 0xFD, 0xFC, 0xFB, 0xFA };
+        File.WriteAllBytes(path, previous);
+
+        Assert.Throws<IOException>(() => GraphImageSaver.WriteFile(path, new FailingStream()));
+
+        Assert.Equal(previous, File.ReadAllBytes(path));
+        AssertNothingLeftBehind();
+    }
+
+    /// <summary>
+    /// The temporary file the write assembles into is cleaned up on every path, so a run of failed
+    /// saves does not silently fill the user's folder with <c>.tmp</c> files.
+    /// </summary>
+    private void AssertNothingLeftBehind()
+    {
+        var strays = Directory.GetFiles(_root, "*.tmp", SearchOption.AllDirectories);
+        Assert.True(strays.Length == 0, "temporary files left behind: [" + string.Join(", ", strays.Select(Path.GetFileName)) + "]");
+    }
+
+    /// <summary>
+    /// A file name may legally run right up to the file system's per-component limit (255 bytes on
+    /// Linux and macOS). The image is assembled in a temporary file beside the destination, so if
+    /// that temporary name were built by appending to the destination's, a name the user could
+    /// previously save to would become unsaveable — a failure caused purely by the mechanism meant
+    /// to make saving safer.
+    /// </summary>
+    /// <remarks>
+    /// Unix-only. The point is the 255-byte per-component limit; on Windows a name this long also
+    /// pushes the full path past <c>MAX_PATH</c>, which would fail for an unrelated reason and
+    /// prove nothing.
+    /// </remarks>
+    [Fact]
+    public void A_destination_name_at_the_length_limit_still_saves()
+    {
+        if (OperatingSystem.IsWindows()) { return; }
+
+        // 251 + ".png" = 255, the longest legal name. Anything appended to it fails.
+        var path = Path.Combine(_root, new string('g', 251) + ".png");
+
+        var failure = GraphImageSaver.SaveTo(path, WriteImage);
+
+        Assert.Null(failure);
+        Assert.Equal(ImageBytes, File.ReadAllBytes(path));
+        AssertNothingLeftBehind();
+    }
+
+    /// <summary>
+    /// Overwriting must not hand the file broader access than it had. Replacing a directory entry
+    /// installs a newly created file carrying the directory's defaults, so a graph the user had
+    /// deliberately restricted to themselves would come back world-readable after an ordinary
+    /// re-save — a protection lost silently, to a successful operation.
+    /// </summary>
+    /// <remarks>Unix-only: <see cref="UnixFileMode"/> does not exist on Windows, where the
+    /// equivalent guarantee is the ACL carried by <c>File.Replace</c>.</remarks>
+    [Fact]
+    public void Overwriting_keeps_the_destinations_own_permissions()
+    {
+        if (OperatingSystem.IsWindows()) { return; }
+
+        var path = Path.Combine(_root, "graph.png");
+        File.WriteAllBytes(path, [0x00, 0x01]);
+        const UnixFileMode ownerOnly = UnixFileMode.UserRead | UnixFileMode.UserWrite;
+        File.SetUnixFileMode(path, ownerOnly);
+
+        var failure = GraphImageSaver.SaveTo(path, WriteImage);
+
+        Assert.Null(failure);
+        Assert.Equal(ImageBytes, File.ReadAllBytes(path));
+        Assert.Equal(ownerOnly, File.GetUnixFileMode(path));
+        AssertNothingLeftBehind();
+    }
+
+    /// <summary>
+    /// A destination that is a symbolic link names the target, not the link. Replacing the link's
+    /// own directory entry would destroy the link and leave the file the user actually meant to
+    /// overwrite untouched — while reporting success. The <c>File.Create</c> this replaced followed
+    /// the link, so that behaviour has to survive the move to an atomic write.
+    /// </summary>
+    /// <remarks>Unix-only: creating a symbolic link on Windows needs elevation or developer
+    /// mode, so the test would report an environment problem rather than a code one.</remarks>
+    [Fact]
+    public void Saving_onto_a_symbolic_link_writes_through_to_its_target()
+    {
+        if (OperatingSystem.IsWindows()) { return; }
+
+        var target = Path.Combine(_root, "real-graph.png");
+        File.WriteAllBytes(target, [0x00, 0x01]);
+        var link = Path.Combine(_root, "link-to-graph.png");
+        File.CreateSymbolicLink(link, target);
+
+        var failure = GraphImageSaver.SaveTo(link, WriteImage);
+
+        Assert.Null(failure);
+        Assert.Equal(ImageBytes, File.ReadAllBytes(target));
+        // The link must still BE a link, still pointing where it did — not a regular file that has
+        // quietly taken the image and orphaned the target.
+        Assert.Equal(target, File.ResolveLinkTarget(link, returnFinalTarget: true)?.FullName);
+        AssertNothingLeftBehind();
+    }
+
+    /// <summary>
+    /// A writable file inside a folder that takes no new entries. Creating a sibling temporary file
+    /// needs write permission on the DIRECTORY; the <c>File.Create</c> this replaced needed only
+    /// write permission on the FILE. So this save worked before the atomic write and has to keep
+    /// working — otherwise the user is told a folder they cannot change is at fault, about a file
+    /// that is perfectly writable.
+    /// </summary>
+    /// <remarks>
+    /// The save is deliberately NOT atomic in this case: in a directory that accepts no new entries
+    /// there is nothing to be atomic with, and refusing the save outright is the worse of the two
+    /// available answers. Unix-only, and stands down unless the mode is genuinely enforced.
+    /// </remarks>
+    [Fact]
+    public void A_writable_file_in_a_read_only_folder_can_still_be_overwritten()
+    {
+        var directory = Path.Combine(_root, "read-only-parent");
+        Directory.CreateDirectory(directory);
+        var path = Path.Combine(directory, "graph.png");
+        File.WriteAllBytes(path, [0x00, 0x01]);
+        if (!MakeReadOnly(directory)) { return; }
+
+        // The file itself is still writable — only the directory is not.
+        var failure = GraphImageSaver.SaveTo(path, WriteImage);
+
+        Assert.Null(failure);
+        Assert.Equal(ImageBytes, File.ReadAllBytes(path));
+    }
+
+    /// <summary>Fills the stream with <see cref="ImageBytes"/>, standing in for the PNG exporter.</summary>
+    private static void WriteImage(Stream stream) => stream.Write(ImageBytes);
+
+    /// <summary>
+    /// A directory the current user genuinely cannot write to, or null when this environment does
+    /// not enforce that — Windows (no <see cref="UnixFileMode"/>) or a run as root. Enforcement is
+    /// confirmed by attempting a write rather than inferred from the user's identity.
+    /// </summary>
+    private string? CreateEnforcedReadOnlyDirectory()
+    {
+        var directory = Path.Combine(_root, "read-only");
+        Directory.CreateDirectory(directory);
+        return MakeReadOnly(directory) ? directory : null;
+    }
+
+    /// <summary>
+    /// Takes write permission off <paramref name="directory"/>, returning false when this
+    /// environment does not actually enforce that — Windows, which has no
+    /// <see cref="UnixFileMode"/>, and any run as root, where 0555 is advisory. Enforcement is
+    /// confirmed by attempting a write rather than inferred from the user's identity, so a test
+    /// built on it can never pass for the wrong reason.
+    /// </summary>
+    private static bool MakeReadOnly(string directory)
+    {
+        if (!RuntimeInformation.IsOSPlatform(OSPlatform.Linux) && !RuntimeInformation.IsOSPlatform(OSPlatform.OSX))
+        {
+            return false;
+        }
+
+        File.SetUnixFileMode(directory, UnixFileMode.UserRead | UnixFileMode.UserExecute);
+
+        try
+        {
+            File.Create(Path.Combine(directory, "enforcement-probe")).Dispose();
+            return false;
+        }
+        catch (UnauthorizedAccessException)
+        {
+            return true;
+        }
+    }
+
+    /// <summary>
+    /// A readable stream that faults once copying starts, standing in for a destination that runs
+    /// out of room mid-write.
+    /// </summary>
+    private sealed class FailingStream : Stream
+    {
+        public override bool CanRead => true;
+        public override bool CanSeek => false;
+        public override bool CanWrite => false;
+        public override long Length => throw new NotSupportedException();
+        public override long Position
+        {
+            get => 0;
+            set => throw new NotSupportedException();
+        }
+
+        public override int Read(byte[] buffer, int offset, int count) => throw new IOException("There is not enough space on the disk.");
+        public override void Flush() { }
+        public override long Seek(long offset, SeekOrigin origin) => throw new NotSupportedException();
+        public override void SetLength(long value) => throw new NotSupportedException();
+        public override void Write(byte[] buffer, int offset, int count) => throw new NotSupportedException();
+    }
+}
