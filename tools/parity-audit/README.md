@@ -87,6 +87,19 @@ It captures the Avalonia side N times into `<out>/determinism/r1..rN` and requir
 every PNG to be byte-identical to the first run's, failing non-zero if any differs,
 is missing, or if there is nothing to compare at all.
 
+Since #191 this is also a **CI gate**: the `Desktop head on macOS` job runs it on every
+pull request, additionally asserts that the capture produced all 18 screens, and uploads
+`<out>/determinism/` as an artifact when it fails, so the differing PNGs are in hand.
+`--check-baseline` is deliberately *not* gated — it compares against bytes recorded on
+one particular Mac, and #188 is the ticket that measures a second one.
+
+That artifact also carries each pass's `.capture-determinism-N.log`, copied in under
+`capture-logs/` with the leading dot dropped. The job has to copy them because
+`run_capture` writes them at the output *root*, one level above the directory being
+uploaded, and as dotfiles — so nothing under the upload's `path:` matched them. Without
+that copy the one failure with nothing else to go on, a pass that dies before writing a
+single PNG, produced an artifact with no files in it at all.
+
 This is not ceremony. Avalonia's animation clock advances with wall time, so whether
 a fade-in has finished when the shutter opens is a race, and a racing harness
 produces differences indistinguishable from a real regression: on this project two
