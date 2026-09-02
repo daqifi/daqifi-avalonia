@@ -238,6 +238,37 @@ public sealed class DaqifiSettingsTests : IDisposable
     }
 
     /// <summary>
+    /// A directory sitting on the preferred name is a taken name like any other, and has to be
+    /// stepped over rather than treated as an unrecoverable failure.
+    /// </summary>
+    /// <remarks>
+    /// The distinction matters because <c>File.Exists</c> is <c>false</c> for a directory while
+    /// <c>Path.Exists</c> is <c>true</c>, and <c>File.Move</c> onto a directory throws
+    /// <see cref="IOException"/> — so keying the retry on <c>File.Exists</c> sends this to the
+    /// giving-up catch, abandons the quarantine, and leaves the damaged file at its real name.
+    /// <c>RecoverFromUnreadableSettingsFile</c> then returns early, and the
+    /// next launch fails on the same file and raises the same Sentry event — the exact permanent
+    /// condition #193 exists to end. Same claim, same reason, as
+    /// <c>ProfileXmlStoreTests.A_directory_on_the_preferred_name_is_stepped_over_like_any_other_taken_name</c>
+    /// — #198.
+    /// </remarks>
+    [Fact]
+    public void A_directory_on_the_preferred_name_is_stepped_over_like_any_other_taken_name()
+    {
+        var taken = Path.Combine(_directory, "DAQifiConfiguration.xml.corrupt-20260902-120000000");
+        Directory.CreateDirectory(taken);
+        File.WriteAllText(Path.Combine(taken, "inside.txt"), "not ours to touch");
+        File.WriteAllText(SettingsPath, TruncatedSettingsXml);
+
+        var moved = DaqifiSettings.MoveFileAside(SettingsPath, taken);
+
+        Assert.Equal(taken + "-1", moved);
+        Assert.Equal(TruncatedSettingsXml, File.ReadAllText(moved!));
+        Assert.False(File.Exists(SettingsPath));
+        Assert.Equal("not ours to touch", File.ReadAllText(Path.Combine(taken, "inside.txt")));
+    }
+
+    /// <summary>
     /// A file that is not there cannot be moved, and the caller has to be told so rather than
     /// handed a path nothing was written to.
     /// </summary>
