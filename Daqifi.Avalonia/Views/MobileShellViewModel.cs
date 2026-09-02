@@ -375,18 +375,12 @@ public partial class MobileShellViewModel : ObservableObject, IDisposable
         AppLogger.Instance.AddBreadcrumb(
             "ui", $"Tapped Start streaming — {analog.Count} channel(s) at {SampleRate} Hz");
 
-        // Power the acquisition subsystem before streaming — the documented
-        // DAQiFi handshake (POWer:STATe 1 + channel enable + STR:START).
-        // Our Core connect uses InitializeDevice=false, which can skip the
-        // TurnDeviceOn step, so a device that associated on WiFi but never
-        // powered its ADC front-end streams NO data (matching the bench
-        // "streaming yields no data" symptom). Idempotent to re-send.
-        // NOTE: Write() sends RAW bytes with no terminator (unlike the producer
-        // path, which appends "\r\n"). The firmware SCPI parser is line-based, so
-        // an unterminated command merges with the next write and BOTH are dropped
-        // — include the terminator explicitly. On WiFi this Write is a caught
-        // no-op; on USB it actually transmits (adversarial audit).
-        try { device.Write("SYSTem:POWer:STATe 1\r\n"); }
+        // Power the acquisition subsystem before streaming — the documented DAQiFi handshake
+        // (power on + channel enable + start). Our Core connect uses InitializeDevice=false,
+        // which can skip the power-on step, so a device that associated but never powered its
+        // ADC front-end streams NO data (matching the bench "streaming yields no data"
+        // symptom). Idempotent to re-send.
+        try { device.TurnDeviceOn(); }
         catch { /* best-effort; InitializeStreaming still gates on IsStreaming */ }
 
         Series.Clear();

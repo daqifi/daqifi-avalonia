@@ -364,9 +364,6 @@ public abstract partial class AbstractStreamingDevice : ObservableObject, IStrea
     #endregion
 
     #region Abstract Methods
-    // @port: Daqifi.Desktop.Device.AbstractStreamingDevice.Write
-    public abstract bool Write(string command);
-
     /// <summary>
     /// Sends a message to the device. Must be implemented in derived classes.
     /// Core-based devices use DaqifiDevice.Send() for sending messages.
@@ -2283,6 +2280,26 @@ public abstract partial class AbstractStreamingDevice : ObservableObject, IStrea
     {
         SendMessage(ScpiMessageProducer.RebootDevice);
         Disconnect();
+    }
+
+    /// <summary>
+    /// Powers the device's acquisition subsystem on. Idempotent: the device accepts it in any
+    /// state, and Core sends the same command during a connect that initializes the device.
+    /// </summary>
+    /// <remarks>
+    /// Callers need this when the device was connected with Core's <c>InitializeDevice=false</c>,
+    /// which skips the power-on step — a board that associated but never powered its analog
+    /// front-end reports itself streaming and delivers no samples.
+    /// <para>
+    /// Goes through <see cref="SendMessage"/> like every other command this class sends, so the
+    /// command text and its line terminator stay inside the device layer with the rest of the
+    /// SCPI. A caller that only knows it wants the device powered on does not have to know
+    /// either.
+    /// </para>
+    /// </remarks>
+    public void TurnDeviceOn()
+    {
+        SendMessage(ScpiMessageProducer.TurnDeviceOn);
     }
 
     // SD and LAN share one SPI bus and can't both be enabled (hardware limitation).

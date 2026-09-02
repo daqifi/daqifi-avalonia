@@ -36,6 +36,7 @@ public class SerialStreamingDevice : AbstractStreamingDevice, ILanChipInfoProvid
             {
                 _port = value;
                 OnPropertyChanged();
+                OnPropertyChanged(nameof(PortName));
                 OnPropertyChanged(nameof(DisplayIdentifier));
             }
         }
@@ -254,37 +255,6 @@ public class SerialStreamingDevice : AbstractStreamingDevice, ILanChipInfoProvid
             return;
         }
         CoreDevice.Send(message);
-    }
-
-    // @port: Daqifi.Desktop.Device.SerialDevice.SerialStreamingDevice.Write
-    public override bool Write(string command)
-    {
-        try
-        {
-            // Use transport's stream for raw writes when available
-            if (_transport?.IsConnected == true)
-            {
-                var bytes = System.Text.Encoding.ASCII.GetBytes(command);
-                _transport.Stream.Write(bytes, 0, bytes.Length);
-                return true;
-            }
-
-            // Fallback to Port for legacy/discovery scenarios
-            if (Port?.IsOpen == true)
-            {
-                Port.WriteTimeout = 1000;
-                Port.Write(command);
-                return true;
-            }
-
-            AppLogger.Warning($"Cannot write to {PortName}: no connection available");
-            return false;
-        }
-        catch (Exception ex)
-        {
-            AppLogger.Error(ex, "Failed to write in SerialStreamingDevice");
-            return false;
-        }
     }
 
     // @port: Daqifi.Desktop.Device.SerialDevice.SerialStreamingDevice.CleanupConnection

@@ -324,7 +324,7 @@
                                                 <TextBlock Text="{Binding Name}"
                                                            FontFamily="Consolas" FontSize="15" FontWeight="Medium"
                                                            Foreground="{StaticResource TextPrimary}"/>
-                                                <TextBlock Text="{Binding Port.PortName}"
+                                                <TextBlock Text="{Binding PortName}"
                                                            FontSize="10" Foreground="{StaticResource TextSecondary}"
                                                            Margin="0,3,0,0"/>
                                                 <TextBlock Text="{Binding DeviceSerialNo}"

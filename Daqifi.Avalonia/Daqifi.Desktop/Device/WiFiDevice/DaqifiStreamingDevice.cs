@@ -180,17 +180,6 @@ public class DaqifiStreamingDevice : AbstractStreamingDevice
     }
 
     /// <summary>
-    /// Not supported for WiFi devices. Commands are sent internally via the Core device.
-    /// </summary>
-    /// <exception cref="NotSupportedException">Always thrown.</exception>
-    // @port: Daqifi.Desktop.Device.WiFiDevice.DaqifiStreamingDevice.Write
-    public override bool Write(string command)
-    {
-        throw new NotSupportedException(
-            "Raw text writes are not supported on WiFi devices.");
-    }
-
-    /// <summary>
     /// Sends messages directly through Core's DaqifiDevice instead of using adapters.
     /// </summary>
     // @port: Daqifi.Desktop.Device.WiFiDevice.DaqifiStreamingDevice.SendMessage
