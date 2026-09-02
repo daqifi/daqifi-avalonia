@@ -65,20 +65,24 @@ public class DeleteAllSessionsRecoveryTests : IDisposable
     }
 
     /// <summary>
-    /// The revert itself, at the only level that can hold it. <c>DaqifiViewModel.IsLogging</c>
-    /// answers a failed start by writing <c>Active = false</c> straight back — which re-enters
+    /// The revert, at the only level that can hold it. <c>DaqifiViewModel.IsLogging</c> answers a
+    /// failed start by writing <c>Active = false</c> straight back — which re-enters
     /// <c>OnActiveChanged</c>, this time down the STOP path, against the very database that just
     /// refused to open. If that path went looking for the session that was never created, the crash
     /// would simply have moved one line down and the revert would be the thing that killed the app.
-    /// It must not: no session exists, so there is nothing to finalize and nothing to delete.
     ///
-    /// <para>The view model's own half of this is not reachable from a test host — see the class
-    /// remarks on <see cref="LoggingManager"/> usage in the PR — so what is pinned here is the
-    /// contract it depends on: the exact pair of writes it makes, in order, on a database that
-    /// cannot serve either of them.</para>
+    /// <para>This is the FIRST-START case: nothing has ever run, so there is no session at all. It
+    /// is the weaker of the two — <c>Session</c> is null, so the stop path's
+    /// <c>_hasActiveApplicationSession &amp;&amp; Session != null</c> guard would hold on the second
+    /// operand alone. <see cref="AFailedStart_AfterAnEarlierRun_NeverTouchesTheStaleSession"/> is
+    /// the one that pins the operand that actually does the work.</para>
+    ///
+    /// <para>The view model's own half of this is not reachable from a test host — see the PR body
+    /// for the measured reason — so what is pinned here is the contract it depends on: the exact
+    /// pair of writes it makes, in order, on a database that cannot serve either of them.</para>
     /// </summary>
     [Fact]
-    public void AFailedStart_FollowedByTheTogglesRevert_DoesNotThrowAndFinalizesNothing()
+    public void AFailedFirstStart_FollowedByTheTogglesRevert_DoesNotThrow()
     {
         File.WriteAllBytes(DatabasePath, []);
 
@@ -98,6 +102,63 @@ public class DeleteAllSessionsRecoveryTests : IDisposable
 
         // Still readable after the revert, because the caller reports it AFTER writing Active back.
         Assert.NotNull(manager.SessionStartFailure);
+    }
+
+    /// <summary>
+    /// The revert after a run that DID happen, which is the case that actually exercises the guard.
+    ///
+    /// <para>A failed start deliberately leaves <c>Session</c> alone rather than nulling it — it is
+    /// a non-nullable bound property — so a manager that has logged before is holding a STALE
+    /// session when the next start fails. At that moment the only thing standing between the stop
+    /// path and finalizing (or deleting) a session this run never created is
+    /// <c>_hasActiveApplicationSession</c> being false: the <c>Session != null</c> half of the guard
+    /// is now true and carries nothing. A regression that set that flag optimistically would send
+    /// <c>DeleteLoggingSessionIfPresent</c> at the stale ID, against a database that has just been
+    /// shown to be unreadable.</para>
+    ///
+    /// <para>Asserted by counting contexts rather than by expecting a throw, because both halves of
+    /// the stop path swallow their own exceptions — so a revert that DID reach the database would
+    /// look identical from the outside, and only the fact that it opened one gives it away.</para>
+    /// </summary>
+    [Fact]
+    public void AFailedStart_AfterAnEarlierRun_NeverTouchesTheStaleSession()
+    {
+        var factory = new FailableContextFactory(DatabasePath);
+        SeedDatabaseWithOneSession(factory, DatabasePath);
+
+        var manager = new LoggingManager(factory) { CurrentMode = LoggingMode.Stream };
+
+        // A run that started and stopped normally, so the manager is left holding a real session.
+        manager.Active = true;
+        Assert.Null(manager.SessionStartFailure);
+        manager.Active = false;
+
+        var staleSession = manager.Session;
+        Assert.NotNull(staleSession);
+
+        // What a half-finished "Delete All" leaves at the same path: a valid, table-less database.
+        SqliteConnection.ClearAllPools();
+        File.Delete(DatabasePath);
+        File.WriteAllBytes(DatabasePath, []);
+
+        manager.Active = true;
+        Assert.NotNull(manager.SessionStartFailure);
+
+        // The stale session survived the failed start, which is precisely what makes the revert
+        // below the interesting one.
+        Assert.Same(staleSession, manager.Session);
+
+        var contextsBeforeRevert = factory.CreateCount;
+        manager.Active = false;
+
+        Assert.False(manager.Active);
+
+        // The revert opened nothing: no sample-count finalization, no session delete.
+        Assert.Equal(contextsBeforeRevert, factory.CreateCount);
+
+        // And it neither published the stale session to the pane nor disturbed it.
+        Assert.Empty(manager.LoggingSessions);
+        Assert.Same(staleSession, manager.Session);
     }
 
     /// <summary>
@@ -364,8 +425,18 @@ public class DeleteAllSessionsRecoveryTests : IDisposable
         /// </summary>
         internal Action? BeforeNextCreate { get; set; }
 
+        /// <summary>
+        /// How many contexts have been handed out. Both halves of the stop path
+        /// (<c>PersistSessionSampleCount</c> and <c>DeleteLoggingSessionIfPresent</c>) open one
+        /// through this factory and swallow their own exceptions, so counting is the only way to
+        /// tell "the revert did not touch the database" from "it did and the failure was logged".
+        /// </summary>
+        internal int CreateCount { get; private set; }
+
         public LoggingContext CreateDbContext()
         {
+            CreateCount++;
+
             if (BeforeNextCreate is { } hook)
             {
                 // Cleared first so a hook that throws cannot fire again on a retry.
