@@ -166,30 +166,6 @@ public class UsbStreamingDevice : AbstractStreamingDevice
     }
 
     /// <summary>
-    /// Writes a raw ASCII command directly to the transport stream.
-    /// </summary>
-    public override bool Write(string command)
-    {
-        try
-        {
-            if (_transport.IsConnected)
-            {
-                var bytes = System.Text.Encoding.ASCII.GetBytes(command);
-                _transport.Stream.Write(bytes, 0, bytes.Length);
-                return true;
-            }
-
-            AppLogger.Warning($"Cannot write to {Name}: transport not connected");
-            return false;
-        }
-        catch (Exception ex)
-        {
-            AppLogger.Error(ex, "Failed to write in UsbStreamingDevice");
-            return false;
-        }
-    }
-
-    /// <summary>
     /// Tears down the Core device (base) then DISCONNECTS the transport.
     /// </summary>
     /// <remarks>

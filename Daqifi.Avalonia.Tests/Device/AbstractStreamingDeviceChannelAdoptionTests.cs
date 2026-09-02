@@ -208,16 +208,14 @@ public class AbstractStreamingDeviceChannelAdoptionTests
     }
 
     /// <summary>
-    /// Minimal concrete <see cref="AbstractStreamingDevice"/>. The base class needs three members
-    /// implemented and none of them is exercised here — nothing in this file writes to the device
+    /// Minimal concrete <see cref="AbstractStreamingDevice"/>. The base class needs two members
+    /// implemented and neither is exercised here — nothing in this file sends to the device
     /// through the wrapper; the only traffic is what Core's own channel commands put on the
     /// transport.
     /// </summary>
     private sealed class TestDevice : AbstractStreamingDevice
     {
         public override ConnectionType ConnectionType => ConnectionType.Usb;
-
-        public override bool Write(string command) => throw new NotSupportedException();
 
         protected override void SendMessage(IOutboundMessage<string> message) =>
             throw new NotSupportedException();

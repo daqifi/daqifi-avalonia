@@ -15,8 +15,8 @@ namespace Daqifi.Avalonia.Tests.Device;
 /// </summary>
 /// <remarks>
 /// <para>
-/// The base class needs three members implemented and none of them is exercised here: no test
-/// using this double connects, writes, or sends anything. There is no Core device behind it,
+/// The base class needs two members implemented and neither is exercised here: no test
+/// using this double connects or sends anything. There is no Core device behind it,
 /// which is exactly the state a wrapper is in for the properties these tests read
 /// (<c>IsConnected</c> is false, <c>IsStreaming</c> is false), and it keeps the tests off any
 /// transport.
@@ -40,8 +40,6 @@ internal sealed class DroppableTestDevice : AbstractStreamingDevice
     private readonly ConnectionType _connectionType;
 
     public override ConnectionType ConnectionType => _connectionType;
-
-    public override bool Write(string command) => throw new NotSupportedException();
 
     protected override void SendMessage(IOutboundMessage<string> message) =>
         throw new NotSupportedException();
