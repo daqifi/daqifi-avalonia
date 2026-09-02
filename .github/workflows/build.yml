@@ -544,10 +544,6 @@ jobs:
           # DAQIFI_DATA_DIR and ~3.5 MB of PNGs, and none of that should be anywhere a
           # later `git diff` check can see it. Must stay in step with the upload path.
           PARITY_OUT: ${{ runner.temp }}/parity-audit
-          # TEMPORARY, reverted in the next commit: a bigger sample on the runner to
-          # test the settle fix. Five green runs would be ~33% likely by luck against
-          # a 1-in-5 flake; fifteen is ~3.5%.
-          DETERMINISM_RUNS: 15
         run: |
           set -euo pipefail
           bash tools/parity-audit/run.sh --determinism "${PARITY_OUT}"
