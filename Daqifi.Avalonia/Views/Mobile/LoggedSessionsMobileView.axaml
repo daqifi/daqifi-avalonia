@@ -80,11 +80,11 @@
                         <!-- Says the session's data is a fragment left by an SD import that did
                              not finish. Without it the row looks exactly like a finished one. -->
                         <Border Classes="chip"
+                                BorderThickness="1"
                                 BorderBrush="{DynamicResource StatusAmber}"
                                 ToolTip.Tip="{Binding IncompleteImportTooltip}"
                                 IsVisible="{Binding IsIncompleteImport}">
-                          <TextBlock Text="INCOMPLETE IMPORT"
-                                     Foreground="{DynamicResource StatusAmber}" />
+                          <TextBlock Text="INCOMPLETE IMPORT" Classes="chipWarn" />
                         </Border>
                       </WrapPanel>
                     </StackPanel>
