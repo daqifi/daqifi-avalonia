@@ -156,11 +156,13 @@ jobs:
       # not be RUN here; it is RID-less since #89, so this now builds it for the
       # runner's own platform and it WOULD run.
       #
-      # Deliberately still only COMPILED, not run. Running it would be a stronger gate
-      # — it boots the real app and renders 18 screens, which a compile cannot check —
-      # but the harness has never been executed on a Linux runner (headless Skia, font
-      # availability), and adding a CI step nobody has watched succeed is how a gate
-      # arrives broken. That is its own change, with its own evidence.
+      # Deliberately still only COMPILED, not run — HERE. Running it would be a
+      # stronger gate — it boots the real app and renders 18 screens, which a compile
+      # cannot check — and since #191 the macos job does exactly that. This one still
+      # does not, because the harness has never been executed on a LINUX runner
+      # (headless Skia, font availability), and adding a CI step nobody has watched
+      # succeed is how a gate arrives broken. That is its own change, with its own
+      # evidence.
       - name: Build
         run: |
           dotnet build Daqifi.Avalonia/Daqifi.Avalonia.csproj \
@@ -281,13 +283,22 @@ jobs:
     #   * It builds the Desktop head for an osx-* RID, which nothing did before. A
     #     RID is not a no-op here — it selects a runtime pack, an apphost, and each
     #     package's runtimes/osx-arm64/ assets.
-    #   * It asserts those macOS native assets actually landed (see the last step).
-    #     That is the part a green compile genuinely does not prove.
+    #   * It asserts those macOS native assets actually landed (see the arm64-natives
+    #     step). That is the part a green compile genuinely does not prove.
+    #   * It RUNS the visual capture harness, five times, and requires all 18 screens
+    #     to be byte-identical across the five (#191, the determinism step at the end
+    #     of this job). That is the first thing in this workflow that executes any of
+    #     this repo's UI code rather than compiling it.
     #
-    # It does NOT catch the separator bug above, or anything else that is wrong only
-    # at runtime; nothing that merely compiles can. What it buys is that the macOS
-    # target stops being a claim nobody re-checks, and it gives the runtime checks a
-    # place to land when there is something to run.
+    # A green compile does NOT catch the separator bug above, or anything else that is
+    # wrong only at runtime. What this job buys is that the macOS target stops being a
+    # claim nobody re-checks — and, since #191, that it is also where the runtime
+    # checks land, which is what the previous version of this comment said it was
+    # waiting for.
+    #
+    # The job NAME is load-bearing: `Desktop head on macOS` is listed as a required
+    # check (.github/merge-queue/README.md), so renaming it to describe the new step
+    # would silently stop that check gating anything.
     #
     # Deliberately NOT covered, so the green tick does not imply more than it means:
     #   * osx-x64. The head declares it; nobody builds or ships it. macos-latest is
@@ -303,16 +314,18 @@ jobs:
     #     a matter of taste: the first test whose VERDICT can differ by host — a path
     #     separator, a native asset, a culture or filesystem-case assumption — is the
     #     one that belongs here, and #88's separator bug is exactly that shape.
-    #   * tools/parity-audit/AvaloniaCapture. It is no longer a Windows tool — #89
-    #     dropped the win-x64 pin so it captures on macOS, and this runner is
-    #     therefore the natural home of a macOS visual gate. Left out anyway, for
-    #     now, and the reason is evidence rather than cost: the harness has been run
-    #     on exactly one Mac (verified deterministic there, 18/18 screens
-    #     byte-identical across two runs), and whether a GitHub macOS runner
-    #     reproduces those same bytes is untested. A baseline check added on that
-    #     assumption would fail on its first run and read as a UI regression, which
-    #     is precisely the false positive #89 exists to stop. Compiling it here would
-    #     be strictly redundant with the `desktop` job.
+    #   * `tools/parity-audit/run.sh --check-baseline`. HALF of the visual gate now
+    #     runs here — see the determinism step at the end of this job (#191) — and
+    #     this is the half that still does not, for the reason #89 and #179 both gave:
+    #     the committed baselines/macos-arm64.sha256 has been reproduced on exactly
+    #     one Mac, and whether a GitHub macOS runner produces those same bytes is
+    #     untested. A baseline check added on that assumption would fail on its first
+    #     run and read as a UI regression, which is precisely the false positive #89
+    #     exists to stop. #188 is the ticket that measures a second Apple-silicon
+    #     machine; gating the baseline is a third one, and if the bytes disagree it is
+    #     the manifest's OS+arch NAME that needs fixing rather than the gate.
+    #     `--determinism` carries none of that risk: it compares this runner against
+    #     ITSELF, so nothing in its verdict depends on another machine's bytes.
     #   * A dependency-graph upload for `avalonia-graph`. That gate reads the
     #     `libraries` section, which comes from a RID-LESS restore and so is
     #     byte-identical to the one `desktop` already uploads. Uploading it would add
@@ -338,10 +351,20 @@ jobs:
       # instead, against the per-RID assets a RID-less restore has already produced
       # for every declared RuntimeIdentifier.
       #
-      # The head alone is enough to restore — Daqifi.Avalonia and the vendored
+      # The head alone is enough to restore the app — Daqifi.Avalonia and the vendored
       # OxyPlot.Avalonia arrive as project references.
+      #
+      # The capture harness is restored EXPLICITLY rather than implicitly by the
+      # `dotnet run` inside run.sh, for two reasons. An NU1004 lock-file failure gets
+      # attributed to a restore step instead of surfacing as "the visual gate broke";
+      # and the guard below then covers this lock file on a macOS derivation host,
+      # which nothing did before — #106 was a lock-file key that macOS and Linux
+      # derived with different casing, and AvaloniaCapture's lock file is otherwise
+      # only ever derived on ubuntu.
       - name: Restore
-        run: dotnet restore Daqifi.Avalonia.Desktop/Daqifi.Avalonia.Desktop.csproj
+        run: |
+          dotnet restore Daqifi.Avalonia.Desktop/Daqifi.Avalonia.Desktop.csproj
+          dotnet restore tools/parity-audit/AvaloniaCapture/AvaloniaCapture.csproj
 
       # Same guard as every other job.
       - name: Lock files must be unchanged by restore
@@ -484,6 +507,104 @@ jobs:
             exit 1
           fi
           echo "arm64 apphost and all five macOS natives present, each with an arm64 slice"
+
+      # ---- The visual gate's determinism half (#191) ----
+      #
+      # The first step in this workflow that RUNS this repo's UI code instead of
+      # compiling it. It boots the real Daqifi.Avalonia app headless five times over
+      # and requires every PNG to be byte-identical to the first run's.
+      #
+      # What it catches, and nothing else did: a harness that races its own animations
+      # produces differences indistinguishable from a real regression, and this
+      # project has been burned by that twice — a 65.6% "visual regression" that was
+      # an unfinished fade-in, and the two live settle-loop races #179 found by
+      # running exactly this mode on macOS (a pane saved mid-fade, ~1 run in 8; the
+      # shared SplitView reopened mid-close, a 6-pixel edge flip, 50/50). Both are
+      # fixed, and until now nothing stopped the next one landing.
+      #
+      # Five runs is the harness default and the sample size is arithmetic rather than
+      # taste: two runs miss a 50/50 per-run flip half the time, five miss it ~6% of
+      # the time. DETERMINISM_RUNS raises it when someone is chasing a flake.
+      #
+      # This asserts NOTHING about cross-machine reproducibility — it compares this
+      # runner against itself — which is exactly why it can be here while
+      # --check-baseline cannot. See the job header, and #188.
+      #
+      # `bash tools/parity-audit/run.sh`, not `./run.sh`: the script is committed mode
+      # 644, so invoking it through its exec bit would fail on a fresh checkout. It
+      # needs bash specifically (arrays, `shopt`), not sh.
+      #
+      # No RID anywhere in here, and none needed: run.sh restores implicitly through
+      # `dotnet run`, a RID-less restore cannot prune a lock file the way #85's `-r`
+      # one did, and the harness was restored explicitly above anyway.
+      - name: Visual capture harness must be deterministic
+        id: determinism
+        env:
+          # Under RUNNER_TEMP rather than the workspace: each pass writes a throwaway
+          # DAQIFI_DATA_DIR and ~3.5 MB of PNGs, and none of that should be anywhere a
+          # later `git diff` check can see it. Must stay in step with the upload path.
+          PARITY_OUT: ${{ runner.temp }}/parity-audit
+        run: |
+          set -euo pipefail
+          bash tools/parity-audit/run.sh --determinism "${PARITY_OUT}"
+
+          # ASSERT THE SIZE OF THE CAPTURE SET, which the byte comparison above cannot:
+          # it compares whatever BOTH runs contain, so a consistently absent screen
+          # reads as a clean "17/17 byte-identical" rather than as an incomplete
+          # capture. #179 put a guard for that inside the harness (ExpectedScreens) and
+          # this is deliberately a SECOND, independent statement of the same contract,
+          # because the harness's list is a variable that a change can edit downwards:
+          # if the only record of the expected count sits beside the code that
+          # produces it, a gate that shrinks stays green. A gate that quietly shrinks
+          # its own scope is worse than no gate, because it is believed.
+          #
+          # Counting r1 alone is sufficient. run.sh compares every later run against r1
+          # in BOTH directions, so a run whose set of names differs has already failed.
+          #
+          # Adding a screen therefore means editing two places on purpose: the
+          # harness's ExpectedScreens, and this number.
+          expected=18
+          actual=$(find "${PARITY_OUT}/determinism/r1" -maxdepth 1 -type f -name '*.png' \
+                     | wc -l | tr -d '[:space:]')
+          if [ "${actual}" != "${expected}" ]; then
+            echo "::error::the capture produced ${actual} screens, not ${expected}." \
+                 "Every run agreed with every other, so this is NOT a determinism" \
+                 "failure — it is an incomplete capture that passed the comparison by" \
+                 "being incomplete in the same way twice. Either a capture site" \
+                 "stopped firing, or the screen set changed on purpose and both this" \
+                 "number and AvaloniaCapture's ExpectedScreens need updating in the" \
+                 "same commit."
+            ls -la "${PARITY_OUT}/determinism/r1"
+            exit 1
+          fi
+          echo "${actual} screens, byte-identical across every run"
+
+      # The PNGs, on failure only. A determinism failure names the screens that
+      # differed and is close to unactionable without the two encodings in hand — and
+      # #179 already had to fix a cleanup that destroyed the very evidence its own
+      # failure message told you to go and fetch. Not a thing to leave for later.
+      #
+      # Conditioned on THIS step rather than a bare `failure()`. `failure()` is
+      # required — an `if:` with no status function has an implicit `success()` and
+      # would never run here — but on its own it would also fire after an earlier
+      # failure (restore, the arm64 check), uploading nothing and adding a second,
+      # misleading red step to a job that already said what was wrong.
+      #
+      # if-no-files-found: warn, for that same reason. The only way this fires against
+      # an empty tree is a harness that captured nothing at all, which run.sh already
+      # fails with its own message ("run 1 produced no PNGs at all, so there is
+      # nothing to compare"); a second failure here would restate a diagnosis that is
+      # already on screen.
+      #
+      # Hidden files are excluded by upload-artifact's own default, which is what
+      # keeps each run's throwaway .appdata (SQLite DB + logs) out of the artifact.
+      - name: Upload the determinism captures
+        if: ${{ failure() && steps.determinism.outcome == 'failure' }}
+        uses: actions/upload-artifact@v4
+        with:
+          name: parity-determinism-macos
+          path: ${{ runner.temp }}/parity-audit/determinism
+          if-no-files-found: warn
 
   android:
     name: Android head
