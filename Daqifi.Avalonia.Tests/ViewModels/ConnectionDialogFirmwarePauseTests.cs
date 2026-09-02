@@ -364,13 +364,11 @@ public class ConnectionDialogFirmwarePauseTests : IDisposable
     #region Fakes
     /// <summary>
     /// The cheapest real <see cref="IStreamingDevice"/>: <c>DeviceBeingUpdated</c> only needs an
-    /// instance, and nothing in these tests connects, writes or sends.
+    /// instance, and nothing in these tests connects or sends.
     /// </summary>
     private sealed class TestDevice : AbstractStreamingDevice
     {
         public override ConnectionType ConnectionType => ConnectionType.Usb;
-
-        public override bool Write(string command) => throw new NotSupportedException();
 
         protected override void SendMessage(IOutboundMessage<string> message) =>
             throw new NotSupportedException();
