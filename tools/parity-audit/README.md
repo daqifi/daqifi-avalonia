@@ -27,27 +27,105 @@ per-user data dir is used.
 
 ## Requirements
 
-- **Windows .NET 10 SDK** at `C:\Program Files\dotnet\dotnet.exe`. The harnesses
-  are driven with the *Windows* dotnet (from WSL): win-x64 Skia native + fonts are
-  reliable there, and WPF requires Windows.
+The two legs do **not** have the same requirements, and that is the whole shape of
+this tool: `WpfCapture` boots the original WPF app and therefore needs Windows at
+all, while `AvaloniaCapture` is RID-less and runs on whatever host you are sitting
+at. So there are two supported host shapes.
+
+**WSL — both legs, i.e. an actual parity comparison:**
+
+- **Windows .NET 10 SDK** at `C:\Program Files\dotnet\dotnet.exe`. Both harnesses
+  are driven with the *Windows* dotnet from WSL, because WPF requires Windows.
 - The sibling repo **`daqifi-desktop`** checked out next to this one
   (`GitHub/daqifi-desktop`), for the WPF leg. If it lives elsewhere, edit the
   `ProjectReference` in `WpfCapture/WpfCapture.csproj`.
 - **python3 + Pillow** in WSL for the montages (`pip install pillow`).
 
+**macOS / Linux — the Avalonia leg only:**
+
+- A .NET 10 SDK that satisfies the repo's `global.json` (pinned, `rollForward:
+  disable`). `run.sh` uses `dotnet` from `PATH`; if that one cannot satisfy the
+  pin, point it at one that can: `DOTNET=~/.dotnet/dotnet ./run.sh`.
+- Nothing else. No Pillow, no sibling repo — the WPF leg and the montages are
+  skipped, loudly, and the script says so rather than printing "Done" over a
+  half-run comparison.
+
+This is what closed #89: the harness used to pin `RuntimeIdentifier=win-x64`, so
+the visual gate had **no macOS coverage at all**. It now has a macOS capture leg.
+It still has no macOS-vs-WPF comparison, because there is no WPF anywhere but
+Windows — see [Limitations](#limitations).
+
 ## Run
 
 ```bash
-# from WSL, in this directory
+# from WSL, in this directory — both legs + montages
 ./run.sh                # writes to ./out (gitignored)
 ./run.sh /some/out/dir  # or a custom out dir
+
+# from macOS/Linux — Avalonia leg only, into <out>/avalonia
+DOTNET=~/.dotnet/dotnet ./run.sh /some/out/dir
+
+# prove the capture is deterministic on this host BEFORE trusting any comparison
+./run.sh --determinism /some/out/dir                       # 5 runs
+DETERMINISM_RUNS=10 ./run.sh --determinism /some/out/dir    # more, if you are chasing a flake
+
+# then: capture once and diff every screen against the committed baseline
+./run.sh --check-baseline /some/out/dir
 ```
+
+Every mode fails non-zero on anything it cannot vouch for, including an **incomplete**
+capture. `AvaloniaCapture` declares the screens it is contracted to produce
+(`ExpectedScreens`) and fails the run if any is absent or if it wrote one that is not on
+the list — because several capture sites can decline to fire and only print `[SKIP]`, and
+a screen dropped that way vanishes from every downstream comparison too. A determinism
+run would then report a clean `17/17` and a baseline check would never look for the
+missing name. A gate that quietly shrinks its own scope is worse than no gate.
+
+### Always run `--determinism` on a host you have not captured from before
+
+It captures the Avalonia side N times into `<out>/determinism/r1..rN` and requires
+every PNG to be byte-identical to the first run's, failing non-zero if any differs,
+is missing, or if there is nothing to compare at all.
+
+This is not ceremony. Avalonia's animation clock advances with wall time, so whether
+a fade-in has finished when the shutter opens is a race, and a racing harness
+produces differences indistinguishable from a real regression: on this project two
+runs of the *same binary at the same commit* once differed on **65.6%** of pixels,
+which read as a catastrophic visual break and was a half-finished fade.
+`AvaloniaCapture` refuses to save a frame it cannot prove is still (`SettledFrame`),
+and the per-screen `settled in N round(s)` line reports how long that took.
+
+**The first macOS run of this mode found two ways that settle loop could still lose
+the race**, both fixed in the same change that unpinned the RID:
+
+- Consecutive frames were compared with no time between them, so a transition sitting
+  at 20% opacity produced two identical samples and the loop stopped there. One run in
+  eight saved `mobile-portrait-3-storage` with **81% of its pixels** wrong — the whole
+  pane at the wrong opacity, reported as `settled`. Fixed by spacing the samples
+  (`SettleSampleInterval`).
+- The three right-hand drawers are one `SplitView`, and the sweep opened the next one
+  while the previous close was still animating. That left a one-pixel-wide flip on the
+  pane edge, 50/50 per run.
+
+Both are in `Program.cs` with the measurements attached. The lesson generalises: a
+settle loop is only as good as the evidence that it settled, and "two samples agreed"
+is not evidence unless something could have changed between them.
+
+**Why five runs and not two.** Both defects above were roughly coin-flips per run, and
+two runs miss a 50/50 flip half the time; five gets that to ~6%, ten to ~0.2%, at about
+15 s a run. portomatic's own `--determinism` captures twice — this is the same check at
+the sample size the failures here actually call for.
+
+The equivalent engine-side gate is `portomatic differential visual <a> <b>
+--determinism` (portomatic #388), which also does the screen-by-screen comparison
+against a candidate set. `--determinism` here is the dependency-free version of the
+same check, for confirming a host before you feed captures to anything.
 
 ### Output paths under WSL (read this before hunting for missing PNGs)
 
-Both harnesses pin `RuntimeIdentifier=win-x64`, so launching them from WSL runs
-them on the **Windows** .NET runtime through interop. `Path.GetFullPath` then
-resolves a Linux-style argument against a Windows root:
+Under WSL the harnesses are launched with the **Windows** dotnet, so they execute on
+the Windows .NET runtime through interop and `Path.GetFullPath` resolves a
+Linux-style argument against a Windows root:
 
 | you pass | files actually land in | Linux sees them at |
 |---|---|---|
@@ -67,11 +145,49 @@ logs) is there even when a plain `ls` of the output dir suggests otherwise.
 `run.sh` runs all three steps. To run a single harness directly:
 
 ```bash
+# WSL
 DOTNET="/mnt/c/Program Files/dotnet/dotnet.exe"
 "$DOTNET" run --project AvaloniaCapture/AvaloniaCapture.csproj -c Release -- "C:\\path\\to\\out\\avalonia"
 "$DOTNET" run --project WpfCapture/WpfCapture.csproj      -c Release -- "C:\\path\\to\\out\\wpf"
 python3 montage.py /mnt/c/path/to/out
+
+# macOS / Linux
+~/.dotnet/dotnet run --project AvaloniaCapture/AvaloniaCapture.csproj -c Release -- /path/to/out/avalonia
 ```
+
+**Never pass `-r` to a build or restore of `AvaloniaCapture`.** An explicit-RID
+restore rewrites its `packages.lock.json` to that single RID and the next CI restore
+fails `NU1004`; `Directory.Build.props` documents this at length. The project is
+RID-less on purpose and resolves each host's native assets through `deps.json` at run
+time.
+
+## Baselines
+
+`baselines/<os>-<arch>.sha256` records the SHA-256 of all 18 Avalonia screens for one
+host — a dated reference point for "has anything moved". `./run.sh --check-baseline`
+captures once and verifies against the one for the current host, failing on a changed
+screen, a missing one, and one the baseline does not list (`shasum -c` only checks the
+names it was given, so the extra-file direction is checked separately).
+
+`macos-arm64.sha256` was recorded 2026-09-01 against `6834469` (macOS 26.5, Apple
+silicon, .NET SDK 10.0.302, Avalonia 12.1.1). No other host has one yet; the mode tells
+you how to record one and refuses to invent a comparison without it.
+
+**A mismatch is a prompt, not a verdict** — re-read that environment line first. The
+PNGs themselves are deliberately *not* committed: the harness is deterministic, so they
+are exactly regenerable from any commit, and 640 KB of binaries per recording would be
+permanent git weight for data that has a one-command source. Re-record after an intended
+UI change with `shasum -a 256 *.png` from the capture dir, in the same commit as the
+change, and update the environment line above with it.
+
+**Record a baseline only after `--determinism` passes on that host.** A baseline taken
+from a host that races its own animations bakes one arbitrary frame in as the truth.
+
+Cross-*machine* reproducibility has **not** been verified — the manifest was taken on
+one Mac. Two different Macs agreeing is plausible (embedded Inter font, HarfBuzz
+shaping, headless Skia software rendering, all from pinned packages) but it is
+untested, so treat a mismatch on a different machine as "compare the environments"
+before "the UI regressed".
 
 ## Implementation notes / gotchas
 
@@ -97,6 +213,12 @@ These cost real time to discover — leaving them here:
   If the app grows a third startup-window entry-relative URI, shim it here too.
 - Faithful pixels need `UseSkia()` + `UseHeadless(new AvaloniaHeadlessPlatformOptions
   { UseHeadlessDrawing = false })`; capture with `window.CaptureRenderedFrame()`.
+- **`AvaloniaCapture` declares no `RuntimeIdentifier`, and that is load-bearing.** A
+  pinned RID does not merely bias the pixels — it makes the harness unrunnable on
+  every other host, because the build produces that platform's apphost and only that
+  platform's native assets. RID-less, NuGet still lays every package's natives out
+  under `runtimes/<rid>/native` and the host picks the right ones through `deps.json`,
+  so one source tree captures on macOS, Linux and Windows from the same `dotnet run`.
 
 ## Side effects (both harnesses boot the REAL app)
 
@@ -110,7 +232,14 @@ real state (both gaps below were closed in issue #18):
   a normal dev run uses. (It's cleaned with the rest of the output dir; delete it to reset.)
 - **No hardware discovery.** Under `DAQIFI_TEST_MODE=1` the app skips starting
   `BootloaderWatcher`, so a capture no longer takes an *exclusive* HID handle on a device
-  sitting in bootloader mode — it's safe to run alongside a HID-bootloader flash.
+  sitting in bootloader mode — it's safe to run alongside a HID-bootloader flash. Serial and
+  WiFi discovery are not running either: `StartConnectionFinders()` has exactly one caller,
+  `DaqifiViewModel.ShowConnectionDialogAsync`, and the harness never opens that dialog.
+  **This is load-bearing, not incidental** — a capture that saw a real device would render
+  its serial number or IP and that screen would then differ run to run for reasons that
+  have nothing to do with the UI. Re-checked on macOS on 2026-09-01 with a board attached
+  on `/dev/cu.usbmodem1101`: `desktop-4-devices.png` shows the empty "NO DEVICES CONNECTED"
+  state, and all 18 screens were byte-identical across twelve runs.
 
 > Note: the **WPF** harness boots the sibling `daqifi-desktop` app, which does not have these
 > overrides, so it still shares the real per-user DB. Prefer running it before your first
@@ -118,6 +247,12 @@ real state (both gaps below were closed in issue #18):
 
 ## Limitations
 
+- **No WPF side off Windows, so no cross-platform parity comparison off Windows.**
+  The macOS/Linux run produces the Avalonia half only. That half is a real regression
+  baseline — capture, re-capture, compare — but it is not the WPF-vs-Avalonia diff
+  this directory is named for. Producing that still requires a Windows host, and no
+  amount of work on `AvaloniaCapture` changes it: `WpfCapture` targets
+  `net10.0-windows` and hosts the sibling WPF app.
 - Empty-state only (no device). **Connected-state** parity (e.g. does the mobile
   landscape Live Graph show the plot while streaming — issue #10) needs a real
   device capture; the mobile shell here is rendered headless at phone sizes, not

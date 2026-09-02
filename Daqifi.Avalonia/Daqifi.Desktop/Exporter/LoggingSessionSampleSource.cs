@@ -6,6 +6,7 @@
 using System.Runtime.CompilerServices;
 using Daqifi.Core.Logging.Export;
 using Daqifi.Desktop.Channel;
+using Daqifi.Desktop.Helpers;
 using Daqifi.Desktop.Logger;
 using Microsoft.EntityFrameworkCore;
 
@@ -59,7 +60,8 @@ public sealed class LoggingSessionSampleSource : ISampleSource
     /// Returns the ordered set of channels present in this session. Channels are deduped by
     /// <c>(DeviceName, DeviceSerialNo, ChannelName)</c>; the <see cref="ChannelDescriptor.ChannelType"/>
     /// is taken from the first observed sample for that channel. Both the in-memory and DB paths use
-    /// the same dedup logic so the resulting descriptor sets match.
+    /// the same dedup logic so the resulting descriptor sets match, and both order the result
+    /// through <see cref="InCsvColumnOrder"/> so the sequences match too.
     /// </summary>
     // @port: Daqifi.Desktop.Exporter.LoggingSessionSampleSource.GetChannels
     public IReadOnlyList<ChannelDescriptor> GetChannels()
@@ -71,17 +73,13 @@ public sealed class LoggingSessionSampleSource : ISampleSource
 
         if (_inMemorySamples != null)
         {
-            _channelsCache = _inMemorySamples
+            _channelsCache = InCsvColumnOrder(_inMemorySamples
                 .GroupBy(s => new { s.DeviceName, s.DeviceSerialNo, s.ChannelName })
                 .Select(g => new ChannelDescriptor(
                     g.Key.DeviceName,
                     g.Key.DeviceSerialNo,
                     g.Key.ChannelName,
-                    g.First().Type))
-                .OrderBy(c => c.DeviceName)
-                .ThenBy(c => c.DeviceSerialNo)
-                .ThenBy(c => c.ChannelName)
-                .ToList();
+                    g.First().Type)));
             return _channelsCache;
         }
 
@@ -92,9 +90,8 @@ public sealed class LoggingSessionSampleSource : ISampleSource
         // the former ~4x faster on million-sample sessions (measured on real device data), and
         // a channel virtually always has a single Type, so the result set is the same size.
         // The (pathological) multi-type collapse and the ordering happen client-side on the
-        // handful of resulting rows — ordinal comparison matches SQLite's BINARY collation so
-        // the column order (and therefore the CSV bytes) is unchanged.
-        _channelsCache = context.Samples
+        // handful of resulting rows.
+        _channelsCache = InCsvColumnOrder(context.Samples
             .AsNoTracking()
             .Where(s => s.LoggingSessionID == _session.ID)
             .Select(s => new { s.DeviceName, s.DeviceSerialNo, s.ChannelName, s.Type })
@@ -105,13 +102,34 @@ public sealed class LoggingSessionSampleSource : ISampleSource
                 g.Key.DeviceName,
                 g.Key.DeviceSerialNo,
                 g.Key.ChannelName,
-                g.Min(s => s.Type)))
-            .OrderBy(c => c.DeviceName, StringComparer.Ordinal)
-            .ThenBy(c => c.DeviceSerialNo, StringComparer.Ordinal)
-            .ThenBy(c => c.ChannelName, StringComparer.Ordinal)
-            .ToList();
+                g.Min(s => s.Type))));
         return _channelsCache;
     }
+
+    /// <summary>
+    /// The column order <see cref="CsvExporter"/> writes: device name, then serial number, then
+    /// channel name.
+    /// </summary>
+    /// <remarks>
+    /// Device name and serial number are compared ORDINALLY, matching the BINARY collation the
+    /// DB path's rows are read under, so the two paths cannot disagree and a session's exported
+    /// bytes do not depend on the exporting machine's locale.
+    /// <para>
+    /// The channel name goes through <see cref="NaturalSortHelper"/> — the same rule the panes
+    /// and the plot legend order by — so <c>AI2</c> precedes <c>AI10</c>. Stating it here rather
+    /// than at each call site is the point of this method: the two paths above previously
+    /// ordered independently, and BOTH were wrong. The database path compared the channel name
+    /// as text, so a board with ten or more channels exported its columns as
+    /// <c>AI0, AI1, AI10, …, AI2</c> — every value correct, every value in the wrong column. The
+    /// in-memory path passed no comparer at all, so it also ordered device identity by the
+    /// current culture while the database path ordered it ordinally.
+    /// </para>
+    /// </remarks>
+    private static List<ChannelDescriptor> InCsvColumnOrder(IEnumerable<ChannelDescriptor> channels) =>
+        [.. channels
+            .OrderBy(c => c.DeviceName, StringComparer.Ordinal)
+            .ThenBy(c => c.DeviceSerialNo, StringComparer.Ordinal)
+            .ThenBy(c => c.ChannelName, NaturalSortHelper.Comparer)];
 
     /// <summary>
     /// Returns the total sample count for this session. Used by core's <see cref="CsvExporter"/>

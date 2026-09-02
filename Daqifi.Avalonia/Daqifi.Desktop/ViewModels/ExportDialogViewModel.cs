@@ -24,6 +24,12 @@ namespace Daqifi.Desktop.ViewModels;
 public partial class ExportDialogViewModel : ObservableObject, IDisposable
 {
     #region Private Variables
+    /// <summary>
+    /// What a failure message calls the destination when the path is blank — this dialog's own
+    /// name for the artefact it writes. See <see cref="DestinationFailureClassifier.Describe"/>.
+    /// </summary>
+    private const string EXPORT_FILE = "the export file";
+
     private readonly List<int> _sessionsIds;
     private string _exportFilePath = string.Empty;
 
@@ -38,6 +44,14 @@ public partial class ExportDialogViewModel : ObservableObject, IDisposable
     // so a single-session export through the hook still lands in a directory the harness owns;
     // the interactive dialog leaves this false and keeps the file/directory-per-count behaviour.
     private bool _forceDirectoryLayout;
+
+    /// <summary>
+    /// How a selected session's id becomes the display name its CSV is named after. Defaults to
+    /// <see cref="LoggingManager"/>'s UI-bound session list — the same list the row the user
+    /// selected came from, so the file matches what that row says even if it was renamed after the
+    /// dialog opened. Replaced only by the multi-session test constructor; see its remarks.
+    /// </summary>
+    private readonly Func<int, string?> _sessionNameLookup = SessionNameFromLoggingManager;
 
     [ObservableProperty]
     private bool _exportAllSelected = true;
@@ -128,6 +142,24 @@ public partial class ExportDialogViewModel : ObservableObject, IDisposable
         _loggingContext = loggingContext;
         _sessionsIds = [sessionId];
         BrowseCommand = BrowseExportPathCommand;
+    }
+
+    /// <summary>
+    /// Test seam for the multi-session ("Export All") shape: as above, and additionally names the
+    /// sessions from <paramref name="sessions"/> instead of from <see cref="LoggingManager"/>.
+    /// </summary>
+    /// <remarks>
+    /// The name source has to be substitutable because <c>LoggingManager.Instance</c> is a lazy
+    /// singleton whose factory resolves <c>App.ServiceProvider</c>, so merely reading it outside the
+    /// app host throws. Everything downstream of the name — target resolution, the pre-flight, the
+    /// real exporter writing real CSVs — is the production path.
+    /// </remarks>
+    internal ExportDialogViewModel(IDbContextFactory<LoggingContext> loggingContext, IReadOnlyList<LoggingSession> sessions)
+    {
+        _loggingContext = loggingContext;
+        _sessionsIds = sessions.Select(s => s.ID).ToList();
+        _sessionNameLookup = id => sessions.FirstOrDefault(s => s.ID == id)?.Name;
+        BrowseCommand = BrowseExportDirectoryCommand;
     }
     #endregion
 
@@ -294,7 +326,7 @@ public partial class ExportDialogViewModel : ObservableObject, IDisposable
             AppLogger.Instance.Information("Export operation was cancelled by user.");
             AppLogger.Instance.AddBreadcrumb("export", "Data export cancelled", Common.Loggers.BreadcrumbLevel.Warning);
         }
-        catch (Exception ex) when (IsDestinationBlocked(ex))
+        catch (Exception ex) when (DestinationFailureClassifier.IsBlocked(ex))
         {
             // A destination that cannot be written — held by another program, read-only, denied, or
             // on a folder that disappeared — is a user/environmental condition, not an app bug. Log
@@ -302,7 +334,7 @@ public partial class ExportDialogViewModel : ObservableObject, IDisposable
             // device layer classifies an unreachable device. Anything else, including a database-level
             // I/O error, still takes the Error/Sentry path below.
             failed = true;
-            failureReason = DescribeFileFailure(ex, currentFilepath);
+            failureReason = DestinationFailureClassifier.Describe(ex, currentFilepath, EXPORT_FILE);
             AppLogger.Instance.Warning(ex, $"Export failed writing '{currentFilepath}'.");
             AppLogger.Instance.AddBreadcrumb("export", "Data export blocked by destination file",
                 Common.Loggers.BreadcrumbLevel.Warning);
@@ -454,20 +486,26 @@ public partial class ExportDialogViewModel : ObservableObject, IDisposable
     /// single-file export writes straight to <see cref="ExportFilePath"/> and so doesn't depend on
     /// LoggingManager. Sessions no longer in the in-memory list fall back to "Session_{id}".
     /// </summary>
+    /// <remarks>
+    /// Materialising every target here is also what makes the export's promise — N selected
+    /// sessions produce N files — enforceable, so the shared <see cref="ExportFileNamer"/> that
+    /// keeps two sessions off one path lives on this loop. Without it, two rows sharing a name
+    /// resolved to the same path and the second write truncated the first, silently, under an
+    /// "Export complete" (issue #186).
+    /// </remarks>
     // @port: Daqifi.Desktop.ViewModels.ExportDialogViewModel.ResolveExportTargets
     private List<ExportTarget> ResolveExportTargets()
     {
         var targets = new List<ExportTarget>(_sessionsIds.Count);
         var perSessionFiles = _forceDirectoryLayout || _sessionsIds.Count > 1;
+        var namer = new ExportFileNamer();
 
         foreach (var sessionId in _sessionsIds)
         {
             string filepath;
             if (perSessionFiles)
             {
-                var sessionName = LoggingManager.Instance.LoggingSessions
-                    .FirstOrDefault(s => s.ID == sessionId)?.Name ?? $"Session_{sessionId}";
-                filepath = Path.Combine(ExportFilePath, $"{MakeSafeFileName(sessionName)}.csv");
+                filepath = namer.NextCsvPath(ExportFilePath, _sessionNameLookup(sessionId), sessionId);
             }
             else
             {
@@ -516,87 +554,15 @@ public partial class ExportDialogViewModel : ObservableObject, IDisposable
         catch (Exception ex) when (ex is IOException or UnauthorizedAccessException)
         {
             error = ex;
-            return DescribeFileFailure(ex, filepath);
+            return DestinationFailureClassifier.Describe(ex, filepath, EXPORT_FILE);
         }
     }
 
     /// <summary>
-    /// True when an export failure is the destination's fault — denied, gone, or held by another
-    /// program. Deliberately narrow: a generic <see cref="IOException"/> (a full disk, a failing
-    /// drive, an EF/SQLite read error) keeps the default Error/Sentry treatment so real problems
-    /// stay visible.
+    /// The production name source: the session list the Logged Data pane binds to.
     /// </summary>
-    // @port: Daqifi.Desktop.ViewModels.ExportDialogViewModel.IsDestinationBlocked
-    private static bool IsDestinationBlocked(Exception ex) => ex switch
-    {
-        UnauthorizedAccessException => true,
-        DirectoryNotFoundException => true,
-        IOException io => IsSharingViolation(io),
-        _ => false,
-    };
-
-    /// <summary>
-    /// Turns a file-access failure into a message that tells the user what to do about it.
-    /// </summary>
-    // @port: Daqifi.Desktop.ViewModels.ExportDialogViewModel.DescribeFileFailure
-    private static string DescribeFileFailure(Exception ex, string filepath)
-    {
-        var name = string.IsNullOrWhiteSpace(filepath) ? "the export file" : $"'{Path.GetFileName(filepath)}'";
-
-        return ex switch
-        {
-            UnauthorizedAccessException =>
-                $"Could not write {name} — access was denied. Choose a different folder, or check that the file is not read-only.",
-            DirectoryNotFoundException =>
-                $"Could not write {name} — that folder no longer exists. Choose a different location and try again.",
-            IOException io when IsSharingViolation(io) =>
-                $"Could not write {name} — it is open in another program. Close it and try again.",
-            _ =>
-                $"Could not write {name}. {ex.Message}",
-        };
-    }
-
-    /// <summary>
-    /// True when Windows refused the handle because someone else already holds the file
-    /// (ERROR_SHARING_VIOLATION / ERROR_LOCK_VIOLATION) — the "it's still open in Excel" case, as
-    /// opposed to a full disk or an I/O error, which deserve a different message.
-    /// </summary>
-    /// <remarks>
-    /// Gated to Windows on purpose. .NET on macOS also raises file exceptions carrying FACILITY_WIN32
-    /// HResults built from the Unix errno (a missing directory measured as 0x80070003 there), so the
-    /// low word is an errno, not a Win32 status code, and 32/33 would mean something else entirely.
-    /// The genuine "held by another program" case on macOS arrives as an <see cref="IOException"/>
-    /// with no facility at all, and is caught by the pre-flight probe rather than by this check.
-    /// </remarks>
-    // @port: Daqifi.Desktop.ViewModels.ExportDialogViewModel.IsSharingViolation
-    private static bool IsSharingViolation(IOException ex)
-    {
-        const int FACILITY_WIN32 = unchecked((int)0x80070000);
-        const int ERROR_SHARING_VIOLATION = 32;
-        const int ERROR_LOCK_VIOLATION = 33;
-
-        if (!OperatingSystem.IsWindows()) { return false; }
-
-        if ((ex.HResult & unchecked((int)0xFFFF0000)) != FACILITY_WIN32) { return false; }
-
-        var win32Error = ex.HResult & 0xFFFF;
-        return win32Error is ERROR_SHARING_VIOLATION or ERROR_LOCK_VIOLATION;
-    }
-
-    /// <summary>
-    /// Replaces characters that are invalid in a file name (a session can be renamed to arbitrary
-    /// text) with '_', so per-session export to <c>{name}.csv</c> never throws on a bad path.
-    /// </summary>
-    // @port: Daqifi.Desktop.ViewModels.ExportDialogViewModel.MakeSafeFileName
-    private static string MakeSafeFileName(string name)
-    {
-        foreach (var invalid in Path.GetInvalidFileNameChars())
-        {
-            name = name.Replace(invalid, '_');
-        }
-
-        return name;
-    }
+    private static string? SessionNameFromLoggingManager(int sessionId) =>
+        LoggingManager.Instance.LoggingSessions.FirstOrDefault(s => s.ID == sessionId)?.Name;
 
     // @port: Daqifi.Desktop.ViewModels.ExportDialogViewModel.GetLoggingSessionFromId
     private async Task<LoggingSession?> GetLoggingSessionFromId(int sessionId)

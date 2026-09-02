@@ -820,14 +820,28 @@ solid white, so the rerun compared white against white and reported "identical")
 Fixed in #388 via `samefile` identity. Mentioned because if you are ever on an
 older build, that trap is live and silent.
 
-> **The capture harness does not run on your Mac yet.** Both legs of
-> `tools/parity-audit` are pinned to `RuntimeIdentifier=win-x64` and its README
-> requires the *Windows* .NET SDK at `C:\Program Files\dotnet\dotnet.exe`
-> (`WpfCapture` genuinely needs Windows; `AvaloniaCapture` is pinned only because
-> win-x64 Skia natives were the reliable option from WSL). So you can build and
-> run the macOS app, but you cannot produce macOS captures to feed the visual
-> gate without first unpinning `AvaloniaCapture`. That is its own ticket, not
-> something to improvise mid-QA.
+> **The Avalonia capture leg now runs on your Mac; the WPF leg still cannot.**
+> `AvaloniaCapture` used to pin `RuntimeIdentifier=win-x64` — not because it needed
+> Windows, but because win-x64 Skia natives were the reliable option from WSL — and
+> that pin meant the visual gate had no macOS coverage at all (#89). It is RID-less
+> now, so from this directory:
+>
+> ```bash
+> DOTNET=~/.dotnet/dotnet ./run.sh --determinism /tmp/parity   # confirm the host first
+> DOTNET=~/.dotnet/dotnet ./run.sh /tmp/parity                 # -> /tmp/parity/avalonia
+> ```
+>
+> **Run `--determinism` before you trust any number it produces** — see the
+> 65.6% false positive above. Doing that on macOS on 2026-09-01 found two live
+> races in the settle loop (one saved a pane mid-fade with 81% of its pixels
+> wrong); both are fixed, and the result is 18 screens byte-identical across
+> twelve runs on macOS 26.5 / Apple silicon.
+>
+> `WpfCapture` genuinely needs Windows (it hosts the sibling WPF app and targets
+> `net10.0-windows`), so `run.sh` skips it and the montages here and says so. What
+> you get on the Mac is the **Avalonia side only** — a real macOS regression baseline
+> (`tools/parity-audit/baselines/macos-arm64.sha256`), *not* a WPF-vs-Avalonia
+> comparison. That comparison still requires a Windows host.
 
 ---
 

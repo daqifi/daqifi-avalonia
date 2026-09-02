@@ -5,8 +5,23 @@
     <Nullable>enable</Nullable>
     <ImplicitUsings>enable</ImplicitUsings>
     <AllowUnsafeBlocks>true</AllowUnsafeBlocks>
-    <!-- Render on the platform the desktop app ships on (win-x64 Skia native + fonts). -->
-    <RuntimeIdentifier>win-x64</RuntimeIdentifier>
+    <!-- DELIBERATELY NO RuntimeIdentifier. This used to pin win-x64 — "render on the
+         platform the desktop app ships on" — which was true when the only host was WSL
+         driving the Windows SDK, and false as soon as the port grew a macOS head. A pinned
+         RID does not merely bias the pixels, it makes the harness UNRUNNABLE anywhere else:
+         a win-x64 build produces a Windows apphost and win-x64-only native assets, so on an
+         Apple-silicon Mac there was no way to capture the app at all and the visual-parity
+         gate had zero macOS coverage (#89).
+
+         RID-less is what lets one source tree capture on every desktop host. NuGet still
+         lays every package's native assets out under runtimes/<rid>/native in the build
+         output, and the host resolves the right one for the machine through deps.json at
+         run time — so libSkiaSharp/libHarfBuzzSharp load on macOS, Linux and Windows alike
+         from the same `dotnet run`.
+
+         Do NOT "fix" a host by adding -r: an explicit-RID restore rewrites this project's
+         packages.lock.json to that single RID and the next CI restore fails NU1004. See the
+         long note in Directory.Build.props; run.sh passes no -r for exactly this reason. -->
     <AvaloniaUseCompiledBindingsByDefault>false</AvaloniaUseCompiledBindingsByDefault>
   </PropertyGroup>
 

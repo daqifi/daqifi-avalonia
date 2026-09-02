@@ -151,8 +151,16 @@ jobs:
           fi
           echo "lock files unchanged by restore"
 
-      # AvaloniaCapture pins RuntimeIdentifier=win-x64; that cross-builds fine on
-      # Linux (it just cannot be RUN here), so it is worth compiling as a gate.
+      # AvaloniaCapture is compiled here as a gate. It used to pin
+      # RuntimeIdentifier=win-x64 and was cross-built on this runner because it could
+      # not be RUN here; it is RID-less since #89, so this now builds it for the
+      # runner's own platform and it WOULD run.
+      #
+      # Deliberately still only COMPILED, not run. Running it would be a stronger gate
+      # — it boots the real app and renders 18 screens, which a compile cannot check —
+      # but the harness has never been executed on a Linux runner (headless Skia, font
+      # availability), and adding a CI step nobody has watched succeed is how a gate
+      # arrives broken. That is its own change, with its own evidence.
       - name: Build
         run: |
           dotnet build Daqifi.Avalonia/Daqifi.Avalonia.csproj \
@@ -295,9 +303,16 @@ jobs:
     #     a matter of taste: the first test whose VERDICT can differ by host — a path
     #     separator, a native asset, a culture or filesystem-case assumption — is the
     #     one that belongs here, and #88's separator bug is exactly that shape.
-    #   * tools/parity-audit/AvaloniaCapture. Pinned to win-x64 and already
-    #     cross-built by the `desktop` job; compiling a Windows tool on a macOS
-    #     runner buys nothing.
+    #   * tools/parity-audit/AvaloniaCapture. It is no longer a Windows tool — #89
+    #     dropped the win-x64 pin so it captures on macOS, and this runner is
+    #     therefore the natural home of a macOS visual gate. Left out anyway, for
+    #     now, and the reason is evidence rather than cost: the harness has been run
+    #     on exactly one Mac (verified deterministic there, 18/18 screens
+    #     byte-identical across two runs), and whether a GitHub macOS runner
+    #     reproduces those same bytes is untested. A baseline check added on that
+    #     assumption would fail on its first run and read as a UI regression, which
+    #     is precisely the false positive #89 exists to stop. Compiling it here would
+    #     be strictly redundant with the `desktop` job.
     #   * A dependency-graph upload for `avalonia-graph`. That gate reads the
     #     `libraries` section, which comes from a RID-LESS restore and so is
     #     byte-identical to the one `desktop` already uploads. Uploading it would add

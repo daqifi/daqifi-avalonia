@@ -29,8 +29,13 @@ internal sealed class TimestampGapDetector
     #endregion
 
     #region Private Fields
+    /// <summary>
+    /// Running average delta per channel. A channel is present here if and only if it has been
+    /// seeded — <see cref="IsGap"/> adds it with its first usable delta and removes it again when a
+    /// gap is detected — so the dictionary's key set doubles as the "have we seen this channel"
+    /// answer and no separate seeded-channel index is needed.
+    /// </summary>
     private readonly Dictionary<(string deviceSerial, string channelName), double> _avgDeltaMs = [];
-    private readonly HashSet<(string deviceSerial, string channelName)> _seeded = [];
     #endregion
 
     #region Public Methods
@@ -59,32 +64,23 @@ internal sealed class TimestampGapDetector
 
         var delta = firmwareDeltaMs.Value;
 
-        if (!_seeded.Contains(key))
+        if (!_avgDeltaMs.TryGetValue(key, out var avgDelta) || avgDelta <= 0)
         {
-            // Second message — seed the EMA with the first real delta.
-            _seeded.Add(key);
+            // Second message — seed the EMA with the first real delta. There is nothing to compare
+            // against yet, so this can never be a gap.
             _avgDeltaMs[key] = delta;
             return false;
         }
 
-        if (_avgDeltaMs.TryGetValue(key, out var avgDelta) && avgDelta > 0)
+        if (delta > GapThresholdMultiplier * avgDelta)
         {
-            if (delta > GapThresholdMultiplier * avgDelta)
-            {
-                // Reset the EMA after a detected gap so a single large outage does not
-                // desensitise future gap detection on the same channel.
-                _avgDeltaMs.Remove(key);
-                _seeded.Remove(key);
-                return true;
-            }
-
-            _avgDeltaMs[key] = (1.0 - EmaAlpha) * avgDelta + EmaAlpha * delta;
-        }
-        else
-        {
-            _avgDeltaMs[key] = delta;
+            // Drop the channel after a detected gap so a single large outage does not desensitise
+            // future gap detection on it; the next delta seeds a fresh average.
+            _avgDeltaMs.Remove(key);
+            return true;
         }
 
+        _avgDeltaMs[key] = (1.0 - EmaAlpha) * avgDelta + EmaAlpha * delta;
         return false;
     }
 
@@ -95,7 +91,6 @@ internal sealed class TimestampGapDetector
     public void Clear()
     {
         _avgDeltaMs.Clear();
-        _seeded.Clear();
     }
     #endregion
 }
