@@ -99,19 +99,22 @@ public class DatabaseMigratorUnusableDatabaseTests : IDisposable
 
     /// <summary>
     /// The invariant that protects the replacement database: nothing belonging to the damaged file
-    /// is left beside the live path. A stale <c>-wal</c> is not inert — SQLite replays a journal
-    /// whose header still checksums, writing the old file's pages into the new one.
+    /// is left beside the live path. A stale journal is not inert — SQLite rolls back a hot
+    /// <c>-journal</c> and replays a <c>-wal</c> whose header still checksums, either way writing
+    /// the old file's pages into the new one. <c>-journal</c> is the one this app can actually
+    /// produce: nothing here sets <c>journal_mode</c>, so SQLite's default DELETE mode applies.
     /// </summary>
     [Fact]
-    public void PrepareMigration_LeavesNoSidecarBesideTheReplacementDatabase()
+    public void PrepareMigration_LeavesNoJournalBesideTheReplacementDatabase()
     {
         File.WriteAllText(DatabasePath, "not a database");
-        File.WriteAllText(DatabasePath + "-wal", "stale journal");
+        File.WriteAllText(DatabasePath + "-journal", "stale rollback journal");
+        File.WriteAllText(DatabasePath + "-wal", "stale write-ahead log");
         File.WriteAllText(DatabasePath + "-shm", "stale shared memory");
 
         DatabaseMigrator.PrepareMigration(Factory(), DatabasePath);
 
-        Assert.Single(QuarantinedFiles());
+        Assert.False(File.Exists(DatabasePath + "-journal"));
         Assert.False(File.Exists(DatabasePath + "-wal"));
         Assert.False(File.Exists(DatabasePath + "-shm"));
     }

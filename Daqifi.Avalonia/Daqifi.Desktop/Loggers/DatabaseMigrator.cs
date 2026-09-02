@@ -38,10 +38,16 @@ public static class DatabaseMigrator
     private const int SQLITE_CORRUPT = 11;
     private const int SQLITE_NOTADB = 26;
 
-    // The database and its journal sidecars are ONE artefact and move together. Ordered so the
-    // database itself goes last: it is the file whose absence lets a replacement be created, so it
-    // is the last thing to leave and (when a quarantine is undone) the first thing to come back.
-    private static readonly string[] DatabaseFileSuffixes = ["-wal", "-shm", ""];
+    // The database and its journal sidecars are ONE artefact and move together. All three of
+    // SQLite's auxiliary files are covered, not just the WAL pair: nothing in this app sets
+    // journal_mode, so it runs in SQLite's default DELETE mode, whose journal is "-journal". A hot
+    // "-journal" beside a replacement database is the same hazard as a stale "-wal" — SQLite rolls
+    // it back into the new file — and it is the one this app can actually produce.
+    //
+    // Ordered so the database itself goes last: it is the file whose absence lets a replacement be
+    // created, so it is the last thing to leave and (when a quarantine is undone) the first thing
+    // to come back.
+    private static readonly string[] DatabaseFileSuffixes = ["-journal", "-wal", "-shm", ""];
     #endregion
 
     #region Public Properties
@@ -272,20 +278,28 @@ public static class DatabaseMigrator
         // Drop any pooled handle on the file first, or the move fails on Windows.
         SqliteConnection.ClearAllPools();
 
-        // Millisecond precision and overwrite:false together guarantee a previous quarantine is
-        // never clobbered — the whole point is that nothing the user might still recover gets
-        // destroyed. A same-millisecond collision instead fails the move, which is logged below and
-        // leaves the file untouched.
+        // Millisecond precision, and every move below uses overwrite:false, so an earlier quarantine
+        // can never be clobbered — the whole point is that nothing the user might still recover gets
+        // destroyed. A same-millisecond collision fails the move instead, which the loop treats like
+        // any other failure and undoes.
         var quarantinePath = $"{databasePath}.corrupt-{DateTime.UtcNow:yyyyMMdd-HHmmssfff}";
 
         // All of it or none of it. Three reasons this has to be atomic rather than best-effort:
-        //   • a -wal can hold the only committed copy of the user's last samples, so it must stay
+        //   • a journal can hold the only committed copy of the user's last samples, so it must stay
         //     with the database it belongs to;
-        //   • a stale -wal left beside a REPLACEMENT database is not inert — SQLite replays a
-        //     journal whose header still checksums, writing the old file's pages into the new one;
+        //   • one left beside a REPLACEMENT database is not inert — SQLite rolls back a hot
+        //     -journal, and replays a -wal whose header still checksums, either way writing the old
+        //     file's pages into the new one;
         //   • every attempt picks a fresh timestamp, so a half-moved set could never be reunited by
         //     a later one.
         // Nothing is ever deleted: a file that cannot be moved is put back, not removed.
+        //
+        // Within one process this is exact. Against a SECOND DAQiFi instance it is not, and cannot
+        // be here: the app has no cross-process database ownership guard at all (no named mutex, no
+        // lock file — two instances already share this file today, entirely independently of this
+        // recovery), and ClearAllPools only releases this process's handles. What bounds it is that
+        // a quarantine only ever runs on a file SQLite has just refused to read, so a second
+        // instance reaches the same failure rather than writing a journal next to it.
         var moved = new List<(string From, string To)>();
 
         foreach (var suffix in DatabaseFileSuffixes)
