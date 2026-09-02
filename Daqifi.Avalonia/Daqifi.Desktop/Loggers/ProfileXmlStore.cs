@@ -147,7 +147,19 @@ internal sealed class ProfileXmlStore
         catch (XmlException ex)
         {
             _appLogger.Error(ex, $"The profiles file is not well-formed XML and is being moved aside: {FilePath}");
-            Quarantine();
+
+            if (!Quarantine())
+            {
+                // The damaged file is still sitting at FilePath. Handing back an empty document
+                // would let the caller's Save rename straight over it and destroy the only copy of
+                // the user's profiles — the one thing this type promises never to do. Fail the
+                // write instead: the pane reports it, and the file survives to be recovered by
+                // hand or by a later attempt.
+                throw new IOException(
+                    $"The profiles file at {FilePath} could not be read and could not be moved " +
+                    "aside, so it has been left untouched.", ex);
+            }
+
             return NewDocument();
         }
     }
@@ -166,7 +178,12 @@ internal sealed class ProfileXmlStore
     {
         EnsureDirectory();
 
-        var temporaryPath = FilePath + ".tmp";
+        // Unique per write, not a fixed ".tmp": two app instances share one data directory, and a
+        // single well-known temp path lets each truncate, move or delete the other's half-written
+        // file — reintroducing exactly the corruption this method exists to prevent. This does not
+        // make a concurrent read-modify-write safe (last writer still wins, as it always has);
+        // it makes each individual write atomic and independent.
+        var temporaryPath = $"{FilePath}.{Guid.NewGuid():N}.tmp";
         try
         {
             document.Save(temporaryPath);
@@ -202,6 +219,12 @@ internal sealed class ProfileXmlStore
             Name = (string)p.Element("Name"),
             ProfileId = (Guid)p.Element("ProfileID"),
             CreatedOn = (DateTime)p.Element("CreatedOn"),
+            // <Devices> is defaulted the same way <Channels> is below, and for the same reason: a
+            // container the writer may legitimately have left out is not a damaged file, and
+            // passing the resulting null to ObservableCollection would throw and quarantine every
+            // other profile in an otherwise readable file. A profile missing <ProfileID> or
+            // <CreatedOn> still fails the read — those are not optional, and a profile without an
+            // id can never be edited or deleted again.
             Devices = new ObservableCollection<ProfileDevice>(p.Element("Devices")?.Elements("Device").Select(d => new ProfileDevice
             {
                 DeviceName = (string)d.Element("DeviceName"),
@@ -220,7 +243,7 @@ internal sealed class ProfileXmlStore
                     IsChannelActive = (bool)c.Element("IsActive"),
                     SerialNo = (string)d.Element("DeviceSerialNo")
                 }).ToList() ?? []
-            }).ToList())
+            }).ToList() ?? [])
         }).ToList();
 
     /// <summary>
@@ -252,14 +275,18 @@ internal sealed class ProfileXmlStore
     /// <summary>
     /// Moves the damaged file aside so the next write starts from a good document.
     /// </summary>
+    /// <returns>
+    /// <c>true</c> when the damaged file is safely out of the way. <c>false</c> means it is still
+    /// sitting at <see cref="FilePath"/>, which callers that are about to write MUST treat as a
+    /// refusal — see <see cref="Open"/>.
+    /// </returns>
     /// <remarks>
     /// RENAMED, never deleted. It is the user's profiles: an unparseable file is very often still
     /// readable by hand (one bad character in an otherwise intact list), and a truncated one still
     /// holds most of what it held. The timestamp keeps repeated recoveries from overwriting each
-    /// other. Best-effort — if even the rename fails there is nothing further to try, and the
-    /// caller carries on with an empty document rather than refusing to work at all.
+    /// other.
     /// </remarks>
-    private void Quarantine()
+    private bool Quarantine()
     {
         var quarantinePath = $"{FilePath}.corrupt-{DateTime.UtcNow:yyyyMMdd-HHmmssfff}";
 
@@ -270,13 +297,14 @@ internal sealed class ProfileXmlStore
         catch (Exception ex)
         {
             _appLogger.Error(ex, $"The damaged profiles file could not be moved aside: {FilePath}");
-            return;
+            return false;
         }
 
         _appLogger.Warning($"The damaged profiles file was moved to {quarantinePath}; profiles will save normally from now on.");
         _pendingQuarantineNotice =
             $"Your saved profiles could not be read, so the damaged file was moved to {quarantinePath}. " +
             "Profiles you create from now on will save normally.";
+        return true;
     }
 
     private static XDocument NewDocument() => new(new XElement(RootElementName));

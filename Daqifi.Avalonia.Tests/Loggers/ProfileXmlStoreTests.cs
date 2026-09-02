@@ -59,6 +59,26 @@ public sealed class ProfileXmlStoreTests : IDisposable
         </Profiles>
         """;
 
+    /// <summary>
+    /// The same profile, followed by one with no <c>&lt;Devices&gt;</c> element at all — an older
+    /// or hand-edited file. Both must load.
+    /// </summary>
+    private const string ProfileWithNoDevicesXml = """
+        <Profiles>
+          <Profile>
+            <Name>Bench</Name>
+            <ProfileID>3f2504e0-4f89-11d3-9a0c-0305e82c3301</ProfileID>
+            <CreatedOn>2026-01-02T03:04:05</CreatedOn>
+            <Devices />
+          </Profile>
+          <Profile>
+            <Name>Deviceless</Name>
+            <ProfileID>6ba7b810-9dad-11d1-80b4-00c04fd430c8</ProfileID>
+            <CreatedOn>2026-01-02T03:04:05</CreatedOn>
+          </Profile>
+        </Profiles>
+        """;
+
     private readonly string _directory =
         Path.Combine(Path.GetTempPath(), "daqifi-avalonia-tests", "profile-store-" + Guid.NewGuid().ToString("N"));
 
@@ -103,6 +123,24 @@ public sealed class ProfileXmlStoreTests : IDisposable
         Assert.Equal("SERIAL-A", device.DeviceSerialNo);
         Assert.Equal(1000, device.SamplingFrequency);
         Assert.Equal("AI0", Assert.Single(device.Channels).Name);
+    }
+
+    /// <summary>
+    /// A container the writer may legitimately have left out is not a damaged file. Passing the
+    /// resulting null sequence to <c>ObservableCollection</c> threw, and this reader treats a throw
+    /// as damage — so one profile with no <c>&lt;Devices&gt;</c> would have quarantined every other
+    /// profile in an otherwise perfectly readable file.
+    /// </summary>
+    [Fact]
+    public void A_profile_with_no_devices_loads_without_condemning_the_rest_of_the_file()
+    {
+        File.WriteAllText(ProfilePath, ProfileWithNoDevicesXml);
+
+        Assert.True(NewStore().TryLoad(out var profiles));
+
+        Assert.Equal(["Bench", "Deviceless"], profiles.Select(profile => profile.Name));
+        Assert.All(profiles, profile => Assert.Empty(profile.Devices));
+        Assert.Empty(QuarantinedFiles());
     }
 
     /// <summary>
