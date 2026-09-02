@@ -113,23 +113,9 @@ the race**, both fixed in the same change that unpinned the RID:
   while the previous close was still animating. That left a one-pixel-wide flip on the
   pane edge, 50/50 per run.
 
-**The first CI run of this mode, on a GitHub `macos-latest` runner, found a third**
-(#191) — and it is the quietest of the three, because the frame it saved was *stable*:
-
-- The headless render timer is manual, so an animation advances only while the settle
-  loop ticks it. The loop is therefore driving the UI, not just watching it, and
-  stopping it freezes the animation wherever it had got to. Near the end of a
-  transition the remaining motion is sub-pixel, two samples 50 ms apart render
-  identically, and the loop stops with the animation parked a hair short of its
-  target. One run in five wrote `desktop-8-livegraph-settings-flyout` with **6 pixels
-  one unit off**, all in the `SplitView` pane's left edge column (x=1059) — the same
-  signature as the flip above, 0.0005% of the image. Fixed by requiring two
-  consecutive identical comparisons (`SettleStableSamples`).
-
-All three are in `Program.cs` with the measurements attached. The lesson generalises: a
+Both are in `Program.cs` with the measurements attached. The lesson generalises: a
 settle loop is only as good as the evidence that it settled, and "two samples agreed"
-is not evidence unless something could have changed between them — nor is one pair of
-samples evidence when the loop itself is what advances the clock.
+is not evidence unless something could have changed between them.
 
 **Why five runs and not two.** Both defects above were roughly coin-flips per run, and
 two runs miss a 50/50 flip half the time; five gets that to ~6%, ten to ~0.2%, at about

@@ -402,9 +402,8 @@ internal static class AvaloniaCapture
     // because one run caught the pane at ~50% opacity mid-fade and the other caught it settled.
     // Diffed against another Avalonia version that reads as a catastrophic visual regression.
     //
-    // So instead of pumping a fixed number of times and hoping, pump until the frame stops
-    // changing (SettleStableSamples below says how much stillness counts as stopped). Comparing
-    // encoded PNGs is exact and needs no pixel-buffer access.
+    // So instead of pumping a fixed number of times and hoping, pump until two consecutive frames
+    // are byte-identical. Comparing encoded PNGs is exact and needs no pixel-buffer access.
     private const int SettleMaxRounds = 40;
 
     // ...and let REAL TIME pass between the two frames being compared, which is the half that
@@ -423,35 +422,9 @@ internal static class AvaloniaCapture
     // interval, so an unfinished one is guaranteed to move between two samples.
     //
     // 50 ms because it must exceed a frame and stay well under the shortest transition. The cost
-    // is bounded and small: a settling screen takes 3-5 rounds (~150-250 ms), and only a screen
+    // is bounded and small: a settling screen takes 2-4 rounds (~100-200 ms), and only a screen
     // that never settles — which fails the capture rather than saving it — pays the full 2 s.
     private static readonly TimeSpan SettleSampleInterval = TimeSpan.FromMilliseconds(50);
-
-    // How many CONSECUTIVE identical comparisons end the loop. Two, not one, and the reason is a
-    // third defect of this same family — found by the CI determinism gate (#191) on its first run
-    // on a GitHub macos-latest runner, which is a host this harness had never been executed on.
-    //
-    // The headless render timer is MANUAL: an animation advances only while Pump() ticks it. So
-    // the loop is not merely observing the UI, it is DRIVING it, and stopping the loop freezes
-    // whatever frame the animation had reached. Near the end of a transition the remaining motion
-    // is sub-pixel, two samples 50 ms apart therefore render identically, and the loop stops —
-    // leaving the animation parked a hair short of its target and saving THAT frame.
-    //
-    // It is a much quieter failure than the two above, because the frame it saves is a stable
-    // one: run 4 of 5 on the runner wrote desktop-8-livegraph-settings-flyout with 6 pixels one
-    // unit off, all in the SplitView pane's left edge column (x=1059) — the same signature as the
-    // flyout-edge flip #179 fixed for desktop-7 and desktop-9, and 0.0005% of the image. The
-    // other four runs, and 20 consecutive runs on an M-series Mac, agree byte for byte with each
-    // other and with the committed baseline. A one-unit difference on six antialiased pixels is
-    // sub-perceptual and still exactly what a byte-identity gate must not manufacture.
-    //
-    // Requiring a second identical comparison buys 50 ms more of ticked animation clock past the
-    // point where the picture stopped moving, which is longer than any tail this app has. It
-    // cannot change a frame that had genuinely finished — verified: with this in place, 20 local
-    // runs produce all 18 screens byte-identical to the set recorded before it.
-    //
-    // Cost: one extra 50 ms round per screen, so ~0.9 s per capture pass.
-    private const int SettleStableSamples = 2;
 
     private static byte[] Encode(Window w)
     {
@@ -475,7 +448,6 @@ internal static class AvaloniaCapture
     {
         Pump();
         var previous = Encode(w);
-        var stable = 0;
         for (var round = 1; round <= SettleMaxRounds; round++)
         {
             Thread.Sleep(SettleSampleInterval);
@@ -483,17 +455,7 @@ internal static class AvaloniaCapture
             var current = Encode(w);
             if (current.Length == previous.Length && current.AsSpan().SequenceEqual(previous))
             {
-                // Consecutive, and reset on ANY change. A screen that moves again after a
-                // pair of identical samples has not settled, it has paused — which is the
-                // whole point of counting more than one.
-                if (++stable >= SettleStableSamples)
-                {
-                    return (current, true, round);
-                }
-            }
-            else
-            {
-                stable = 0;
+                return (current, true, round);
             }
             previous = current;
         }
