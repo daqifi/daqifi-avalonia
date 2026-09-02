@@ -341,6 +341,34 @@ public sealed class GraphImageSaveTests : IDisposable
         AssertNothingLeftBehind();
     }
 
+    /// <summary>
+    /// A writable file inside a folder that takes no new entries. Creating a sibling temporary file
+    /// needs write permission on the DIRECTORY; the <c>File.Create</c> this replaced needed only
+    /// write permission on the FILE. So this save worked before the atomic write and has to keep
+    /// working — otherwise the user is told a folder they cannot change is at fault, about a file
+    /// that is perfectly writable.
+    /// </summary>
+    /// <remarks>
+    /// The save is deliberately NOT atomic in this case: in a directory that accepts no new entries
+    /// there is nothing to be atomic with, and refusing the save outright is the worse of the two
+    /// available answers. Unix-only, and stands down unless the mode is genuinely enforced.
+    /// </remarks>
+    [Fact]
+    public void A_writable_file_in_a_read_only_folder_can_still_be_overwritten()
+    {
+        var directory = Path.Combine(_root, "read-only-parent");
+        Directory.CreateDirectory(directory);
+        var path = Path.Combine(directory, "graph.png");
+        File.WriteAllBytes(path, [0x00, 0x01]);
+        if (!MakeReadOnly(directory)) { return; }
+
+        // The file itself is still writable — only the directory is not.
+        var failure = GraphImageSaver.SaveTo(path, WriteImage);
+
+        Assert.Null(failure);
+        Assert.Equal(ImageBytes, File.ReadAllBytes(path));
+    }
+
     /// <summary>Fills the stream with <see cref="ImageBytes"/>, standing in for the PNG exporter.</summary>
     private static void WriteImage(Stream stream) => stream.Write(ImageBytes);
 
@@ -351,25 +379,35 @@ public sealed class GraphImageSaveTests : IDisposable
     /// </summary>
     private string? CreateEnforcedReadOnlyDirectory()
     {
-        if (!RuntimeInformation.IsOSPlatform(OSPlatform.Linux) && !RuntimeInformation.IsOSPlatform(OSPlatform.OSX))
-        {
-            return null;
-        }
-
         var directory = Path.Combine(_root, "read-only");
         Directory.CreateDirectory(directory);
+        return MakeReadOnly(directory) ? directory : null;
+    }
+
+    /// <summary>
+    /// Takes write permission off <paramref name="directory"/>, returning false when this
+    /// environment does not actually enforce that — Windows, which has no
+    /// <see cref="UnixFileMode"/>, and any run as root, where 0555 is advisory. Enforcement is
+    /// confirmed by attempting a write rather than inferred from the user's identity, so a test
+    /// built on it can never pass for the wrong reason.
+    /// </summary>
+    private static bool MakeReadOnly(string directory)
+    {
+        if (!RuntimeInformation.IsOSPlatform(OSPlatform.Linux) && !RuntimeInformation.IsOSPlatform(OSPlatform.OSX))
+        {
+            return false;
+        }
+
         File.SetUnixFileMode(directory, UnixFileMode.UserRead | UnixFileMode.UserExecute);
 
         try
         {
-            // If this succeeds the mode is advisory here (root), and a test built on it would pass
-            // for the wrong reason.
             File.Create(Path.Combine(directory, "enforcement-probe")).Dispose();
-            return null;
+            return false;
         }
         catch (UnauthorizedAccessException)
         {
-            return directory;
+            return true;
         }
     }
 

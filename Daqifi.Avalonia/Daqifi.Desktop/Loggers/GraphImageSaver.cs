@@ -216,7 +216,22 @@ internal static class GraphImageSaver
         // writer of a user-chosen path does.
         var destination = ResolveLink(path);
 
-        var temporary = CreateTemporaryFile(destination);
+        (FileStream Stream, string Path) temporary;
+        try
+        {
+            temporary = CreateTemporaryFile(destination);
+        }
+        catch (Exception ex) when (ex is IOException or UnauthorizedAccessException)
+        {
+            // The directory will not take a new entry. That does not mean the save is impossible:
+            // creating a sibling needs write permission on the DIRECTORY, while the File.Create
+            // this replaced needed only write permission on the FILE — so a writable graph inside a
+            // read-only folder used to save fine and would otherwise now fail, with a message
+            // blaming a folder the user cannot do anything about.
+            if (!TryWriteInPlace(destination, image)) { throw; }
+            return;
+        }
+
         try
         {
             using (temporary.Stream)
@@ -242,6 +257,41 @@ internal static class GraphImageSaver
     {
         var pngExporter = new PngExporter { Width = WIDTH_PIXELS, Height = HEIGHT_PIXELS };
         pngExporter.Export(plotModel, stream);
+    }
+
+    /// <summary>
+    /// Last resort for a directory that will not accept a temporary file: write straight into an
+    /// existing, directly writable destination. Returns false when there is no such file, leaving
+    /// the caller to report the original failure.
+    /// </summary>
+    /// <remarks>
+    /// This is the pre-atomic behaviour, deliberately, and it carries the pre-atomic risk: the file
+    /// is truncated before the new bytes go in, so a failure part-way through costs the user the
+    /// image that was there. It is reached only where no alternative exists — in a directory that
+    /// takes no new entries there is nothing to be atomic *with* — and the choice there is between
+    /// this and refusing a save that worked before, which would report a folder problem the user
+    /// cannot act on about a file that is perfectly writable.
+    /// </remarks>
+    private static bool TryWriteInPlace(string destination, Stream image)
+    {
+        FileStream stream;
+        try
+        {
+            // Truncate, not Create: only an EXISTING file justifies this path, and a destination
+            // that has to be created needs the same directory permission the temporary file did.
+            stream = new FileStream(destination, FileMode.Truncate, FileAccess.Write, FileShare.None);
+        }
+        catch (Exception ex) when (ex is IOException or UnauthorizedAccessException)
+        {
+            return false;
+        }
+
+        using (stream)
+        {
+            image.CopyTo(stream);
+        }
+
+        return true;
     }
 
     /// <summary>
