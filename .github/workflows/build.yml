@@ -579,10 +579,79 @@ jobs:
           fi
           echo "${actual} screens, byte-identical across every run"
 
-      # The PNGs, on failure only. A determinism failure names the screens that
-      # differed and is close to unactionable without the two encodings in hand — and
-      # #179 already had to fix a cleanup that destroyed the very evidence its own
-      # failure message told you to go and fetch. Not a thing to leave for later.
+      # The capture logs, so the artifact is never empty when it matters most.
+      #
+      # run.sh's run_capture() sends each pass's whole stdout+stderr to
+      # `<out>/.capture-determinism-N.log`, and its failure line points straight at it
+      # ("!! determinism-3 failed (see …)"). Two things put those logs out of reach of
+      # the upload below, and both had to be true for the artifact to be right:
+      #
+      #   1. They are written at the OUTPUT ROOT — one level ABOVE `<out>/determinism`,
+      #      which is the only directory the upload collects. Nothing under `path:`
+      #      ever matched them, so `include-hidden-files` alone would not have helped.
+      #   2. They are dotfiles, which upload-artifact drops by default.
+      #
+      # The case that suffers is exactly the one with the least to go on: a pass that
+      # dies BEFORE writing a single PNG — a crash during boot, or a build error out of
+      # `dotnet run` — leaves `<out>/determinism/rN` empty, so the upload found no
+      # files, `if-no-files-found: warn` shrugged, and NO artifact was produced at all.
+      # #191 asked for this gate on the grounds that a determinism failure is only
+      # actionable with the differing PNGs in hand; a failure with no PNGs is only
+      # actionable with the log, and that was the one thing being thrown away. It is
+      # #179's cleanup-destroys-the-evidence trap wearing different clothes.
+      #
+      # COPIED to a non-hidden name rather than added to `path:`. Adding the glob would
+      # force `include-hidden-files: true`, and that flag is not selective: it would
+      # also sweep in each run's throwaway `.appdata` (SQLite DB + app logs) — one per
+      # run — from inside the very tree being uploaded. Copying keeps that default
+      # exclusion doing its job, and puts the evidence somewhere a plain `ls` on the
+      # unzipped artifact will show, which is the same dotfile trap
+      # tools/parity-audit/README.md already warns readers about.
+      #
+      # The leading dot is the only thing dropped, so `capture-determinism-3.log` here
+      # is the `.capture-determinism-3.log` the failing step named on screen.
+      - name: Collect the capture logs
+        if: ${{ failure() && steps.determinism.outcome == 'failure' }}
+        env:
+          PARITY_OUT: ${{ runner.temp }}/parity-audit
+        run: |
+          set -euo pipefail
+          dest="${PARITY_OUT}/determinism/capture-logs"
+          mkdir -p "${dest}"
+          found=0
+          for log in "${PARITY_OUT}"/.capture-determinism-*.log; do
+            # An unmatched glob stays literal; skip it rather than copying a filename
+            # that does not exist.
+            [ -e "${log}" ] || continue
+            name="$(basename "${log}")"
+            cp "${log}" "${dest}/${name#.}"
+            found=$((found + 1))
+          done
+
+          # This step is the one place that knows run.sh's log naming, so a rename
+          # there must not quietly produce a plausible-looking artifact with the logs
+          # missing — that is the failure mode this whole step exists to end. Say so,
+          # and say so INSIDE the artifact too, where whoever downloads it is looking.
+          if [ "${found}" -eq 0 ]; then
+            echo "::warning::no .capture-determinism-*.log found under ${PARITY_OUT}." \
+                 "run_capture()'s log naming in tools/parity-audit/run.sh has moved and" \
+                 "this step needs updating; the artifact carries the PNGs only."
+            printf '%s\n' \
+              "No capture logs were collected." \
+              "" \
+              "This step looked for .capture-determinism-*.log at the parity-audit output" \
+              "root, which is where run_capture() in tools/parity-audit/run.sh writes each" \
+              "pass's stdout+stderr. Nothing matched. If that naming changed, update the" \
+              "'Collect the capture logs' step in .github/workflows/build.yml." \
+              > "${dest}/NO-CAPTURE-LOGS.txt"
+          fi
+          echo "collected ${found} capture log(s) into ${dest}"
+
+      # The PNGs and those logs, on failure only. A determinism failure names the
+      # screens that differed and is close to unactionable without the two encodings in
+      # hand — and #179 already had to fix a cleanup that destroyed the very evidence
+      # its own failure message told you to go and fetch. Not a thing to leave for
+      # later.
       #
       # Conditioned on THIS step rather than a bare `failure()`. `failure()` is
       # required — an `if:` with no status function has an implicit `success()` and
@@ -590,13 +659,13 @@ jobs:
       # failure (restore, the arm64 check), uploading nothing and adding a second,
       # misleading red step to a job that already said what was wrong.
       #
-      # if-no-files-found: warn, for that same reason. The only way this fires against
-      # an empty tree is a harness that captured nothing at all, which run.sh already
-      # fails with its own message ("run 1 produced no PNGs at all, so there is
-      # nothing to compare"); a second failure here would restate a diagnosis that is
-      # already on screen.
+      # if-no-files-found: warn, and it should now be unreachable: the collect step
+      # above writes into this tree unconditionally, so there is always at least a
+      # note. It stays `warn` rather than `error` for the reason above — the only way
+      # to arrive here empty is the collect step having failed first, and a second red
+      # step would restate a diagnosis already on screen.
       #
-      # Hidden files are excluded by upload-artifact's own default, which is what
+      # Hidden files are still excluded by upload-artifact's own default, which is what
       # keeps each run's throwaway .appdata (SQLite DB + logs) out of the artifact.
       - name: Upload the determinism captures
         if: ${{ failure() && steps.determinism.outcome == 'failure' }}
