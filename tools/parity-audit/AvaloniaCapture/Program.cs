@@ -24,6 +24,44 @@ internal static class AvaloniaCapture
     private static string _outDir = "";
     private static bool _failed;   // any [FAIL] → non-zero exit so run.sh aborts the pipeline
 
+    // Every screen this harness is contracted to produce. Checked at the end of the run, and
+    // that check is the point: without it a MISSING screen is the quietest possible failure.
+    // Several capture sites can decline to fire without anything going wrong on the surface —
+    // SweepDrawer prints [SKIP] when a VM property is gone, NavClick prints [SKIP] when a named
+    // button is gone, and the mobile settings overlay was simply skipped in silence when the
+    // named control was absent — and none of those set the failure flag. A screen dropped that
+    // way then disappears from every downstream comparison too: the run-to-run determinism
+    // check compares whatever both runs contain, so a consistently absent screen reads as a
+    // clean "17/17 byte-identical" rather than as an incomplete capture. A gate that quietly
+    // shrinks its own scope is worse than no gate, because it is believed.
+    //
+    // Adding a screen means adding its name here. That is deliberate: this list is the
+    // contract, and the failure it produces when the two drift apart is the whole feature.
+    private static readonly string[] ExpectedScreens =
+    [
+        "desktop-1-livegraph",
+        "desktop-2-loggeddata",
+        "desktop-3-channels",
+        "desktop-4-devices",
+        "desktop-5-profiles",
+        "desktop-6-settings-drawer",
+        "desktop-7-notifications-flyout",
+        "desktop-8-livegraph-settings-flyout",
+        "desktop-9-summary-flyout",
+        "mobile-portrait-1-stream",
+        "mobile-portrait-2-channels",
+        "mobile-portrait-3-storage",
+        "mobile-portrait-4-profiles",
+        "mobile-portrait-5-settings",
+        "mobile-landscape-1-stream",
+        "mobile-landscape-2-channels",
+        "mobile-landscape-3-storage",
+        "mobile-landscape-4-profiles",
+    ];
+
+    // Names actually written, recorded by Capture only after the file is confirmed non-empty.
+    private static readonly HashSet<string> _captured = new(StringComparer.Ordinal);
+
     [STAThread]
     public static void Main(string[] args)
     {
@@ -44,9 +82,12 @@ internal static class AvaloniaCapture
             // down with a raw stack trace instead of the harness's diagnostic.
             //
             // Resolve ONCE and use the resolved path for everything after — including the closing
-            // "done ->" line. This project pins RuntimeIdentifier=win-x64, so launched from WSL it
-            // executes on the WINDOWS .NET runtime through interop, and GetFullPath resolves a
-            // Linux-style argument against a Windows root: `/tmp/shots` becomes `C:\tmp\shots`.
+            // "done ->" line. run.sh drives this harness with the WINDOWS dotnet when it runs from
+            // WSL (the WPF leg it runs alongside requires Windows at all), so there it executes on
+            // the Windows .NET runtime through interop and GetFullPath resolves a Linux-style
+            // argument against a Windows root: `/tmp/shots` becomes `C:\tmp\shots`.
+            // The project itself is RID-less and runs natively on macOS/Linux, where no such
+            // rewrite happens — but the WSL path is still live, so this stays.
             // Echoing the raw argument back made that invisible — the tool reported writing 18 files
             // to /tmp/shots while every byte landed on the Windows filesystem, and `ls /tmp/shots`
             // showed an empty directory (port #74).
@@ -64,9 +105,10 @@ internal static class AvaloniaCapture
                 // on the Windows console, which mangles non-ASCII (an em-dash here printed as '-').
                 if (requestedOutDir.StartsWith('/') && !_outDir.StartsWith('/'))
                 {
-                    Console.WriteLine("[INFO] under WSL a Linux-style path resolves against a " +
-                                      "Windows root (win-x64 runtime): look for output there, or " +
-                                      "pass a Windows path.");
+                    Console.WriteLine("[INFO] this process is on the Windows runtime (run.sh " +
+                                      "drives the Windows dotnet from WSL), so a Linux-style " +
+                                      "path resolves against a Windows root: look for output " +
+                                      "there, or pass a Windows path.");
                 }
             }
             Console.WriteLine($"[INFO] output directory: {_outDir}");
@@ -107,6 +149,7 @@ internal static class AvaloniaCapture
         {
             CaptureDesktop(desktop.MainWindow);
             CaptureMobile();
+            VerifyExpectedScreens();
         }
         finally
         {
@@ -145,14 +188,34 @@ internal static class AvaloniaCapture
         main.Height = 900;
         if (!main.IsVisible) { main.Show(); }
 
+        // Never capture after a navigation that did not happen. Set() returning false means the
+        // property is gone or read-only, and the window is therefore still showing the PREVIOUS
+        // screen — capturing anyway would write that frame under this screen's name, which is
+        // worse than not capturing it: a missing screen is caught by VerifyExpectedScreens, and
+        // a mislabelled one passes every check this tool has while quietly lying about what the
+        // UI looks like. Skipping the capture converts it into the case that IS caught.
         var tabs = new[] { "livegraph", "loggeddata", "channels", "devices", "profiles" };
         for (var i = 0; i < tabs.Length; i++)
         {
-            Set(vm, "SelectedIndex", i);
-            Capture($"desktop-{i + 1}-{tabs[i]}", main);
+            var name = $"desktop-{i + 1}-{tabs[i]}";
+            if (!Set(vm, "SelectedIndex", i))
+            {
+                _failed = true;
+                Console.WriteLine($"[SKIP] {name}: SelectedIndex is not writable on the " +
+                                  "view-model; not capturing the previous tab under this name");
+                continue;
+            }
+            Capture(name, main);
         }
 
-        Set(vm, "SelectedIndex", 0);
+        if (!Set(vm, "SelectedIndex", 0))
+        {
+            _failed = true;
+            Console.WriteLine("[FAIL] could not return to tab 0 before the drawer sweep; the " +
+                              "drawer captures would show the wrong pane behind them");
+            return;
+        }
+        Quiesce(main);
         SweepDrawer(main, vm, "IsAppSettingsOpen", "desktop-6-settings-drawer");
         SweepDrawer(main, vm, "IsNotificationsOpen", "desktop-7-notifications-flyout");
         SweepDrawer(main, vm, "IsLiveGraphSettingsOpen", "desktop-8-livegraph-settings-flyout");
@@ -161,9 +224,53 @@ internal static class AvaloniaCapture
 
     private static void SweepDrawer(Window main, object vm, string prop, string name)
     {
-        if (!Set(vm, prop, true)) { Console.WriteLine($"[SKIP] {name}: no prop {prop}"); return; }
+        if (!Set(vm, prop, true))
+        {
+            _failed = true;
+            Console.WriteLine($"[SKIP] {name}: no writable prop {prop}");
+            return;
+        }
         Capture(name, main);
         Set(vm, prop, false);
+        // Let the CLOSE finish before the next drawer opens. Set() pumps a fixed number of
+        // times, which is enough to get the new content on screen but nowhere near enough to
+        // finish an animation — and the last three drawers here are not three panels, they are
+        // ONE SplitView (MainWindow.axaml binds IsPaneOpen to BoolOr of the three VM flags), so
+        // whatever state a half-finished close left the pane in is the state the next open
+        // starts from, and the error accumulates across the sweep.
+        //
+        // This line and SettleSampleInterval are two DIFFERENT fixes and both are load-bearing.
+        // Ablated on macOS, repeat runs of the same binary at the same commit:
+        //
+        //   neither         (8 runs)   desktop-9-summary-flyout flipped between two encodings,
+        //                              4 each way — 6 pixels differing by 1 down the pane's left
+        //                              edge column (x=1059, the 1440-380 boundary)
+        //   interval only   (10 runs)  desktop-9 holds, but desktop-7-notifications-flyout — the
+        //                              FIRST user of that same SplitView — flips instead
+        //   both            (12 runs)  18/18 screens byte-identical
+        //
+        // (This line alone was not measured separately; the interval is what stops the mid-fade
+        // case described on SettleSampleInterval, so it is not optional regardless.)
+        //
+        // The one-pixel flips are sub-perceptual and still exactly the class of difference a
+        // visual gate must not manufacture: indistinguishable from a real one-pixel regression,
+        // and enough to fail a byte-identity baseline half the time.
+        Quiesce(main);
+    }
+
+    // Drive the window to a still frame and throw the frame away. Same settle loop the capture
+    // path uses; the point is only the side effect of pumping until nothing moves.
+    private static void Quiesce(Window w)
+    {
+        var (_, settled, _) = SettledFrame(w);
+        if (!settled)
+        {
+            // Not fatal — nothing was saved. But a window that will not stop moving between
+            // screens means the NEXT capture starts from a moving state, so say so rather
+            // than letting it turn into an unexplained difference in someone's diff.
+            Console.WriteLine($"[WARN] window still changing after {SettleMaxRounds} settle " +
+                              "rounds between screens; the next capture starts from motion");
+        }
     }
 
     // ---- Mobile: MobileMainView hosted at phone portrait + landscape sizes ----
@@ -186,16 +293,40 @@ internal static class AvaloniaCapture
         // "below the fold / clipped" issues (e.g. #15) reproduce headless instead of
         // silently fitting in an oversized viewport.
         // Portrait phone
+        // Every capture below is gated on the navigation that selects it. NavClick returning
+        // false means the named button is gone and the view is still on the PREVIOUS pane, so
+        // capturing anyway would save that pane under this one's name — a duplicate, mislabelled
+        // screenshot that satisfies the completeness check and every byte comparison downstream,
+        // while being a picture of the wrong screen. That is the one failure a visual gate must
+        // never produce. Skipping the capture turns it into a missing screen, which
+        // VerifyExpectedScreens does catch.
+        //
+        // The bare NavClicks that return to Stream are gated too, for the same reason one step
+        // removed: they set up the state the NEXT capture is taken from.
         Resize(host, 384, 800);
         Capture("mobile-portrait-1-stream", host);
-        NavClick(mobile, "NavChannels"); Capture("mobile-portrait-2-channels", host);
-        NavClick(mobile, "NavStorage");  Capture("mobile-portrait-3-storage", host);
-        NavClick(mobile, "NavProfiles"); Capture("mobile-portrait-4-profiles", host);
-        NavClick(mobile, "NavStream");
+        if (NavClick(mobile, "NavChannels")) { Capture("mobile-portrait-2-channels", host); }
+        if (NavClick(mobile, "NavStorage"))  { Capture("mobile-portrait-3-storage", host); }
+        if (NavClick(mobile, "NavProfiles")) { Capture("mobile-portrait-4-profiles", host); }
+
+        // Back to Stream. This one is not followed by a capture of its own, but the two that
+        // come after it — the settings overlay and the landscape Stream pane — are both taken
+        // with it as their backdrop, so a failure here mislabels them rather than itself.
+        var onStream = NavClick(mobile, "NavStream");
 
         // Settings overlay (#11): toggle the named overlay visible + give it its VM.
         var overlay = mobile.FindControl<Control>("SettingsOverlay");
-        if (overlay is not null)
+        if (overlay is null)
+        {
+            _failed = true;
+            Console.WriteLine("[SKIP] mobile-portrait-5-settings: no SettingsOverlay control");
+        }
+        else if (!onStream)
+        {
+            Console.WriteLine("[SKIP] mobile-portrait-5-settings: the view is not on Stream, so " +
+                              "the overlay would be captured over the wrong pane");
+        }
+        else
         {
             overlay.DataContext ??= new Daqifi.Desktop.ViewModels.SettingsViewModel();
             overlay.IsVisible = true;
@@ -205,10 +336,17 @@ internal static class AvaloniaCapture
 
         // Landscape phone (desktop-style left rail per design intent)
         Resize(host, 820, 360);
-        Capture("mobile-landscape-1-stream", host);
-        NavClick(mobile, "RailChannels"); Capture("mobile-landscape-2-channels", host);
-        NavClick(mobile, "RailStorage");  Capture("mobile-landscape-3-storage", host);
-        NavClick(mobile, "RailProfiles"); Capture("mobile-landscape-4-profiles", host);
+        if (onStream)
+        {
+            Capture("mobile-landscape-1-stream", host);
+        }
+        else
+        {
+            Console.WriteLine("[SKIP] mobile-landscape-1-stream: the view is not on Stream");
+        }
+        if (NavClick(mobile, "RailChannels")) { Capture("mobile-landscape-2-channels", host); }
+        if (NavClick(mobile, "RailStorage"))  { Capture("mobile-landscape-3-storage", host); }
+        if (NavClick(mobile, "RailProfiles")) { Capture("mobile-landscape-4-profiles", host); }
         NavClick(mobile, "RailStream");
     }
 
@@ -221,12 +359,22 @@ internal static class AvaloniaCapture
         Pump();
     }
 
-    private static void NavClick(Control root, string name)
+    // Returns whether the navigation actually happened, and fails the run when it did not.
+    // Callers MUST gate their capture on this: the view is still on the previous pane, so a
+    // capture taken anyway is a picture of the wrong screen filed under the right name.
+    private static bool NavClick(Control root, string name)
     {
         var btn = root.FindControl<Button>(name);
-        if (btn is null) { Console.WriteLine($"[SKIP] nav {name}: not found"); return; }
+        if (btn is null)
+        {
+            _failed = true;
+            Console.WriteLine($"[SKIP] nav {name}: button not found; the pane it selects is not " +
+                              "reachable, so nothing is captured for it");
+            return false;
+        }
         btn.RaiseEvent(new RoutedEventArgs(Button.ClickEvent));
         Pump();
+        return true;
     }
 
     private static bool Set(object target, string prop, object? value)
@@ -258,6 +406,26 @@ internal static class AvaloniaCapture
     // are byte-identical. Comparing encoded PNGs is exact and needs no pixel-buffer access.
     private const int SettleMaxRounds = 40;
 
+    // ...and let REAL TIME pass between the two frames being compared, which is the half that
+    // was missing. "Two consecutive samples are identical" only means nothing changed BETWEEN
+    // THOSE SAMPLES. Avalonia's animation clock advances with wall time, not with pump count,
+    // so two samples taken microseconds apart are identical for a transition sitting at 20%
+    // opacity just as surely as for one that finished — and the loop stops on the first pair,
+    // saving a half-drawn frame while reporting "settled in 1 round".
+    //
+    // Found on macOS by running the harness eight times and hashing: one run's
+    // mobile-portrait-3-storage differed from the other seven on 81% of its pixels (249,600 of
+    // 307,200). That is not a subtle artifact, it is the whole pane at the wrong opacity, and it
+    // is the same shape as the 65.6% false positive above — which was diagnosed as a race and
+    // then fixed with a settle loop that could still lose that race. Spacing the samples is what
+    // makes them evidence: every Avalonia transition in this app is far longer than this
+    // interval, so an unfinished one is guaranteed to move between two samples.
+    //
+    // 50 ms because it must exceed a frame and stay well under the shortest transition. The cost
+    // is bounded and small: a settling screen takes 2-4 rounds (~100-200 ms), and only a screen
+    // that never settles — which fails the capture rather than saving it — pays the full 2 s.
+    private static readonly TimeSpan SettleSampleInterval = TimeSpan.FromMilliseconds(50);
+
     private static byte[] Encode(Window w)
     {
         using var buffer = new MemoryStream();
@@ -282,6 +450,7 @@ internal static class AvaloniaCapture
         var previous = Encode(w);
         for (var round = 1; round <= SettleMaxRounds; round++)
         {
+            Thread.Sleep(SettleSampleInterval);
             Pump();
             var current = Encode(w);
             if (current.Length == previous.Length && current.AsSpan().SequenceEqual(previous))
@@ -327,12 +496,45 @@ internal static class AvaloniaCapture
             // line's grouping vary by machine, which run-to-run log comparison relies on
             // not doing.
             var size = written.Length.ToString("N0", CultureInfo.InvariantCulture);
+            _captured.Add(name);
             Console.WriteLine($"[OK]   {name}: {size} bytes, settled in {rounds} round(s)");
         }
         catch (Exception ex)
         {
             _failed = true;
             Console.WriteLine($"[FAIL] {name}: {ex.GetType().Name}: {ex.Message}");
+        }
+    }
+
+    // Turn "a screen is missing" from a silent shrink into a failed run. Reports BOTH
+    // directions: a missing screen is the dangerous case, and an unexpected one means the
+    // capture set and ExpectedScreens have drifted, which is the same bug seen from the other
+    // side — a downstream comparison would treat the new name as an extra rather than as
+    // coverage nobody approved.
+    private static void VerifyExpectedScreens()
+    {
+        var missing = ExpectedScreens.Where(name => !_captured.Contains(name)).ToArray();
+        var unexpected = _captured.Except(ExpectedScreens, StringComparer.Ordinal)
+                                  .OrderBy(name => name, StringComparer.Ordinal).ToArray();
+
+        if (missing.Length > 0)
+        {
+            _failed = true;
+            Console.WriteLine($"[FAIL] {missing.Length} expected screen(s) were not captured: " +
+                              string.Join(", ", missing) +
+                              ". A [SKIP] or [FAIL] above says why; the run is incomplete, and an " +
+                              "incomplete set must not be compared as if it were whole.");
+        }
+        if (unexpected.Length > 0)
+        {
+            _failed = true;
+            Console.WriteLine($"[FAIL] {unexpected.Length} screen(s) were captured that " +
+                              "ExpectedScreens does not list: " + string.Join(", ", unexpected) +
+                              ". Add them there so the completeness check covers them.");
+        }
+        if (missing.Length == 0 && unexpected.Length == 0)
+        {
+            Console.WriteLine($"[OK]   all {ExpectedScreens.Length} expected screens captured");
         }
     }
 }
