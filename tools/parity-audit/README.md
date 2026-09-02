@@ -235,7 +235,10 @@ These cost real time to discover — leaving them here:
   window loads instead of crashing the leg with "Cannot locate resource images/daqifi.png".
   If the app grows a third startup-window entry-relative URI, shim it here too.
 - Faithful pixels need `UseSkia()` + `UseHeadless(new AvaloniaHeadlessPlatformOptions
-  { UseHeadlessDrawing = false })`; capture with `window.CaptureRenderedFrame()`.
+  { UseHeadlessDrawing = false })`. Capture with a fresh `RenderTargetBitmap`, **not**
+  `window.CaptureRenderedFrame()` — that one reads the headless framebuffer, which the
+  compositor updates in place a dirty region at a time, so its contents depend on the
+  redraw history and not only on the tree (#201, and the long note on `Encode`).
 - **`AvaloniaCapture` declares no `RuntimeIdentifier`, and that is load-bearing.** A
   pinned RID does not merely bias the pixels — it makes the harness unrunnable on
   every other host, because the build produces that platform's apphost and only that
