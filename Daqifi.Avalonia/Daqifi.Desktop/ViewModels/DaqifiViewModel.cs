@@ -324,6 +324,21 @@ public partial class DaqifiViewModel : ObservableObject, IFirmwareUpdateHost, IL
             // while the label still says "LOGGING OFF").
             OnPropertyChanged(nameof(IsLogging));
             LoggingManager.Instance.Active = value;
+
+            // A start that could not create its session row reports it here rather than throwing,
+            // because a throw out of this setter travels through the toggle's two-way binding write
+            // into the dispatcher and ends the process (#183). Put the toggle back to OFF and say
+            // why: without this the toggle reads ON, no device is ever told to stream, and the next
+            // stop silently discards a run that never happened.
+            if (value && LoggingManager.Instance.SessionStartFailure is { } sessionStartFailure)
+            {
+                LoggingManager.Instance.Active = false;
+                _isLogging = false;
+                OnPropertyChanged(nameof(IsLogging));
+                ReportLoggingCouldNotStart(sessionStartFailure);
+                return;
+            }
+
             if (_isLogging)
             {
                 _diskSpaceCoordinator?.StartMonitoring(suppressInitialWarning: preSessionWarningShown);
@@ -1497,6 +1512,47 @@ public partial class DaqifiViewModel : ObservableObject, IFirmwareUpdateHost, IL
             Message = message
         });
         NotificationCount = NotificationList.Count;
+    }
+
+    /// <summary>
+    /// Tells the user that flipping the logging toggle did not start a session, and why. Called from
+    /// the <see cref="IsLogging"/> setter after <c>LoggingManager</c> reports a failed start.
+    /// </summary>
+    /// <remarks>
+    /// Both surfaces, deliberately: the dialog because the user just clicked something and watched
+    /// it snap back, and the standing notification (the shape <see cref="ReportQuarantinedDatabase"/>
+    /// established) because that is what is still readable once the dialog is dismissed.
+    /// </remarks>
+    private void ReportLoggingCouldNotStart(string message)
+    {
+        _appLogger.Error(message);
+
+        // Null DeviceSerialNo, as above: an app-level condition with no owning device, which exempts
+        // it from RemoveNotification's per-device pruning.
+        NotificationList.Add(new Notifications
+        {
+            IsFirmwareUpdate = false,
+            Message = message
+        });
+        NotificationCount = NotificationList.Count;
+
+        // Fire-and-forget for the same reason the disk-space gate in this same setter does it: the
+        // toggle's two-way binding is mid-write, so there is nothing here that can await a modal.
+        // The dialog's own failures are caught rather than left as an unobserved task fault.
+        _ = ShowLoggingStartFailure(message);
+    }
+
+    /// <summary>Shows the failed-start dialog, and never lets its own failure escape.</summary>
+    private async Task ShowLoggingStartFailure(string message)
+    {
+        try
+        {
+            await _messageBoxService.ShowAsync(message, "Cannot Start Logging", MessageBoxButton.OK, MessageBoxImage.Warning);
+        }
+        catch (Exception ex)
+        {
+            _appLogger.Error(ex, "Failed to show the logging start failure dialog");
+        }
     }
 
     /// <summary>

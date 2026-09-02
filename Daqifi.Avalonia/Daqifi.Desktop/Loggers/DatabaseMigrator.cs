@@ -206,6 +206,73 @@ public static class DatabaseMigrator
             : preserved + "Building a replacement also failed, so logged data is unavailable in this "
               + "session. The old file has not been deleted.";
     }
+
+    /// <summary>
+    /// Replaces the logged-data database with a freshly migrated, empty one — the storage half of
+    /// "Delete All Sessions" — in an order that cannot leave the app without a schema.
+    /// </summary>
+    /// <remarks>
+    /// The purge used to delete <c>DAQiFiDatabase.db</c> and its sidecars and only then ask EF to
+    /// rebuild the schema, so anything that failed after the first delete — a second process, a
+    /// scanner or a file browser holding a sidecar, a full disk, a folder gone read-only — left a
+    /// STRUCTURALLY VALID BUT TABLE-LESS database behind, with the failure swallowed to the log. The
+    /// next thing to query <c>Sessions</c> or <c>Samples</c> then threw <c>no such table</c>, and on
+    /// the logging toggle that is a crash, not a glitch (#183).
+    /// <para>
+    /// So the old set is MOVED aside first, the replacement is built, and only a replacement that
+    /// actually migrated lets the old set be deleted. A failure at any point puts the user's
+    /// database back exactly where it was, which is why the caller can honestly leave the session
+    /// list alone and say nothing was deleted.
+    /// </para>
+    /// <para>
+    /// This is a different fault from the corruption recovery above and is deliberately kept
+    /// distinct: that one preserves a <c>.corrupt-</c> file for ever because the user's data may
+    /// still be recoverable from it, while this one is the user asking for that data to be
+    /// destroyed, so a successful purge deletes what it moved.
+    /// </para>
+    /// </remarks>
+    /// <param name="contextFactory">The DbContext factory registered in DI.</param>
+    /// <param name="databasePath">Full path to the SQLite database file.</param>
+    /// <exception cref="DatabaseReplacementException">
+    /// The database was not replaced. Its message says what happened to the old data, and
+    /// <see cref="DatabaseReplacementException.RelocatedDatabasePath"/> is set in the one case where
+    /// it could not be put back.
+    /// </exception>
+    public static void ReplaceWithEmptyDatabase(IDbContextFactory<LoggingContext> contextFactory, string databasePath)
+    {
+        // Drop any pooled handle on the file first, or the move fails on Windows.
+        SqliteConnection.ClearAllPools();
+
+        // Millisecond precision and overwrite:false throughout, exactly as the quarantine does, so a
+        // purge can never land on top of a set an earlier one left behind.
+        var relocatedPath = $"{databasePath}.deleted-{DateTime.UtcNow:yyyyMMdd-HHmmssfff}";
+
+        if (MoveDatabaseSet(databasePath, relocatedPath) is not { } moved)
+        {
+            throw new DatabaseReplacementException(
+                "The logged data could not be deleted because its database file is in use. Nothing was "
+                + "deleted — your logging sessions are exactly as they were. Close any other copy of "
+                + "DAQiFi and try again.",
+                relocatedDatabasePath: null,
+                innerException: null);
+        }
+
+        try
+        {
+            RunMigrations(contextFactory);
+        }
+        catch (Exception ex)
+        {
+            AppLogger.Instance.Error(ex,
+                $"Rebuilding an empty database at '{databasePath}' failed after the old one was moved to "
+                + $"'{relocatedPath}'; putting the old one back.");
+
+            throw RestoreAfterFailedReplacement(databasePath, relocatedPath, moved, ex);
+        }
+
+        // Only now is the old set redundant: a working, migrated database is in its place.
+        DeleteRelocatedSet(moved);
+    }
     #endregion
 
     #region Private Methods
@@ -284,45 +351,15 @@ public static class DatabaseMigrator
         // any other failure and undoes.
         var quarantinePath = $"{databasePath}.corrupt-{DateTime.UtcNow:yyyyMMdd-HHmmssfff}";
 
-        // All of it or none of it. Three reasons this has to be atomic rather than best-effort:
-        //   • a journal can hold the only committed copy of the user's last samples, so it must stay
-        //     with the database it belongs to;
-        //   • one left beside a REPLACEMENT database is not inert — SQLite rolls back a hot
-        //     -journal, and replays a -wal whose header still checksums, either way writing the old
-        //     file's pages into the new one;
-        //   • every attempt picks a fresh timestamp, so a half-moved set could never be reunited by
-        //     a later one.
-        // Nothing is ever deleted: a file that cannot be moved is put back, not removed.
-        //
-        // Within one process this is exact. Against a SECOND DAQiFi instance it is not, and cannot
-        // be here: the app has no cross-process database ownership guard at all (no named mutex, no
-        // lock file — two instances already share this file today, entirely independently of this
-        // recovery), and ClearAllPools only releases this process's handles. What bounds it is that
-        // a quarantine only ever runs on a file SQLite has just refused to read, so a second
+        // Within one process the move below is exact. Against a SECOND DAQiFi instance it is not,
+        // and cannot be here: the app has no cross-process database ownership guard at all (no named
+        // mutex, no lock file — two instances already share this file today, entirely independently
+        // of this recovery), and ClearAllPools only releases this process's handles. What bounds it
+        // is that a quarantine only ever runs on a file SQLite has just refused to read, so a second
         // instance reaches the same failure rather than writing a journal next to it.
-        var moved = new List<(string From, string To)>();
-
-        foreach (var suffix in DatabaseFileSuffixes)
+        if (MoveDatabaseSet(databasePath, quarantinePath) is null)
         {
-            var source = databasePath + suffix;
-            if (!File.Exists(source))
-            {
-                continue;
-            }
-
-            try
-            {
-                File.Move(source, quarantinePath + suffix, overwrite: false);
-                moved.Add((source, quarantinePath + suffix));
-            }
-            catch (Exception ex)
-            {
-                AppLogger.Instance.Error(ex,
-                    $"Could not move '{source}' aside, so the quarantine of '{databasePath}' is being undone. " +
-                    "The app will refuse to open the database rather than leave a half-moved set of files behind.");
-                UndoMoves(moved);
-                return null;
-            }
+            return null;
         }
 
         QuarantinedDatabasePath = quarantinePath;
@@ -334,7 +371,148 @@ public static class DatabaseMigrator
     }
 
     /// <summary>
-    /// Puts every file an abandoned quarantine had already moved back where it came from, newest
+    /// Moves the database and every journal sidecar from <paramref name="databasePath"/> to
+    /// <paramref name="destinationPathPrefix"/> plus the same suffix — all of it or none of it.
+    /// </summary>
+    /// <remarks>
+    /// Three reasons this has to be atomic rather than best-effort:
+    /// <list type="bullet">
+    ///   <item>a journal can hold the only committed copy of the user's last samples, so it must
+    ///   stay with the database it belongs to;</item>
+    ///   <item>one left beside a REPLACEMENT database is not inert — SQLite rolls back a hot
+    ///   <c>-journal</c>, and replays a <c>-wal</c> whose header still checksums, either way writing
+    ///   the old file's pages into the new one;</item>
+    ///   <item>every caller picks a fresh timestamped destination, so a half-moved set could never
+    ///   be reunited by a later attempt.</item>
+    /// </list>
+    /// Nothing is ever deleted here: a file that cannot be moved is put back, not removed. Every
+    /// move uses <c>overwrite: false</c>, so an existing destination fails the move rather than
+    /// clobbering something the user might still want.
+    /// <para>
+    /// Shared by the two callers that need the database out of the way — the corruption quarantine
+    /// and the "Delete All Sessions" purge — so there is one implementation of "relocate the whole
+    /// artefact" rather than two that drift on which sidecars exist and what happens half way.
+    /// </para>
+    /// </remarks>
+    /// <returns>
+    /// The moves that were made (empty when there was no database to move), or <c>null</c> when the
+    /// set could not be moved and every move already made has been undone.
+    /// </returns>
+    private static List<(string From, string To)>? MoveDatabaseSet(string databasePath, string destinationPathPrefix)
+    {
+        var moved = new List<(string From, string To)>();
+
+        foreach (var suffix in DatabaseFileSuffixes)
+        {
+            var source = databasePath + suffix;
+            if (!File.Exists(source))
+            {
+                continue;
+            }
+
+            var destination = destinationPathPrefix + suffix;
+            try
+            {
+                File.Move(source, destination, overwrite: false);
+                moved.Add((source, destination));
+            }
+            catch (Exception ex)
+            {
+                AppLogger.Instance.Error(ex,
+                    $"Could not move '{source}' to '{destination}', so the relocation of '{databasePath}' is being undone. " +
+                    "A half-moved set of database files is never left behind.");
+                UndoMoves(moved);
+                return null;
+            }
+        }
+
+        return moved;
+    }
+
+    /// <summary>
+    /// Undoes a purge whose replacement could not be built: clears away whatever the failed
+    /// migration left at the live path and puts the user's database back.
+    /// </summary>
+    /// <remarks>
+    /// The half-built replacement has to go first, because <see cref="UndoMoves"/> moves with
+    /// <c>overwrite: false</c> and would otherwise refuse. It is safe to delete precisely because it
+    /// is seconds old and holds nothing: it was created by the migration that just failed. If even
+    /// that cannot be deleted, the old data stays under its relocated name rather than being put
+    /// back — which the returned exception says out loud, with the path, so it is never lost
+    /// silently.
+    /// </remarks>
+    /// <returns>The exception to throw, describing what the user's data is now doing.</returns>
+    private static DatabaseReplacementException RestoreAfterFailedReplacement(
+        string databasePath,
+        string relocatedPath,
+        List<(string From, string To)> moved,
+        Exception fault)
+    {
+        // The failed migration may still hold a pooled handle on the file it created.
+        SqliteConnection.ClearAllPools();
+
+        foreach (var suffix in DatabaseFileSuffixes)
+        {
+            var leftover = databasePath + suffix;
+            if (!File.Exists(leftover))
+            {
+                continue;
+            }
+
+            try
+            {
+                File.Delete(leftover);
+            }
+            catch (Exception ex)
+            {
+                AppLogger.Instance.Error(ex,
+                    $"Could not remove '{leftover}', left by a failed rebuild, so the original database "
+                    + $"cannot be put back and stays at '{relocatedPath}'.");
+
+                return new DatabaseReplacementException(
+                    "The logged data could not be deleted, and the original database could not be put "
+                    + $"back either. It has been preserved at '{relocatedPath}' — nothing was destroyed. "
+                    + "Close any other copy of DAQiFi, restart, and contact support if the Logged Data "
+                    + "pane is still empty.",
+                    relocatedPath,
+                    fault);
+            }
+        }
+
+        UndoMoves(moved);
+
+        return new DatabaseReplacementException(
+            "The logged data could not be deleted because an empty database could not be created in "
+            + "its place. Nothing was deleted — your logging sessions are exactly as they were. Check "
+            + "that there is free disk space and that the DAQiFi data folder is writable, then try again.",
+            relocatedDatabasePath: null,
+            fault);
+    }
+
+    /// <summary>
+    /// Deletes the set a successful purge moved aside. Best-effort: the user's request has already
+    /// been honoured (the live database is empty), so a file that will not go is a leftover to log
+    /// rather than a reason to fail the operation and re-show sessions that are gone.
+    /// </summary>
+    private static void DeleteRelocatedSet(List<(string From, string To)> moved)
+    {
+        foreach (var (_, to) in moved)
+        {
+            try
+            {
+                File.Delete(to);
+            }
+            catch (Exception ex)
+            {
+                AppLogger.Instance.Error(ex,
+                    $"Deleted all logging sessions, but the old database file '{to}' could not be removed. "
+                    + "Delete it by hand; it holds the sessions that were just deleted.");
+            }
+        }
+    }
+
+    /// <summary>
+    /// Puts every file an abandoned relocation had already moved back where it came from, newest
     /// move first. Best-effort by necessity — there is nothing left to try if this fails — so each
     /// failure is logged with both paths, which is what a support log needs to say.
     /// </summary>
@@ -350,7 +528,7 @@ public static class DatabaseMigrator
             catch (Exception ex)
             {
                 AppLogger.Instance.Error(ex,
-                    $"Could not put '{to}' back as '{from}' while undoing an abandoned quarantine. Move it back by hand.");
+                    $"Could not put '{to}' back as '{from}' while undoing an abandoned relocation. Move it back by hand.");
             }
         }
     }
@@ -526,4 +704,30 @@ public static class DatabaseMigrator
         return result is long count && count > 0;
     }
     #endregion
+}
+
+/// <summary>
+/// Thrown when <see cref="DatabaseMigrator.ReplaceWithEmptyDatabase"/> did not replace the database.
+/// </summary>
+/// <remarks>
+/// The <see cref="Exception.Message"/> is deliberately written for a user, not a developer: the
+/// caller shows it verbatim, because "Delete All Sessions" quietly failing while the pane went on
+/// listing the sessions is half of what #183 reported. What the user needs to know is whether their
+/// data is still there, and it always is — either back at the database path, or, in the one case
+/// where it could not be put back, under <see cref="RelocatedDatabasePath"/>.
+/// </remarks>
+/// <param name="message">The sentence to show the user.</param>
+/// <param name="relocatedDatabasePath">
+/// Where the original database now sits, when it could NOT be put back; <c>null</c> whenever it was
+/// restored (the ordinary failure), so the caller can say nothing moved.
+/// </param>
+/// <param name="innerException">The failure that stopped the replacement, for the log.</param>
+public sealed class DatabaseReplacementException(string message, string? relocatedDatabasePath, Exception? innerException)
+    : IOException(message, innerException)
+{
+    /// <summary>
+    /// Where the user's original database was left when it could not be put back, or <c>null</c>
+    /// when it is exactly where it always was.
+    /// </summary>
+    public string? RelocatedDatabasePath { get; } = relocatedDatabasePath;
 }
