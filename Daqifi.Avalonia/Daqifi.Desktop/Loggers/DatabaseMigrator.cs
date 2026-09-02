@@ -20,6 +20,52 @@ public static class DatabaseMigrator
     #region Constants
     private const string INITIAL_MIGRATION_ID = "20250812090000_InitialSQLiteMigration";
     private const string EF_PRODUCT_VERSION = "10.0.7";
+
+    // SQLite primary result codes that mean the FILE'S CONTENT is unusable as a database.
+    // These two, and only these two, justify moving the file aside:
+    //   SQLITE_CORRUPT (11) "database disk image is malformed" — a valid header, damaged pages.
+    //   SQLITE_NOTADB  (26) "file is not a database" — the header itself is wrong or truncated.
+    // Deliberately NOT included, because each describes the ENVIRONMENT rather than the file, and
+    // quarantining on one would move a perfectly healthy database aside over a transient fault:
+    //   SQLITE_BUSY (5) / SQLITE_LOCKED (6) — a second instance holds it.
+    //   SQLITE_CANTOPEN (14) — permission denied, missing directory, or the path is a directory.
+    //   SQLITE_READONLY (8) — the file or its directory is not writable.
+    // Codes verified against Microsoft.Data.Sqlite 10.0.10 by damaging real database files: a
+    // text file, a truncated header and a clobbered magic string all report 26; a database whose
+    // pages past the header are overwritten reports 11; a directory in the file's place reports 14.
+    // A ZERO-BYTE file reports nothing at all — SQLite treats it as a valid empty database, which
+    // is why "the file exists but has no content" is not a corruption case and is not one here.
+    private const int SQLITE_CORRUPT = 11;
+    private const int SQLITE_NOTADB = 26;
+
+    // The database and its journal sidecars are ONE artefact and move together. All three of
+    // SQLite's auxiliary files are covered, not just the WAL pair: nothing in this app sets
+    // journal_mode, so it runs in SQLite's default DELETE mode, whose journal is "-journal". A hot
+    // "-journal" beside a replacement database is the same hazard as a stale "-wal" — SQLite rolls
+    // it back into the new file — and it is the one this app can actually produce.
+    //
+    // Ordered so the database itself goes last: it is the file whose absence lets a replacement be
+    // created, so it is the last thing to leave and (when a quarantine is undone) the first thing
+    // to come back.
+    private static readonly string[] DatabaseFileSuffixes = ["-journal", "-wal", "-shm", ""];
+    #endregion
+
+    #region Public Properties
+    /// <summary>
+    /// Where an unreadable <c>DAQiFiDatabase.db</c> was moved to on this run, or <c>null</c> when
+    /// the database opened normally (the overwhelmingly common case). Parked as static state so the
+    /// UI can tell the user their logged sessions were left behind — <see cref="PrepareMigration"/>
+    /// runs before any window exists, so there is nothing to show a dialog on at the time.
+    /// </summary>
+    public static string? QuarantinedDatabasePath { get; private set; }
+
+    /// <summary>
+    /// Whether a migration has since completed against the database now at that path. Tracked apart
+    /// from <see cref="QuarantinedDatabasePath"/> because moving the damaged file aside and building
+    /// a working replacement are separate outcomes, and the mobile head reaches its UI even when the
+    /// second one failed (<c>App.InitializeMobile</c> catches a migration failure and carries on).
+    /// </summary>
+    private static bool _replacementDatabaseIsLive;
     #endregion
 
     #region Public Methods
@@ -28,15 +74,36 @@ public static class DatabaseMigrator
     /// there are pending migrations. Call this before <see cref="ApplyMigrations"/>
     /// to determine if a status UI should be shown.
     /// </summary>
+    /// <remarks>
+    /// Every read here assumed the file at <paramref name="databasePath"/>, if it exists, IS a
+    /// SQLite database. Nothing had ever checked. A damaged <c>DAQiFiDatabase.db</c> therefore threw
+    /// <see cref="SqliteException"/> out of <c>SeedMigrationHistoryIfNeeded</c>'s first
+    /// <c>sqlite_master</c> query, straight out of <c>App.Initialize</c> and
+    /// <c>OnFrameworkInitializationCompleted</c>, killing the process before a window existed — and
+    /// the next launch found the same file and did the same thing. It now recovers instead.
+    /// </remarks>
     /// <param name="contextFactory">The DbContext factory registered in DI.</param>
     /// <param name="databasePath">Full path to the SQLite database file.</param>
     /// <returns><c>true</c> if there are pending migrations to apply.</returns>
     // @port: Daqifi.Desktop.Logger.DatabaseMigrator.PrepareMigration
     public static bool PrepareMigration(IDbContextFactory<LoggingContext> contextFactory, string databasePath)
     {
-        SeedMigrationHistoryIfNeeded(databasePath);
-        SqliteConnection.ClearAllPools();
-        return HasPendingMigrations(contextFactory);
+        try
+        {
+            return SeedHistoryAndCheckPending(contextFactory, databasePath);
+        }
+        catch (Exception ex) when (FindContentCorruption(ex) is { } corruption)
+        {
+            AppLogger.Instance.Error(ex, "Reading the database to check for pending migrations failed: the file is corrupt");
+            if (QuarantineDatabase(databasePath, corruption) is null)
+            {
+                throw;
+            }
+
+            // Against the file that was just created in its place. A second corruption here would
+            // mean the fresh database is damaged too, which is a real bug, so it is left to throw.
+            return SeedHistoryAndCheckPending(contextFactory, databasePath);
+        }
     }
 
     /// <summary>
@@ -51,25 +118,243 @@ public static class DatabaseMigrator
     {
         var backupPath = BackupDatabase(databasePath);
         CheckpointWal(databasePath);
+        var quarantinedBefore = QuarantinedDatabasePath;
 
         try
         {
-            using var context = contextFactory.CreateDbContext();
-            context.Database.Migrate();
+            MigrateWithCorruptionRecovery(contextFactory, databasePath);
         }
         catch (Exception ex)
         {
             AppLogger.Instance.Error(ex, "Database migration failed");
-            RestoreBackup(backupPath, databasePath);
+
+            // Roll back only onto a database that is still the user's own. If the file was
+            // quarantined during the call above then the backup is a copy of THAT damaged file, and
+            // restoring it would put the damage back on top of the replacement; the quarantined
+            // original is the copy worth keeping, so drop the redundant one instead.
+            if (QuarantinedDatabasePath == quarantinedBefore)
+            {
+                RestoreBackup(backupPath, databasePath);
+            }
+            else
+            {
+                CleanupBackup(backupPath);
+            }
+
             throw;
         }
 
         CleanupBackup(backupPath);
         AppLogger.Instance.AddBreadcrumb("database", "Database migration completed successfully");
     }
+
+    /// <summary>
+    /// Migrates, and if the database file's content turns out to be corrupt, quarantines it and
+    /// migrates once more against the fresh one that takes its place.
+    /// </summary>
+    /// <remarks>
+    /// Public because the mobile heads call it directly: they cannot show
+    /// <c>MigrationStatusWindow</c>, so they never call <see cref="PrepareMigration"/> /
+    /// <see cref="ApplyMigrations"/> and would otherwise get no recovery at all.
+    /// </remarks>
+    /// <param name="contextFactory">The DbContext factory registered in DI.</param>
+    /// <param name="databasePath">Full path to the SQLite database file.</param>
+    public static void MigrateWithCorruptionRecovery(IDbContextFactory<LoggingContext> contextFactory, string databasePath)
+    {
+        try
+        {
+            RunMigrations(contextFactory);
+        }
+        catch (Exception ex) when (FindContentCorruption(ex) is { } corruption)
+        {
+            // Corruption the pending-migration read did not reach — that read only touches the
+            // schema catalog and __EFMigrationsHistory, so damage confined to pages the migration
+            // itself rewrites surfaces here for the first time.
+            AppLogger.Instance.Error(ex, "Database migration failed: the database file is corrupt");
+            if (QuarantineDatabase(databasePath, corruption) is null)
+            {
+                throw;
+            }
+
+            RunMigrations(contextFactory);
+        }
+
+        // Reached only when a migration completed, so whatever is at databasePath now works.
+        _replacementDatabaseIsLive = true;
+    }
+
+    /// <summary>
+    /// The one user-facing sentence describing this run's quarantine, or <c>null</c> when there was
+    /// none. Lives here so the desktop notification list and the mobile notifications overlay say
+    /// the same thing.
+    /// </summary>
+    public static string? DescribeQuarantineForUser()
+    {
+        if (QuarantinedDatabasePath is not { } path)
+        {
+            return null;
+        }
+
+        var preserved = $"The logged-data database could not be read and was moved to '{path}'. ";
+
+        // Never claim a working replacement that does not exist. The desktop dies before any window
+        // when the rebuild fails, but the mobile head carries on to its UI, so this branch is what
+        // stops that user being told everything is fine while every data-backed pane is broken.
+        return _replacementDatabaseIsLive
+            ? preserved + "A new, empty one is in use — previously logged sessions are not in it, "
+              + "and the old file has not been deleted."
+            : preserved + "Building a replacement also failed, so logged data is unavailable in this "
+              + "session. The old file has not been deleted.";
+    }
     #endregion
 
     #region Private Methods
+    /// <summary>The pre-migration read, factored out so the recovery path can repeat it verbatim.</summary>
+    private static bool SeedHistoryAndCheckPending(IDbContextFactory<LoggingContext> contextFactory, string databasePath)
+    {
+        SeedMigrationHistoryIfNeeded(databasePath);
+        SqliteConnection.ClearAllPools();
+        return HasPendingMigrations(contextFactory);
+    }
+
+    /// <summary>The migration itself, factored out for the same reason.</summary>
+    private static void RunMigrations(IDbContextFactory<LoggingContext> contextFactory)
+    {
+        using var context = contextFactory.CreateDbContext();
+        context.Database.Migrate();
+    }
+
+    /// <summary>
+    /// Searches an exception and its inner chain for SQLite saying the database FILE'S CONTENT is
+    /// unusable, which is the only kind of failure a quarantine is a valid answer to.
+    /// </summary>
+    /// <remarks>
+    /// Asking the operation that actually failed, rather than probing up front, is deliberate. A
+    /// cheap pre-flight query (<c>SELECT COUNT(*) FROM sqlite_master</c>) validates the header and
+    /// the schema catalog and nothing else — measured: a database whose pages past page 1 are
+    /// overwritten passes it and then throws <c>SQLITE_CORRUPT</c> on the very next table read, so
+    /// a probe-first design would have left that file in place and crashed startup anyway. The
+    /// thorough pre-flight, <c>PRAGMA integrity_check</c>, walks the whole file, and this runs on
+    /// every launch of an app whose database routinely holds millions of samples. Catching the real
+    /// failure costs nothing on a healthy launch and covers exactly the reads that happen.
+    /// <para>
+    /// The chain walk matters because EF Core wraps provider exceptions; the corruption is often the
+    /// inner one.
+    /// </para>
+    /// </remarks>
+    private static SqliteException? FindContentCorruption(Exception? exception)
+    {
+        for (var current = exception; current is not null; current = current.InnerException)
+        {
+            if (current is SqliteException sqlite && sqlite.SqliteErrorCode is SQLITE_CORRUPT or SQLITE_NOTADB)
+            {
+                return sqlite;
+            }
+        }
+
+        return null;
+    }
+
+    /// <summary>
+    /// Moves a proven-unreadable database file aside so the caller can create a fresh one, and
+    /// records where it went.
+    /// </summary>
+    /// <remarks>
+    /// The damaged file is RENAMED, never deleted: it is the user's logged data, and a corrupt
+    /// SQLite file is frequently still partly recoverable with <c>sqlite3 .recover</c>.
+    /// </remarks>
+    /// <param name="databasePath">Full path to the SQLite database file.</param>
+    /// <param name="fault">The exception proving the file is unreadable, for the log.</param>
+    /// <returns>The path the file was moved to, or <c>null</c> if nothing was moved.</returns>
+    private static string? QuarantineDatabase(string databasePath, Exception fault)
+    {
+        if (!File.Exists(databasePath))
+        {
+            // Corruption reported for a path with no file at it: nothing to move, and creating a
+            // quarantine name for it would say something untrue.
+            return null;
+        }
+
+        // Drop any pooled handle on the file first, or the move fails on Windows.
+        SqliteConnection.ClearAllPools();
+
+        // Millisecond precision, and every move below uses overwrite:false, so an earlier quarantine
+        // can never be clobbered — the whole point is that nothing the user might still recover gets
+        // destroyed. A same-millisecond collision fails the move instead, which the loop treats like
+        // any other failure and undoes.
+        var quarantinePath = $"{databasePath}.corrupt-{DateTime.UtcNow:yyyyMMdd-HHmmssfff}";
+
+        // All of it or none of it. Three reasons this has to be atomic rather than best-effort:
+        //   • a journal can hold the only committed copy of the user's last samples, so it must stay
+        //     with the database it belongs to;
+        //   • one left beside a REPLACEMENT database is not inert — SQLite rolls back a hot
+        //     -journal, and replays a -wal whose header still checksums, either way writing the old
+        //     file's pages into the new one;
+        //   • every attempt picks a fresh timestamp, so a half-moved set could never be reunited by
+        //     a later one.
+        // Nothing is ever deleted: a file that cannot be moved is put back, not removed.
+        //
+        // Within one process this is exact. Against a SECOND DAQiFi instance it is not, and cannot
+        // be here: the app has no cross-process database ownership guard at all (no named mutex, no
+        // lock file — two instances already share this file today, entirely independently of this
+        // recovery), and ClearAllPools only releases this process's handles. What bounds it is that
+        // a quarantine only ever runs on a file SQLite has just refused to read, so a second
+        // instance reaches the same failure rather than writing a journal next to it.
+        var moved = new List<(string From, string To)>();
+
+        foreach (var suffix in DatabaseFileSuffixes)
+        {
+            var source = databasePath + suffix;
+            if (!File.Exists(source))
+            {
+                continue;
+            }
+
+            try
+            {
+                File.Move(source, quarantinePath + suffix, overwrite: false);
+                moved.Add((source, quarantinePath + suffix));
+            }
+            catch (Exception ex)
+            {
+                AppLogger.Instance.Error(ex,
+                    $"Could not move '{source}' aside, so the quarantine of '{databasePath}' is being undone. " +
+                    "The app will refuse to open the database rather than leave a half-moved set of files behind.");
+                UndoMoves(moved);
+                return null;
+            }
+        }
+
+        QuarantinedDatabasePath = quarantinePath;
+        AppLogger.Instance.Error(fault,
+            $"Database at '{databasePath}' could not be read and was moved to '{quarantinePath}'. " +
+            "A new, empty database will be created; previously logged sessions are not in it.");
+
+        return quarantinePath;
+    }
+
+    /// <summary>
+    /// Puts every file an abandoned quarantine had already moved back where it came from, newest
+    /// move first. Best-effort by necessity — there is nothing left to try if this fails — so each
+    /// failure is logged with both paths, which is what a support log needs to say.
+    /// </summary>
+    private static void UndoMoves(List<(string From, string To)> moved)
+    {
+        for (var i = moved.Count - 1; i >= 0; i--)
+        {
+            var (from, to) = moved[i];
+            try
+            {
+                File.Move(to, from, overwrite: false);
+            }
+            catch (Exception ex)
+            {
+                AppLogger.Instance.Error(ex,
+                    $"Could not put '{to}' back as '{from}' while undoing an abandoned quarantine. Move it back by hand.");
+            }
+        }
+    }
+
     /// <summary>
     /// Checks whether there are any pending migrations to apply.
     /// </summary>
