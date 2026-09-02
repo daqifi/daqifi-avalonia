@@ -122,9 +122,9 @@ public abstract partial class AbstractChannel : ObservableObject, IChannel
     public abstract bool IsAnalog { get; }
 
     [NotMapped]
-    // @port: Daqifi.Desktop.Channel.AbstractChannel.TypeString
     // IsAnalog is tested first because the two `if`s this replaces ran in the other order and the
     // second overwrote the first, so analog wins for anything claiming to be both.
+    // @port: Daqifi.Desktop.Channel.AbstractChannel.TypeString
     public string TypeString =>
         (IsAnalog ? "Analog " : IsDigital ? "Digital " : string.Empty)
         + Direction switch
