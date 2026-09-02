@@ -5,6 +5,8 @@ using Avalonia.Controls;
 using Avalonia.Controls.ApplicationLifetimes;
 using Avalonia.Headless;
 using Avalonia.Interactivity;
+using Avalonia.Media.Imaging;
+using Avalonia.Platform;
 using Avalonia.Threading;
 using Daqifi.Avalonia.Views;
 using Optris.Icons.Avalonia;
@@ -484,7 +486,7 @@ internal static class AvaloniaCapture
     {
         var size = RenderSize(w);
 
-        using var rendered = new Avalonia.Media.Imaging.RenderTargetBitmap(size, Dpi);
+        using var rendered = new RenderTargetBitmap(size, Dpi);
         rendered.Render(w);
 
         // RenderTargetBitmap is premultiplied and starts fully transparent; the framebuffer it
@@ -494,8 +496,7 @@ internal static class AvaloniaCapture
         // about. It is sound only while the tree paints every pixel, because premultiplied colour
         // with its alpha dropped is DARKENED: an unpainted region would arrive as a plausible
         // dark patch rather than as an error. Checked below rather than assumed.
-        using var opaque = new Avalonia.Media.Imaging.WriteableBitmap(
-            size, Dpi, Avalonia.Platform.PixelFormat.Rgba8888, Avalonia.Platform.AlphaFormat.Opaque);
+        using var opaque = new WriteableBitmap(size, Dpi, PixelFormat.Rgba8888, AlphaFormat.Opaque);
         using (var locked = opaque.Lock())
         {
             rendered.CopyPixels(new PixelRect(size), locked.Address,
@@ -524,7 +525,10 @@ internal static class AvaloniaCapture
         return new PixelSize((int)w.Width, (int)w.Height);
     }
 
-    private static unsafe void RequireFullyOpaque(Avalonia.Platform.ILockedFramebuffer locked, PixelSize size)
+    // Reads only the alpha byte of every pixel. Four bytes per pixel and alpha last are
+    // Rgba8888's layout, which is the format Encode just constructed the target with; RowBytes
+    // rather than Width*4 as the row stride, because the platform is free to pad.
+    private static unsafe void RequireFullyOpaque(ILockedFramebuffer locked, PixelSize size)
     {
         for (var y = 0; y < size.Height; y++)
         {
