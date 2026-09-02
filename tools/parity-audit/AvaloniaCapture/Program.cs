@@ -252,6 +252,12 @@ internal static class AvaloniaCapture
         // (This line alone was not measured separately; the interval is what stops the mid-fade
         // case described on SettleSampleInterval, so it is not optional regardless.)
         //
+        // The x=1059 flip in that table has the same signature as #201's, which Encode now
+        // removes at its source by rendering the tree instead of reading the framebuffer — so
+        // this line may well have been masking it rather than fixing it. It stays regardless:
+        // the ablation above was not repeated after that change, and "probably redundant now"
+        // is not a measurement.
+        //
         // The one-pixel flips are sub-perceptual and still exactly the class of difference a
         // visual gate must not manufacture: indistinguishable from a real one-pixel regression,
         // and enough to fail a byte-identity baseline half the time.
@@ -262,7 +268,18 @@ internal static class AvaloniaCapture
     // path uses; the point is only the side effect of pumping until nothing moves.
     private static void Quiesce(Window w)
     {
-        var (_, settled, _) = SettledFrame(w);
+        bool settled;
+        // Report rather than stack-trace. Every other capture site funnels its failures through
+        // [FAIL] + a non-zero exit, and this one is on the same render path (Encode asserts the
+        // window painted its whole surface); an uncaught throw from BETWEEN screens would be the
+        // one failure in this tool that arrives as a raw trace.
+        try { (_, settled, _) = SettledFrame(w); }
+        catch (Exception ex)
+        {
+            _failed = true;
+            Console.WriteLine($"[FAIL] settling between screens: {ex.GetType().Name}: {ex.Message}");
+            return;
+        }
         if (!settled)
         {
             // Not fatal — nothing was saved. But a window that will not stop moving between
@@ -426,22 +443,103 @@ internal static class AvaloniaCapture
     // that never settles — which fails the capture rather than saving it — pays the full 2 s.
     private static readonly TimeSpan SettleSampleInterval = TimeSpan.FromMilliseconds(50);
 
+    // 96 DPI, matching the headless framebuffer this capture path replaced, so the PNG's pHYs
+    // chunk — and therefore its bytes — are unchanged for every screen whose pixels are.
+    private static readonly Vector Dpi = new(96, 96);
+
+    // A capture must be a function of the VISUAL TREE. It used to be a function of the tree AND
+    // of how the surface happened to get that way, which is a different thing and is the hole
+    // the settle loop above cannot see through.
+    //
+    // CaptureRenderedFrame() reads the headless FRAMEBUFFER: one persistent surface that the
+    // compositor updates in place, a dirty region at a time. What is in it therefore depends on
+    // the whole sequence of partial redraws that built it. The settle loop can only prove the
+    // surface has STOPPED CHANGING — and a mosaic assembled by one sequence of redraws is every
+    // bit as still as the same picture assembled by another. Both are settled. They are not the
+    // same bytes.
+    //
+    // That distinction is the third defect this settle loop has been asked to absorb, and the
+    // first one that is not about the tree still moving (#179's two were: a pane saved mid-fade,
+    // and the shared SplitView reopened mid-close). Measured, on the capture set this harness
+    // produces (#201):
+    //
+    //   With the SplitView pane open, the column immediately to its left — x=1059, the
+    //   1440-minus-380 edge — is covered by more than one partial redraw, and 8-bit quantisation
+    //   between passes leaves +/-1 wherever a content divider crosses that column. Exactly six
+    //   pixels on each of the three flyout screens, always the same six, mixed sign, sub-
+    //   perceptual, and enough to fail byte identity. On GitHub's macos-latest it flipped ~1
+    //   capture run in 5 (7 of 30 across four jobs); on an M-series Mac it never flipped in 40.
+    //   Waiting LONGER made it worse and produced a third encoding, because more time means more
+    //   redraws, not fewer — which is why no settle rule and no timeout could have fixed it.
+    //
+    // So stop photographing the framebuffer and render the tree instead. RenderTargetBitmap
+    // starts blank and is drawn exactly once, so the bytes returned here are a pure function of
+    // what the window currently looks like. Measured against the previous path on the baseline
+    // Mac: 15 of the 18 screens come out BYTE-IDENTICAL, and the only pixels that move are those
+    // 18 — each one onto the value the rest of its own line already had.
+    //
+    // (Quiesce and SettleSampleInterval stay. They fix a different failure — a tree that is
+    // genuinely still in motion — which this does nothing about.)
     private static byte[] Encode(Window w)
     {
+        var size = RenderSize(w);
+
+        using var rendered = new Avalonia.Media.Imaging.RenderTargetBitmap(size, Dpi);
+        rendered.Render(w);
+
+        // RenderTargetBitmap is premultiplied and starts fully transparent; the framebuffer it
+        // replaced was opaque. Copying into an Opaque bitmap is what keeps the PNG three-channel,
+        // and that is not cosmetic — it is what leaves 15 of the 18 committed baseline hashes
+        // untouched, so the baseline diff for this change shows only the pixels the change is
+        // about. It is sound only while the tree paints every pixel, because premultiplied colour
+        // with its alpha dropped is DARKENED: an unpainted region would arrive as a plausible
+        // dark patch rather than as an error. Checked below rather than assumed.
+        using var opaque = new Avalonia.Media.Imaging.WriteableBitmap(
+            size, Dpi, Avalonia.Platform.PixelFormat.Rgba8888, Avalonia.Platform.AlphaFormat.Opaque);
+        using (var locked = opaque.Lock())
+        {
+            rendered.CopyPixels(new PixelRect(size), locked.Address,
+                                locked.RowBytes * locked.Size.Height, locked.RowBytes);
+            RequireFullyOpaque(locked, size);
+        }
+
         using var buffer = new MemoryStream();
-        // Dispose the frame. CaptureRenderedFrame allocates a NEW caller-owned
-        // WriteableBitmap per call (headless copies out of the locked framebuffer), and
-        // the settle loop calls this 2-41 times per screen rather than once.
-        //
-        // Hygiene, not a crash fix: the pixel store is an UnmanagedBlob whose ctor calls
-        // GC.AddMemoryPressure, so undisposed frames are GC-visible, provoke collection,
-        // and are freed by finalizers. Dropping them is not an unbounded native leak, and
-        // the pre-settle code did not dispose either. Deterministic release is still
-        // right — it just keeps peak transient pressure (~5 MB per 1440x900 frame) off
-        // the finalizer queue.
-        using var frame = w.CaptureRenderedFrame();
-        frame?.Save(buffer);
+        opaque.Save(buffer);
         return buffer.ToArray();
+    }
+
+    // The size to render at. These are the values this harness itself set (1440x900 for the
+    // desktop window; the phone sizes for the mobile host), and they are what the framebuffer
+    // capture produced, so every screen keeps the dimensions already recorded in the baselines.
+    // Guarded rather than assumed: an unsized window would otherwise reach RenderTargetBitmap as
+    // an ArgumentException from inside Avalonia, with nothing in it naming the capture site.
+    private static PixelSize RenderSize(Window w)
+    {
+        if (!double.IsFinite(w.Width) || !double.IsFinite(w.Height) || w.Width < 1 || w.Height < 1)
+        {
+            throw new InvalidOperationException(
+                $"window has no usable size to capture ({w.Width} x {w.Height}); every capture " +
+                "site must size the window before the shutter opens");
+        }
+        return new PixelSize((int)w.Width, (int)w.Height);
+    }
+
+    private static unsafe void RequireFullyOpaque(Avalonia.Platform.ILockedFramebuffer locked, PixelSize size)
+    {
+        for (var y = 0; y < size.Height; y++)
+        {
+            var row = new ReadOnlySpan<byte>((byte*)locked.Address + (y * locked.RowBytes), size.Width * 4);
+            for (var i = 3; i < row.Length; i += 4)
+            {
+                if (row[i] != byte.MaxValue)
+                {
+                    throw new InvalidOperationException(
+                        $"pixel ({i / 4},{y}) rendered with alpha {row[i]}: the window left part of " +
+                        "its surface unpainted, and saving premultiplied colour as opaque would " +
+                        "darken it into something that looks like a real screenshot");
+                }
+            }
+        }
     }
 
     private static (byte[] Frame, bool Settled, int Rounds) SettledFrame(Window w)
