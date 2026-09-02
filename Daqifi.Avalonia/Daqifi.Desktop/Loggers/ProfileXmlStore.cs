@@ -335,11 +335,14 @@ internal sealed class ProfileXmlStore
                 File.Move(sourcePath, candidate, overwrite: false);
                 return candidate;
             }
-            catch (IOException ex) when (File.Exists(candidate))
+            catch (IOException ex) when (Path.Exists(candidate))
             {
-                // The name is taken — by another instance's quarantine, or by one of this
-                // instance's own within the same millisecond. Take the next name. Any other
-                // IOException (no space, unwritable directory) falls to the catch below.
+                // The name is taken — by another instance's quarantine, by one of this instance's
+                // own within the same millisecond, or by a directory that happens to sit there.
+                // Take the next name. Path.Exists rather than File.Exists precisely so a DIRECTORY
+                // counts as taken: File.Exists is false for one, which would send this to the catch
+                // below, abandon the quarantine, and leave the damaged file in place. Any other
+                // IOException (no space, unwritable directory) does fall through to that catch.
                 lastFailure = ex;
             }
             catch (Exception ex)

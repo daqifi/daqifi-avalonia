@@ -332,6 +332,28 @@ public sealed class ProfileXmlStoreTests : IDisposable
     }
 
     /// <summary>
+    /// A directory sitting on the preferred name is a taken name like any other. It has to be
+    /// stepped over rather than treated as an unrecoverable failure: giving up here would leave the
+    /// damaged file at <c>FilePath</c> and disable saving, which is the failure this whole type
+    /// exists to end.
+    /// </summary>
+    [Fact]
+    public void A_directory_on_the_preferred_name_is_stepped_over_like_any_other_taken_name()
+    {
+        const string damaged = "<Profiles><Profile><Name>Ben";
+        var taken = Path.Combine(_directory, "DAQifiProfilesConfiguration.xml.corrupt-20260902-120000000");
+        Directory.CreateDirectory(taken);
+        File.WriteAllText(Path.Combine(taken, "inside.txt"), "not ours to touch");
+        File.WriteAllText(ProfilePath, damaged);
+
+        var moved = ProfileXmlStore.MoveFileAside(ProfilePath, taken);
+
+        Assert.Equal(taken + "-1", moved);
+        Assert.Equal(damaged, File.ReadAllText(moved!));
+        Assert.Equal("not ours to touch", File.ReadAllText(Path.Combine(taken, "inside.txt")));
+    }
+
+    /// <summary>
     /// A file that is not there cannot be moved, and the caller has to be told so rather than
     /// handed a path nothing was written to — <see cref="ProfileXmlStore.Open"/> turns that
     /// <c>null</c> into the refusal that keeps a later <c>Save</c> from renaming over the damaged
