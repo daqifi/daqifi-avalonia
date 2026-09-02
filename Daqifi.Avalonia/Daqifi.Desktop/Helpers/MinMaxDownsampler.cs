@@ -138,22 +138,16 @@ public static class MinMaxDownsampler
                 continue;
             }
 
-            // Emit min and max in X-order to preserve visual continuity
-            if (minYX <= maxYX)
+            // Emit min and max in X-order to preserve visual continuity, and emit only one of them
+            // when the bucket's values never moved.
+            var lowest = new DataPoint(minYX, minY);
+            var highest = new DataPoint(maxYX, maxY);
+            var (earlier, later) = minYX <= maxYX ? (lowest, highest) : (highest, lowest);
+
+            output.Add(earlier);
+            if (Math.Abs(minY - maxY) > double.Epsilon)
             {
-                output.Add(new DataPoint(minYX, minY));
-                if (Math.Abs(minY - maxY) > double.Epsilon)
-                {
-                    output.Add(new DataPoint(maxYX, maxY));
-                }
-            }
-            else
-            {
-                output.Add(new DataPoint(maxYX, maxY));
-                if (Math.Abs(minY - maxY) > double.Epsilon)
-                {
-                    output.Add(new DataPoint(minYX, minY));
-                }
+                output.Add(later);
             }
         }
 

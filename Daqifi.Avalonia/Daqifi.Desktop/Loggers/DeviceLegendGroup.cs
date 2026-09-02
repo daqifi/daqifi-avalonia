@@ -91,20 +91,16 @@ public partial class DeviceLegendGroup : ObservableObject
 
         var hz = frequencyHz.Value;
 
+        // "0.##" already drops the decimal point for a whole number, so there is no separate
+        // whole-number format to choose between: 1.0 renders as "1" under it, not "1.00".
         if (hz >= 1_000_000)
         {
-            var mhz = hz / 1_000_000.0;
-            return mhz % 1 == 0
-                ? string.Format(CultureInfo.InvariantCulture, "{0:0} MHz", mhz)
-                : string.Format(CultureInfo.InvariantCulture, "{0:0.##} MHz", mhz);
+            return string.Format(CultureInfo.InvariantCulture, "{0:0.##} MHz", hz / 1_000_000.0);
         }
 
         if (hz >= 1_000)
         {
-            var khz = hz / 1_000.0;
-            return khz % 1 == 0
-                ? string.Format(CultureInfo.InvariantCulture, "{0:0} kHz", khz)
-                : string.Format(CultureInfo.InvariantCulture, "{0:0.##} kHz", khz);
+            return string.Format(CultureInfo.InvariantCulture, "{0:0.##} kHz", hz / 1_000.0);
         }
 
         return string.Format(CultureInfo.InvariantCulture, "{0} Hz", hz);
