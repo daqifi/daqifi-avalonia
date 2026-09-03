@@ -210,73 +210,11 @@ public sealed class DaqifiSettingsTests : IDisposable
         Assert.Null(NewSettings().TakeQuarantineNotice());
     }
 
-    /// <summary>
-    /// The rename must never clobber a file already sitting at the quarantine name. Two app
-    /// instances share the data directory and can both reach recovery, and the name carries only a
-    /// millisecond, so a collision is possible — and overwriting would destroy the one copy of the
-    /// user's settings the rename exists to preserve.
-    /// </summary>
-    /// <remarks>
-    /// Driven through <c>MoveFileAside</c> with an explicit destination rather than through a
-    /// recovery, because the production name is <c>DateTime.UtcNow</c> and a collision cannot be
-    /// arranged from outside.
-    /// </remarks>
-    [Fact]
-    public void Moving_a_damaged_file_aside_never_overwrites_an_earlier_one()
-    {
-        const string earlier = "the file an earlier recovery moved aside";
-        var taken = Path.Combine(_directory, "DAQifiConfiguration.xml.corrupt-20260902-120000000");
-        File.WriteAllText(taken, earlier);
-        File.WriteAllText(SettingsPath, TruncatedSettingsXml);
-
-        var moved = DaqifiSettings.MoveFileAside(SettingsPath, taken);
-
-        Assert.Equal(taken + "-1", moved);
-        Assert.Equal(earlier, File.ReadAllText(taken));
-        Assert.Equal(TruncatedSettingsXml, File.ReadAllText(moved!));
-        Assert.False(File.Exists(SettingsPath));
-    }
-
-    /// <summary>
-    /// A directory sitting on the preferred name is a taken name like any other, and has to be
-    /// stepped over rather than treated as an unrecoverable failure.
-    /// </summary>
-    /// <remarks>
-    /// The distinction matters because <c>File.Exists</c> is <c>false</c> for a directory while
-    /// <c>Path.Exists</c> is <c>true</c>, and <c>File.Move</c> onto a directory throws
-    /// <see cref="IOException"/> — so keying the retry on <c>File.Exists</c> sends this to the
-    /// giving-up catch, abandons the quarantine, and leaves the damaged file at its real name.
-    /// <c>RecoverFromUnreadableSettingsFile</c> then returns early, and the
-    /// next launch fails on the same file and raises the same Sentry event — the exact permanent
-    /// condition #193 exists to end. Same claim, same reason, as
-    /// <c>ProfileXmlStoreTests.A_directory_on_the_preferred_name_is_stepped_over_like_any_other_taken_name</c>
-    /// — #198.
-    /// </remarks>
-    [Fact]
-    public void A_directory_on_the_preferred_name_is_stepped_over_like_any_other_taken_name()
-    {
-        var taken = Path.Combine(_directory, "DAQifiConfiguration.xml.corrupt-20260902-120000000");
-        Directory.CreateDirectory(taken);
-        File.WriteAllText(Path.Combine(taken, "inside.txt"), "not ours to touch");
-        File.WriteAllText(SettingsPath, TruncatedSettingsXml);
-
-        var moved = DaqifiSettings.MoveFileAside(SettingsPath, taken);
-
-        Assert.Equal(taken + "-1", moved);
-        Assert.Equal(TruncatedSettingsXml, File.ReadAllText(moved!));
-        Assert.False(File.Exists(SettingsPath));
-        Assert.Equal("not ours to touch", File.ReadAllText(Path.Combine(taken, "inside.txt")));
-    }
-
-    /// <summary>
-    /// A file that is not there cannot be moved, and the caller has to be told so rather than
-    /// handed a path nothing was written to.
-    /// </summary>
-    [Fact]
-    public void Moving_a_file_that_is_not_there_reports_failure()
-    {
-        Assert.Null(DaqifiSettings.MoveFileAside(SettingsPath, Path.Combine(_directory, "target")));
-    }
+    // The rename itself — a taken quarantine name, a DIRECTORY on that name, a source that is not
+    // there, the bound on the search — is pinned once, in AppDataFileTests, against the one
+    // implementation both stores now share. It used to be stated here and again, character for
+    // character, in ProfileXmlStoreTests. What stays here is every claim about THIS store: that a
+    // damaged settings file reaches the rename at all, and what the user is told afterwards.
 
     /// <summary>
     /// Moving the damaged file aside and getting a working one back in its place are two outcomes,
