@@ -8,8 +8,16 @@ this by hand:
     python3 tools/parity-audit/test_coverage.py
 
 The member regex is the part most likely to be wrong — its first revision
-silently skipped `const`, which dropped 40 members from the audit's denominator
-and hid a real difference. These cases pin the declaration forms that matter.
+silently skipped `const`, which dropped 26 members from the audit's denominator
+and hid a real difference. (Adding `abstract` and `required` in the same fix
+recovered a further 9 and 5, taking the total from 606 to 646.) These cases pin
+the declaration forms that matter.
+
+The second block pins what the regex deliberately does NOT see, so the boundary
+stays visible instead of being rediscovered. Those forms were swept by hand
+against upstream: 39 symbols fall in the blind spot and exactly one
+(ServiceLocator.RegisterSingleton) is absent from the port, a refactor rather
+than a gap. See "Limits of this ledger" in docs/parity-ledger.md.
 """
 import importlib.util
 import os
@@ -50,11 +58,24 @@ member('    public string Name { get; set; }', 'Name')
 member('    internal static List<Profile> ParseProfiles(XDocument doc)', 'ParseProfiles')
 member('    public async Task<bool> ConnectAsync(', 'ConnectAsync')
 member('    public static readonly IComparer<string> Comparer =', 'Comparer')
-member('    public event Action<DebugDataModel>? DebugDataReceived;', None)
 
-# Private members are out of scope by design.
+# Private and protected members are out of scope by design.
 member('    private int _count;', None)
 member('    private void Helper()', None)
+member('    protected override void OnStartup(StartupEventArgs e)', None)
+
+# An abstract declaration ending in `;` is still seen — the trailing `;` is
+# irrelevant, only the `(` matters.
+member('    public abstract bool Write(string command);', 'Write')
+
+# KNOWN BLIND SPOTS, pinned so they stay visible rather than being rediscovered.
+# A declaration must contain `(`, `{` or `=` after the name, and the name is taken
+# from before any `<` — so these three forms are invisible to the audit. Swept by
+# hand (39 symbols, 1 absent downstream and a refactor); widen these before
+# trusting a future zero, and re-sweep upstream if you do.
+member('    public event Action<DebugDataModel>? DebugDataReceived;', None)  # event
+member('    internal bool IsSyncingFromMinimap;', None)                      # bare field
+member('    public static TInterface Resolve<TInterface>()', None)           # generic method
 
 # Types.
 typ('public partial class DebugDataHistory : ObservableObject', 'DebugDataHistory')

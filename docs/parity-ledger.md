@@ -96,12 +96,29 @@ the "port the capability, leave the scar tissue" rule working as intended.
 straight through with no `??`
 (`Daqifi.Avalonia/Daqifi.Desktop/Loggers/SessionDataRepository.cs:164`).
 
-Recorded as a difference, **not filed as a gap**: both repos share the same
-`20250812090000_InitialSQLiteMigration` declaring `Color` as `nullable: false`, so a null
-cannot be produced through either app's own schema, and no failing case could be
-constructed. Note also that neither app guards the empty string, which `OxyColor.Parse`
-rejects just as hard — so this is at most equal-risk hardening, not a capability the WPF
-app has and this one lacks.
+Recorded as a difference, **not filed as a gap** — but state the reason narrowly, because
+the obvious argument is wrong. Both repos share the same
+`20250812090000_InitialSQLiteMigration` declaring `Color` as `nullable: false`, and it is
+tempting to conclude a null "cannot be produced". That over-claims: `nullable: false`
+constrains the table *as the migration creates it*, and SQLite does not re-validate rows
+already sitting in a database file. Upstream says as much directly above the constant —
+"Color is nullable in the Samples table (legacy/imported rows can omit it)" — so upstream's
+guard is aimed at **pre-existing databases**, not at its own writes.
+
+What actually holds is narrower, and it is enough:
+
+- Both apps' *current* write paths always set a colour. `DataSample.Color` is a
+  non-nullable `string` in both (upstream defaults it to `string.Empty`), and the port's
+  SD-card importer assigns one on every row, falling back to `#D32F2F` / `#757575`.
+- Neither app guards the **empty string**, which `OxyColor.Parse` rejects just as hard as
+  null — so on the colourless-row scenario the two apps are closer to equal-risk than the
+  `??` suggests.
+
+The residual case is a database written before the column was required. There the WPF app
+renders grey and this port would throw on session load. That is robustness against legacy
+data, not a capability the WPF app offers a user and this one does not — so it stays a
+difference. Closing it is a one-line `?? "#FF808080"` at
+`SessionDataRepository.cs:164` if a legacy-database report ever appears.
 
 ## Label differences, all in the port's favour
 
@@ -173,10 +190,22 @@ State these rather than round up:
   A one-sided capture is not a parity comparison.
 - **The coverage diff is regex-based**, over declaration syntax rather than a
   compiled symbol table. It finds candidates; each still needs reading by hand. Its
-  first revision silently skipped `const` declarations, which cost 40 members of the
-  denominator and hid one real difference (the fallback colour above) — so treat the
-  member regex as the part most likely to be wrong, and widen it before trusting a
-  zero.
+  first revision omitted four modifiers and so lifted the denominator from 606 to 646
+  when they were added: `const` accounted for **26** members, `abstract` 9 and
+  `required` 5 (`volatile` 0). The `const` miss was the one that mattered — it hid the
+  one real difference in the sweep (the fallback colour above). Treat the member regex
+  as the part most likely to be wrong.
+- **The parser's remaining blind spots were measured, not assumed.** `MEMBER_RE`
+  requires a declaration to end in `(`, `{` or `=`, and takes the name from before any
+  `<`, so it never sees plain fields and events declared with `;`, generic methods,
+  explicit interface implementations, or `abstract` methods ending in `;`. Widening it
+  to cover all four surfaces **39** further upstream symbols. Exactly **one** is absent
+  from the port by name — `DialogService.ServiceLocator.RegisterSingleton<,>` — and that
+  is a refactor, not a gap: the port replaced the hand-rolled locator with
+  `Microsoft.Extensions.DependencyInjection` (`ServiceCollection` / `AddSingleton` in
+  `Daqifi.Avalonia/Daqifi.Desktop/App.cs`). **The verdict is unchanged with the blind
+  spots covered.** `test_coverage.py` pins these forms so the boundary stays visible.
+  `protected` members remain out of scope by design.
 - **Behaviour behind a matching name is not verified.** A command that exists
   downstream is not proof it does the same thing. This ledger establishes that the
   *surface* is complete, not that every code path matches.
