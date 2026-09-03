@@ -1,7 +1,6 @@
 using Daqifi.Desktop.Logger;
 using Microsoft.Data.Sqlite;
 using Microsoft.EntityFrameworkCore;
-using Microsoft.EntityFrameworkCore.Diagnostics;
 using Xunit;
 
 namespace Daqifi.Avalonia.Tests.Loggers;
@@ -34,7 +33,6 @@ public class DatabaseMigratorUnusableDatabaseTests : IDisposable
 
     public void Dispose()
     {
-        SqliteConnection.ClearAllPools();
         try { Directory.Delete(_directory, recursive: true); } catch { /* best-effort cleanup */ }
         GC.SuppressFinalize(this);
     }
@@ -235,8 +233,6 @@ public class DatabaseMigratorUnusableDatabaseTests : IDisposable
             context.Sessions.Add(new LoggingSession(0, "Session_0"));
             context.SaveChanges();
         }
-
-        SqliteConnection.ClearAllPools();
     }
 
     /// <summary>
@@ -246,8 +242,6 @@ public class DatabaseMigratorUnusableDatabaseTests : IDisposable
     /// </summary>
     private static void CorruptEveryPageAfterTheFirst(string databasePath)
     {
-        SqliteConnection.ClearAllPools();
-
         using var file = new FileStream(databasePath, FileMode.Open, FileAccess.ReadWrite);
 
         // Bytes 16-17 of the header are the page size, big-endian, with 1 meaning 65536.
@@ -264,17 +258,5 @@ public class DatabaseMigratorUnusableDatabaseTests : IDisposable
         file.Write(junk);
     }
 
-    private TestContextFactory Factory() => new(DatabasePath);
-
-    /// <summary>
-    /// The same SQLite context factory <c>App.Initialize</c> registers in DI, without the container.
-    /// </summary>
-    private sealed class TestContextFactory(string databasePath) : IDbContextFactory<LoggingContext>
-    {
-        public LoggingContext CreateDbContext() => new(
-            new DbContextOptionsBuilder<LoggingContext>()
-                .UseSqlite($"Data source={databasePath}")
-                .ConfigureWarnings(w => w.Ignore(RelationalEventId.PendingModelChangesWarning))
-                .Options);
-    }
+    private IDbContextFactory<LoggingContext> Factory() => TestDatabase.Contexts(DatabasePath);
 }

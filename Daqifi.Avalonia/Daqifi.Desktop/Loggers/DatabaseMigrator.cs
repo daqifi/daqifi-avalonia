@@ -684,6 +684,22 @@ public static class DatabaseMigrator
     }
 
     /// <summary>
+    /// The connection string for this class's own short-lived raw connections, with pooling OFF.
+    /// </summary>
+    /// <remarks>
+    /// Every raw connection here is opened, used once and disposed inside a single method. Pooling
+    /// one of those buys nothing and costs twice: the pooled handle keeps the database file open
+    /// after the <c>using</c> block ends — which is half of why this class has to call
+    /// <see cref="SqliteConnection.ClearAllPools"/> before it can move a file aside — and it enters
+    /// the connection into the process-global pool, whose <c>Clear()</c> is what
+    /// <c>ClearAllPools</c> drives. Unpooled, the handle is gone the moment the connection is, and
+    /// a pool clear on another thread cannot reach it (issue #210). The EF contexts this class
+    /// migrates through are still pooled, which is what the remaining ClearAllPools calls are for.
+    /// </remarks>
+    private static string UnpooledConnectionString(string databasePath) =>
+        new SqliteConnectionStringBuilder { DataSource = databasePath, Pooling = false }.ToString();
+
+    /// <summary>
     /// Flushes the WAL journal into the main database file using PRAGMA wal_checkpoint.
     /// This is safer than deleting WAL/SHM files directly, which could cause data loss
     /// if uncommitted transactions exist.
@@ -693,8 +709,7 @@ public static class DatabaseMigrator
     {
         try
         {
-            var connectionString = $"Data source={databasePath}";
-            using var connection = new SqliteConnection(connectionString);
+            using var connection = new SqliteConnection(UnpooledConnectionString(databasePath));
             connection.Open();
 
             using var command = connection.CreateCommand();
@@ -744,8 +759,7 @@ public static class DatabaseMigrator
             return;
         }
 
-        var connectionString = $"Data source={databasePath}";
-        using var connection = new SqliteConnection(connectionString);
+        using var connection = new SqliteConnection(UnpooledConnectionString(databasePath));
         connection.Open();
 
         if (HasMigrationHistoryTable(connection))
