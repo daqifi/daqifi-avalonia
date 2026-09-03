@@ -202,7 +202,7 @@ public class ChannelColorFallbackTests : IDisposable
     /// </param>
     private IDbContextFactory<LoggingContext> SeedLegacySession(bool nullColour)
     {
-        var factory = Contexts(DatabasePath);
+        var factory = new TestContextFactory(DatabasePath);
         DatabaseMigrator.ApplyMigrations(factory, DatabasePath);
 
         using var context = factory.CreateDbContext();
@@ -266,16 +266,17 @@ public class ChannelColorFallbackTests : IDisposable
     }
 
     /// <summary>
-    /// The same SQLite context factory <c>App.Initialize</c> registers in DI, without the container.
+    /// The same SQLite context factory <c>App.Initialize</c> registers in DI, without the container —
+    /// spelled the way the suite's six other database fixtures spell it today.
     /// </summary>
     /// <remarks>
-    /// Kept to one method so it is the single line to reroute when #225 lands
-    /// <c>Daqifi.Avalonia.Tests/TestDatabase.cs</c> — which becomes the only file in this project
-    /// allowed to name a data source — to <c>TestDatabase.Contexts(databasePath)</c>.
+    /// Deliberately the ONLY connection string in this file, because PR #225 makes
+    /// <c>Daqifi.Avalonia.Tests/TestDatabase.cs</c> the one place in this project allowed to name a
+    /// data source and fails the build on anything else. Run against that branch's guard, this file
+    /// reports exactly the two findings below (and no <c>ClearAllPools</c>, which is already avoided),
+    /// so whichever of the two PRs lands second replaces this one method body with
+    /// <c>TestDatabase.Contexts(databasePath)</c> — the same edit #225 already makes to those six.
     /// </remarks>
-    private static IDbContextFactory<LoggingContext> Contexts(string databasePath) =>
-        new TestContextFactory(databasePath);
-
     private sealed class TestContextFactory(string databasePath) : IDbContextFactory<LoggingContext>
     {
         public LoggingContext CreateDbContext() => new(
