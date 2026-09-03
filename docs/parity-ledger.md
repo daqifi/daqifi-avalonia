@@ -115,10 +115,17 @@ What actually holds is narrower, and it is enough:
   `??` suggests.
 
 The residual case is a database written before the column was required. There the WPF app
-renders grey and this port would throw on session load. That is robustness against legacy
-data, not a capability the WPF app offers a user and this one does not — so it stays a
-difference. Closing it is a one-line `?? "#FF808080"` at
-`SessionDataRepository.cs:164` if a legacy-database report ever appears.
+renders grey and this port would throw on session load, aborting the whole load rather
+than one series. That is robustness against legacy data, not a capability the WPF app
+offers a user and this one does not — so for *parity* purposes it stays a difference.
+
+It is still a reliability defect, so it is **filed as #231** rather than left to wait for
+a report. Note the fix is not the bare `?? "#FF808080"` this ledger first suggested:
+`OxyColor.Parse` rejects the empty string just as hard as null, and
+`PlotLogger.cs:271` calls `.ToLowerInvariant()` on the value first, so null throws there
+before `Parse` is even reached. The guard has to normalise both —
+`string.IsNullOrWhiteSpace(g.Color) ? FALLBACK_CHANNEL_COLOR : g.Color` where the value
+enters `SessionChannelInfo`, which covers all three `Parse` call sites from one place.
 
 ## Label differences, all in the port's favour
 
