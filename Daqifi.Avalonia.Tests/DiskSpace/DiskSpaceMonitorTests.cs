@@ -21,13 +21,14 @@ namespace Daqifi.Avalonia.Tests.DiskSpace;
 /// </para>
 ///
 /// <para>
-/// These tests pin what the code DOES today, quirks included. Two of the behaviours asserted
-/// below look like defects rather than decisions —
-/// <see cref="IsMonitoring_still_reports_true_after_the_critical_hard_stop"/> and
-/// <see cref="StartMonitoring_after_Dispose_starts_a_timer_that_Dispose_will_not_stop"/> — and
-/// they are asserted as they are, not as they arguably should be, so that a later fix has to
-/// change a test on purpose instead of changing behaviour by accident. Each says so at its own
-/// comment.
+/// These tests pin what the code DOES today. Two of the behaviours they originally asserted
+/// were defects rather than decisions, pinned deliberately so that a later fix would have to
+/// change a test on purpose instead of changing behaviour by accident. Issue #208 was that
+/// later fix, and the assertions it changed on purpose now live in
+/// <see cref="IsMonitoring_reports_false_after_the_critical_hard_stop"/>,
+/// <see cref="StartMonitoring_after_the_critical_hard_stop_resumes_probing"/> and
+/// <see cref="StartMonitoring_after_Dispose_does_not_start_a_timer"/>. Each says at its own
+/// comment what it used to assert and why that answer was wrong.
 /// </para>
 ///
 /// <para>
@@ -541,15 +542,20 @@ public class DiskSpaceMonitorTests
 
     #endregion
 
-    #region Pinned quirks
+    #region Lifecycle: the hard stop, Dispose, and what comes after
 
     /// <summary>
-    /// PINNED, NOT ENDORSED. Reaching the critical threshold stops the timer but leaves the
-    /// field set, so the monitor goes on reporting <c>IsMonitoring == true</c> while it is in
-    /// fact dead. Asserted as it behaves today; see issue #208.
+    /// The hard stop ends monitoring, and the monitor says so.
+    /// <para>
+    /// This assertion was inverted until issue #208. The critical branch used to pause the timer
+    /// with <c>Change(Infinite, Infinite)</c> and leave the field set, so <c>IsMonitoring</c>
+    /// went on reporting <c>true</c> for a monitor that would never tick again. The coverage
+    /// pass that wrote this file pinned that answer rather than fixing it — correct discipline
+    /// for a coverage PR — and #208 is where it was decided and corrected.
+    /// </para>
     /// </summary>
     [Fact]
-    public void IsMonitoring_still_reports_true_after_the_critical_hard_stop()
+    public void IsMonitoring_reports_false_after_the_critical_hard_stop()
     {
         var (monitor, _, criticals) = Monitored(new FreeSpaceProbe(Mb(10)));
         using (monitor)
@@ -557,20 +563,32 @@ public class DiskSpaceMonitorTests
             monitor.StartMonitoring();
             criticals.WaitForOne();
 
-            Assert.True(monitor.IsMonitoring);
+            Assert.False(monitor.IsMonitoring);
         }
     }
 
     /// <summary>
-    /// PINNED, NOT ENDORSED. The consequence of the above: because the field is still set,
-    /// <see cref="DiskSpaceMonitor.StartMonitoring"/> takes its already-running early return and
-    /// silently does nothing. A caller that trusted <c>IsMonitoring</c> and tried to resume
-    /// would get no monitoring at all; only a <c>StopMonitoring</c> first makes it restartable.
+    /// The consequence that made the flag worth fixing: an instance that has hard-stopped is
+    /// restartable, so the next session gets monitoring.
+    /// <para>
+    /// This assertion was inverted until issue #208. Because the hard stop left the field set,
+    /// <see cref="DiskSpaceMonitor.StartMonitoring"/> took its already-running early return and
+    /// silently did nothing; only an intervening <c>StopMonitoring</c> made the instance usable
+    /// again, and nothing in the class enforced that ordering.
+    /// </para>
+    /// <para>
+    /// The disk is freed between the two starts, so what is asserted is a resumed monitor doing
+    /// ordinary work rather than one that immediately hard-stops again — the state a user who
+    /// deletes some old sessions and records again should end up in.
+    /// </para>
     /// </summary>
     [Fact]
-    public void StartMonitoring_after_the_critical_hard_stop_does_not_resume_probing()
+    public void StartMonitoring_after_the_critical_hard_stop_resumes_probing()
     {
-        var probe = new FreeSpaceProbe(Mb(10));
+        // A one-element array rather than a captured local: the answer changes mid-test, and the
+        // change has to be visible to the monitor's timer thread.
+        var available = new[] { Mb(10) };
+        var probe = new FreeSpaceProbe(_ => Interlocked.Read(ref available[0]));
         var (monitor, _, criticals) = Monitored(probe);
         using (monitor)
         {
@@ -578,9 +596,46 @@ public class DiskSpaceMonitorTests
             criticals.WaitForOne();
             var probesAtHardStop = probe.Count;
 
+            Interlocked.Exchange(ref available[0], Mb(1000));
             monitor.StartMonitoring();
 
-            Assert.False(probe.WaitForAnotherProbe(probesAtHardStop, NoFurtherProbeWindow));
+            // A restarted timer is due immediately. EventTimeout rather than the short window
+            // because this waits for a probe that must arrive, not for one that must not.
+            Assert.True(
+                probe.WaitForAnotherProbe(probesAtHardStop, EventTimeout),
+                "the monitor never probed the disk again after being restarted");
+            Assert.True(monitor.IsMonitoring);
+        }
+    }
+
+    /// <summary>
+    /// The ordering the app actually produces. The coordinator's critical handler stops the
+    /// logging session, and the stop path calls <c>StopMonitoring</c> — which now lands on a
+    /// monitor the hard stop has already torn down. That second stop has to be a no-op rather
+    /// than a double-dispose, and it must leave the instance able to run the next session.
+    /// </summary>
+    [Fact]
+    public void StopMonitoring_after_the_critical_hard_stop_is_a_no_op_and_leaves_it_restartable()
+    {
+        var available = new[] { Mb(10) };
+        var probe = new FreeSpaceProbe(_ => Interlocked.Read(ref available[0]));
+        var (monitor, _, criticals) = Monitored(probe);
+        using (monitor)
+        {
+            monitor.StartMonitoring();
+            criticals.WaitForOne();
+
+            monitor.StopMonitoring();
+            Assert.False(monitor.IsMonitoring);
+
+            Interlocked.Exchange(ref available[0], Mb(1000));
+            var probesBeforeRestart = probe.Count;
+            monitor.StartMonitoring();
+
+            Assert.True(
+                probe.WaitForAnotherProbe(probesBeforeRestart, EventTimeout),
+                "the monitor never probed the disk again after the hard stop was stopped and restarted");
+            Assert.True(monitor.IsMonitoring);
         }
     }
 
@@ -609,29 +664,58 @@ public class DiskSpaceMonitorTests
     }
 
     /// <summary>
-    /// PINNED, NOT ENDORSED. Nothing guards <see cref="DiskSpaceMonitor.StartMonitoring"/>
-    /// against a disposed instance, so it starts a fresh timer — and since <c>Dispose</c> has
-    /// already latched itself, a second <c>Dispose</c> returns without stopping it. The timer
-    /// then ticks every 15 seconds for the life of the process. Asserted as it behaves today;
-    /// see issue #208.
+    /// A disposed monitor stays disposed: starting one does nothing at all.
+    /// <para>
+    /// This assertion was inverted until issue #208. <see cref="DiskSpaceMonitor.StartMonitoring"/>
+    /// had no disposed check, so it created a fresh <c>System.Threading.Timer</c> — and because
+    /// <c>Dispose</c> had already latched itself, a second <c>Dispose</c> returned without
+    /// stopping it. Nothing could then stop that timer: it probed the disk every 15 seconds for
+    /// the life of the process, held the monitor and its captured provider alive, and could
+    /// still raise <c>CriticalSpaceReached</c> into handlers the owner believed it had torn down.
+    /// </para>
+    /// <para>
+    /// The version of this test that pinned the old answer had to call <c>StopMonitoring</c> by
+    /// hand at the end so the resurrected timer did not tick for the rest of the run. Needing a
+    /// cleanup step that no production caller performs is the shape of the defect.
+    /// </para>
     /// </summary>
     [Fact]
-    public void StartMonitoring_after_Dispose_starts_a_timer_that_Dispose_will_not_stop()
+    public void StartMonitoring_after_Dispose_does_not_start_a_timer()
     {
         var probe = new FreeSpaceProbe(Mb(1000));
         var monitor = new DiskSpaceMonitor(MonitoredPath, probe.Probe);
         monitor.Dispose();
 
         monitor.StartMonitoring();
-        probe.WaitForFirstProbe();
 
-        Assert.True(monitor.IsMonitoring);
+        // A timer created by that call would be due immediately, so a probe inside this window
+        // is the resurrected timer and nothing else.
+        Assert.False(probe.WaitForAnotherProbe(probesSoFar: 0, NoFurtherProbeWindow));
+        Assert.False(monitor.IsMonitoring);
+
         monitor.Dispose();
-        Assert.True(monitor.IsMonitoring);
+        Assert.False(monitor.IsMonitoring);
+    }
 
-        // Not part of the assertion: stop the resurrected timer by hand so this test does not
-        // leave one ticking for the rest of the run.
-        monitor.StopMonitoring();
+    /// <summary>
+    /// The same guard reached from the state the app actually produces: the monitor is running
+    /// when its owner tears it down. <c>Dispose</c> already stops the timer; what this adds is
+    /// that a later start cannot bring it back, so the owner's teardown is final.
+    /// </summary>
+    [Fact]
+    public void StartMonitoring_after_Dispose_does_not_restart_a_monitor_that_was_running()
+    {
+        var probe = new FreeSpaceProbe(Mb(1000));
+        var monitor = new DiskSpaceMonitor(MonitoredPath, probe.Probe);
+        monitor.StartMonitoring();
+        probe.WaitForFirstProbe();
+        monitor.Dispose();
+        var probesAtDispose = probe.Count;
+
+        monitor.StartMonitoring();
+
+        Assert.False(probe.WaitForAnotherProbe(probesAtDispose, NoFurtherProbeWindow));
+        Assert.False(monitor.IsMonitoring);
     }
 
     #endregion

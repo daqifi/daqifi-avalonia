@@ -95,6 +95,25 @@ public class DiskSpaceMonitor : IDiskSpaceMonitor
     {
         lock (_lock)
         {
+            // A disposed monitor stays disposed. Without this the call created a fresh timer that
+            // nothing could ever stop: Dispose has already latched _disposed, so a second Dispose
+            // returns without touching it, and the timer went on probing the disk every 15 s for
+            // the life of the process — holding this instance and its captured provider alive and
+            // still able to raise CriticalSpaceReached into handlers the owner had torn down (#208).
+            //
+            // This returns rather than throwing ObjectDisposedException on purpose. The whole class
+            // fails open — a probe that throws is swallowed in both CheckPreLoggingSpace and
+            // OnTimerTick — and its one production call chain is DaqifiViewModel's IsLogging setter,
+            // which is written both by a two-way bound toggle and by the disk-space hard stop's own
+            // Dispatcher.UIThread.Post. An exception escaping that setter reaches the dispatcher and
+            // ends the process; #183 and #214 are both that failure. Trading a leaked timer for a
+            // new way to crash mid-session is not a trade this class should make.
+            if (_disposed)
+            {
+                _appLogger.Warning("Ignoring StartMonitoring on a disposed disk space monitor");
+                return;
+            }
+
             if (_timer != null)
             {
                 return;
@@ -128,13 +147,20 @@ public class DiskSpaceMonitor : IDiskSpaceMonitor
     // @port: Daqifi.Desktop.DiskSpace.DiskSpaceMonitor.Dispose
     public void Dispose()
     {
-        if (_disposed)
+        // Under the lock so that the flag StartMonitoring now reads is written where that read
+        // happens, rather than being published by nothing in particular. lock is reentrant, so the
+        // StopMonitoring below takes it again on this same thread without ceremony.
+        lock (_lock)
         {
-            return;
+            if (_disposed)
+            {
+                return;
+            }
+
+            StopMonitoring();
+            _disposed = true;
         }
 
-        StopMonitoring();
-        _disposed = true;
         GC.SuppressFinalize(this);
     }
     #endregion
@@ -153,10 +179,25 @@ public class DiskSpaceMonitor : IDiskSpaceMonitor
                 switch (level)
                 {
                     case DiskSpaceLevel.Critical:
-                        // Stop the timer first to prevent duplicate critical events
-                        // before the UI thread can call StopMonitoring()
-                        _timer?.Change(Timeout.Infinite, Timeout.Infinite);
                         _appLogger.Warning($"Disk space critically low: {available / (1024 * 1024)} MB — triggering hard stop");
+
+                        // Stop before raising, so the handler cannot see a monitor that is still
+                        // armed and so no further tick is scheduled before the UI thread gets round
+                        // to ending the session.
+                        //
+                        // This used to be _timer?.Change(Infinite, Infinite), which pauses the timer
+                        // but leaves the field set. IsMonitoring is `_timer != null`, so it went on
+                        // answering true for a monitor that would never tick again — and worse,
+                        // StartMonitoring took its already-running early return, so the instance was
+                        // only restartable if someone happened to call StopMonitoring first. Nothing
+                        // in this class enforced that ordering (#208). Tearing the timer down here is
+                        // the same guarantee the pause gave, and leaves the invariant true.
+                        //
+                        // Safe to call from the tick: lock is reentrant, and Timer.Dispose() from
+                        // inside the timer's own callback returns without waiting (only the
+                        // Dispose(WaitHandle) overload blocks).
+                        StopMonitoring();
+
                         CriticalSpaceReached?.Invoke(this, new DiskSpaceEventArgs(available, DiskSpaceLevel.Critical));
                         break;
 
