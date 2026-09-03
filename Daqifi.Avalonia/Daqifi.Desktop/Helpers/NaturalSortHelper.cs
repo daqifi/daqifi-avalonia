@@ -44,7 +44,7 @@ public static class NaturalSortHelper
     /// <param name="y">Second string to compare</param>
     /// <returns>A signed integer that indicates the relative values of x and y</returns>
     // @port: Daqifi.Desktop.Helpers.NaturalSortHelper.NaturalCompare
-    public static int NaturalCompare(string x, string y)
+    public static int NaturalCompare(string? x, string? y)
     {
         if (x == null && y == null) return 0;
         if (x == null) return -1;
@@ -98,7 +98,7 @@ public static class NaturalSortHelper
     /// </summary>
     private class NaturalStringComparer : IComparer<string>
     {
-        public int Compare(string x, string y)
+        public int Compare(string? x, string? y)
         {
             return NaturalCompare(x, y);
         }

@@ -12,7 +12,7 @@ namespace Daqifi.Desktop.Converters;
 public class BoolToActiveStatusConverter : IValueConverter
 {
     // @port: Daqifi.Desktop.Converters.BoolToActiveStatusConverter.Convert
-    public object Convert(object value, Type targetType, object parameter, CultureInfo culture)
+    public object Convert(object? value, Type targetType, object? parameter, CultureInfo culture)
     {
         if (value is bool isActive)
         {
@@ -22,7 +22,7 @@ public class BoolToActiveStatusConverter : IValueConverter
     }
 
     // @port: Daqifi.Desktop.Converters.BoolToActiveStatusConverter.ConvertBack
-    public object ConvertBack(object value, Type targetType, object parameter, CultureInfo culture)
+    public object ConvertBack(object? value, Type targetType, object? parameter, CultureInfo culture)
     {
         throw new NotImplementedException();
     }

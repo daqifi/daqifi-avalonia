@@ -22,7 +22,7 @@ namespace Daqifi.Desktop.Converters;
 public class BrushColorMatchConverter : IMultiValueConverter
 {
     // @port: Daqifi.Desktop.Converters.BrushColorMatchConverter.Convert
-    public object Convert(IList<object?> values, Type targetType, object parameter, CultureInfo culture)
+    public object Convert(IList<object?> values, Type targetType, object? parameter, CultureInfo culture)
     {
         var match = values.Count >= 2
             && values[0] is ISolidColorBrush a

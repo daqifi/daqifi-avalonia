@@ -14,7 +14,7 @@ namespace Daqifi.Desktop.Converters;
 public class OxyColorToBrushConverter : IValueConverter
 {
     // @port: Daqifi.Desktop.Converters.OxyColorToBrushConverter.Convert
-    public object Convert(object value, Type targetType, object parameter, CultureInfo culture)
+    public object Convert(object? value, Type targetType, object? parameter, CultureInfo culture)
     {
         if (value is OxyColor oxyColor)
         {
@@ -24,7 +24,7 @@ public class OxyColorToBrushConverter : IValueConverter
     }
 
     // @port: Daqifi.Desktop.Converters.OxyColorToBrushConverter.ConvertBack
-    public object ConvertBack(object value, Type targetType, object parameter, CultureInfo culture)
+    public object ConvertBack(object? value, Type targetType, object? parameter, CultureInfo culture)
     {
         throw new NotImplementedException();
     }

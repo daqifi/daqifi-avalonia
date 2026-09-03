@@ -34,7 +34,7 @@ public class EnumDescriptionConverter : IValueConverter
     }
 
     // @port: Daqifi.Desktop.Helpers.EnumDescriptionConverter.Convert
-    object IValueConverter.Convert(object value, Type targetType, object parameter, CultureInfo culture)
+    object IValueConverter.Convert(object? value, Type targetType, object? parameter, CultureInfo culture)
     {
         if (value == null)
         {
@@ -51,7 +51,7 @@ public class EnumDescriptionConverter : IValueConverter
     }
 
     // @port: Daqifi.Desktop.Helpers.EnumDescriptionConverter.ConvertBack
-    object IValueConverter.ConvertBack(object value, Type targetType, object parameter, CultureInfo culture)
+    object IValueConverter.ConvertBack(object? value, Type targetType, object? parameter, CultureInfo culture)
     {
         return string.Empty;
     }
