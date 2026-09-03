@@ -31,6 +31,17 @@ public partial class PlotLogger : ObservableObject, ILogger
     private int _precision = 4;
     private Dictionary<(string deviceSerial, string channelName), List<DataPoint>> _loggedPoints = [];
     private Dictionary<(string deviceSerial, string channelName), LineSeries> _loggedChannels = [];
+
+    /// <summary>
+    /// The colour string each live series was last built from, keyed like
+    /// <see cref="LoggedChannels"/>. Kept so <see cref="Log(DataSample)"/>'s per-sample "has the
+    /// colour changed?" test can compare the sample's raw string against the raw string behind the
+    /// current colour, instead of against that colour rendered back out to text — see the comment at
+    /// the test. Same lifetime and same lock as <see cref="LoggedChannels"/>: written by
+    /// <see cref="AddChannelSeries"/>, dropped by <see cref="ClearPlot"/>, both under
+    /// <c>PlotModel.SyncRoot</c>. Not exposed: this is bookkeeping, not plot state.
+    /// </summary>
+    private readonly Dictionary<(string deviceSerial, string channelName), string?> _rawSeriesColors = [];
     private readonly TimestampGapDetector _gapDetector = new();
     private string _plotStatsSummary = EMPTY_PLOT_STATS_SUMMARY;
     #endregion
@@ -263,16 +274,23 @@ public partial class PlotLogger : ObservableObject, ILogger
                 AddChannelSeries(dataSample.ChannelName, dataSample.DeviceSerialNo, dataSample.Type, dataSample.Color);
                 addedSeries = true;
             }
-            // Check for a change in color. Hex color strings are compared ordinal/case-insensitively
-            // rather than lower-cased under the current culture (which mangles ASCII letters in e.g.
-            // the Turkish locale).
-            else if (!string.Equals(series.Color.ToString(), dataSample.Color, StringComparison.OrdinalIgnoreCase))
+            // Check for a change in color, by comparing the sample's string against the STRING that
+            // produced the series' current colour rather than against that colour rendered back out.
+            // Raw-to-raw is what makes this an equality test: any value whose canonical form differs
+            // from its stored form — a fallback, a named colour, a six-digit hex — would never compare
+            // equal to `series.Color.ToString()`, so it would be re-converted on every single sample
+            // of the stream, and an unusable one would throw and be caught every time. It is also one
+            // less string allocated per sample, since nothing has to be rendered to compare.
+            // Compared ordinal/case-insensitively rather than lower-cased under the current culture
+            // (which mangles ASCII letters in e.g. the Turkish locale).
+            else if (!string.Equals(_rawSeriesColors.GetValueOrDefault(key), dataSample.Color, StringComparison.OrdinalIgnoreCase))
             {
                 // No ToLowerInvariant: the hex path is already case-insensitive, and lower-casing was
                 // the one thing that could break a named colour (OxyColors is looked up by reflection,
                 // which IS case-sensitive). It also dereferenced dataSample.Color, so a null colour
                 // threw here BEFORE Parse was reached.
                 series.Color = ChannelSeriesColor.ParseOrFallback(dataSample.Color);
+                _rawSeriesColors[key] = dataSample.Color;
             }
 
             FirstTime ??= new DateTime(dataSample.TimestampTicks);
@@ -373,6 +391,10 @@ public partial class PlotLogger : ObservableObject, ILogger
         // list. The caller raises the PlotModel change notification after releasing the lock.
         LoggedPoints.Add(key, newDataPoints);
         LoggedChannels.Add(key, newLineSeries);
+        // Indexer, not Add. The key cannot be present today — LoggedChannels.Add above would have
+        // thrown first — but this is bookkeeping, and it should not be the thing that takes the
+        // transport thread down if the two ever fall out of step.
+        _rawSeriesColors[key] = newColor;
         PlotModel.Series.Add(newLineSeries);
     }
 
@@ -524,6 +546,7 @@ public partial class PlotLogger : ObservableObject, ILogger
         {
             LoggedChannels.Clear();
             LoggedPoints.Clear();
+            _rawSeriesColors.Clear();
             _gapDetector.Clear();
             PlotModel.Series.Clear();
             PlotModel.InvalidatePlot(true);

@@ -1,3 +1,5 @@
+using Daqifi.Avalonia.Tests.ViewModels;
+using Daqifi.Desktop.Channel;
 using Daqifi.Desktop.Common.Loggers;
 using Daqifi.Desktop.Logger;
 using Microsoft.Data.Sqlite;
@@ -323,4 +325,102 @@ public class ChannelColorFallbackTests : IDisposable
     }
 
     #endregion
+}
+
+/// <summary>
+/// The same fallback on the LIVE plot, where the cost of getting it wrong is different: the session
+/// viewer converts a colour once per channel, but <see cref="PlotLogger.Log(DataSample)"/> runs on the
+/// device transport thread for every sample of every channel.
+///
+/// <para>Review of this PR caught that guarding the conversion was not enough there. The per-sample
+/// "has the colour changed?" test compared the sample's string against <c>series.Color.ToString()</c>
+/// — raw against canonical — so any value whose two forms differ never compared equal and was
+/// re-converted on every sample, with an unusable one throwing and being caught every time. The
+/// logger now remembers the string each series was built from and compares raw against raw, which
+/// also stops rendering a string per sample just to compare it.</para>
+///
+/// <para>Separate class, and on the app-host collection, because <c>AddChannelSeries</c> reads
+/// <c>LoggingManager.Instance</c> to mirror channel visibility, and that singleton's lazy constructor
+/// resolves an <c>IDbContextFactory</c> off <c>App.ServiceProvider</c> — null in a bare test host, so
+/// the property throws before its own null check can help. <c>App.InitializeMobile()</c> is the
+/// supported way to supply it, already used by <c>DeviceRefusalCrashTests</c>, and it runs against the
+/// throwaway <c>DAQIFI_DATA_DIR</c> the assembly's module initializer sets — never the real one.</para>
+/// </summary>
+[Collection(AppHostCollection.Name)]
+public class ChannelColorLivePlotTests
+{
+    private static readonly OxyColor Fallback = OxyColor.Parse("#FF808080");
+
+    public ChannelColorLivePlotTests() => Daqifi.Desktop.App.InitializeMobile();
+
+    /// <summary>
+    /// The case that motivated the change: an unusable colour, arriving sample after sample, has to
+    /// settle on the fallback rather than being re-converted — and re-thrown through — each time. What
+    /// is asserted is the outcome that would survive either implementation; that it settles is what the
+    /// comparison against the remembered raw string buys, and the two tests below hold that honest.
+    /// </summary>
+    [Fact]
+    public void A_repeated_unusable_colour_still_draws_every_sample_in_the_fallback()
+    {
+        var plotter = new PlotLogger();
+
+        plotter.Log(Sample("not a colour"));
+        plotter.Log(Sample("not a colour"));
+        plotter.Log(Sample("not a colour"));
+
+        var series = Assert.Single(plotter.LoggedChannels.Values);
+        Assert.Equal(Fallback, series.Color);
+
+        // Every sample was still plotted: the fallback must not cost the user data.
+        Assert.Equal(3, plotter.LoggedPoints.Values.Single().Count);
+    }
+
+    /// <summary>
+    /// The guard on remembering anything at all, and the one thing a stale cache would break: a
+    /// channel whose colour really does change mid-stream must still repaint. Get this wrong and the
+    /// series keeps its first colour forever, which nothing else here would notice.
+    /// </summary>
+    [Fact]
+    public void A_colour_that_changes_mid_stream_still_repaints_the_series()
+    {
+        var plotter = new PlotLogger();
+
+        plotter.Log(Sample("#FFD32F2F"));
+        var series = Assert.Single(plotter.LoggedChannels.Values);
+        Assert.Equal(OxyColor.Parse("#FFD32F2F"), series.Color);
+
+        plotter.Log(Sample("#FF1976D2"));
+
+        Assert.Equal(OxyColor.Parse("#FF1976D2"), series.Color);
+    }
+
+    /// <summary>
+    /// And the lifecycle half: clearing the plot has to drop the remembered colour along with the
+    /// series it belonged to, or the next session's first sample would find its colour already
+    /// "current" against a series that no longer exists.
+    /// </summary>
+    [Fact]
+    public void Clearing_the_plot_forgets_the_remembered_colour()
+    {
+        var plotter = new PlotLogger();
+
+        plotter.Log(Sample("#FFD32F2F"));
+        plotter.ClearPlot();
+        plotter.Log(Sample("#FFD32F2F"));
+
+        var series = Assert.Single(plotter.LoggedChannels.Values);
+        Assert.Equal(OxyColor.Parse("#FFD32F2F"), series.Color);
+    }
+
+    /// <summary>One channel's sample, with only the colour varying.</summary>
+    private static DataSample Sample(string? colour) => new()
+    {
+        ChannelName = "AI0",
+        DeviceName = "Nyquist",
+        DeviceSerialNo = "SN-1",
+        Type = ChannelType.Analog,
+        Color = colour!,
+        Value = 1.25,
+        TimestampTicks = 638000000000000000
+    };
 }
