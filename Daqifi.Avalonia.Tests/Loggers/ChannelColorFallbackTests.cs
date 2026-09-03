@@ -33,8 +33,10 @@ namespace Daqifi.Avalonia.Tests.Loggers;
 /// these tests pin a reachable failure rather than a hypothetical one. The empty string needs no old
 /// file at all: <c>NOT NULL</c> has always accepted <c>""</c>.</para>
 ///
-/// <para>Every assertion below fails against the unchanged code, which is the evidence that the
-/// defect was real. The blank case is the one a <c>?? fallback</c> alone would have left wide open.</para>
+/// <para>Seven of the twelve fail against the unchanged code — five by throwing, two by coming back
+/// the wrong colour — which is the evidence that the defect was real. The five that pass unchanged
+/// are meant to: the three good-colour guards, and the two above that describe today's behaviour
+/// rather than the fix's. The blank case is the one a <c>?? fallback</c> alone would have left open.</para>
 /// </summary>
 public class ChannelColorFallbackTests : IDisposable
 {
@@ -102,10 +104,13 @@ public class ChannelColorFallbackTests : IDisposable
     #region The crash, end to end
 
     /// <summary>
-    /// The user-visible failure: open a session logged before the colour column was required and the
-    /// load throws out of series construction. Both halves are asserted — that it does not throw,
-    /// and that the channel is still THERE and visible, because "no crash" bought by dropping the
-    /// series would lose the user's data just as quietly.
+    /// The user-visible failure, end to end: open a session logged before the colour column was
+    /// required. Unfixed, the blank row throws out of series construction and the null row comes back
+    /// transparent — one loses the session, the other loses the channel.
+    ///
+    /// <para>Both halves of the outcome are asserted, not just the absence of a throw: the channel has
+    /// to still be THERE, visible, and drawn in a colour a person can see. "No crash" bought by
+    /// dropping the series would lose the user's data every bit as quietly as the transparent one did.</para>
     /// </summary>
     [Theory]
     [InlineData(true)]   // the row holds SQL NULL
