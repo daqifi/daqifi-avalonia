@@ -339,36 +339,62 @@ public partial class DaqifiViewModel : ObservableObject, IFirmwareUpdateHost, IL
                 return;
             }
 
+            // The device fan-out runs through LoggingFleet, which commands every device and
+            // collects the refusals rather than letting the first one decide the outcome (#214).
+            // These loops used to be bare: a device whose transport had gone threw
+            // DeviceNotConnectedException out of this setter, and because the setter is written
+            // both by the toggle's two-way binding AND by the disk-space hard stop's
+            // Dispatcher.UIThread.Post, the throw reached the dispatcher and ended the process
+            // mid-session. Same ground as #183, one loop further down.
             if (_isLogging)
             {
                 _diskSpaceCoordinator?.StartMonitoring(suppressInitialWarning: preSessionWarningShown);
 
-                foreach (var device in ConnectedDevices)
+                var start = LoggingFleet.Start(ConnectedDevices, _appLogger);
+
+                // Nothing anywhere is recording, so this is not a session — unwind it exactly the
+                // way a failed session row does above, rather than leaving the toggle ON over a
+                // fleet that refused. A start with no devices connected at all is not this: it is
+                // the ordinary "arm the session, connect a device next" case and stays ON.
+                if (start.EveryDeviceRefused)
                 {
-                    if (device.Mode == DeviceMode.StreamToApp)
-                    {
-                        device.InitializeStreaming();
-                    }
-                    else if (device.Mode == DeviceMode.LogToDevice)
-                    {
-                        device.StartSdCardLogging();
-                    }
+                    _diskSpaceCoordinator?.StopMonitoring();
+                    LoggingManager.Instance.Active = false;
+                    _isLogging = false;
+                    OnPropertyChanged(nameof(IsLogging));
+                    OnPropertyChanged(nameof(IsSdCardLoggingActive));
+                    ReportLoggingProblem(
+                        "Cannot Start Logging",
+                        "Logging could not be started on any connected device." + Environment.NewLine + start.RefusalSummary);
+                    return;
+                }
+
+                // A partial refusal keeps the session: the devices that did start are recording,
+                // and taking the run away from them because a sibling declined would lose data
+                // the user asked for. Say which ones are not in the run and why.
+                if (start.AnyRefused)
+                {
+                    ReportLoggingProblem(
+                        "Some Devices Are Not Logging",
+                        "Logging started, but these devices are not part of it:"
+                        + Environment.NewLine + start.RefusalSummary);
                 }
             }
             else
             {
                 _diskSpaceCoordinator?.StopMonitoring();
 
-                foreach (var device in ConnectedDevices)
+                var stop = LoggingFleet.Stop(ConnectedDevices, _appLogger);
+
+                // The local session has ended regardless — see LoggingFleet.Stop. A device that
+                // would not stop is reported, not obeyed: refusing to end the session over it
+                // would leave the user with a toggle that cannot be turned off.
+                if (stop.AnyRefused)
                 {
-                    if (device.Mode == DeviceMode.StreamToApp)
-                    {
-                        device.StopStreaming();
-                    }
-                    else if (device.Mode == DeviceMode.LogToDevice)
-                    {
-                        device.StopSdCardLogging();
-                    }
+                    ReportLoggingProblem(
+                        "Logging Stopped With Errors",
+                        "Logging stopped, but these devices did not confirm it:"
+                        + Environment.NewLine + stop.RefusalSummary);
                 }
             }
 
@@ -526,37 +552,26 @@ public partial class DaqifiViewModel : ObservableObject, IFirmwareUpdateHost, IL
 
                 var isLogToDeviceMode = mode == "Log to Device";
                 var deviceMode = isLogToDeviceMode ? DeviceMode.LogToDevice : DeviceMode.StreamToApp;
-                var originalDeviceModes = ConnectedDevices.ToDictionary(device => device, device => device.Mode, ReferenceComparer<IStreamingDevice>.Instance);
 
-                try
+                // All-or-nothing, and reported rather than thrown (#214). SelectedLoggingMode is a
+                // single value for the whole app, so a fleet that cannot all move is put back where
+                // it was — that rollback already existed. What did not was surviving it: the setter
+                // rethrew afterwards, out of the RelayCommand behind the LOG TO DEVICE radio and
+                // into the dispatcher, which ended the process. The rollback had already restored
+                // every device by then, so the throw's only remaining effect was to close the app.
+                var switched = LoggingFleet.SwitchMode(ConnectedDevices, deviceMode, _appLogger);
+                if (switched.AnyRefused)
                 {
-                    foreach (var device in ConnectedDevices)
-                    {
-                        device.SwitchMode(deviceMode);
-                    }
-                }
-                catch (Exception ex)
-                {
-                    foreach (var originalDeviceMode in originalDeviceModes)
-                    {
-                        if (originalDeviceMode.Key.Mode == originalDeviceMode.Value)
-                        {
-                            continue;
-                        }
+                    // The fleet is back in its previous mode, so leave _selectedLoggingMode alone
+                    // and re-notify: the radio group is the binding source and has already moved
+                    // itself, and without this it would keep showing a mode nothing is in.
+                    OnPropertyChanged();
 
-                        try
-                        {
-                            originalDeviceMode.Key.SwitchMode(originalDeviceMode.Value);
-                        }
-                        catch (Exception rollbackException)
-                        {
-                            _appLogger.Warning(
-                                $"Failed to roll back logging mode for {originalDeviceMode.Key.Name}: {rollbackException.Message}");
-                        }
-                    }
-
-                    _appLogger.Error(ex, "Failed to switch device logging mode.");
-                    throw;
+                    ReportLoggingProblem(
+                        "Cannot Change Logging Mode",
+                        $"The logging mode was left as \"{_selectedLoggingMode}\" because these devices could not change it:"
+                        + Environment.NewLine + switched.RefusalSummary);
+                    return;
                 }
 
                 _selectedLoggingMode = value;
@@ -1544,11 +1559,50 @@ public partial class DaqifiViewModel : ObservableObject, IFirmwareUpdateHost, IL
     /// established) because that is what is still readable once the dialog is dismissed.
     /// </remarks>
     private void ReportLoggingCouldNotStart(string message)
+        => ReportLoggingProblem("Cannot Start Logging", message, isDefect: true);
+
+    /// <summary>
+    /// Tells the user that a logging command did not do what the click asked for, and why.
+    /// </summary>
+    /// <remarks>
+    /// <para>
+    /// Both surfaces, deliberately: the dialog because the user just clicked something and watched
+    /// it snap back, and the standing notification (the shape <see cref="ReportQuarantinedDatabase"/>
+    /// established) because that is what is still readable once the dialog is dismissed.
+    /// </para>
+    /// <para>
+    /// The title is a parameter because #214 gave this three more callers with three different
+    /// things to say — a start that no device accepted, a start some devices sat out, a stop some
+    /// devices did not confirm, and a mode switch that was rolled back. They are not all "Cannot
+    /// Start Logging", and a partial start in particular is not a failure at all.
+    /// </para>
+    /// </remarks>
+    /// <param name="title">Dialog title; also the first line of the standing notification.</param>
+    /// <param name="message">What happened, in the user's terms.</param>
+    /// <param name="isDefect">
+    /// <c>true</c> to log at Error, which raises a Sentry issue. Only the failed session row (#183)
+    /// sets it: that is the app's own storage failing. A device declining a command is a device or
+    /// environmental condition the app cannot prevent — no card, no link, wrong transport — and the
+    /// repo routes those to Warning so they do not file issues, the same rule
+    /// <see cref="SdCardFailureClassifier"/> applies.
+    /// </param>
+    private void ReportLoggingProblem(string title, string message, bool isDefect = false)
     {
-        _appLogger.Error(message);
+        if (isDefect)
+        {
+            _appLogger.Error(message);
+        }
+        else
+        {
+            _appLogger.Warning($"{title}: {message}");
+        }
 
         // Null DeviceSerialNo, as above: an app-level condition with no owning device, which exempts
-        // it from RemoveNotification's per-device pruning.
+        // it from RemoveNotification's per-device pruning. A refusal can name several devices, so it
+        // has no single owner to prune it by either.
+        //
+        // The message alone, not the title with it: the notification list is a flat list of
+        // sentences, and every message passed here is written to stand on its own in it.
         NotificationList.Add(new Notifications
         {
             IsFirmwareUpdate = false,
@@ -1559,19 +1613,19 @@ public partial class DaqifiViewModel : ObservableObject, IFirmwareUpdateHost, IL
         // Fire-and-forget for the same reason the disk-space gate in this same setter does it: the
         // toggle's two-way binding is mid-write, so there is nothing here that can await a modal.
         // The dialog's own failures are caught rather than left as an unobserved task fault.
-        _ = ShowLoggingStartFailure(message);
+        _ = ShowLoggingProblem(title, message);
     }
 
-    /// <summary>Shows the failed-start dialog, and never lets its own failure escape.</summary>
-    private async Task ShowLoggingStartFailure(string message)
+    /// <summary>Shows the logging-problem dialog, and never lets its own failure escape.</summary>
+    private async Task ShowLoggingProblem(string title, string message)
     {
         try
         {
-            await _messageBoxService.ShowAsync(message, "Cannot Start Logging", MessageBoxButton.OK, MessageBoxImage.Warning);
+            await _messageBoxService.ShowAsync(message, title, MessageBoxButton.OK, MessageBoxImage.Warning);
         }
         catch (Exception ex)
         {
-            _appLogger.Error(ex, "Failed to show the logging start failure dialog");
+            _appLogger.Error(ex, "Failed to show the logging problem dialog");
         }
     }
 
