@@ -938,7 +938,9 @@ public partial class ConnectionDialogViewModel : ObservableObject
         try
         {
             Common.Loggers.AppLogger.Instance.AddBreadcrumb("discovery", $"Serial device found: {e.DeviceInfo.Name}");
-            AddSerialDeviceFromDiscovery(e.DeviceInfo);
+            // sender is the finder that raised this (Core raises with `this`), and it is carried
+            // through so the mutation can check it is still the current one — see below.
+            AddSerialDeviceFromDiscovery(sender, e.DeviceInfo);
         }
         catch (Exception ex)
         {
@@ -946,8 +948,13 @@ public partial class ConnectionDialogViewModel : ObservableObject
         }
     }
 
+    /// <param name="finder">
+    /// The finder that raised the discovery. Used to reject a retired finder's late callback — see
+    /// the guard inside the marshalled action.
+    /// </param>
+    /// <param name="deviceInfo">What the finder found.</param>
     // @port: Daqifi.Desktop.ViewModels.ConnectionDialogViewModel.AddSerialDeviceFromDiscovery
-    private void AddSerialDeviceFromDiscovery(CoreDeviceInfo deviceInfo)
+    private void AddSerialDeviceFromDiscovery(object? finder, CoreDeviceInfo deviceInfo)
     {
         var portName = deviceInfo.PortName?.Trim();
         if (string.IsNullOrWhiteSpace(portName))
@@ -957,6 +964,23 @@ public partial class ConnectionDialogViewModel : ObservableObject
 
         _marshalToUiThread(() =>
         {
+            // Only the CURRENT finder may touch the list, and the check has to happen here rather
+            // than before the marshal. Unsubscribing DeviceDiscovered does not revoke a raise
+            // already in flight, and the action this queues can land behind the very
+            // StartSerialFinder call that retired the finder — so a late callback would otherwise
+            // put a pre-flash port straight back into the list the clear had just emptied, or
+            // overwrite the new session's metadata with the old session's. The watchdog makes this
+            // concrete: it deliberately abandons a timed-out sweep, which can identify a device
+            // long afterwards. A rejected discovery costs at most one sweep (2s) — the current
+            // finder reports the device again if it is really there.
+            //
+            // Also rejects everything once the dialog has stopped discovery, because
+            // StopSerialDiscoveryAsync nulls the field.
+            //
+            // (HandleWifiDeviceFound has the same shape and the same hole. Pre-existing, untouched
+            // here, and partly masked by its per-MAC dedup.)
+            if (finder == null || !ReferenceEquals(finder, _serialFinder)) { return; }
+
             var existing = FindSerialDeviceByPortName(portName);
             if (existing == null)
             {

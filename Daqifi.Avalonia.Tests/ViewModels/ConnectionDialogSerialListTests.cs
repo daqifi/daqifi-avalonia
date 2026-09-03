@@ -91,7 +91,79 @@ public class ConnectionDialogSerialListTests
         Assert.NotNull(GetPrivateField(resumed.Value, "_serialFinder"));
     }
 
+    /// <summary>
+    /// The clear is only worth anything if the finder it retired cannot undo it. Unsubscribing
+    /// <c>DeviceDiscovered</c> does not revoke a raise already in flight, and the mutation it
+    /// queues onto the UI thread can land after the clear — so a retired finder could otherwise
+    /// put the pre-flash port straight back. The watchdog makes this concrete by deliberately
+    /// abandoning timed-out sweeps.
+    /// </summary>
+    [Fact]
+    public void A_retired_finders_late_discovery_cannot_put_a_ghost_back()
+    {
+        using var viewModel = CreateViewModel();
+
+        InvokePrivate(viewModel.Value, "StartSerialDiscovery");
+        var retiredFinder = GetPrivateField(viewModel.Value, "_serialFinder");
+        Assert.NotNull(retiredFinder);
+
+        // A second start retires the first finder and installs a new one, exactly as the
+        // firmware-flash resume does.
+        SetPrivateField(viewModel.Value, "_serialDiscoveryTask", null);
+        InvokePrivate(viewModel.Value, "StartSerialDiscovery");
+        Assert.NotSame(retiredFinder, GetPrivateField(viewModel.Value, "_serialFinder"));
+
+        RaiseDiscovery(viewModel.Value, retiredFinder, "COM-GHOST");
+
+        Assert.Empty(viewModel.Value.AvailableSerialDevices);
+        Assert.True(viewModel.Value.HasNoSerialDevices);
+    }
+
+    /// <summary>
+    /// The other direction, so the guard is pinned as a filter rather than as a blanket refusal:
+    /// the finder that is actually current still populates the list.
+    /// </summary>
+    [Fact]
+    public void The_current_finders_discovery_still_reaches_the_list()
+    {
+        using var viewModel = CreateViewModel();
+
+        InvokePrivate(viewModel.Value, "StartSerialDiscovery");
+        var currentFinder = GetPrivateField(viewModel.Value, "_serialFinder");
+
+        RaiseDiscovery(viewModel.Value, currentFinder, "COM-REAL");
+
+        var listed = Assert.Single(viewModel.Value.AvailableSerialDevices);
+        Assert.Equal("COM-REAL", listed.Port?.PortName);
+        Assert.False(viewModel.Value.HasNoSerialDevices);
+    }
+
     #region Harness
+    /// <summary>
+    /// Raises <c>DeviceDiscovered</c> at the view model the way a finder does, with
+    /// <paramref name="finder"/> as the sender.
+    /// </summary>
+    private static void RaiseDiscovery(
+        ConnectionDialogViewModel viewModel,
+        object? finder,
+        string portName)
+    {
+        var handler = typeof(ConnectionDialogViewModel).GetMethod(
+            "HandleCoreSerialDeviceDiscovered", BindingFlags.Instance | BindingFlags.NonPublic);
+        Assert.NotNull(handler);
+
+        var deviceInfo = new DeviceInfo
+        {
+            Name = portName,
+            SerialNumber = "SN-" + portName,
+            FirmwareVersion = "1.0.1.24",
+            PortName = portName,
+            ConnectionType = Daqifi.Core.Device.Discovery.ConnectionType.Serial
+        };
+
+        handler.Invoke(viewModel, [finder, new DeviceDiscoveredEventArgs(deviceInfo)]);
+    }
+
     private static SerialStreamingDevice SeedDiscoveredDevice(
         ConnectionDialogViewModel viewModel,
         string portName)
