@@ -49,7 +49,17 @@ actually live, which is what keeps it from crying wolf and from missing the real
     (`builder.DataSource = path`) are rejected: both produce a pooled connection
     string. Only an ASSIGNMENT matches, so reading the property
     (`Assert.Equal(path, builder.DataSource)`) or comparing it (`== path`) stays legal
-    — that is how TestDatabasePoolingTests parses a connection string to assert on it.
+    — that is how TestDatabasePoolingTests parses a connection string to assert on it;
+  - the `DataSource =` rule is further scoped to files that MENTION SQLITE. `DataSource`
+    is an ordinary property name on grids, charts and options objects, and failing the
+    build on `new SomeSeries { DataSource = rows }` would be indefensible. Nothing is
+    lost: a connection string cannot be built without naming a SQLite type somewhere;
+  - the `Data Source=` key is additionally looked for across the file's WHOLE literal
+    text, so splitting it (`"Data " + "Source="`) does not slip between two lines.
+
+None of this makes the guard proof against someone determined to evade it — a source
+check never is. It is meant to catch the ACCIDENT: a new fixture that reaches for a
+connection string without knowing this invariant exists.
 
 Usage:
     check_test_sqlite_pooling.py <File.cs> [...]
@@ -90,6 +100,14 @@ DATA_SOURCE_CODE = [
      "a `DataSource =` assignment on a connection-string builder"),
     (re.compile(r"\bUseSqlite\s*\("), "a `UseSqlite(...)` call"),
 ]
+
+# `DataSource` is a common property name — grids, charts and plenty of unrelated
+# options objects have one — so the assignment rule is only applied in files that
+# touch SQLite at all. This costs nothing: a fixture cannot build a SQLite connection
+# string without naming a SQLite type, in this file or in a helper that has its own.
+# Without the scope, an unrelated `new SomeSeries { DataSource = rows }` fails CI, and
+# a guard that fires on innocent code is a guard somebody deletes.
+SQLITE_MENTION = re.compile(r"sqlite", re.IGNORECASE)
 
 # Rule 2, over STRING LITERAL CONTENT only — see PRECISION above.
 DATA_SOURCE_LITERAL = re.compile(r"Data\s*Source\s*=", re.IGNORECASE)
@@ -237,21 +255,36 @@ def main(argv: list[str]) -> int:
             continue
 
         # Rule 2 — everywhere except the seam, each pattern over its own view.
-        for number, line in enumerate(code_lines, start=1):
-            for pattern, what in DATA_SOURCE_CODE:
-                if pattern.search(line):
-                    failures.append(
-                        f"{rel}:{number}: names a SQLite data source directly "
-                        f"({what}). That connection is POOLED by default, which "
-                        f"re-opens #210 for the whole suite. Route it through "
-                        f"{SEAM} instead.")
-        for number, line in enumerate(literal_lines, start=1):
-            if DATA_SOURCE_LITERAL.search(line):
-                failures.append(
-                    f"{rel}:{number}: names a SQLite data source directly (a "
-                    f"`Data Source=` connection-string literal). That connection is "
-                    f"POOLED by default, which re-opens #210 for the whole suite. "
-                    f"Route it through {SEAM} instead.")
+        if SQLITE_MENTION.search("\n".join(code_lines)):
+            for number, line in enumerate(code_lines, start=1):
+                for pattern, what in DATA_SOURCE_CODE:
+                    if pattern.search(line):
+                        failures.append(
+                            f"{rel}:{number}: names a SQLite data source directly "
+                            f"({what}). That connection is POOLED by default, which "
+                            f"re-opens #210 for the whole suite. Route it through "
+                            f"{SEAM} instead.")
+
+        literal_hits = [
+            number for number, line in enumerate(literal_lines, start=1)
+            if DATA_SOURCE_LITERAL.search(line)
+        ]
+        for number in literal_hits:
+            failures.append(
+                f"{rel}:{number}: names a SQLite data source directly (a "
+                f"`Data Source=` connection-string literal). That connection is "
+                f"POOLED by default, which re-opens #210 for the whole suite. "
+                f"Route it through {SEAM} instead.")
+        # A key spelled across more than one literal ("Data " + "Source=") lands on one
+        # line's literal text already, because adjacent literals concatenate there. Split
+        # across LINES it would land on neither, so the whole file's literal text is
+        # checked too — the per-line pass is only for the line number.
+        if not literal_hits and DATA_SOURCE_LITERAL.search("".join(literal_lines)):
+            failures.append(
+                f"{rel}: names a SQLite data source in a `Data Source=` key assembled "
+                f"from string literals spanning more than one line. That connection is "
+                f"POOLED by default, which re-opens #210 for the whole suite. Route it "
+                f"through {SEAM} instead.")
 
     # Rule 3 — the seam has to have been handed in, or rules 1 and 2 are vacuous.
     if seam_code is None:

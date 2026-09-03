@@ -187,6 +187,72 @@ public class ComparisonTests
 }
 ''')
         check("comparing `.DataSource ==` passes", 0, run(tmp, seam, fixture))
+
+        # `DataSource` is an ordinary property name. A file that never touches SQLite
+        # cannot be building a SQLite connection string, so the assignment rule is
+        # scoped to files that mention it — otherwise this fails the build. Caught in
+        # review on #225.
+        write(fixture, '''
+namespace Daqifi.Avalonia.Tests.ViewModels;
+
+public class ChartBindingTests
+{
+    private void Bind()
+    {
+        var series = new LineSeries { DataSource = Rows };
+        series.DataSource = OtherRows;
+    }
+}
+''')
+        check("`DataSource =` in a file with no SQLite passes", 0,
+              run(tmp, seam, fixture))
+
+        # ...but the same assignment in a file that DOES touch SQLite is the real thing.
+        write(fixture, '''
+namespace Daqifi.Avalonia.Tests.Loggers;
+
+using Microsoft.Data.Sqlite;
+
+public class StillCaughtTests
+{
+    private void Build()
+    {
+        var builder = new SqliteConnectionStringBuilder();
+        builder.DataSource = DatabasePath;
+    }
+}
+''')
+        check("`DataSource =` in a file that touches SQLite still fails", 1,
+              run(tmp, seam, fixture))
+
+        # A `Data Source=` key split across two LINES lands on neither line's literal
+        # text, so the whole file's literal text is checked as well. Caught in review
+        # on #225.
+        write(fixture, '''
+namespace Daqifi.Avalonia.Tests.Loggers;
+
+public class SplitKeyTests
+{
+    private string Build() =>
+        "Data " +
+        "Source=" +
+        DatabasePath;
+}
+''')
+        check("a `Data Source=` key split across lines fails", 1,
+              run(tmp, seam, fixture))
+
+        # Split on ONE line already concatenates in that line's literal text.
+        write(fixture, '''
+namespace Daqifi.Avalonia.Tests.Loggers;
+
+public class SameLineSplitTests
+{
+    private string Build() => "Data " + "Source=" + DatabasePath;
+}
+''')
+        check("a `Data Source=` key split on one line fails", 1,
+              run(tmp, seam, fixture))
         write(fixture, CLEAN_FIXTURE)
 
         # A `//` inside a string must not be mistaken for a comment and blank out the
