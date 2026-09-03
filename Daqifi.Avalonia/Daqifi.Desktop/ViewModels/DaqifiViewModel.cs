@@ -350,6 +350,10 @@ public partial class DaqifiViewModel : ObservableObject, IFirmwareUpdateHost, IL
             {
                 _diskSpaceCoordinator?.StartMonitoring(suppressInitialWarning: preSessionWarningShown);
 
+                // A new start supersedes whatever the last failed stop left unknown: every device
+                // is about to be commanded again, so its answer is the current one.
+                _sdStateUnknownAfterFailedStop.Clear();
+
                 var start = LoggingFleet.Start(ConnectedDevices, _appLogger);
 
                 // Nothing anywhere is recording, so this is not a session — unwind it exactly the
@@ -391,6 +395,16 @@ public partial class DaqifiViewModel : ObservableObject, IFirmwareUpdateHost, IL
                 // would leave the user with a toggle that cannot be turned off.
                 if (stop.AnyRefused)
                 {
+                    // ...and the toggle only actually moves if the getter stops counting these
+                    // devices as logging. A refused StopSdCardLogging leaves IsLoggingToSdCard
+                    // reading true — the command never got through, so the flag is stale, not
+                    // evidence — and AnyDeviceActivelyLogging would otherwise put IsLogging
+                    // straight back to true and spring the switch back ON. See IsKnownToBeSdLogging.
+                    foreach (var refusal in stop.Refusals)
+                    {
+                        _sdStateUnknownAfterFailedStop.Add(refusal.Device);
+                    }
+
                     ReportLoggingProblem(
                         "Logging Stopped With Errors",
                         "Logging stopped, but these devices did not confirm it:"
@@ -409,11 +423,43 @@ public partial class DaqifiViewModel : ObservableObject, IFirmwareUpdateHost, IL
     /// (necessarily empty) plot, since SD-mode samples never reach the desktop.
     /// </summary>
     // @port: Daqifi.Desktop.ViewModels.DaqifiViewModel.IsSdCardLoggingActive
-    public bool IsSdCardLoggingActive => ConnectedDevices.Any(d => d.IsLoggingToSdCard);
+    public bool IsSdCardLoggingActive => ConnectedDevices.Any(IsKnownToBeSdLogging);
 
     // @port: Daqifi.Desktop.ViewModels.DaqifiViewModel.AnyDeviceActivelyLogging
     private bool AnyDeviceActivelyLogging()
-        => ConnectedDevices.Any(d => d.IsLoggingToSdCard);
+        => ConnectedDevices.Any(IsKnownToBeSdLogging);
+
+    /// <summary>
+    /// Devices whose last stop command was refused, so what this app last recorded about their
+    /// SD-card state is stale rather than informative. Reference identity, because a device's
+    /// value hash moves as its fields do. Cleared on the next start and whenever the connected set
+    /// changes.
+    /// </summary>
+    private readonly HashSet<IStreamingDevice> _sdStateUnknownAfterFailedStop =
+        new(ReferenceComparer<IStreamingDevice>.Instance);
+
+    /// <summary>
+    /// Whether this device is believed to be logging to its SD card.
+    /// </summary>
+    /// <remarks>
+    /// <para>
+    /// <see cref="IStreamingDevice.IsLoggingToSdCard"/> is the ordinary answer, and reading it is
+    /// deliberate: it is what makes the toggle tell the truth after reconnecting to a device that
+    /// kept logging across a desktop restart.
+    /// </para>
+    /// <para>
+    /// The exception is a device whose stop command was REFUSED.
+    /// <c>AbstractStreamingDevice.StopSdCardLogging</c> clears its flag only after the device
+    /// answers, so a refusal leaves the flag reading <c>true</c> — not because the device is known
+    /// to be logging, but because the command never got through. Counting that as "actively
+    /// logging" makes <see cref="IsLogging"/> return true straight after an explicit stop, and the
+    /// toggle springs back ON: the user turns logging off, is told a device did not confirm, and
+    /// watches the switch refuse to move. That is the trap this whole change exists to avoid, so
+    /// the stale value is dropped until the app learns something new about that device.
+    /// </para>
+    /// </remarks>
+    private bool IsKnownToBeSdLogging(IStreamingDevice device)
+        => device.IsLoggingToSdCard && !_sdStateUnknownAfterFailedStop.Contains(device);
 
     // @port: Daqifi.Desktop.ViewModels.DaqifiViewModel.CanToggleLogging
     public bool CanToggleLogging
@@ -567,10 +613,23 @@ public partial class DaqifiViewModel : ObservableObject, IFirmwareUpdateHost, IL
                     // itself, and without this it would keep showing a mode nothing is in.
                     OnPropertyChanged();
 
-                    ReportLoggingProblem(
-                        "Cannot Change Logging Mode",
+                    var report =
                         $"The logging mode was left as \"{_selectedLoggingMode}\" because these devices could not change it:"
-                        + Environment.NewLine + switched.RefusalSummary);
+                        + Environment.NewLine + switched.RefusalSummary;
+
+                    // A rollback that itself failed makes the sentence above untrue of part of the
+                    // fleet, so it is never reported alone. The named device is still in the mode
+                    // that was just abandoned, and the next start would log it there — to its SD
+                    // card, with nothing reaching the desktop — while the app showed the other mode.
+                    if (switched.Stranded.Count > 0)
+                    {
+                        report += Environment.NewLine + Environment.NewLine
+                            + "These devices could NOT be put back and are still in the mode that was cancelled. "
+                            + "Reconnect them before logging again:"
+                            + Environment.NewLine + switched.StrandedSummary;
+                    }
+
+                    ReportLoggingProblem("Cannot Change Logging Mode", report);
                     return;
                 }
 
@@ -1750,6 +1809,12 @@ public partial class DaqifiViewModel : ObservableObject, IFirmwareUpdateHost, IL
         // can't rely on the args alone — diff against our tracked-subscription set
         // to handle Reset, Replace, and per-item adds/removes uniformly.
         var current = new HashSet<IStreamingDevice>(ConnectedDevices, ReferenceComparer<IStreamingDevice>.Instance);
+
+        // A device that left takes its unknown SD state with it (#214): the entry only exists to
+        // stop a stale flag on a CONNECTED device from holding the logging toggle ON, and keeping
+        // it would leak an entry per disconnect for the process's lifetime. A device that
+        // reconnects re-reports its state, so the doubt does not survive the reconnect either.
+        _sdStateUnknownAfterFailedStop.RemoveWhere(device => !current.Contains(device));
 
         foreach (var stale in _subscribedDevices.Except(current, ReferenceComparer<IStreamingDevice>.Instance).ToList())
         {

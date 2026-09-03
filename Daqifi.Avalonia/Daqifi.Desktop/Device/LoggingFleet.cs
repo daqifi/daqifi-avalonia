@@ -6,13 +6,18 @@ namespace Daqifi.Desktop.Device;
 /// <summary>
 /// One device's refusal of a logging command, in the terms the UI reports it.
 /// </summary>
+/// <param name="Device">
+/// The device that declined. Carried so a caller can act on the device itself and not just say
+/// its name — the stop path uses it to record that what it last knew about that device's SD state
+/// is now stale.
+/// </param>
 /// <param name="DeviceName">
 /// The device the command was issued against, named the way the rest of the UI names it.
 /// </param>
 /// <param name="Exception">The failure the device (or the wrapper) raised.</param>
 // Downstream-only: no upstream counterpart. Upstream WPF issues these commands from the property
 // setters directly and has the same crash.
-public sealed record DeviceCommandRefusal(string DeviceName, Exception Exception)
+public sealed record DeviceCommandRefusal(IStreamingDevice Device, string DeviceName, Exception Exception)
 {
     /// <summary>
     /// The one-line sentence shown to the user. Core's own exception messages are already written
@@ -32,8 +37,25 @@ public sealed record FleetCommandResult(
     IReadOnlyList<IStreamingDevice> Succeeded,
     IReadOnlyList<DeviceCommandRefusal> Refusals)
 {
+    /// <summary>
+    /// Devices a rollback could not put back, and why — so they are left in a mode the UI is
+    /// about to stop claiming they are in. Only <see cref="LoggingFleet.SwitchMode"/> rolls back,
+    /// so this is always empty for a start or a stop.
+    /// </summary>
+    /// <remarks>
+    /// Reported rather than swallowed because the consequence outlives the message:
+    /// <see cref="LoggingFleet.Start"/> picks each device's command from its ACTUAL
+    /// <see cref="IStreamingDevice.Mode"/>, so a device stranded in <c>LogToDevice</c> would log
+    /// to its SD card on the next start while the app showed "Stream to App" — a run whose data
+    /// never reaches the desktop and which the user has no reason to look for on the card.
+    /// </remarks>
+    public IReadOnlyList<DeviceCommandRefusal> Stranded { get; init; } = [];
+
     /// <summary>True when at least one device declined the command.</summary>
     public bool AnyRefused => Refusals.Count > 0;
+
+    /// <summary>The stranded-device sentences, newline-joined.</summary>
+    public string StrandedSummary => string.Join(Environment.NewLine, Stranded.Select(r => r.Description));
 
     /// <summary>
     /// True when the command was issued to at least one device and every one of them declined —
@@ -174,7 +196,7 @@ public static class LoggingFleet
             catch (Exception ex)
             {
                 appLogger.Warning(ex, $"{Describe(device)} refused the switch to {mode} logging mode.");
-                refusals.Add(new DeviceCommandRefusal(Describe(device), ex));
+                refusals.Add(new DeviceCommandRefusal(device, Describe(device), ex));
 
                 // One refusal settles it for everyone, so there is nothing to gain by asking the
                 // rest and a partially-moved fleet to unwind if we did.
@@ -186,6 +208,8 @@ public static class LoggingFleet
         {
             return new FleetCommandResult(moved, refusals);
         }
+
+        var stranded = new List<DeviceCommandRefusal>();
 
         foreach (var (device, originalMode) in originalModes)
         {
@@ -200,12 +224,21 @@ public static class LoggingFleet
             }
             catch (Exception rollbackException)
             {
+                // Recorded, not just logged. The rollback is what entitles the caller to say the
+                // fleet was left alone, and a device that would not go back makes that untrue —
+                // it stays in the new mode, and Start picks each device's command from its actual
+                // Mode, so it would log somewhere the UI is not showing.
                 appLogger.Warning(
-                    $"Failed to roll back logging mode for {Describe(device)}: {rollbackException.Message}");
+                    rollbackException,
+                    $"Failed to roll back logging mode for {Describe(device)}; it is stranded in {device.Mode}.");
+                stranded.Add(new DeviceCommandRefusal(device, Describe(device), rollbackException));
             }
         }
 
-        return new FleetCommandResult([], refusals);
+        // Carry on through the whole loop above rather than returning on the first failure: the
+        // devices after a stranded one can still be put back, and abandoning them would strand
+        // more of the fleet than actually refused.
+        return new FleetCommandResult([], refusals) { Stranded = stranded };
     }
 
     /// <summary>
@@ -242,7 +275,7 @@ public static class LoggingFleet
                 // condition the app cannot prevent (no card, no link, wrong transport), and the
                 // repo routes those away from Sentry — same rule SdCardFailureClassifier applies.
                 appLogger.Warning(ex, $"Could not {what} {Describe(device)}.");
-                refusals.Add(new DeviceCommandRefusal(Describe(device), ex));
+                refusals.Add(new DeviceCommandRefusal(device, Describe(device), ex));
             }
         }
 

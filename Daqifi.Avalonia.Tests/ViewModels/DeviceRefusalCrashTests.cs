@@ -1,4 +1,5 @@
 using Avalonia.Controls;
+using Daqifi.Core.Device;
 using Daqifi.Core.Device.SdCard;
 using Daqifi.Avalonia.Tests.Device;
 using Daqifi.Desktop.Device;
@@ -314,6 +315,114 @@ public class DeviceRefusalCrashTests : IDisposable
         var notification = Assert.Single(_viewModel.NotificationList);
         Assert.Contains("Nq1-NOCARD", notification.Message);
         Assert.Contains(missingCard.Message, notification.Message);
+    }
+
+    #endregion
+
+    #region What a refusal must not leave behind (Qodo round 1)
+
+    /// <summary>
+    /// The trap this change exists to avoid, reached by the fix itself. When
+    /// <c>StopSdCardLogging</c> is refused, <c>AbstractStreamingDevice</c> leaves
+    /// <c>IsLoggingToSdCard</c> reading <c>true</c> — it clears the flag only after the device
+    /// answers — and the <see cref="DaqifiViewModel.IsLogging"/> getter ORs <c>_isLogging</c> with
+    /// exactly that flag. So the stop reported success, the getter said <c>true</c>, and the toggle
+    /// sprang straight back ON: the user turns logging off, is told a device did not confirm, and
+    /// watches the switch refuse to move.
+    /// <para>
+    /// The command never got through, so the flag is stale rather than evidence, and the app stops
+    /// asserting it until it learns something new about that device.
+    /// </para>
+    /// </summary>
+    [Fact]
+    public void StoppingLogging_WhenAnSdCardStopIsRefused_StillLeavesTheToggleOff()
+    {
+        var sdDevice = new RecordingStreamingDevice("Nq1-SD", ConnectionType.Usb);
+        _viewModel.ConnectedDevices.Add(sdDevice);
+        _viewModel.SelectedLoggingMode = "Log to Device";
+
+        _viewModel.IsLogging = true;
+        Assert.True(sdDevice.IsLoggingToSdCard);
+        Assert.True(_viewModel.IsLogging);
+
+        // The link goes while the card is logging: the stop cannot be delivered, so the device's
+        // flag is never cleared.
+        sdDevice.Refusals["StopSdCardLogging"] = new DeviceNotConnectedException();
+
+        _viewModel.IsLogging = false;
+
+        Assert.True(sdDevice.IsLoggingToSdCard);   // the device object still says so...
+        Assert.False(_viewModel.IsLogging);        // ...and the toggle is off anyway.
+        Assert.False(_viewModel.IsSdCardLoggingActive);
+        Assert.Contains(_viewModel.NotificationList, n => n.Message.Contains("Nq1-SD"));
+    }
+
+    /// <summary>
+    /// The guard on the above: the device-state fallback is the whole reason the getter reads
+    /// device flags at all — it is what makes the toggle tell the truth after reconnecting to a
+    /// device that kept SD-logging across a desktop restart. Dropping a stale flag after a REFUSED
+    /// stop must not turn into ignoring device state generally.
+    /// </summary>
+    [Fact]
+    public void ADeviceThatIsSdLoggingOnItsOwn_StillReportsTheSessionAsActive()
+    {
+        var stillLogging = new RecordingStreamingDevice("Nq1-SD", ConnectionType.Usb);
+        stillLogging.SwitchMode(DeviceMode.LogToDevice);
+        stillLogging.StartSdCardLogging();
+
+        _viewModel.ConnectedDevices.Add(stillLogging);
+
+        // Nothing was ever toggled in this app; the device is simply already logging.
+        Assert.True(_viewModel.IsLogging);
+        Assert.True(_viewModel.IsSdCardLoggingActive);
+    }
+
+    /// <summary>
+    /// The rollback's own failure. A device that accepted the new mode and then refuses to go back
+    /// is left in the mode the app is about to stop claiming it is in — and
+    /// <c>LoggingFleet.Start</c> picks each device's command from its ACTUAL <c>Mode</c>, so on the
+    /// next start it would log to its SD card while the app showed "Stream to App", producing a run
+    /// that never reaches the desktop and that the user has no reason to look for on the card.
+    /// Saying "the mode was left as X" over that is false, so the stranded device is named too.
+    /// </summary>
+    [Fact]
+    public void SwitchingMode_WhenTheRollbackAlsoFails_NamesTheDeviceItCouldNotPutBack()
+    {
+        var stubborn = new RecordingStreamingDevice("Nq1-STUCK", ConnectionType.Usb);
+        var wifi = AGhostDevice("Nq1-WIFI", ConnectionType.Wifi);
+
+        _viewModel.ConnectedDevices.Add(stubborn);
+        _viewModel.ConnectedDevices.Add(wifi);
+
+        // It takes the new mode, then the WiFi device refuses, and it will not come back.
+        stubborn.Refusals["SwitchMode(StreamToApp)"] = new DeviceNotConnectedException();
+
+        _viewModel.SelectedLoggingMode = "Log to Device";
+
+        // Really stranded, not merely reported as such.
+        Assert.Equal(DeviceMode.LogToDevice, stubborn.Mode);
+        Assert.Equal("Stream to App", _viewModel.SelectedLoggingMode);
+
+        var notification = Assert.Single(_viewModel.NotificationList);
+        Assert.Contains("Nq1-WIFI", notification.Message);    // what refused
+        Assert.Contains("Nq1-STUCK", notification.Message);   // what could not be put back
+        Assert.Contains("could NOT be put back", notification.Message);
+    }
+
+    /// <summary>
+    /// And the guard on that one: an ordinary refusal whose rollback works must NOT tell the user
+    /// a device is stranded, or the warning stops meaning anything.
+    /// </summary>
+    [Fact]
+    public void SwitchingMode_WhenTheRollbackSucceeds_SaysNothingAboutStrandedDevices()
+    {
+        _viewModel.ConnectedDevices.Add(new RecordingStreamingDevice("Nq1-USB", ConnectionType.Usb));
+        _viewModel.ConnectedDevices.Add(AGhostDevice("Nq1-WIFI", ConnectionType.Wifi));
+
+        _viewModel.SelectedLoggingMode = "Log to Device";
+
+        var notification = Assert.Single(_viewModel.NotificationList);
+        Assert.DoesNotContain("could NOT be put back", notification.Message);
     }
 
     #endregion
