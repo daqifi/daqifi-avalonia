@@ -1433,14 +1433,9 @@ public partial class DaqifiViewModel : ObservableObject, IFirmwareUpdateHost, IL
             {
                 Title = "Select SD Card Log File to Import",
                 AllowMultiple = false,
-                FileTypeFilter = new[]
-                {
-                    new FilePickerFileType("SD Card Log Files (*.bin;*.json;*.csv)") { Patterns = new[] { "*.bin", "*.json", "*.csv" } },
-                    new FilePickerFileType("Protobuf (*.bin)") { Patterns = new[] { "*.bin" } },
-                    new FilePickerFileType("JSON (*.json)") { Patterns = new[] { "*.json" } },
-                    new FilePickerFileType("CSV (*.csv)") { Patterns = new[] { "*.csv" } },
-                    FilePickerFileTypes.All
-                }
+                // Built from Core's own SupportedExtensions, so a format Core gains is offered
+                // here without an edit — and one it drops stops being offered.
+                FileTypeFilter = SdCardLogFormatInfo.BuildFilePickerFileTypes()
             });
 
             var selectedPath = files.Count > 0 ? files[0].TryGetLocalPath() : null;

@@ -3,8 +3,6 @@
 // DO NOT manually delete the `// @port:` markers — they link symbols back to
 // the correspondence map.
 
-using System.IO;
-
 namespace Daqifi.Desktop.Models;
 
 // @port: Daqifi.Desktop.Models.SdCardFile
@@ -34,11 +32,5 @@ public class SdCardFile
     /// Gets a user-facing format label based on the file extension.
     /// </summary>
     // @port: Daqifi.Desktop.Models.SdCardFile.FormatDisplay
-    public string FormatDisplay => Path.GetExtension(FileName)?.ToLowerInvariant() switch
-    {
-        ".bin" => "Protobuf",
-        ".json" => "JSON",
-        ".csv" => "CSV",
-        _ => "Unknown"
-    };
+    public string FormatDisplay => SdCardLogFormatInfo.DisplayNameFor(FileName);
 }
