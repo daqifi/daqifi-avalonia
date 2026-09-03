@@ -75,6 +75,21 @@ public partial class ConnectionDialogViewModel : ObservableObject
     /// </summary>
     private Action<Action> _marshalToUiThread = InvokeOnUiThread;
 
+    /// <summary>
+    /// How this view model creates the serial finder. Nothing in the app ever reassigns it — it is a
+    /// field rather than a direct <c>new</c> only so a test can replace it by reflection (not
+    /// <c>readonly</c>, because reflection may refuse an init-only field), the same seam and for the
+    /// same kind of reason as <see cref="_marshalToUiThread"/> above.
+    /// </summary>
+    /// <remarks>
+    /// A real <c>SerialDeviceFinder</c> opens every DAQiFi VID/PID COM port on the machine the moment
+    /// discovery starts. A test that wants to observe what starting discovery does to
+    /// <see cref="AvailableSerialDevices"/> must not be the thing that probes a developer's attached
+    /// board — or, on the CI/loop machines, a board another process is mid-connect on.
+    /// </remarks>
+    private Func<Daqifi.Core.Device.Discovery.SerialDeviceFinder> _createSerialFinder =
+        static () => new Daqifi.Core.Device.Discovery.SerialDeviceFinder();
+
     [ObservableProperty]
     private bool _hasNoWiFiDevices = true;
 
@@ -377,8 +392,36 @@ public partial class ConnectionDialogViewModel : ObservableObject
         }, TaskScheduler.Default);
     }
 
+    /// <summary>
+    /// Starts serial discovery on a fresh finder, dropping the devices the previous finder found —
+    /// the teardown-and-restart paths (dialog open, resume after a firmware pause).
+    /// </summary>
+    /// <remarks>
+    /// Matches <see cref="StartWiFiDiscovery"/>. Use
+    /// <see cref="ResumeSerialDiscoveryKeepingDiscoveredDevices"/> instead on the retry-after-a-failed-connect
+    /// paths, where the list is what the user is about to press Connect on again.
+    /// </remarks>
     // @port: Daqifi.Desktop.ViewModels.ConnectionDialogViewModel.StartSerialDiscovery
-    private void StartSerialDiscovery()
+    private void StartSerialDiscovery() => StartSerialFinder(clearDiscoveredDevices: true);
+
+    /// <summary>
+    /// Recreates the serial finder but keeps <see cref="AvailableSerialDevices"/> as it is.
+    /// </summary>
+    /// <remarks>
+    /// For the paths that restart discovery immediately after a connect attempt did not take. The
+    /// device that just failed is the one the user is most likely to retry, and a sweep runs every
+    /// two seconds — blanking the list back to "Scanning for USB devices…" would take the retry
+    /// target away from them for no gain. Upstream <c>daqifi-desktop</c> does not clear here either.
+    /// </remarks>
+    private void ResumeSerialDiscoveryKeepingDiscoveredDevices() =>
+        StartSerialFinder(clearDiscoveredDevices: false);
+
+    /// <summary>
+    /// The shared body of the two entry points above. Deliberately NOT an overload of
+    /// <c>StartSerialDiscovery</c>: the dialog's tests reach these by
+    /// <c>GetMethod("StartSerialDiscovery", …)</c>, which throws on an ambiguous match.
+    /// </summary>
+    private void StartSerialFinder(bool clearDiscoveredDevices)
     {
         if (_closed || _serialDiscoveryTask is { IsCompleted: false }) { return; }
 
@@ -393,7 +436,31 @@ public partial class ConnectionDialogViewModel : ObservableObject
         if (_serialFinder != null) { _serialFinder.DeviceDiscovered -= HandleCoreSerialDeviceDiscovered; _serialFinder.Dispose(); }
         _serialDiscoveryCts?.Dispose();
 
-        _serialFinder = new Daqifi.Core.Device.Discovery.SerialDeviceFinder();
+        // Drop what the previous finder found, for the same reason StartWiFiDiscovery does (issue
+        // #621): the bound list outlives the finder that populated it, so without this it keeps
+        // devices that are no longer there. The case that bites is the firmware-flash resume — the
+        // flashed board re-enumerates its USB-CDC port and can come back under a different port
+        // name, leaving the pre-flash row sitting in the USB tab next to the new one, advertising a
+        // port that no longer exists and the firmware version it no longer runs.
+        //
+        // Only on this teardown-and-recreate path. The watchdog's in-place finder rebuild inside
+        // RunContinuousSerialDiscoveryAsync deliberately does not come through here: it is mid-session
+        // recovery from ONE wedged port, and the rest of the list is still valid.
+        //
+        // The per-port dedup in AddSerialDeviceFromDiscovery is RETAINED: this clear runs on finder
+        // recreate, not per sweep, and one finder is reused across many sweeps while Core's own
+        // dedup set is per-sweep.
+        if (clearDiscoveredDevices)
+        {
+            // Routed through the UI marshal like every other AvailableSerialDevices mutation.
+            _marshalToUiThread(() =>
+            {
+                AvailableSerialDevices.Clear();
+                HasNoSerialDevices = true;
+            });
+        }
+
+        _serialFinder = _createSerialFinder();
         _serialDiscoveryCts = new CancellationTokenSource();
         _serialFinder.DeviceDiscovered += HandleCoreSerialDeviceDiscovered;
 
@@ -513,7 +580,7 @@ public partial class ConnectionDialogViewModel : ObservableObject
 
                     // Rebuild the finder so healthy ports get fresh sweeps on the next iteration.
                     finder.DeviceDiscovered -= HandleCoreSerialDeviceDiscovered;
-                    _serialFinder = new Daqifi.Core.Device.Discovery.SerialDeviceFinder();
+                    _serialFinder = _createSerialFinder();
                     _serialFinder.DeviceDiscovered += HandleCoreSerialDeviceDiscovered;
                     continue;
                 }
@@ -561,6 +628,11 @@ public partial class ConnectionDialogViewModel : ObservableObject
 
         foreach (var device in selectedDevices)
         {
+            // This path reads no result at all, so it cannot misattribute one — it closes the
+            // dialog whatever happens. That is the same missing-feedback gap the USB tab had before
+            // issue #207, and closing it needs a WiFi-tab error surface (a bound message, a colour,
+            // a rendered baseline), not a result type. Out of scope here, which is about attributing
+            // a result to the right device rather than about growing a new one.
             await ConnectionManager.Instance.Connect(device);
         }
 
@@ -577,32 +649,35 @@ public partial class ConnectionDialogViewModel : ObservableObject
 
         await StopSerialDiscoveryAsync();
 
-        // Check the status after each device rather than once at the end: ConnectionStatus is a single
-        // shared field on ConnectionManager, so with multi-select a later device's success would
-        // overwrite an earlier device's failure and the dialog would close despite a failed connect.
-        // A discovered device can still fail here (e.g. one left streaming over WiFi returns a SCPI
-        // error when told to switch to USB), and without this check the dialog closes silently with no
-        // feedback at all — the device simply never appears in the device list.
+        // Act on each device's OWN result, per device. A discovered device can fail here (e.g. one
+        // left streaming over WiFi returns a SCPI error when told to switch to USB), and without
+        // this check the dialog closes silently with no feedback at all — the device simply never
+        // appears in the device list.
         foreach (var device in selectedDevices)
         {
-            await ConnectionManager.Instance.Connect(device);
+            var result = await ConnectionManager.Instance.Connect(device);
+            if (result.IsConnected) { continue; }
 
-            var status = ConnectionManager.Instance.ConnectionStatus;
-            if (status is not (DAQiFiConnectionStatus.Connected or DAQiFiConnectionStatus.AlreadyConnected))
+            if (result.WasCancelledByUser)
             {
-                SerialConnectError =
-                    $"Could not connect to '{device.Name}'. " +
-                    "The device may be in use by another application or not responding.";
-                // Resume the discovery this method drained above, so the dialog is not left with a
-                // frozen list after a failed attempt. This does NOT clear AvailableSerialDevices, and
-                // deliberately so: the device that just failed is the one the user is most likely to
-                // retry, and blanking the list back to "Scanning…" would make them wait for it to be
-                // rediscovered first. Upstream does not clear here either. (The serial list is never
-                // cleared on finder recreate, unlike the WiFi one — a pre-existing asymmetry, see the
-                // clear in StartWiFiDiscovery.)
-                StartSerialDiscovery();
+                // The duplicate-device prompt was declined. Nothing failed, so say nothing — but
+                // don't close either, because the user did not ask for this device after all.
+                ResumeSerialDiscoveryKeepingDiscoveredDevices();
                 return;
             }
+
+            // Named off the result, not off the loop variable: the message and the outcome it
+            // describes then cannot come from two different devices, whatever else is in flight.
+            SerialConnectError =
+                $"Could not connect to '{result.Device.Name}'. " +
+                "The device may be in use by another application or not responding.";
+            // Resume the discovery this method drained above, so the dialog is not left with a
+            // frozen list after a failed attempt, and deliberately WITHOUT clearing the list: the
+            // device that just failed is the one the user is most likely to retry, and blanking the
+            // list back to "Scanning…" would make them wait for it to be rediscovered first.
+            // Upstream does not clear here either.
+            ResumeSerialDiscoveryKeepingDiscoveredDevices();
+            return;
         }
 
         RaiseCloseRequested();
@@ -642,20 +717,24 @@ public partial class ConnectionDialogViewModel : ObservableObject
         await StopSerialDiscoveryAsync();
 
         ManualSerialDevice = new SerialStreamingDevice(portName);
-        await ConnectionManager.Instance.Connect(ManualSerialDevice);
+        var result = await ConnectionManager.Instance.Connect(ManualSerialDevice);
 
-        // Post-connect status check covers failures the pre-flight enumeration cannot
-        // catch — most notably "port exists but is held by another process", which
-        // SerialStreamingDevice.Connect now classifies as a Warning (no Sentry capture).
-        // Without this, the dialog would close silently and the user would have no idea
-        // the connection failed.
-        if (ConnectionManager.Instance.ConnectionStatus == DAQiFiConnectionStatus.Error)
+        // Post-connect check covers failures the pre-flight enumeration cannot catch — most notably
+        // "port exists but is held by another process", which SerialStreamingDevice.Connect
+        // classifies as a Warning (no Sentry capture). Without this, the dialog would close silently
+        // and the user would have no idea the connection failed.
+        if (!result.IsConnected)
         {
-            ManualPortError =
-                $"Could not connect to '{portName}'. " +
-                "The port may be in use by another application or the device is not responding.";
+            if (!result.WasCancelledByUser)
+            {
+                ManualPortError =
+                    $"Could not connect to '{portName}'. " +
+                    "The port may be in use by another application or the device is not responding.";
+            }
+
             // Restart discovery so the dialog keeps finding devices after a failed manual attempt.
-            StartSerialDiscovery();
+            // Keeps the discovered list, for the same retry reason as the USB tab's failure path.
+            ResumeSerialDiscoveryKeepingDiscoveredDevices();
             return;
         }
 
@@ -729,16 +808,20 @@ public partial class ConnectionDialogViewModel : ObservableObject
         // (issue #620). The hardcoded 9760 data port is tracked separately in issue #615.
         const int MANUAL_WIFI_DATA_PORT = 9760;
         var device = new DaqifiStreamingDevice(ipAddress, MANUAL_WIFI_DATA_PORT, "Manual IP Device");
-        await ConnectionManager.Instance.Connect(device);
+        var result = await ConnectionManager.Instance.Connect(device);
 
-        // Post-connect status check mirrors the manual-serial path: an unreachable device
-        // (connect timeout — issue #517) must keep the dialog open with an inline message
-        // instead of closing silently.
-        if (ConnectionManager.Instance.ConnectionStatus == DAQiFiConnectionStatus.Error)
+        // Post-connect check mirrors the manual-serial path: an unreachable device (connect
+        // timeout — issue #517) must keep the dialog open with an inline message instead of
+        // closing silently.
+        if (!result.IsConnected)
         {
-            ManualWifiError =
-                $"Could not connect to '{endpointInput}'. " +
-                "Verify the device is powered on and reachable on this network.";
+            if (!result.WasCancelledByUser)
+            {
+                ManualWifiError =
+                    $"Could not connect to '{endpointInput}'. " +
+                    "Verify the device is powered on and reachable on this network.";
+            }
+
             return;
         }
 
@@ -855,7 +938,9 @@ public partial class ConnectionDialogViewModel : ObservableObject
         try
         {
             Common.Loggers.AppLogger.Instance.AddBreadcrumb("discovery", $"Serial device found: {e.DeviceInfo.Name}");
-            AddSerialDeviceFromDiscovery(e.DeviceInfo);
+            // sender is the finder that raised this (Core raises with `this`), and it is carried
+            // through so the mutation can check it is still the current one — see below.
+            AddSerialDeviceFromDiscovery(sender, e.DeviceInfo);
         }
         catch (Exception ex)
         {
@@ -863,8 +948,13 @@ public partial class ConnectionDialogViewModel : ObservableObject
         }
     }
 
+    /// <param name="finder">
+    /// The finder that raised the discovery. Used to reject a retired finder's late callback — see
+    /// the guard inside the marshalled action.
+    /// </param>
+    /// <param name="deviceInfo">What the finder found.</param>
     // @port: Daqifi.Desktop.ViewModels.ConnectionDialogViewModel.AddSerialDeviceFromDiscovery
-    private void AddSerialDeviceFromDiscovery(CoreDeviceInfo deviceInfo)
+    private void AddSerialDeviceFromDiscovery(object? finder, CoreDeviceInfo deviceInfo)
     {
         var portName = deviceInfo.PortName?.Trim();
         if (string.IsNullOrWhiteSpace(portName))
@@ -874,6 +964,23 @@ public partial class ConnectionDialogViewModel : ObservableObject
 
         _marshalToUiThread(() =>
         {
+            // Only the CURRENT finder may touch the list, and the check has to happen here rather
+            // than before the marshal. Unsubscribing DeviceDiscovered does not revoke a raise
+            // already in flight, and the action this queues can land behind the very
+            // StartSerialFinder call that retired the finder — so a late callback would otherwise
+            // put a pre-flash port straight back into the list the clear had just emptied, or
+            // overwrite the new session's metadata with the old session's. The watchdog makes this
+            // concrete: it deliberately abandons a timed-out sweep, which can identify a device
+            // long afterwards. A rejected discovery costs at most one sweep (2s) — the current
+            // finder reports the device again if it is really there.
+            //
+            // Also rejects everything once the dialog has stopped discovery, because
+            // StopSerialDiscoveryAsync nulls the field.
+            //
+            // (HandleWifiDeviceFound has the same shape and the same hole. Pre-existing, untouched
+            // here, and partly masked by its per-MAC dedup.)
+            if (finder == null || !ReferenceEquals(finder, _serialFinder)) { return; }
+
             var existing = FindSerialDeviceByPortName(portName);
             if (existing == null)
             {

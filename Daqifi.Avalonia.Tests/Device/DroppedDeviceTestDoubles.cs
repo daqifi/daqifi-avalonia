@@ -69,8 +69,27 @@ internal sealed class DroppableTestDevice : AbstractStreamingDevice
     public override bool IsConnected =>
         PretendConnectSucceeds || PretendTransportDiesDuringConnect ? _pretendConnected : base.IsConnected;
 
+    /// <summary>
+    /// Completes as soon as <see cref="Connect"/> has been entered, so a test can wait until this
+    /// device's connect is genuinely in flight before starting another one.
+    /// </summary>
+    public TaskCompletionSource ConnectEntered { get; } = new();
+
+    /// <summary>
+    /// When set, <see cref="Connect"/> waits on it before doing anything, so a test can pin the
+    /// order in which two overlapping connects finish. Null (the default) means no gate.
+    /// </summary>
+    /// <remarks>
+    /// Blocking is the right shape here: <c>ConnectionManager.Connect</c> calls this from inside a
+    /// <c>Task.Run</c>, so the wait sits on a pool thread and never on the caller's.
+    /// </remarks>
+    public TaskCompletionSource? ConnectGate { get; init; }
+
     public override bool Connect()
     {
+        ConnectEntered.TrySetResult();
+        ConnectGate?.Task.GetAwaiter().GetResult();
+
         if (PretendTransportDiesDuringConnect)
         {
             _pretendConnected = false;
