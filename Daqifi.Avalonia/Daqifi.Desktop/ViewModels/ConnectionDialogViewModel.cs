@@ -111,6 +111,15 @@ public partial class ConnectionDialogViewModel : ObservableObject
     private readonly ReadOnlyObservableCollection<HeldBootloader> _emptyHidDevices =
         new(new ObservableCollection<HeldBootloader>());
 
+    /// <summary>
+    /// User-facing failure message for the USB tab's discovered-device list. Non-null when a
+    /// connect attempt on a device picked out of that list did not reach a connected state.
+    /// Cleared at the start of every attempt.
+    /// </summary>
+    // @port: Daqifi.Desktop.ViewModels.ConnectionDialogViewModel.SerialConnectError
+    [ObservableProperty]
+    private string? _serialConnectError;
+
     [ObservableProperty]
     private string? _manualPortName;
 
@@ -564,11 +573,36 @@ public partial class ConnectionDialogViewModel : ObservableObject
         var selectedDevices = ToStreamingDevices(selectedItems);
         if (selectedDevices.Count == 0) { return; }
 
+        SerialConnectError = null;
+
         await StopSerialDiscoveryAsync();
 
+        // Check the status after each device rather than once at the end: ConnectionStatus is a single
+        // shared field on ConnectionManager, so with multi-select a later device's success would
+        // overwrite an earlier device's failure and the dialog would close despite a failed connect.
+        // A discovered device can still fail here (e.g. one left streaming over WiFi returns a SCPI
+        // error when told to switch to USB), and without this check the dialog closes silently with no
+        // feedback at all — the device simply never appears in the device list.
         foreach (var device in selectedDevices)
         {
             await ConnectionManager.Instance.Connect(device);
+
+            var status = ConnectionManager.Instance.ConnectionStatus;
+            if (status is not (DAQiFiConnectionStatus.Connected or DAQiFiConnectionStatus.AlreadyConnected))
+            {
+                SerialConnectError =
+                    $"Could not connect to '{device.Name}'. " +
+                    "The device may be in use by another application or not responding.";
+                // Resume the discovery this method drained above, so the dialog is not left with a
+                // frozen list after a failed attempt. This does NOT clear AvailableSerialDevices, and
+                // deliberately so: the device that just failed is the one the user is most likely to
+                // retry, and blanking the list back to "Scanning…" would make them wait for it to be
+                // rediscovered first. Upstream does not clear here either. (The serial list is never
+                // cleared on finder recreate, unlike the WiFi one — a pre-existing asymmetry, see the
+                // clear in StartWiFiDiscovery.)
+                StartSerialDiscovery();
+                return;
+            }
         }
 
         RaiseCloseRequested();

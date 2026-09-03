@@ -30,6 +30,7 @@ namespace Daqifi.Avalonia.Tests.ViewModels;
 /// because the guard was removed <em>will</em> create one — that is the point of the assertion.
 /// </para>
 /// </summary>
+[Collection(ConnectionManagerSingletonCollection.Name)]
 public class ConnectionDialogFirmwarePauseTests : IDisposable
 {
     /// <summary>
