@@ -639,6 +639,63 @@ public class DiskSpaceMonitorTests
         }
     }
 
+    /// <summary>
+    /// A tick that was already in flight when its session ended does not act on what it finds.
+    /// <para>
+    /// The free-space probe runs outside the monitor's lock, and it is the one slow thing in the
+    /// tick — <c>statvfs</c> on a network mount can block. If the session is stopped and a new
+    /// one started while that probe is out, the reading it eventually returns describes a
+    /// monitor that no longer exists. Acting on it would dispose the timer belonging to the
+    /// session that replaced it and announce a hard stop the new session never saw — which is
+    /// precisely the restartability the rest of this region asserts.
+    /// </para>
+    /// <para>
+    /// The race predates this fix: the old critical branch paused the replacement session's
+    /// timer instead of disposing it, which wedged it in exactly the state issue #208 is about.
+    /// It is closed here because this PR is the one that claims restartability.
+    /// </para>
+    /// </summary>
+    [Fact]
+    public void A_tick_already_in_flight_does_not_stop_the_session_that_replaced_it()
+    {
+        var firstProbeEntered = new ManualResetEventSlim(false);
+        var releaseFirstProbe = new ManualResetEventSlim(false);
+        var probes = 0;
+
+        // Only the first probe is held, and only it answers Critical. If its result were still
+        // acted on when it finally lands, it would tear down whatever monitor is current then.
+        long Answer(string _)
+        {
+            if (Interlocked.Increment(ref probes) != 1)
+            {
+                return Mb(1000);
+            }
+
+            firstProbeEntered.Set();
+            releaseFirstProbe.Wait(EventTimeout);
+            return Mb(10);
+        }
+
+        var monitor = new DiskSpaceMonitor(MonitoredPath, Answer);
+        var criticals = new EventSink();
+        monitor.CriticalSpaceReached += criticals.Handle;
+        using (monitor)
+        {
+            monitor.StartMonitoring();
+            Assert.True(firstProbeEntered.Wait(EventTimeout), "the monitor never probed the disk");
+
+            // The session ends and a new one begins while that first probe is still out. Neither
+            // call blocks on it: Timer.Dispose() does not wait for a running callback.
+            monitor.StopMonitoring();
+            monitor.StartMonitoring();
+
+            releaseFirstProbe.Set();
+
+            Assert.False(criticals.AnyWithin(SilenceWindow));
+            Assert.True(monitor.IsMonitoring);
+        }
+    }
+
     [Fact]
     public void Dispose_stops_monitoring()
     {

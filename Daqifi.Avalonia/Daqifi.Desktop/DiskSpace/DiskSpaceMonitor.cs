@@ -36,6 +36,13 @@ public class DiskSpaceMonitor : IDiskSpaceMonitor
     private System.Threading.Timer? _timer;
     private bool _disposed;
     private bool _warningRaised;
+
+    /// <summary>
+    /// Identifies the current run of the timer. Bumped by every start and every stop, and handed
+    /// to each timer as its callback state, so a tick can tell whether the run it belongs to is
+    /// still the current one. Only ever touched under <see cref="_lock"/>.
+    /// </summary>
+    private long _generation;
     #endregion
 
     #region Events
@@ -120,7 +127,8 @@ public class DiskSpaceMonitor : IDiskSpaceMonitor
             }
 
             _warningRaised = suppressInitialWarning;
-            _timer = new System.Threading.Timer(OnTimerTick, null, TimeSpan.Zero, TimeSpan.FromMilliseconds(MONITOR_INTERVAL_MS));
+            var generation = ++_generation;
+            _timer = new System.Threading.Timer(OnTimerTick, generation, TimeSpan.Zero, TimeSpan.FromMilliseconds(MONITOR_INTERVAL_MS));
             _appLogger.Information("Disk space monitoring started");
         }
     }
@@ -138,6 +146,10 @@ public class DiskSpaceMonitor : IDiskSpaceMonitor
 
             _timer.Dispose();
             _timer = null;
+            // Retire the run. Timer.Dispose() does not wait for a callback that is already
+            // running, so a tick from this run can still be out on its probe; bumping the
+            // generation is what tells it, when it finally lands, that it is stale.
+            _generation++;
             _warningRaised = false;
             _appLogger.Information("Disk space monitoring stopped");
         }
@@ -176,6 +188,19 @@ public class DiskSpaceMonitor : IDiskSpaceMonitor
 
             lock (_lock)
             {
+                // The probe above deliberately runs outside the lock, and it is the one slow
+                // thing here — statvfs on a network mount can take a while. By the time it
+                // lands, the run this tick belongs to may already have been stopped, restarted
+                // or disposed, and the reading then describes a session that no longer exists.
+                // Acting on it would tear down whichever timer is current NOW and report a hard
+                // stop the current session never saw, which is exactly the restartability this
+                // class is supposed to guarantee. Every start and stop retires the generation,
+                // so a tick only ever acts on its own.
+                if (state is not long generation || generation != _generation)
+                {
+                    return;
+                }
+
                 switch (level)
                 {
                     case DiskSpaceLevel.Critical:
