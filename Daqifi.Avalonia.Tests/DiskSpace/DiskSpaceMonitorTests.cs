@@ -933,8 +933,9 @@ public class DiskSpaceMonitorTests
         {
             return drive.IsReady ? drive.AvailableFreeSpace : null;
         }
-        catch (Exception ex) when (ex is IOException or UnauthorizedAccessException or DriveNotFoundException)
+        catch (Exception ex) when (ex is IOException or UnauthorizedAccessException)
         {
+            // DriveNotFoundException is an IOException, so an unmounted candidate lands here too.
             return null;
         }
     }
