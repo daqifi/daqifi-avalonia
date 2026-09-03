@@ -118,6 +118,12 @@ AVALONIA_CSPROJ="$HERE/AvaloniaCapture/AvaloniaCapture.csproj"
 # would hide the dotnet exit code — even a `grep ... || true` swallows it — so the
 # script would march on to montage with missing/partial captures.
 #
+# [INFO] is in the filter because those lines are the harness's evidence, not chatter:
+# the resolved output directory (the #74 trap, which the README says is printed up front
+# and which this grep used to swallow), the visual-tree read-backs that say a dialog's
+# binding actually resolved, and the notice that an indeterminate progress animation was
+# frozen for a capture. All three are things a reader of a green run needs to see.
+#
 # No -r here, ever. An explicit-RID restore rewrites AvaloniaCapture's
 # packages.lock.json to that single RID and the next CI restore fails NU1004
 # (Directory.Build.props documents this at length).
@@ -127,11 +133,11 @@ run_capture() {
   echo "== $label =="
   if ! "$DOTNET" run --project "$(to_native "$csproj")" -c Release \
         -- "$(to_native "$dir")" >"$log" 2>&1; then
-    grep -E '\[OK\]|\[FAIL\]|\[SKIP\]|done' "$log" || true
+    grep -E '\[OK\]|\[FAIL\]|\[SKIP\]|\[INFO\]|done' "$log" || true
     echo "!! $label failed (see $log)" >&2
     return 1
   fi
-  grep -E '\[OK\]|\[FAIL\]|\[SKIP\]|done' "$log" || true
+  grep -E '\[OK\]|\[FAIL\]|\[SKIP\]|\[INFO\]|done' "$log" || true
 }
 
 # Byte-compare two capture sets. Byte identity, not a pixel diff: it needs no

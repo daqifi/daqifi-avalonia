@@ -11,7 +11,7 @@ Used for the 2026-07-22 parity audit → issues **#5–#14**.
 
 | Harness | App | How | Output |
 |---|---|---|---|
-| `AvaloniaCapture/` | the Avalonia port | boots the **real** app headless (Skia, no display) and drives the view-models | `<out>/avalonia/desktop-*.png`, `mobile-{portrait,landscape}-*.png` |
+| `AvaloniaCapture/` | the Avalonia port | boots the **real** app headless (Skia, no display) and drives the view-models | `<out>/avalonia/desktop-*.png`, `mobile-{portrait,landscape}-*.png`, `dialog-*.png` |
 | `WpfCapture/` | the original WPF app | runs the **real** app off-screen, captures via `RenderTargetBitmap` | `<out>/wpf/wpf-*.png` |
 | `montage.py` | — | pairs them left/right with labels | `<out>/montage/*.png` |
 
@@ -21,7 +21,9 @@ VM booleans (`IsAppSettingsOpen`, `IsNotificationsOpen`,
 `IsLiveGraphSettingsOpen`, `IsLogSummaryOpen`); the mobile shell is hosted in a
 headless window at the Galaxy A16's true logical content size — portrait
 (384×800) and landscape (820×360) — and navigated by raising `Click` on the named
-nav buttons (`NavChannels`/`RailChannels`…).
+nav buttons (`NavChannels`/`RailChannels`…); and since #213 the **dialogs** are
+constructed directly with their real view-models and seeded per state, see
+[Dialogs](#dialogs).
 `DAQIFI_TEST_MODE=1` is set so no modal dialogs / firewall prompts appear and the
 per-user data dir is used.
 
@@ -92,7 +94,7 @@ every PNG to be byte-identical to the first run's, failing non-zero if any diffe
 is missing, or if there is nothing to compare at all.
 
 Since #191 this is also a **CI gate**: the `Desktop head on macOS` job runs it on every
-pull request, additionally asserts that the capture produced all 18 screens, and uploads
+pull request, additionally asserts that the capture produced all 24 screens, and uploads
 `<out>/determinism/` as an artifact when it fails, so the differing PNGs are in hand.
 
 Since #188 the **baseline is gated there too, over the same captures**: the job runs
@@ -206,19 +208,112 @@ fails `NU1004`; `Directory.Build.props` documents this at length. The project is
 RID-less on purpose and resolves each host's native assets through `deps.json` at run
 time.
 
+## Dialogs
+
+Every `Window` the app shows through `IDialogService` used to be **outside the visual gate
+entirely** — the harness rendered the desktop panes, the drawers and the mobile shell, and
+constructed no dialog at all (#213). That mattered more here than it would elsewhere,
+because **XAML in this repo is not compile-checked**: the views carry no `x:DataType`, so
+bindings resolve by reflection at run time. A green build cannot tell you whether a new
+`TextBlock` renders, whether its binding resolves, or whether a `StaticResource` brush
+exists. Three changes in a row (#209, #218, #219) therefore shipped with an explicit
+"I did not render this dialog" disclosure.
+
+`CaptureDialogs()` in `AvaloniaCapture/Program.cs` closes that. It runs **last**, after the
+desktop and mobile phases, and captures one PNG per seeded state:
+
+| screen | what it pins |
+|---|---|
+| `dialog-connect-wifi-scanning` | the empty state every open of the connect dialog starts in |
+| `dialog-connect-usb-idle` | USB tab with one discovered device, no error |
+| `dialog-connect-usb-error` | the same, plus `SerialConnectError` (#207/#209) |
+| `dialog-connect-manual-usb-error` | Manual USB tab with `ManualPortError` |
+| `dialog-export-configure` | the export dialog's configuration form |
+| `dialog-export-failed` | its result state with `ExportSucceeded` false |
+
+### Adding one
+
+Append a `DialogScreen` to `DialogScreens()`, and add its name to `ExpectedScreens` — the
+two lists are checked against each other in both directions, so forgetting either fails the
+run rather than silently shrinking the gate. Then re-record the baseline (below) and bump
+`expected=` in the macOS determinism step of `.github/workflows/build.yml`, which states the
+screen count independently on purpose.
+
+```csharp
+yield return new DialogScreen
+{
+    Name = "dialog-something-state",
+    Size = (560, 500),                       // the size the window's own AXAML declares
+    Build = () => new SomeDialog { DataContext = SeededViewModel() },
+    Prepare = w => SelectTab(w, "dialog-something-state", "USB"),   // needs a realized tree
+    Inspect = w => RequireRenderedText(w, "dialog-something-state", "SomeAutomationId", Text),
+};
+```
+
+Four rules, each of which cost someone real time:
+
+- **Never start discovery.** See [Side effects](#side-effects-both-harnesses-boot-the-real-app).
+  Seed the bound collection directly, with fixed literal values — anything a real finder,
+  the clock or the environment produced would land in the PNG and the baseline would then be
+  per-machine.
+- **An indeterminate `ProgressBar` never settles**, so a dialog containing a visible one
+  fails `SettledFrame` after all 40 rounds with a message that says nothing about progress
+  bars. The connect dialog puts one behind a "Scanning…" overlay on three of its five tabs,
+  so this is the *default* state of the dialog most likely to be captured next.
+  `SettleIndeterminateProgress` now fails loudly and **by name** instead, and offers two
+  remedies: **preferred**, seed the state that hides the overlay (a device in the list, and
+  `HasNoSerialDevices = false`) — nothing is faked, that is a state the app really has; or
+  set `FreezeIndeterminateProgress` when the scanning state *is* the subject, which stops
+  the animation and logs that it did, because a frozen bar renders as its empty track rather
+  than as the moving indicator a user sees. The settle rule itself is never loosened for
+  everything: CI has caught a real six-pixel race with it (#201).
+- **Assert the element, not just the picture.** A `TextBlock` whose binding silently failed
+  to resolve and one that rendered an empty string are indistinguishable in a screenshot,
+  and with no `x:DataType` the first is exactly what a renamed view-model member produces.
+  `RequireRenderedText` reads it back out of the visual tree by
+  `AutomationProperties.AutomationId` and prints type, visibility, bounds, foreground brush
+  and text, separately from the pixels.
+- **Select tabs by header, not by index** (`SelectTab`). An index is silently wrong the
+  moment a tab is inserted before it, and the wrong tab saved under the right filename
+  passes every check this tool has while being a picture of something else.
+
+### Not covered: the autosizing alert family
+
+`ErrorDialog`, `SuccessDialog`, `DuplicateDeviceDialog` and `MessageDialog` are
+`SizeToContent`, and they are **deliberately absent**, because headless does not size them
+the way a real window does. Measured: `DuplicateDeviceDialog` declares
+`MinWidth="480" MinHeight="280"`, and headless its `Bounds`, `ClientSize`, `DesiredSize` and
+`Width`/`Height` all come back **460×248** — under its own stated minimum. Nothing in the
+headless windowing stack applies a window's min/max the way a platform window does, so a
+capture at that size would be a picture of a dialog no user has, and pinning an arbitrary
+size instead would photograph a layout the app never produces. Every screen this harness
+takes is at a size the harness itself set, and that stays true. Covering this family needs
+either a headless window that honours the constraints or a decision about what the "real"
+size is; it is not a matter of adding another `DialogScreen`.
+
+`FirmwareDialog` is absent for a different reason: `FirmwareDialogViewModel`'s constructor
+starts a network fetch (`LoadFirmwareOptionsAsync`) that populates a bound `ComboBox`
+asynchronously, so its rendered state is a race against github.com. Capturing it needs an
+injected stub `IFirmwareDownloadService`, which makes the picture a picture of a stub.
+
 ## Baselines
 
-`baselines/<os>-<arch>.sha256` records the SHA-256 of all 18 Avalonia screens for one
+`baselines/<os>-<arch>.sha256` records the SHA-256 of all 24 Avalonia screens for one
 host — a dated reference point for "has anything moved". `./run.sh --check-baseline`
 captures once and verifies against the one for the current host, failing on a changed
 screen, a missing one, and one the baseline does not list (`shasum -c` only checks the
 names it was given, so the extra-file direction is checked separately).
 
-`macos-arm64.sha256` was re-recorded 2026-09-02 for #201 (macOS 26.5 build 25F71, Apple
-silicon, .NET SDK 10.0.302, Avalonia 12.1.1), after 20 consecutive `--determinism` runs
-on that host. Fifteen of the eighteen hashes are unchanged from the 2026-09-01 recording
-against `6834469`; the three `SplitView` flyouts moved by the six pixels each that #201
-is about. No other host has a baseline **file**, and a second Apple-silicon host does not
+`macos-arm64.sha256` was extended 2026-09-03 for #213 (macOS 26.5 build 25F71, Apple
+silicon, .NET SDK 10.0.302, Avalonia 12.1.1) with the six `dialog-*` screens, after 10
+consecutive `--determinism` runs on that host agreed 24/24. That recording is **purely
+additive**: all eighteen existing hashes are byte-for-byte unchanged, which is the evidence
+that adding the dialog phase moved nothing that was already gated.
+
+It was re-recorded 2026-09-02 for #201 on the same host, after 20 consecutive
+`--determinism` runs. Fifteen of the eighteen hashes were unchanged from the 2026-09-01
+recording against `6834469`; the three `SplitView` flyouts moved by the six pixels each that
+#201 is about. No other host has a baseline **file**, and a second Apple-silicon host does not
 want one: it wants to match this one, which since #188 is what CI checks on every pull
 request. The mode still tells you how to record a baseline for a genuinely new OS+arch,
 and still refuses to invent a comparison without it.
@@ -245,8 +340,9 @@ from a host that races its own animations bakes one arbitrary frame in as the tr
 **Cross-*machine* reproducibility is measured now, and it holds** (#188). A GitHub
 `macos-latest` runner — a different Apple-silicon machine on a different macOS build
 (26.5.2 / 25F84, image `macos26`, against 26.5 / 25F71 on the recording Mac) —
-reproduces all eighteen hashes byte for byte, and does so on every pull request as part
-of the macOS job. So the manifest's OS+arch name is earned rather than assumed, and it
+reproduced all eighteen hashes byte for byte, and does so on every pull request as part
+of the macOS job — which is what will settle the same question for the six dialog screens
+added in #213. So the manifest's OS+arch name is earned rather than assumed, and it
 stays earned: the day two Apple-silicon hosts stop agreeing, a red tick says so.
 
 Why that works is worth knowing, because it is what makes the name reasonable in the
@@ -306,13 +402,22 @@ real state (both gaps below were closed in issue #18):
 - **No hardware discovery.** Under `DAQIFI_TEST_MODE=1` the app skips starting
   `BootloaderWatcher`, so a capture no longer takes an *exclusive* HID handle on a device
   sitting in bootloader mode — it's safe to run alongside a HID-bootloader flash. Serial and
-  WiFi discovery are not running either: `StartConnectionFinders()` has exactly one caller,
-  `DaqifiViewModel.ShowConnectionDialogAsync`, and the harness never opens that dialog.
-  **This is load-bearing, not incidental** — a capture that saw a real device would render
-  its serial number or IP and that screen would then differ run to run for reasons that
-  have nothing to do with the UI. Re-checked on macOS on 2026-09-01 with a board attached
-  on `/dev/cu.usbmodem1101`: `desktop-4-devices.png` shows the empty "NO DEVICES CONNECTED"
-  state, and all 18 screens were byte-identical across twelve runs.
+  WiFi discovery are not running either, and **this is load-bearing, not incidental** — a
+  capture that saw a real device would render its serial number or IP, and that screen would
+  then differ run to run for reasons that have nothing to do with the UI. Re-checked on macOS
+  on 2026-09-01 with a board attached on `/dev/cu.usbmodem1101`: `desktop-4-devices.png` shows
+  the empty "NO DEVICES CONNECTED" state, and all 18 screens were byte-identical across twelve
+  runs.
+
+  What guarantees it is that **discovery is a separate call from construction**.
+  `ConnectionDialogViewModel`'s constructor starts nothing; `StartConnectionFinders()` does,
+  and its only caller is `DaqifiViewModel.ShowConnectionDialogAsync`. Since #213 the harness
+  *does* construct `ConnectionDialog` (see [Dialogs](#dialogs)) — so the guarantee is no
+  longer "the harness never touches that dialog", it is that **no capture scenario may call
+  `StartConnectionFinders()` or otherwise start a finder**. A real `SerialDeviceFinder` opens
+  every DAQiFi VID/PID COM port on the machine. Scenarios seed `AvailableSerialDevices`
+  directly instead, with fixed literal values. (Constructing a `SerialStreamingDevice` is
+  inert: its `SerialPort` is constructed, never opened.)
 
 > Note: the **WPF** harness boots the sibling `daqifi-desktop` app, which does not have these
 > overrides, so it still shares the real per-user DB. Prefer running it before your first
