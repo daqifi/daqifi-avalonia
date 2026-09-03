@@ -101,6 +101,24 @@ public class ChannelColorFallbackTests : IDisposable
         Assert.Equal(0, parsed.A);
     }
 
+    /// <summary>
+    /// The other premise worth pinning, because review assumed the opposite: <see cref="OxyColor.Parse"/>
+    /// on 2.2.0 understands hex and NOTHING else. It has no named-colour table, so <c>"Red"</c> is
+    /// exactly as unusable as <c>"red"</c>.
+    /// </summary>
+    /// <remarks>
+    /// This is what makes case irrelevant to MEANING here — the only thing that parses is hex, and hex
+    /// is case-insensitive — and therefore what makes the live plot's raw-string comparison safe either
+    /// way. It is pinned rather than assumed because an OxyPlot bump that added named colours would
+    /// change the answer without changing a line of this repo.
+    /// </remarks>
+    [Fact]
+    public void A_named_colour_does_not_parse_at_all()
+    {
+        Assert.Throws<FormatException>(() => OxyColor.Parse("Red"));
+        Assert.Throws<FormatException>(() => OxyColor.Parse("red"));
+    }
+
     #endregion
 
     #region The crash, end to end
@@ -198,9 +216,10 @@ public class ChannelColorFallbackTests : IDisposable
     private const int SessionId = 1;
 
     /// <summary>
-    /// A database file shaped like one written before <c>Samples.Color</c> was required: the current
-    /// schema everywhere else, but a <c>Samples</c> table whose <c>Color</c> column is nullable, with
-    /// one session and one sample row in it whose colour is missing.
+    /// A database with one session and one sample row whose colour is missing. For the null case it is
+    /// shaped like a file written before <c>Samples.Color</c> was required — the current schema
+    /// everywhere else, but a <c>Samples</c> table whose <c>Color</c> is nullable. For the empty-string
+    /// case the schema is left exactly as the migrations build it, because it does not need relaxing.
     /// </summary>
     /// <param name="nullColour">
     /// <see langword="true"/> stores SQL NULL — only possible in the older table. <see langword="false"/>
@@ -280,9 +299,10 @@ public class ChannelColorFallbackTests : IDisposable
     /// Deliberately the ONLY connection string in this file, because PR #225 makes
     /// <c>Daqifi.Avalonia.Tests/TestDatabase.cs</c> the one place in this project allowed to name a
     /// data source and fails the build on anything else. Run against that branch's guard, this file
-    /// reports exactly the two findings below (and no <c>ClearAllPools</c>, which is already avoided),
-    /// so whichever of the two PRs lands second replaces this one method body with
-    /// <c>TestDatabase.Contexts(databasePath)</c> — the same edit #225 already makes to those six.
+    /// reports exactly two findings, both on the <c>UseSqlite</c> line below, and no
+    /// <c>ClearAllPools</c> (which is avoided on purpose). So whichever of the two PRs lands second
+    /// replaces this one method body with <c>TestDatabase.Contexts(databasePath)</c> — the same edit
+    /// #225 already makes to those six.
     /// </remarks>
     private sealed class TestContextFactory(string databasePath) : IDbContextFactory<LoggingContext>
     {
@@ -392,6 +412,36 @@ public class ChannelColorLivePlotTests
         plotter.Log(Sample("#FF1976D2"));
 
         Assert.Equal(OxyColor.Parse("#FF1976D2"), series.Color);
+    }
+
+    /// <summary>
+    /// A colour that changes only in case still lands on the right colour. Review raised the opposite
+    /// worry — that comparing case-INSENSITIVELY would call <c>"red"</c> and <c>"Red"</c> equal and
+    /// strand a series that should have repainted — on the premise that
+    /// <see cref="OxyColor.Parse"/> resolves named colours case-sensitively. It does not resolve them
+    /// at all on 2.2.0 (see
+    /// <see cref="ChannelColorFallbackTests.A_named_colour_does_not_parse_at_all"/>), so no pair of
+    /// strings differing only in case can mean two different colours, and neither comparison could
+    /// have got this wrong.
+    ///
+    /// <para>The comparison is <c>Ordinal</c> anyway, and this is what pins it: a case-only change is
+    /// then simply a change, costing one conversion and settling, rather than resting on a fact about
+    /// a third-party parser that a version bump could quietly reverse.</para>
+    /// </summary>
+    [Theory]
+    [InlineData("#FFD32F2F", "#ffd32f2f")]  // the same colour, spelled two ways: must not drift
+    [InlineData("red", "Red")]              // neither is parseable here: the fallback, either way
+    public void A_colour_that_changes_only_in_case_lands_on_the_same_colour(string first, string second)
+    {
+        var plotter = new PlotLogger();
+
+        plotter.Log(Sample(first));
+        var series = Assert.Single(plotter.LoggedChannels.Values);
+        var afterFirst = series.Color;
+
+        plotter.Log(Sample(second));
+
+        Assert.Equal(afterFirst, series.Color);
     }
 
     /// <summary>

@@ -281,9 +281,15 @@ public partial class PlotLogger : ObservableObject, ILogger
             // equal to `series.Color.ToString()`, so it would be re-converted on every single sample
             // of the stream, and an unusable one would throw and be caught every time. It is also one
             // less string allocated per sample, since nothing has to be rendered to compare.
-            // Compared ordinal/case-insensitively rather than lower-cased under the current culture
-            // (which mangles ASCII letters in e.g. the Turkish locale).
-            else if (!string.Equals(_rawSeriesColors.GetValueOrDefault(key), dataSample.Color, StringComparison.OrdinalIgnoreCase))
+            // Ordinal, and case-SENSITIVE, so this stays a plain "is it the same string?" test. Case
+            // happens not to change meaning on OxyPlot 2.2.0 — hex is all it parses, and hex is
+            // case-insensitive — but that is a fact about a third-party parser, and resting a
+            // correctness decision on it means a version that added named colours (looked up by
+            // reflection, hence case-sensitively) would silently strand a series on the wrong colour.
+            // Ignoring case buys nothing anyway: a case-only change costs one conversion and settles,
+            // because the new spelling is what gets remembered. Ordinal, not the current culture,
+            // which mangles ASCII letters in e.g. the Turkish locale.
+            else if (!string.Equals(_rawSeriesColors.GetValueOrDefault(key), dataSample.Color, StringComparison.Ordinal))
             {
                 // No ToLowerInvariant: the hex path is already case-insensitive, and lower-casing was
                 // the one thing that could break a named colour (OxyColors is looked up by reflection,
