@@ -130,8 +130,8 @@
       },
       "ExtendedNumerics.BigDecimal": {
         "type": "Transitive",
-        "resolved": "3003.0.0.346",
-        "contentHash": "o6qdyacVFNvDKX6T0sDEdhMKppdCiTwpj22kdgNfQlIviLSAiLqv/i4G/gYL4ZzqBYzR/o3t8wDWCX21Tt/i1A=="
+        "resolved": "3003.2.0.161",
+        "contentHash": "VMTiP6rMaghsAILVw+2W7FzReJH0kuF+YU9/4u110IWtsCWe+5HvzJqWxyknd860zFEbA9N37+qk5IjRLdF5UQ=="
       },
       "Google.Protobuf": {
         "type": "Transitive",
@@ -401,35 +401,35 @@
       },
       "NCalc.Core": {
         "type": "Transitive",
-        "resolved": "6.4.0",
-        "contentHash": "8OfiSnOvgzvXzfK5zEmOaNaus5JIq/ExZxlZvp3prwsKKFuO1YIJqYifnwDIpgpdu77td0eb3gk/qc97k765rQ==",
+        "resolved": "7.1.0",
+        "contentHash": "AW0R2aiRkZqSv2GZcO5QJ3dirCuiE+1U53NYF2ONzKts9fbE3J3oZPzujJzBuLO1EaXiirzibghgPRavufiDGg==",
         "dependencies": {
-          "ExtendedNumerics.BigDecimal": "3003.0.0.346",
-          "Microsoft.Extensions.Logging.Abstractions": "10.0.7",
-          "NCalc.Parser": "6.4.0",
-          "Parlot": "1.5.7"
+          "ExtendedNumerics.BigDecimal": "3003.2.0.161",
+          "Microsoft.Extensions.Logging.Abstractions": "10.0.10",
+          "NCalc.Parser": "7.1.0",
+          "Parlot": "1.5.8"
         }
       },
       "NCalc.Domain": {
         "type": "Transitive",
-        "resolved": "6.4.0",
-        "contentHash": "PVr+iWFMGXsMHOrHrpicymJjB1dpO7J6BYpHXWKnwoBiJ2wpJGckVyi3RLbTJAnPch7F9r+h1x55Xp8uJLNjTA=="
+        "resolved": "7.1.0",
+        "contentHash": "+TJaDQ1EkWE9v672uwf2PjjTS9Pd5IxZKPOL/KjvH06DdgFqBGAC+7ws1VVn1vXR59SWfCM1wm1K/Dr5msiMRQ=="
       },
       "NCalc.Parser": {
         "type": "Transitive",
-        "resolved": "6.4.0",
-        "contentHash": "6IFg/9Y0YjdFuEF+Ig791AQiLqPhTutLokzDGqLcaq/RvbPIP+PFBY0W7Qg7etFcUwUV3YDtRke7KlOOEpfDDQ==",
+        "resolved": "7.1.0",
+        "contentHash": "I93ttSN4BVQ6nC9QB41ttjVTOVlNFRY/5UyGJLNvqiuLAVDW2YLONyyf0CVInI0zMKg6F7TIvaVhDMrtQQ32MA==",
         "dependencies": {
-          "NCalc.Domain": "6.4.0",
-          "Parlot": "1.5.7"
+          "NCalc.Domain": "7.1.0",
+          "Parlot": "1.5.8"
         }
       },
       "NCalcSync": {
         "type": "Transitive",
-        "resolved": "6.4.0",
-        "contentHash": "yEsGubcMeNIH5Fk/idmcw2EemmLEeREyqvhOCuIGDGjXw6t7QRxLSK1izvHdhatd9AP2OiOzBK/4KJcZgc6uFA==",
+        "resolved": "7.1.0",
+        "contentHash": "JTcmTqUGGTUBRRZdFoS2VJxpBRxQ5gOJOCzOjBdMuAAqEFucw0bNxNpVgS5G2+CaVaX85rE7t/Rjg/TL4fPy/w==",
         "dependencies": {
-          "NCalc.Core": "6.4.0"
+          "NCalc.Core": "7.1.0"
         }
       },
       "NetTopologySuite": {
@@ -478,8 +478,8 @@
       },
       "Parlot": {
         "type": "Transitive",
-        "resolved": "1.5.7",
-        "contentHash": "D0PhSypMx1JJVTQUqB8ebwcJxH4NAvdn1d8eKi9lLoNz8c1+8qHw+/Sq5/6HaJFgOaqy1VJBpvYFCIC4I2uvqQ=="
+        "resolved": "1.5.8",
+        "contentHash": "QBFNAMKQPRvBwrXOl6Gp24a2nbhzqJ5X4pe0I1g1RtR4SqoT2ThyE6RwFAOZLcWMQxzo8YC08VmHspPDeOLYWg=="
       },
       "runtime.android-arm.runtime.native.System.IO.Ports": {
         "type": "Transitive",
@@ -1478,7 +1478,7 @@
           "Microsoft.EntityFrameworkCore": "[10.0.11, )",
           "Microsoft.EntityFrameworkCore.Sqlite": "[10.0.11, )",
           "Microsoft.Extensions.Http": "[10.0.11, )",
-          "NCalcSync": "[6.4.0, )",
+          "NCalcSync": "[7.1.0, )",
           "NLog": "[6.2.0, )",
           "Newtonsoft.Json": "[13.0.4, )",
           "Optris.Icons.Avalonia.MaterialDesign": "[12.0.7, )",
