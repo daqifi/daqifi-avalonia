@@ -71,6 +71,10 @@ DETERMINISM_RUNS=10 ./run.sh --determinism /some/out/dir    # more, if you are c
 
 # then: capture once and diff every screen against the committed baseline
 ./run.sh --check-baseline /some/out/dir
+
+# or run that same comparison over captures you already have — which is what CI does
+# with the determinism run's own first set, so the two checks share one capture
+./run.sh --check-captured /some/out/dir/determinism/r1
 ```
 
 Every mode fails non-zero on anything it cannot vouch for, including an **incomplete**
@@ -90,8 +94,16 @@ is missing, or if there is nothing to compare at all.
 Since #191 this is also a **CI gate**: the `Desktop head on macOS` job runs it on every
 pull request, additionally asserts that the capture produced all 18 screens, and uploads
 `<out>/determinism/` as an artifact when it fails, so the differing PNGs are in hand.
-`--check-baseline` is deliberately *not* gated — it compares against bytes recorded on
-one particular Mac, and #188 is the ticket that measures a second one.
+
+Since #188 the **baseline is gated there too, over the same captures**: the job runs
+`--determinism` first, and then points `--check-captured` at `determinism/r1` — one of
+the sets every other run was just shown to byte-match. So a green macOS job says both
+"this runner is stable" and "this runner reproduces the bytes recorded on a developer's
+Mac", about one set of bytes, for the cost of the captures that had already happened.
+
+The order is load-bearing rather than tidy. A baseline check on a host whose captures
+race is a machine for manufacturing differences that are not regressions — which is
+exactly why the baseline half stayed out of CI until #202 removed the last such race.
 
 That artifact also carries each pass's `.capture-determinism-N.log`, copied in under
 `capture-logs/` with the leading dot dropped. The job has to copy them because
@@ -202,14 +214,25 @@ captures once and verifies against the one for the current host, failing on a ch
 screen, a missing one, and one the baseline does not list (`shasum -c` only checks the
 names it was given, so the extra-file direction is checked separately).
 
-`macos-arm64.sha256` was re-recorded 2026-09-02 for #201 (macOS 26.5, Apple silicon,
-.NET SDK 10.0.302, Avalonia 12.1.1), after 20 consecutive `--determinism` runs on that
-host. Fifteen of the eighteen hashes are unchanged from the 2026-09-01 recording against
-`6834469`; the three `SplitView` flyouts moved by the six pixels each that #201 is about.
-No other host has a baseline yet; the mode tells you how to record one and refuses to
-invent a comparison without it.
+`macos-arm64.sha256` was re-recorded 2026-09-02 for #201 (macOS 26.5 build 25F71, Apple
+silicon, .NET SDK 10.0.302, Avalonia 12.1.1), after 20 consecutive `--determinism` runs
+on that host. Fifteen of the eighteen hashes are unchanged from the 2026-09-01 recording
+against `6834469`; the three `SplitView` flyouts moved by the six pixels each that #201
+is about. No other host has a baseline **file**, and a second Apple-silicon host does not
+want one: it wants to match this one, which since #188 is what CI checks on every pull
+request. The mode still tells you how to record a baseline for a genuinely new OS+arch,
+and still refuses to invent a comparison without it.
 
-**A mismatch is a prompt, not a verdict** — re-read that environment line first. The
+**A mismatch is a prompt, not a verdict** — re-read that environment line first. In CI
+the same applies with one addition: the baseline step prints the runner's macOS build and
+image version on **every** run, green ones included, so a red one can be read against the
+last green one instead of guessed at. In order of likelihood, red means a UI change whose
+commit did not re-record the manifest, a real visual regression, or the `macos-latest`
+image having moved under us — the third being the one your own Mac cannot reproduce.
+There is a fourth, and it is the interesting one: a red that does **not** reproduce is a
+capture race that survived five determinism samples (which miss a 50/50 per-run flip
+about 6% of the time), i.e. a fourth instance of the defect class #179 and #201 each
+turned out to be. That wants a ticket, not a re-run. The
 PNGs themselves are deliberately *not* committed: the harness is deterministic, so they
 are exactly regenerable from any commit, and 640 KB of binaries per recording would be
 permanent git weight for data that has a one-command source. Re-record after an intended
@@ -219,11 +242,22 @@ change, and update the environment line above with it.
 **Record a baseline only after `--determinism` passes on that host.** A baseline taken
 from a host that races its own animations bakes one arbitrary frame in as the truth.
 
-Cross-*machine* reproducibility has **not** been verified — the manifest was taken on
-one Mac. Two different Macs agreeing is plausible (embedded Inter font, HarfBuzz
-shaping, headless Skia software rendering, all from pinned packages) but it is
-untested, so treat a mismatch on a different machine as "compare the environments"
-before "the UI regressed".
+**Cross-*machine* reproducibility is measured now, and it holds** (#188). A GitHub
+`macos-latest` runner — a different Apple-silicon machine on a different macOS build
+(26.5.2 / 25F84, image `macos26`, against 26.5 / 25F71 on the recording Mac) —
+reproduces all eighteen hashes byte for byte, and does so on every pull request as part
+of the macOS job. So the manifest's OS+arch name is earned rather than assumed, and it
+stays earned: the day two Apple-silicon hosts stop agreeing, a red tick says so.
+
+Why that works is worth knowing, because it is what makes the name reasonable in the
+first place: the render is headless *software* Skia with an embedded Inter font and
+HarfBuzz shaping, every piece of it from a pinned package, so very little about the host
+is on the path to a pixel.
+
+Two hosts is still not every host. If `--check-baseline` fails on a **third** machine,
+the environment line above is the first thing to compare — but "the UI regressed" is now
+a likelier reading than it was, because a mismatch has to explain why two machines
+agreed and yours does not.
 
 ## Implementation notes / gotchas
 
