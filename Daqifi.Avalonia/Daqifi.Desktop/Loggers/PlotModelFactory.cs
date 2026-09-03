@@ -137,7 +137,11 @@ public sealed class PlotModelFactory
     /// <param name="channelName">Channel identifier (e.g., "AI0"); also the series title.</param>
     /// <param name="deviceSerialNo">Serial number of the owning device, used for the tag and legend grouping.</param>
     /// <param name="type">Channel type; selects the <see cref="ANALOG_AXIS_KEY"/> or <see cref="DIGITAL_AXIS_KEY"/> Y axis.</param>
-    /// <param name="color">Series color in a format <see cref="OxyColor.Parse"/> understands (e.g., "#FFD32F2F").</param>
+    /// <param name="color">
+    /// Series color as persisted with the samples (e.g., "#FFD32F2F"). A value
+    /// <see cref="OxyColor.Parse"/> cannot use — a legacy row's null or blank included — draws the
+    /// series in <see cref="ChannelSeriesColor.FALLBACK_CHANNEL_COLOR"/> rather than failing the load.
+    /// </param>
     /// <param name="plotModel">The live main plot model the legend item invalidates on visibility changes.</param>
     /// <param name="databaseLogger">Logger the legend item uses to sync minimap series visibility, or null to skip that sync.</param>
     /// <returns>The configured series and its legend item.</returns>
@@ -158,7 +162,7 @@ public sealed class PlotModelFactory
         {
             Title = channelName,
             Tag = (deviceSerialNo, channelName),
-            Color = OxyColor.Parse(color),
+            Color = ChannelSeriesColor.ParseOrFallback(color),
             IsVisible = true,
             TrackerFormatString = $"{channelName} ({serialSuffix})\n{{1}}: {{2:0.###}}\n{{3}}: {{4:0.######}}"
         };

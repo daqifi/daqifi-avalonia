@@ -268,7 +268,11 @@ public partial class PlotLogger : ObservableObject, ILogger
             // the Turkish locale).
             else if (!string.Equals(series.Color.ToString(), dataSample.Color, StringComparison.OrdinalIgnoreCase))
             {
-                series.Color = OxyColor.Parse(dataSample.Color.ToLowerInvariant());
+                // No ToLowerInvariant: the hex path is already case-insensitive, and lower-casing was
+                // the one thing that could break a named colour (OxyColors is looked up by reflection,
+                // which IS case-sensitive). It also dereferenced dataSample.Color, so a null colour
+                // threw here BEFORE Parse was reached.
+                series.Color = ChannelSeriesColor.ParseOrFallback(dataSample.Color);
             }
 
             FirstTime ??= new DateTime(dataSample.TimestampTicks);
@@ -337,7 +341,7 @@ public partial class PlotLogger : ObservableObject, ILogger
         {
             Title = channelName,
             ItemsSource = newDataPoints,
-            Color = OxyColor.Parse(newColor),
+            Color = ChannelSeriesColor.ParseOrFallback(newColor),
             TrackerFormatString = $"{channelName} ({serialSuffix})\n{{1}}: {{2:0.###}}\n{{3}}: {{4:0.######}}"
         };
 
