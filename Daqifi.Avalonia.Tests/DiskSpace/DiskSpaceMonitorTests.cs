@@ -52,6 +52,14 @@ public class DiskSpaceMonitorTests
     /// </summary>
     private static readonly TimeSpan NoFurtherProbeWindow = TimeSpan.FromSeconds(1);
 
+    /// <summary>
+    /// How long to watch for an event that should NOT be raised, measured from the point the
+    /// tick's lock is free. Everything between the free-space probe returning and the event
+    /// being raised is a comparison and a lock acquisition — no I/O — so a tick that was going
+    /// to raise has raised long before this expires.
+    /// </summary>
+    private static readonly TimeSpan SilenceWindow = TimeSpan.FromSeconds(1);
+
     private static long Mb(long megabytes) => megabytes * 1024 * 1024;
 
     #region Test doubles
@@ -119,6 +127,12 @@ public class DiskSpaceMonitorTests
             _signal.Release();
         }
 
+        /// <summary>
+        /// Events seen so far. Only asserted on once the tick's decision is known to have been
+        /// made: either the OTHER sink's <see cref="WaitForOne"/> has returned (the tick's switch
+        /// raises at most one event and then breaks), or the other sink has already spent a full
+        /// <see cref="SilenceWindow"/> waiting.
+        /// </summary>
         public int Count => _events.Count;
 
         public DiskSpaceEventArgs WaitForOne()
@@ -127,6 +141,13 @@ public class DiskSpaceMonitorTests
             Assert.True(_events.TryDequeue(out var raised));
             return raised!;
         }
+
+        /// <summary>
+        /// True if an event arrives inside <paramref name="window"/>. Used for the assertions
+        /// that require silence, so that they wait for the event they claim is absent rather
+        /// than sampling a counter the instant after the probe was entered.
+        /// </summary>
+        public bool AnyWithin(TimeSpan window) => _signal.Wait(window);
     }
 
     /// <summary>
@@ -143,18 +164,27 @@ public class DiskSpaceMonitorTests
     }
 
     /// <summary>
-    /// Waits until the monitor has finished acting on its first tick.
+    /// Waits for the monitor's first tick to have been taken and acted on, without disturbing
+    /// the decision that tick is in the middle of making.
     /// <para>
-    /// <see cref="DiskSpaceMonitor.StopMonitoring"/> takes the same lock the tick raises its
-    /// events under, so a stop that returns proves the tick's decision has been made. That is
-    /// the synchronisation point the "no event" assertions need; without it they would pass on
-    /// a monitor that had simply not got round to looking yet.
+    /// The probe signals on ENTRY, so its return is not on its own evidence that the tick has
+    /// finished — the classification and the event decision happen after the provider returns.
+    /// Calling <see cref="DiskSpaceMonitor.StartMonitoring"/> on an already-running monitor is a
+    /// bare acquire-and-release of the very lock the tick raises its events under, and its
+    /// already-running early return mutates nothing, so it is a barrier with no side effect.
+    /// </para>
+    /// <para>
+    /// <see cref="DiskSpaceMonitor.StopMonitoring"/> takes that same lock and would look like
+    /// the natural barrier, but it must NOT be used as one: it resets <c>_warningRaised</c> on
+    /// the way through. A stop that won the lock against a tick still on its way to it would
+    /// un-suppress that tick, and the suppression test would intermittently observe the very
+    /// warning it asserts is absent.
     /// </para>
     /// </summary>
     private static void SettleFirstTick(DiskSpaceMonitor monitor, FreeSpaceProbe probe)
     {
         probe.WaitForFirstProbe();
-        monitor.StopMonitoring();
+        monitor.StartMonitoring();
     }
 
     #endregion
@@ -364,9 +394,15 @@ public class DiskSpaceMonitorTests
     }
 
     /// <summary>
-    /// The in-session monitor uses the in-session thresholds: 300 MB would have warned at the
-    /// pre-logging gate and must stay silent here, or every long session on an ordinary laptop
-    /// would open a dialog on its first tick.
+    /// 300 MB warns at the pre-logging gate and must stay silent once a session is running, or
+    /// every long session on an ordinary laptop would open a dialog on its first tick.
+    /// <para>
+    /// What this pins is the OUTCOME — that mid-band space raises nothing during a session — not
+    /// which of the two mechanisms produces it. The tick classifies with <c>preSession: false</c>
+    /// AND its switch handles only <c>Critical</c> and <c>Warning</c>, so either alone would keep
+    /// this quiet. The test fails if the switch ever grows a <c>PreSessionWarning</c> case, or if
+    /// the warning threshold moves up past 300 MB.
+    /// </para>
     /// </summary>
     [Fact]
     public void Monitoring_stays_silent_in_the_pre_session_band()
@@ -378,7 +414,7 @@ public class DiskSpaceMonitorTests
             monitor.StartMonitoring();
             SettleFirstTick(monitor, probe);
 
-            Assert.Equal(0, warnings.Count);
+            Assert.False(warnings.AnyWithin(SilenceWindow));
             Assert.Equal(0, criticals.Count);
         }
     }
@@ -386,6 +422,11 @@ public class DiskSpaceMonitorTests
     /// <summary>
     /// The flag the coordinator passes when the pre-logging gate has already shown a low-space
     /// dialog, so the user is not told the same thing twice inside a second.
+    /// <para>
+    /// The silence is followed by a positive control on the same monitor and the same 80 MB
+    /// reading: re-armed with the flag clear, it must warn. Without that, "no warning arrived"
+    /// would also be satisfied by a monitor whose events were never wired up at all.
+    /// </para>
     /// </summary>
     [Fact]
     public void StartMonitoring_with_the_warning_suppressed_does_not_warn()
@@ -397,8 +438,15 @@ public class DiskSpaceMonitorTests
             monitor.StartMonitoring(suppressInitialWarning: true);
             SettleFirstTick(monitor, probe);
 
-            Assert.Equal(0, warnings.Count);
+            Assert.False(warnings.AnyWithin(SilenceWindow));
             Assert.Equal(0, criticals.Count);
+
+            // Same monitor, same 80 MB, flag clear: the warning this test just showed absent is
+            // reachable, so its absence above was the suppression and not a dead subscription.
+            monitor.StopMonitoring();
+            monitor.StartMonitoring(suppressInitialWarning: false);
+
+            Assert.Equal(DiskSpaceLevel.Warning, warnings.WaitForOne().Level);
         }
     }
 
@@ -486,7 +534,7 @@ public class DiskSpaceMonitorTests
             monitor.StartMonitoring();
             SettleFirstTick(monitor, probe);
 
-            Assert.Equal(0, warnings.Count);
+            Assert.False(warnings.AnyWithin(SilenceWindow));
             Assert.Equal(0, criticals.Count);
         }
     }
@@ -565,7 +613,7 @@ public class DiskSpaceMonitorTests
     /// against a disposed instance, so it starts a fresh timer — and since <c>Dispose</c> has
     /// already latched itself, a second <c>Dispose</c> returns without stopping it. The timer
     /// then ticks every 15 seconds for the life of the process. Asserted as it behaves today;
-    /// see the follow-up issue linked from the PR.
+    /// see issue #208.
     /// </summary>
     [Fact]
     public void StartMonitoring_after_Dispose_starts_a_timer_that_Dispose_will_not_stop()
@@ -603,8 +651,12 @@ public class DiskSpaceMonitorTests
 
         var result = monitor.CheckPreLoggingSpace();
 
-        // A real reading, not the long.MaxValue the catch block substitutes when the probe throws.
-        Assert.InRange(result.AvailableBytes, 1, long.MaxValue - 1);
+        // A real reading, not the long.MaxValue the catch block substitutes when the probe
+        // throws. Zero is deliberately inside the accepted range: a correctly queried full
+        // volume reports zero, and these tests classify zero as Critical rather than as an
+        // error, so requiring a positive number would fail a CI box with a full temp volume
+        // even though the provider had behaved perfectly.
+        Assert.InRange(result.AvailableBytes, 0, long.MaxValue - 1);
     }
 
     #endregion
