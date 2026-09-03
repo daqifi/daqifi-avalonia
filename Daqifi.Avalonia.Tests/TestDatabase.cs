@@ -6,8 +6,8 @@ using Microsoft.EntityFrameworkCore.Diagnostics;
 namespace Daqifi.Avalonia.Tests;
 
 /// <summary>
-/// Assembly-wide policy: every SQLite connection this suite opens is UNPOOLED, and this is the
-/// only place that decides so.
+/// Assembly-wide policy: every SQLite connection this suite opens FOR ITSELF is UNPOOLED, and this
+/// is the only place that decides so.
 ///
 /// <para>xUnit runs distinct test classes in parallel in one process, and
 /// <see cref="SqliteConnection.ClearAllPools"/> is process-global — it is not scoped to a
@@ -31,6 +31,15 @@ namespace Daqifi.Avalonia.Tests;
 /// reason the fixtures used to clear pools themselves: an unpooled connection releases its file
 /// handle when it is disposed, so a temp directory can be deleted without dropping a pool first.
 /// Pooling buys a test nothing — every database here is a throwaway file used by one test.</para>
+///
+/// <para>The one exception is deliberate and already contained. <c>DeviceRefusalCrashTests</c> does
+/// not build a connection string at all — it stands the real app host up with
+/// <c>App.InitializeMobile()</c> and uses the <c>IDbContextFactory</c> that registers, which is
+/// production's own pooled <c>Data source=</c> (<c>App.cs</c>). Those connections stay pooled
+/// because they are the shipping app's, so that class remains exposed to the window described
+/// above; <c>AppHostCollection</c>'s <c>DisableParallelization</c> is what keeps it out of the way,
+/// and it is scoped to exactly that one class. Do not "simplify" it away — <c>App.ServiceProvider</c>
+/// is static, so an app host cannot be made per-test.</para>
 ///
 /// <para>Pinned by <c>TestDatabasePoolingTests</c>, which is what fails if a future fixture
 /// grows its own connection string instead of coming through here.</para>
