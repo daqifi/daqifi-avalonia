@@ -350,11 +350,26 @@ public partial class DaqifiViewModel : ObservableObject, IFirmwareUpdateHost, IL
             {
                 _diskSpaceCoordinator?.StartMonitoring(suppressInitialWarning: preSessionWarningShown);
 
-                // A new start supersedes whatever the last failed stop left unknown: every device
-                // is about to be commanded again, so its answer is the current one.
-                _sdStateUnknownAfterFailedStop.Clear();
-
                 var start = LoggingFleet.Start(ConnectedDevices, _appLogger);
+
+                // Bookkeeping AFTER the fan-out, never before it. A device that ACCEPTED the start
+                // has just told the app what it is doing, so the doubt an earlier failed stop left
+                // is gone; a device that refused AGAIN is still one this app cannot speak for.
+                //
+                // Clearing up front — which is what this did first — reinstated the stale flag of
+                // an SD device before finding out whether it would accept: on a retry that it
+                // refuses, StartSdCardLogging leaves IsLoggingToSdCard reading true, so the getter
+                // reported logging active and the toggle sprang back ON even as the all-refused
+                // unwind below set _isLogging false.
+                foreach (var accepted in start.Succeeded)
+                {
+                    _sdStateUnknownAfterFailedStop.Remove(accepted);
+                }
+
+                foreach (var refusal in start.Refusals)
+                {
+                    ForgetSdState(refusal.Device);
+                }
 
                 // Nothing anywhere is recording, so this is not a session — unwind it exactly the
                 // way a failed session row does above, rather than leaving the toggle ON over a
@@ -402,7 +417,7 @@ public partial class DaqifiViewModel : ObservableObject, IFirmwareUpdateHost, IL
                     // straight back to true and spring the switch back ON. See IsKnownToBeSdLogging.
                     foreach (var refusal in stop.Refusals)
                     {
-                        _sdStateUnknownAfterFailedStop.Add(refusal.Device);
+                        ForgetSdState(refusal.Device);
                     }
 
                     ReportLoggingProblem(
@@ -460,6 +475,30 @@ public partial class DaqifiViewModel : ObservableObject, IFirmwareUpdateHost, IL
     /// </remarks>
     private bool IsKnownToBeSdLogging(IStreamingDevice device)
         => device.IsLoggingToSdCard && !_sdStateUnknownAfterFailedStop.Contains(device);
+
+    /// <summary>
+    /// Records that this app no longer knows whether <paramref name="device"/> is logging to its SD
+    /// card, because the command that would have told it was refused.
+    /// </summary>
+    /// <remarks>
+    /// Only for a device that is STILL CONNECTED. A logging command can fail by disconnecting — the
+    /// wrapper is torn out of <see cref="ConnectedDevices"/> mid-fan-out, which is the same
+    /// mutation <c>LoggingFleet</c>'s snapshot exists to survive — and by the time the refusal is
+    /// processed here, <see cref="OnConnectedDevicesCollectionChanged"/> has already run its
+    /// cleanup. An entry added afterwards would therefore never be cleaned up: it does nothing
+    /// while the device is gone (the getters only walk connected devices), and if that same wrapper
+    /// instance reconnected it would silently suppress the state the device had just reported.
+    /// </remarks>
+    /// <param name="device">The device whose SD-card state is now unknown.</param>
+    private void ForgetSdState(IStreamingDevice device)
+    {
+        // Reference identity, matching the set's comparer: a device's value equality moves as its
+        // fields do, so Contains() on the collection is not a safe identity test here.
+        if (ConnectedDevices.Any(connected => ReferenceEquals(connected, device)))
+        {
+            _sdStateUnknownAfterFailedStop.Add(device);
+        }
+    }
 
     // @port: Daqifi.Desktop.ViewModels.DaqifiViewModel.CanToggleLogging
     public bool CanToggleLogging

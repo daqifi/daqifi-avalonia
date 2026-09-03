@@ -427,6 +427,109 @@ public class DeviceRefusalCrashTests : IDisposable
 
     #endregion
 
+    #region What the suppression itself must not do (Qodo round 2)
+
+    /// <summary>
+    /// The retry, which is the obvious next thing a user does. After a refused SD stop leaves the
+    /// toggle OFF, they click it ON again — and if the device refuses that too, nothing is
+    /// recording and the toggle must stay OFF.
+    /// <para>
+    /// It did not. The doubt from the failed stop was cleared at the TOP of the start, before
+    /// anyone had asked the device anything, so the moment the retry was refused the stale
+    /// <c>IsLoggingToSdCard</c> was visible again and the getter reported logging active — even as
+    /// the all-refused unwind set <c>_isLogging</c> false. The bookkeeping now happens after the
+    /// fan-out, driven by what each device actually answered.
+    /// </para>
+    /// </summary>
+    [Fact]
+    public void RetryingAfterARefusedSdStop_WhenTheRetryIsRefusedToo_LeavesTheToggleOff()
+    {
+        var sdDevice = new RecordingStreamingDevice("Nq1-SD", ConnectionType.Usb);
+        _viewModel.ConnectedDevices.Add(sdDevice);
+        _viewModel.SelectedLoggingMode = "Log to Device";
+
+        _viewModel.IsLogging = true;
+        Assert.True(sdDevice.IsLoggingToSdCard);
+
+        // The link goes: neither the stop nor anything after it can be delivered.
+        sdDevice.Refusals["StopSdCardLogging"] = new DeviceNotConnectedException();
+        sdDevice.Refusals["StartSdCardLogging"] = new DeviceNotConnectedException();
+
+        _viewModel.IsLogging = false;
+        Assert.False(_viewModel.IsLogging);
+
+        // The retry.
+        _viewModel.IsLogging = true;
+
+        Assert.True(sdDevice.IsLoggingToSdCard);   // still stale...
+        Assert.False(_viewModel.IsLogging);        // ...and the toggle still does not lie.
+    }
+
+    /// <summary>
+    /// The retry that WORKS must clear the doubt, or a device would stay invisible for the rest of
+    /// the session after one bad stop.
+    /// </summary>
+    [Fact]
+    public void RetryingAfterARefusedSdStop_WhenTheRetrySucceeds_ReportsTheSessionActiveAgain()
+    {
+        var sdDevice = new RecordingStreamingDevice("Nq1-SD", ConnectionType.Usb);
+        _viewModel.ConnectedDevices.Add(sdDevice);
+        _viewModel.SelectedLoggingMode = "Log to Device";
+
+        _viewModel.IsLogging = true;
+        sdDevice.Refusals["StopSdCardLogging"] = new DeviceNotConnectedException();
+        _viewModel.IsLogging = false;
+        Assert.False(_viewModel.IsLogging);
+
+        // The link comes back, and this time the device answers.
+        sdDevice.Refusals.Remove("StopSdCardLogging");
+        _viewModel.IsLogging = true;
+
+        Assert.True(_viewModel.IsLogging);
+        Assert.True(_viewModel.IsSdCardLoggingActive);
+    }
+
+    /// <summary>
+    /// The stop that fails BY disconnecting — the ordering trap. <c>ConnectionManager.Disconnect</c>
+    /// tears the wrapper out of <c>ConnectedDevices</c> while the command is in flight, so the
+    /// collection-changed cleanup runs BEFORE the refusal is processed. An entry recorded after
+    /// that point would never be cleaned up by anything: it does nothing while the device is gone,
+    /// and it would suppress the device's freshly reported state if that same wrapper reconnected.
+    /// </summary>
+    [Fact]
+    public void AStopThatFailsByDisconnecting_DoesNotStaySuppressedIfTheDeviceComesBack()
+    {
+        var dropper = new RecordingStreamingDevice("Nq1-DROPS", ConnectionType.Usb);
+        _viewModel.ConnectedDevices.Add(dropper);
+        _viewModel.SelectedLoggingMode = "Log to Device";
+
+        _viewModel.IsLogging = true;
+        Assert.True(dropper.IsLoggingToSdCard);
+
+        // The command's own failure is the disconnect: removed from the fleet, then it throws.
+        dropper.OnCommand = command =>
+        {
+            if (command == "StopSdCardLogging")
+            {
+                _viewModel.ConnectedDevices.Remove(dropper);
+            }
+        };
+        dropper.Refusals["StopSdCardLogging"] = new DeviceNotConnectedException();
+
+        _viewModel.IsLogging = false;
+        Assert.False(_viewModel.IsLogging);
+
+        // The same wrapper reconnects, still reporting that it is logging to its card. That is a
+        // fresh report, and it must be believed.
+        dropper.OnCommand = null;
+        _viewModel.ConnectedDevices.Add(dropper);
+
+        Assert.True(_viewModel.IsSdCardLoggingActive);
+        Assert.True(_viewModel.IsLogging);
+    }
+
+    #endregion
+
     #region Helpers
 
     /// <summary>
