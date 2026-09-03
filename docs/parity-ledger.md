@@ -131,6 +131,26 @@ baseline". **Both are done** — PR #179 unpinned `RuntimeIdentifier=win-x64`, a
 the *WPF* leg, which needs Windows because WPF does. The issue body should be
 narrowed to that so it stops reading as available work.
 
+## The Avalonia leg was captured and matches its baseline
+
+```
+DOTNET=~/.dotnet/dotnet tools/parity-audit/run.sh <out>
+tools/parity-audit/run.sh --check-captured <out>/avalonia
+```
+
+All **24** screens captured and every one is byte-identical to the committed
+`baselines/macos-arm64.sha256`. So the port boots headless on macOS, every pane and
+dialog renders, and the rendering is stable run-to-run on this host.
+
+That capture surfaced one genuine user-visible layout defect, filed separately: in
+the Log Summary flyout's SETTINGS box the label `Refresh Every (msgs)` is clipped to
+`Refresh Every (ms` and the **Reset** button overlaps the status toggle's `Stopped`
+text. The grid is `ColumnDefinitions="150,*,75"` with a fixed 150px first column too
+narrow for the label at this font
+(`Daqifi.Avalonia/Daqifi.Desktop/View/Flyouts/SummaryFlyout.axaml:72`). It is in the
+committed baseline, so it ships today. It is a defect in a redesigned surface, not a
+missing capability — no WPF capture exists to compare against.
+
 ## Limits of this ledger
 
 State these rather than round up:
