@@ -1,25 +1,32 @@
 using System.Globalization;
 using System.Reflection;
 using Avalonia;
+using Avalonia.Automation;
 using Avalonia.Controls;
 using Avalonia.Controls.ApplicationLifetimes;
+using Avalonia.Controls.Primitives;
 using Avalonia.Headless;
 using Avalonia.Interactivity;
 using Avalonia.Media.Imaging;
 using Avalonia.Platform;
 using Avalonia.Threading;
+using Avalonia.VisualTree;
 using Daqifi.Avalonia.Views;
+using Daqifi.Desktop.Device.SerialDevice;
+using Daqifi.Desktop.View;
+using Daqifi.Desktop.ViewModels;
 using Optris.Icons.Avalonia;
 using Optris.Icons.Avalonia.MaterialDesign;
 
 // Parity-audit screenshot harness for the Avalonia port. Boots the REAL
 // Daqifi.Avalonia app headless (Skia backend, no display) via the app's own DI
-// bootstrap, then captures faithful PNGs of every desktop pane/drawer and the
-// mobile shell in both orientations. DAQIFI_TEST_MODE=1 suppresses modal dialogs and
-// skips hardware discovery; DAQIFI_DATA_DIR isolates the DB/logs to a throwaway dir.
+// bootstrap, then captures faithful PNGs of every desktop pane/drawer, the
+// mobile shell in both orientations, and the modal dialogs. DAQIFI_TEST_MODE=1
+// suppresses modal dialogs and skips hardware discovery; DAQIFI_DATA_DIR isolates
+// the DB/logs to a throwaway dir.
 //
 // Usage:  AvaloniaCapture <output-dir>
-// The output dir receives desktop-*.png and mobile-*.png. See ../README.md.
+// The output dir receives desktop-*.png, mobile-*.png and dialog-*.png. See ../README.md.
 
 internal static class AvaloniaCapture
 {
@@ -59,6 +66,14 @@ internal static class AvaloniaCapture
         "mobile-landscape-2-channels",
         "mobile-landscape-3-storage",
         "mobile-landscape-4-profiles",
+        // Dialogs. One name per seeded state, defined in DialogScreens() — keep the two lists
+        // in step, which VerifyExpectedScreens enforces in both directions.
+        "dialog-connect-wifi-scanning",
+        "dialog-connect-usb-idle",
+        "dialog-connect-usb-error",
+        "dialog-connect-manual-usb-error",
+        "dialog-export-configure",
+        "dialog-export-failed",
     ];
 
     // Names actually written, recorded by Capture only after the file is confirmed non-empty.
@@ -151,6 +166,13 @@ internal static class AvaloniaCapture
         {
             CaptureDesktop(desktop.MainWindow);
             CaptureMobile();
+            // LAST, and deliberately so. Every dialog here builds a real view-model, and those
+            // constructors touch process-global state the other two phases read (the connection
+            // manager's duplicate-device handler, its firmware-in-progress event). Running the
+            // dialogs after both existing phases is what keeps the eighteen committed screens a
+            // function of exactly the sequence that produced their baselines — the run order is
+            // part of what a byte-identity manifest is measuring.
+            CaptureDialogs();
             VerifyExpectedScreens();
         }
         finally
@@ -369,6 +391,440 @@ internal static class AvaloniaCapture
         NavClick(mobile, "RailStream");
     }
 
+    // ---- Dialogs: the Windows IDialogService shows, built by hand and seeded ----
+    //
+    // WHY THIS PHASE EXISTS (#213). XAML in this repo is not compile-checked: the views carry no
+    // x:DataType, so every binding resolves by reflection at run time. A green build therefore
+    // cannot tell you whether a TextBlock renders, whether its binding resolves, or whether a
+    // StaticResource brush exists — and dialogs were the one family of surfaces this harness
+    // never constructed, so nothing else could tell you either. Three changes in a row shipped
+    // with an explicit "I did not render this dialog" disclosure before this existed.
+    //
+    // WHAT A SCENARIO MUST NOT DO. Nothing here may start device discovery. The dialog view-models
+    // expose it as a separate call (ConnectionDialogViewModel.StartConnectionFinders), never from a
+    // constructor, so building one is inert — and it must stay that way: a real SerialDeviceFinder
+    // opens every DAQiFi VID/PID COM port on the machine, which would both render a real device's
+    // serial number into a screen that is supposed to be byte-reproducible and interfere with a
+    // board another process is using. Seed the bound collections directly instead, as these do.
+    // (Constructing a SerialStreamingDevice is safe: its SerialPort is constructed, never opened.)
+    private static void CaptureDialogs()
+    {
+        foreach (var screen in DialogScreens())
+        {
+            Window dialog;
+            try
+            {
+                dialog = screen.Build();
+            }
+            catch (Exception ex)
+            {
+                // Log the whole exception: a view-model constructor that throws here is usually a
+                // missing DI registration or a renamed member, and the stack is the diagnostic.
+                _failed = true;
+                Console.WriteLine($"[FAIL] {screen.Name}: building the dialog threw: {ex}");
+                continue;
+            }
+
+            try
+            {
+                ShowForCapture(dialog, screen.Size);
+
+                // Both gated, and neither followed by a capture when it fails, for the reason
+                // NavClick is gated: a dialog left on the wrong tab, or one still animating, would
+                // be saved under this screen's name. A missing screen is caught by
+                // VerifyExpectedScreens; a mislabelled one passes every check this tool has.
+                if (screen.Prepare != null && !screen.Prepare(dialog)) { continue; }
+                if (!SettleIndeterminateProgress(dialog, screen)) { continue; }
+
+                Quiesce(dialog);
+                screen.Inspect?.Invoke(dialog);
+                Capture(screen.Name, dialog);
+            }
+            catch (Exception ex)
+            {
+                _failed = true;
+                Console.WriteLine($"[FAIL] {screen.Name}: {ex.GetType().Name}: {ex.Message}");
+            }
+            finally
+            {
+                // Close through the window's own Closing handler rather than dropping the
+                // reference, so each dialog's real teardown runs — ConnectionDialog's, for one,
+                // calls the view-model's Close(). Exercising it is free coverage; skipping it
+                // would leave this harness the only caller in the app that does not.
+                try { dialog.Close(); Pump(); }
+                catch (Exception ex) { Console.WriteLine($"[WARN] closing {screen.Name}: {ex.Message}"); }
+            }
+        }
+    }
+
+    /// <summary>One dialog state worth gating.</summary>
+    private sealed class DialogScreen
+    {
+        /// <summary>Screen name, also the PNG filename. Must appear in <c>ExpectedScreens</c>.</summary>
+        public required string Name { get; init; }
+
+        /// <summary>
+        /// Builds the window and seeds its view-model. Runs AFTER the app bootstrap, because the
+        /// real dialog view-models resolve services out of the DI container.
+        /// </summary>
+        public required Func<Window> Build { get; init; }
+
+        /// <summary>
+        /// Capture size. Required, and it should be the size the window's own AXAML declares.
+        /// </summary>
+        /// <remarks>
+        /// Not optional, because the obvious alternative — let a <c>SizeToContent</c> dialog size
+        /// itself and shoot whatever layout produced — is measurably NOT what the app shows.
+        /// <c>DuplicateDeviceDialog</c> declares <c>MinWidth="480" MinHeight="280"</c>; headless,
+        /// its <c>Bounds</c>, <c>ClientSize</c>, <c>DesiredSize</c> and <c>Width</c>/<c>Height</c>
+        /// all come back 460x248, i.e. under its own stated minimum, because nothing in the
+        /// headless windowing stack applies a window's min/max the way a real platform window does.
+        /// A capture at that size would be a picture of a dialog no user has. So the autosizing
+        /// alert family (<c>ErrorDialog</c>, <c>SuccessDialog</c>, <c>DuplicateDeviceDialog</c>,
+        /// <c>MessageDialog</c>) is deliberately NOT covered here yet — see README, "Dialogs".
+        /// </remarks>
+        public required (int Width, int Height) Size { get; init; }
+
+        /// <summary>
+        /// State that needs a realized visual tree — selecting a tab, reaching a templated part.
+        /// Runs after <c>Show()</c>. Returns false to skip the capture rather than save the wrong
+        /// screen under this name.
+        /// </summary>
+        public Func<Window, bool>? Prepare { get; init; }
+
+        /// <summary>
+        /// Opt in to freezing indeterminate progress animations instead of failing on them. See
+        /// <see cref="SettleIndeterminateProgress"/>: prefer seeding the state that hides the
+        /// animation, and reach for this only when the animation IS the state under test.
+        /// </summary>
+        public bool FreezeIndeterminateProgress { get; init; }
+
+        /// <summary>
+        /// Reads the state under test back out of the visual tree, separately from the pixels.
+        /// </summary>
+        public Action<Window>? Inspect { get; init; }
+    }
+
+    // Fixed, invented device identity, shared by every scenario that needs one. Literals rather
+    // than anything discovered or generated: these strings are rendered into the PNG, so a value
+    // that varied by host or by run would put the difference straight into the baseline.
+    private const string SeedPortName = "COM7";
+    private const string SeedDeviceName = "DAQiFi Nq1";
+    private const string SeedSerialNumber = "1024";
+    private const string SeedFirmwareVersion = "1.0.1.24";
+
+    private static SerialStreamingDevice SeedSerialDevice() =>
+        new(SeedPortName, SeedDeviceName, SeedSerialNumber, SeedFirmwareVersion);
+
+    /// <summary>
+    /// The connect dialog with one discovered USB device seeded into the list. Shared by the two
+    /// USB scenarios so the only difference between their pixels is the error message.
+    /// </summary>
+    private static ConnectionDialog ConnectDialogWithOneSerialDevice(string? serialConnectError)
+    {
+        // The parameterless constructor is the one the app uses; it resolves IDialogService out of
+        // the container, which is up because this phase runs after SetupWithLifetime.
+        var vm = new ConnectionDialogViewModel();
+        vm.AvailableSerialDevices.Add(SeedSerialDevice());
+        // Hides the "Scanning for USB devices…" overlay — see SettleIndeterminateProgress. This is
+        // the state a user is in whenever a device has been found, so it is the honest way to get a
+        // still frame here rather than a workaround.
+        vm.HasNoSerialDevices = false;
+        vm.SerialConnectError = serialConnectError;
+        return new ConnectionDialog { DataContext = vm };
+    }
+
+    // The connect dialog's own declared size (ConnectionDialog.axaml: Width 560, Height 500).
+    private static readonly (int Width, int Height) ConnectDialogSize = (560, 500);
+
+    private const string SerialConnectErrorText =
+        "Could not connect to 'DAQiFi Nq1'. The device may be in use by another application " +
+        "or not responding.";
+
+    private const string ManualPortErrorText =
+        "COM99 is not a serial port on this system.";
+
+    private static IEnumerable<DialogScreen> DialogScreens()
+    {
+        // The empty state, which is what the dialog looks like every time it opens. The indeterminate
+        // "Scanning…" bar IS this screen, so it is the one scenario that freezes rather than seeds.
+        yield return new DialogScreen
+        {
+            Name = "dialog-connect-wifi-scanning",
+            Size = ConnectDialogSize,
+            Build = () => new ConnectionDialog { DataContext = new ConnectionDialogViewModel() },
+            Prepare = w => SelectTab(w, "dialog-connect-wifi-scanning", "WiFi"),
+            FreezeIndeterminateProgress = true,
+        };
+
+        yield return new DialogScreen
+        {
+            Name = "dialog-connect-usb-idle",
+            Size = ConnectDialogSize,
+            Build = () => ConnectDialogWithOneSerialDevice(serialConnectError: null),
+            Prepare = w => SelectTab(w, "dialog-connect-usb-idle", "USB"),
+        };
+
+        // The pair that earns its place: with SerialConnectError null the error row collapses to
+        // zero height, so comparing these two shows whether the message costs layout when absent.
+        yield return new DialogScreen
+        {
+            Name = "dialog-connect-usb-error",
+            Size = ConnectDialogSize,
+            Build = () => ConnectDialogWithOneSerialDevice(SerialConnectErrorText),
+            Prepare = w => SelectTab(w, "dialog-connect-usb-error", "USB"),
+            Inspect = w => RequireRenderedText(
+                w, "dialog-connect-usb-error", "SerialConnectError", SerialConnectErrorText),
+        };
+
+        yield return new DialogScreen
+        {
+            Name = "dialog-connect-manual-usb-error",
+            Size = ConnectDialogSize,
+            Build = () =>
+            {
+                var vm = new ConnectionDialogViewModel();
+                // Order matters: OnManualPortNameChanged clears a stale error when the port name is
+                // edited, so setting the name second would wipe the message this screen is about.
+                vm.ManualPortName = "COM99";
+                vm.ManualPortError = ManualPortErrorText;
+                return new ConnectionDialog { DataContext = vm };
+            },
+            Prepare = w => SelectTab(w, "dialog-connect-manual-usb-error", "Manual USB"),
+            Inspect = w => RequireRenderedText(
+                w, "dialog-connect-manual-usb-error", "ManualPortError", ManualPortErrorText),
+        };
+
+        // A second dialog, and a second Window class, so this phase is a mechanism rather than one
+        // dialog's special case. Its two states are picked by IsConfiguring / IsExportComplete, so
+        // between them they show that a scenario can drive a view-model state machine and not just
+        // set a string.
+        yield return new DialogScreen
+        {
+            Name = "dialog-export-configure",
+            Size = ExportDialogSize,
+            Build = () => new ExportDialog { DataContext = SeedExportViewModel() },
+        };
+
+        // The result state, and specifically the FAILED one: it swaps the icon, the message and two
+        // of the three buttons off a single bool, which is a lot of rendering to take on trust.
+        yield return new DialogScreen
+        {
+            Name = "dialog-export-failed",
+            Size = ExportDialogSize,
+            Build = () =>
+            {
+                var vm = SeedExportViewModel();
+                vm.ExportSucceeded = false;
+                vm.ExportResultMessage = "Export failed: the destination folder is not writable.";
+                vm.IsExportComplete = true;
+                return new ExportDialog { DataContext = vm };
+            },
+        };
+    }
+
+    // The export dialog's own declared size (ExportDialog.axaml: Width 560, Height 390).
+    private static readonly (int Width, int Height) ExportDialogSize = (560, 390);
+
+    /// <summary>
+    /// The export dialog's real view-model over a fixed session id, with a fixed destination path.
+    /// </summary>
+    /// <remarks>
+    /// The path is a literal rather than anything resolved from the environment because it is
+    /// RENDERED: a real user directory would put the capturing machine's home directory into the
+    /// PNG and the baseline would then be per-developer. Nothing here reads the session out of the
+    /// database — the id is only carried until an export is started, which no scenario does.
+    /// </remarks>
+    private static ExportDialogViewModel SeedExportViewModel() =>
+        new(sessionId: 1) { ExportFilePath = "/Users/daqifi/Documents/session-1.csv" };
+
+    // ---- dialog helpers ----
+
+    // SizeToContent.Manual first, mirroring CaptureDesktop: several of these dialogs autosize by
+    // default, and an autosizing window ignores an assigned Width/Height.
+    private static void ShowForCapture(Window w, (int Width, int Height) size)
+    {
+        w.SizeToContent = SizeToContent.Manual;
+        w.Width = size.Width;
+        w.Height = size.Height;
+        w.Show();
+        Pump();
+    }
+
+    /// <summary>
+    /// Selects the tab whose header is <paramref name="header"/>, or fails the run.
+    /// </summary>
+    /// <remarks>
+    /// By header rather than by index. An index is silently wrong the moment a tab is inserted
+    /// before it — and the wrong tab saved under the right filename is the one failure a visual
+    /// gate must never produce, because it passes every downstream check while being a picture of
+    /// something else. Matching on the header makes selecting and asserting the same act.
+    /// The connect dialog's TabControl has no <c>x:Name</c>, hence the visual-tree search.
+    /// </remarks>
+    private static bool SelectTab(Window w, string screenName, string header)
+    {
+        var tabs = w.GetVisualDescendants().OfType<TabControl>().FirstOrDefault();
+        if (tabs is null)
+        {
+            _failed = true;
+            Console.WriteLine($"[SKIP] {screenName}: no TabControl in the dialog's visual tree");
+            return false;
+        }
+
+        var items = tabs.Items.OfType<TabItem>().ToArray();
+        var match = items.FirstOrDefault(t => string.Equals(t.Header as string, header, StringComparison.Ordinal));
+        if (match is null)
+        {
+            _failed = true;
+            var found = items.Length == 0
+                ? "none"
+                : string.Join(", ", items.Select(t => $"'{t.Header}'"));
+            Console.WriteLine($"[SKIP] {screenName}: no tab with header '{header}' (found: {found}); " +
+                              "not capturing the previously selected tab under this name");
+            return false;
+        }
+
+        tabs.SelectedItem = match;
+        Pump();
+        return true;
+    }
+
+    /// <summary>
+    /// Deals with indeterminate <c>ProgressBar</c>s before the settle loop meets them.
+    /// </summary>
+    /// <remarks>
+    /// <para>
+    /// This is the trap that makes a naive dialog capture fail, and the failure does not point at
+    /// its cause. An indeterminate progress bar never stops animating, so <c>SettledFrame</c> burns
+    /// all 40 rounds and <c>Capture</c> correctly refuses to save a moving frame — the run reports
+    /// "still changing after 40 settle rounds" and says nothing about a progress bar. The connect
+    /// dialog puts one behind a "Scanning…" overlay on three of its five tabs, so it is the
+    /// DEFAULT state of the dialog most likely to be captured next.
+    /// </para>
+    /// <para>
+    /// Two remedies, and the choice is per scenario rather than global on purpose. The settle rule
+    /// is load-bearing — CI has caught a real six-pixel race with it (#201) — so it is never
+    /// loosened for everything.
+    /// </para>
+    /// <list type="number">
+    /// <item>PREFERRED: seed the state that hides the animation, the way
+    /// <see cref="ConnectDialogWithOneSerialDevice"/> puts a device in the list and clears
+    /// <c>HasNoSerialDevices</c>. Nothing is faked — that is a state the app really has.</item>
+    /// <item><c>FreezeIndeterminateProgress</c>, for a screen whose whole subject is the scanning
+    /// state. A frozen bar renders as its empty track rather than as a moving pill, so the PNG is
+    /// not what a user sees at any given instant; the [INFO] line below records that, so the empty
+    /// track is never read as a rendering bug.</item>
+    /// </list>
+    /// <para>
+    /// Anything else fails LOUDLY and by name, which is the point: the next person to add a dialog
+    /// gets told what is moving instead of spending an hour on a settle-loop timeout.
+    /// </para>
+    /// </remarks>
+    private static bool SettleIndeterminateProgress(Window w, DialogScreen screen)
+    {
+        // Only the bars actually on screen. IsEffectivelyVisible, not IsVisible: a TabControl
+        // realizes one tab's content at a time, and a collapsed overlay's bar animates nothing.
+        var live = w.GetVisualDescendants()
+                    .OfType<ProgressBar>()
+                    .Where(p => p.IsIndeterminate && p.IsEffectivelyVisible)
+                    .ToArray();
+        if (live.Length == 0) { return true; }
+
+        if (!screen.FreezeIndeterminateProgress)
+        {
+            _failed = true;
+            Console.WriteLine(
+                $"[SKIP] {screen.Name}: {live.Length} indeterminate ProgressBar(s) are visible " +
+                $"({DescribeBars(live)}). An indeterminate bar never stops animating, so the " +
+                "settle loop would burn all its rounds and the capture would be refused as a " +
+                "moving frame. Either seed the state that hides it (preferred - e.g. add a device " +
+                "so HasNoSerialDevices goes false), or set FreezeIndeterminateProgress on this " +
+                "scenario if the scanning state is what you are photographing.");
+            return false;
+        }
+
+        foreach (var bar in live)
+        {
+            bar.IsIndeterminate = false;
+        }
+        Pump();
+        Console.WriteLine(
+            $"[INFO] {screen.Name}: froze {live.Length} indeterminate ProgressBar(s) " +
+            $"({DescribeBars(live)}); each renders as its empty track, not as the moving " +
+            "indicator a user sees.");
+        return true;
+    }
+
+    private static string DescribeBars(IEnumerable<ProgressBar> bars) =>
+        string.Join("; ", bars.Select(b => $"{b.Bounds.Width}x{b.Bounds.Height} at {b.Bounds.Position}"));
+
+    /// <summary>
+    /// Asserts that the element carrying <paramref name="automationId"/> is on screen, has non-zero
+    /// bounds, and holds exactly <paramref name="expected"/> — and prints what it found either way.
+    /// </summary>
+    /// <remarks>
+    /// The picture alone is not proof. A TextBlock whose binding silently failed to resolve and one
+    /// that rendered an empty string are indistinguishable in a screenshot, and with no
+    /// <c>x:DataType</c> anywhere in these views the first case is exactly what a renamed view-model
+    /// member produces. So read the element back out of the tree and say so in the log, separately
+    /// from the pixels. <c>AutomationProperties.AutomationId</c> rather than <c>x:Name</c> because
+    /// these views already carry ids on the interesting elements, for the UI automation to use.
+    /// </remarks>
+    private static void RequireRenderedText(Window w, string screenName, string automationId, string expected)
+    {
+        var matches = w.GetVisualDescendants()
+                       .OfType<Control>()
+                       .Where(c => AutomationProperties.GetAutomationId(c) == automationId)
+                       .ToArray();
+        if (matches.Length == 0)
+        {
+            _failed = true;
+            Console.WriteLine($"[FAIL] {screenName}: no element with AutomationId '{automationId}' " +
+                              "in the visual tree");
+            return;
+        }
+        // Ambiguity is a failure, not a first-match. An id that appears twice means this assert is
+        // silently checking whichever one the tree walk reached first, which is exactly the kind of
+        // "passes while measuring the wrong thing" the rest of this harness refuses to do.
+        if (matches.Length > 1)
+        {
+            _failed = true;
+            Console.WriteLine($"[FAIL] {screenName}: AutomationId '{automationId}' is on " +
+                              $"{matches.Length} elements ({string.Join(", ", matches.Select(m => m.GetType().Name))}); " +
+                              "an assert on it would be checking an arbitrary one of them");
+            return;
+        }
+        var control = matches[0];
+
+        var text = control switch
+        {
+            TextBlock block => block.Text,
+            TextBox box => box.Text,
+            ContentControl content => content.Content?.ToString(),
+            _ => null,
+        };
+        var foreground = (control as TextBlock)?.Foreground
+                         ?? (control as TemplatedControl)?.Foreground;
+
+        Console.WriteLine($"[INFO] {screenName}: {automationId} is a {control.GetType().Name}, " +
+                          $"IsVisible={control.IsEffectivelyVisible} Bounds={control.Bounds} " +
+                          $"Foreground={foreground?.ToString() ?? "(none)"} Text=\"{text}\"");
+
+        if (!control.IsEffectivelyVisible || control.Bounds.Width <= 0 || control.Bounds.Height <= 0)
+        {
+            _failed = true;
+            Console.WriteLine($"[FAIL] {screenName}: {automationId} occupies no space on screen, so " +
+                              "the capture does not show it");
+            return;
+        }
+        if (!string.Equals(text, expected, StringComparison.Ordinal))
+        {
+            _failed = true;
+            Console.WriteLine($"[FAIL] {screenName}: {automationId} reads \"{text}\" but the scenario " +
+                              $"seeded \"{expected}\" - the binding did not resolve to it");
+        }
+    }
+
     // ---- helpers ----
     private static void Resize(Window w, int width, int height)
     {
@@ -510,10 +966,14 @@ internal static class AvaloniaCapture
     }
 
     // The size to render at. These are the values this harness itself set (1440x900 for the
-    // desktop window; the phone sizes for the mobile host), and they are what the framebuffer
-    // capture produced, so every screen keeps the dimensions already recorded in the baselines.
-    // Guarded rather than assumed: an unsized window would otherwise reach RenderTargetBitmap as
-    // an ArgumentException from inside Avalonia, with nothing in it naming the capture site.
+    // desktop window; the phone sizes for the mobile host; each dialog's own declared size), and
+    // they are what the framebuffer capture produced, so every screen keeps the dimensions already
+    // recorded in the baselines. Guarded rather than assumed: an unsized window would otherwise
+    // reach RenderTargetBitmap as an ArgumentException from inside Avalonia, with nothing in it
+    // naming the capture site.
+    //
+    // Every capture site here sizes its window explicitly, and that is a rule rather than an
+    // accident — see the note on DialogScreen.Size about the SizeToContent dialogs.
     private static PixelSize RenderSize(Window w)
     {
         if (!double.IsFinite(w.Width) || !double.IsFinite(w.Height) || w.Width < 1 || w.Height < 1)
