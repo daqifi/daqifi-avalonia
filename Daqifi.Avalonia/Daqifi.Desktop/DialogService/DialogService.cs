@@ -5,23 +5,19 @@
 
 using System;
 using System.Collections.Generic;
-using System.Collections.ObjectModel;
 using System.Linq;
 using System.Threading.Tasks;
 using Avalonia;
 using Avalonia.Controls;
 using Avalonia.Interactivity;
-using Daqifi.Desktop.Services;
-using Daqifi.Desktop.View.Dialogs;
-using Daqifi.Desktop.WindowViewModelMapping;
+using Microsoft.Extensions.DependencyInjection;
 
 namespace Daqifi.Desktop.DialogService;
 
 // @port: Daqifi.Desktop.DialogService.DialogService
 public class DialogService : IDialogService
 {
-    private readonly HashSet<Control> _views;
-    private readonly IWindowViewModelMappings _windowViewModelMappings;
+    private readonly HashSet<Control> _views = [];
 
     static DialogService()
     {
@@ -29,21 +25,8 @@ public class DialogService : IDialogService
         IsRegisteredViewProperty.Changed.AddClassHandler<Control>(IsRegisteredViewPropertyChanged);
     }
 
-    public DialogService(IWindowViewModelMappings windowViewModelMappings = null)
-    {
-        _windowViewModelMappings = windowViewModelMappings;
-        _views = [];
-    }
-
 
     #region IDialogService Members
-
-    /// <summary>
-    /// Gets the registered views.
-    /// </summary>
-    // @port: Daqifi.Desktop.DialogService.DialogService.Views
-    public ReadOnlyCollection<Control> Views => new(_views.ToList());
-
 
     /// <summary>
     /// Registers a View.
@@ -84,27 +67,6 @@ public class DialogService : IDialogService
     /// <summary>
     /// Shows a dialog.
     /// </summary>
-    /// <remarks>
-    /// The dialog used to represent the ViewModel is retrieved from the registered mappings.
-    /// </remarks>
-    /// <param name="ownerViewModel">
-    /// A ViewModel that represents the owner window of the dialog.
-    /// </param>
-    /// <param name="viewModel">The ViewModel of the new dialog.</param>
-    /// <returns>
-    /// A nullable value of type bool that signifies how a window was closed by the user.
-    /// </returns>
-    // @port: Daqifi.Desktop.DialogService.DialogService.ShowDialog
-    public Task<bool?> ShowDialogAsync(object ownerViewModel, object viewModel)
-    {
-        var dialogType = _windowViewModelMappings.GetWindowTypeFromViewModelType(viewModel.GetType());
-        return ShowDialogAsync(ownerViewModel, viewModel, dialogType);
-    }
-
-
-    /// <summary>
-    /// Shows a dialog.
-    /// </summary>
     /// <param name="ownerViewModel">
     /// A ViewModel that represents the owner window of the dialog.
     /// </param>
@@ -117,35 +79,6 @@ public class DialogService : IDialogService
     public Task<bool?> ShowDialogAsync<T>(object ownerViewModel, object viewModel) where T : Window
     {
         return ShowDialogAsync(ownerViewModel, viewModel, typeof(T));
-    }
-
-
-    /// <summary>
-    /// Shows a message box (WPF MessageBox.Show → owned MessageDialog window
-    /// routed through this service; hal: message_box).
-    /// </summary>
-    /// <param name="ownerViewModel">
-    /// A ViewModel that represents the owner window of the message box.
-    /// </param>
-    /// <param name="messageBoxText">A string that specifies the text to display.</param>
-    /// <param name="caption">A string that specifies the title bar caption to display.</param>
-    /// <param name="button">
-    /// A MessageBoxButton value that specifies which button or buttons to display.
-    /// </param>
-    /// <param name="icon">A MessageBoxImage value that specifies the icon to display.</param>
-    /// <returns>
-    /// A MessageBoxResult value that specifies which message box button is clicked by the user.
-    /// </returns>
-    // @port: Daqifi.Desktop.DialogService.DialogService.ShowMessageBox
-    public async Task<MessageBoxResult> ShowMessageBoxAsync(
-        object ownerViewModel,
-        string messageBoxText,
-        string caption,
-        MessageBoxButton button,
-        MessageBoxImage icon)
-    {
-        var dialog = new MessageDialog(messageBoxText, caption, button, icon);
-        return await dialog.ShowDialog<MessageBoxResult>(FindOwnerWindow(ownerViewModel));
     }
     #endregion
 
@@ -185,20 +118,23 @@ public class DialogService : IDialogService
     /// </summary>
     private static void IsRegisteredViewPropertyChanged(Control target, AvaloniaPropertyChangedEventArgs e)
     {
-        // The visual designer will run this code when setting the attached
-        // property, however at that point there is no IDialogService registered
-        // in the ServiceLocator which will cause the Resolve method to throw a ArgumentException.
+        // The visual designer will run this code when setting the attached property, however at
+        // that point the app container has not been built, so resolving the service would throw.
         if (Design.IsDesignMode) return;
 
         if (e.NewValue is bool newValue)
         {
+            // The ONE app container (App.Initialize builds it before the first registered view is
+            // constructed) — so this and every view model resolve the same singleton, which is what
+            // makes the view registered here findable by FindOwnerWindow later.
+            var dialogService = App.ServiceProvider.GetRequiredService<IDialogService>();
             if (newValue)
             {
-                ServiceLocator.Resolve<IDialogService>().Register(target);
+                dialogService.Register(target);
             }
             else
             {
-                ServiceLocator.Resolve<IDialogService>().Unregister(target);
+                dialogService.Unregister(target);
             }
         }
     }
@@ -232,7 +168,7 @@ public class DialogService : IDialogService
     /// Finds window corresponding to specified ViewModel.
     /// </summary>
     // @port: Daqifi.Desktop.DialogService.DialogService.FindOwnerWindow
-    public Window FindOwnerWindow(object ownerViewModel)
+    private Window FindOwnerWindow(object ownerViewModel)
     {
         var view = _views.SingleOrDefault(v => ReferenceEquals(v.DataContext, ownerViewModel));
         if (view == null)

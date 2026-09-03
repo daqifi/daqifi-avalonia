@@ -3,31 +3,26 @@
 // DO NOT manually delete the `// @port:` markers — they link symbols back to
 // the correspondence map.
 
-using System.Collections.ObjectModel;
 using System.Threading.Tasks;
 using Avalonia.Controls;
-using Daqifi.Desktop.Services;
 
 namespace Daqifi.Desktop.DialogService;
 
 /// <summary>
 /// Abstracts ViewModels from Views.
 ///
-/// Dialect notes (recorded divergences, hal: message_box / dialog_service):
-/// WPF FrameworkElement → Avalonia Control; the sync ShowDialog/ShowMessageBox
-/// become Task-returning *Async members because Avalonia dialogs never block
-/// the UI thread. FindOwnerWindow is promoted from a private helper to the
-/// interface so picker wrappers resolve owners through the ONE registry.
+/// Dialect note (recorded divergence, hal: dialog_service): WPF FrameworkElement
+/// → Avalonia Control, and the sync ShowDialog becomes a Task-returning
+/// ShowDialogAsync because Avalonia dialogs never block the UI thread.
+///
+/// Message boxes are NOT routed through this service. They go through
+/// <see cref="Services.IMessageBoxService"/>, which owns the one live
+/// MessageDialog path; the ShowMessageBoxAsync member this interface used to
+/// carry had no callers.
 /// </summary>
 // @port: Daqifi.Desktop.DialogService.IDialogService
 public interface IDialogService
 {
-    /// <summary>
-    /// Gets the registered views.
-    /// </summary>
-    // @port: Daqifi.Desktop.DialogService.IDialogService.Views
-    ReadOnlyCollection<Control> Views { get; }
-
     /// <summary>
     /// Registers a view.
     /// </summary>
@@ -45,31 +40,9 @@ public interface IDialogService
     /// <summary>
     /// Shows a dialog.
     /// </summary>
-    /// <param name="ownerViewModel">The ViewModel that is the owner of the dialog.</param>
-    /// <param name="viewModel">The ViewModel of the dialog itself.</param>
-    // @port: Daqifi.Desktop.DialogService.IDialogService.ShowDialog
-    Task<bool?> ShowDialogAsync(object ownerViewModel, object viewModel);
-
-    /// <summary>
-    /// Shows a dialog.
-    /// </summary>
     /// <typeparam name="T">The type of the dialog to show.</typeparam>
     /// <param name="ownerViewModel">The ViewModel that is the owner of the dialog.</param>
     /// <param name="viewModel">The ViewModel of the dialog itself.</param>
     // @port: Daqifi.Desktop.DialogService.IDialogService.ShowDialog<T>
     Task<bool?> ShowDialogAsync<T>(object ownerViewModel, object viewModel) where T : Window;
-
-    // @port: Daqifi.Desktop.DialogService.IDialogService.ShowMessageBox
-    Task<MessageBoxResult> ShowMessageBoxAsync(
-        object ownerViewModel,
-        string messageBoxText,
-        string caption,
-        MessageBoxButton button,
-        MessageBoxImage icon);
-
-    /// <summary>
-    /// Finds the window whose registered View's DataContext is the given
-    /// ViewModel (downstream extension — see the divergence note above).
-    /// </summary>
-    Window FindOwnerWindow(object ownerViewModel);
 }

@@ -14,7 +14,6 @@ using Daqifi.Desktop.DialogService;
 using Daqifi.Desktop.Services;
 using Daqifi.Desktop.Logger;
 using Daqifi.Desktop.View;
-using Daqifi.Desktop.WindowViewModelMapping;
 using Microsoft.EntityFrameworkCore;
 using Microsoft.EntityFrameworkCore.Diagnostics;
 using Microsoft.Extensions.DependencyInjection;
@@ -200,8 +199,9 @@ public static class App
             Common.Loggers.AppLogger.Instance));
 
         serviceCollection.AddSingleton<LoggingManager>();
-        ServiceLocator.RegisterSingleton<IDialogService, DialogService.DialogService>();
-        ServiceLocator.RegisterSingleton<IWindowViewModelMappings, WindowViewModelMappings>();
+        // Constructed lazily on first resolve and shared from then on, which is what lets the
+        // IsRegisteredView attached property and the view models agree on one view registry.
+        serviceCollection.AddSingleton<IDialogService, DialogService.DialogService>();
 
         ServiceProvider = serviceCollection.BuildServiceProvider();
 
