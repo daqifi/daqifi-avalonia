@@ -19,8 +19,8 @@ Why this is a source guard and not a test. `TestDatabasePoolingTests` already as
 that TestDatabase hands out unpooled connections. What it cannot see is a fixture that
 never asks it — a new class writing its own `Data source=` re-pools the suite and every
 test still passes. Nor would running the suite notice: the flake has been chased for
-348 full runs across two machines without appearing once, so green tells you nothing
-about whether the race is open. The invariant is only observable in the source.
+348 full runs without appearing once, so green tells you nothing about whether the race
+is open. The invariant is only observable in the source.
 
 Three rules over the files handed in (or discovered with --glob):
 
@@ -36,9 +36,20 @@ Three rules over the files handed in (or discovered with --glob):
      Without this, rules 1 and 2 would pass over a suite that had quietly gone back to
      pooling in the one file allowed to decide.
 
-Comments are stripped before matching, so the prose in these files may discuss
-`ClearAllPools` and `Data source=` freely — as TestDatabase.cs and
-DeviceRefusalCrashTests.cs both do.
+PRECISION. Each rule is matched against the part of the file where its violation can
+actually live, which is what keeps it from crying wolf and from missing the real thing:
+
+  - comments are discarded outright, so the prose in TestDatabase.cs and
+    DeviceRefusalCrashTests.cs may discuss `ClearAllPools` and `Data source=` freely;
+  - a `Data Source=` connection string is looked for ONLY INSIDE STRING LITERALS.
+    Searched over code as well, it would flag an ordinary local named `dataSource`,
+    because `Data\\s*Source\\s*=` matches `dataSource =` case-insensitively;
+  - `DataSource =` and `UseSqlite(` are looked for ONLY IN CODE, with literals removed.
+    Both the object-initialiser form (`{ DataSource = path }`) and the qualified form
+    (`builder.DataSource = path`) are rejected: both produce a pooled connection
+    string. Only an ASSIGNMENT matches, so reading the property
+    (`Assert.Equal(path, builder.DataSource)`) or comparing it (`== path`) stays legal
+    — that is how TestDatabasePoolingTests parses a connection string to assert on it.
 
 Usage:
     check_test_sqlite_pooling.py <File.cs> [...]
@@ -63,86 +74,117 @@ import sys
 SEAM = "Daqifi.Avalonia.Tests/TestDatabase.cs"
 TEST_ROOT = "Daqifi.Avalonia.Tests"
 
-# Rule 1. The call, not the word — `nameof(ClearAllPools)` or a <see cref> in prose is
-# not a call, and prose is stripped before this runs anyway.
+# Build output. Restore generates .cs under obj/ (AssemblyInfo, GlobalUsings, source
+# generators), which is not source anybody edits — scanning it would report violations
+# nobody can fix, and the count would depend on whether the tree had been built.
+GENERATED_DIRS = ("/obj/", "/bin/")
+
+# Rule 1. The call, not the word: prose is stripped before this runs.
 CLEAR_ALL_POOLS = re.compile(r"\bClearAllPools\s*\(")
 
-# Rule 2, in the three shapes a data source can be named:
-#   - a connection-string literal:      "Data Source=...", "Data source=..."
-#   - a builder initialiser:            DataSource = path
-#   - EF's provider call:               UseSqlite(...)
-# `(?<!\.)` keeps a READ of the property (`builder.DataSource`) out of it: parsing a
-# connection string to assert on it is what TestDatabasePoolingTests legitimately does.
-DATA_SOURCE = [
-    (re.compile(r"Data\s*Source\s*=", re.IGNORECASE), "a `Data Source=` connection-string literal"),
-    (re.compile(r"(?<!\.)\bDataSource\s*="), "a `DataSource =` connection-string-builder initialiser"),
+# Rule 2, over CODE with string literals removed. `(?!=)` keeps `==` out, so a
+# comparison reads as what it is. No dot exclusion: `builder.DataSource = path` is
+# every bit as pooled as `{ DataSource = path }`.
+DATA_SOURCE_CODE = [
+    (re.compile(r"\bDataSource\s*=(?!=)"),
+     "a `DataSource =` assignment on a connection-string builder"),
     (re.compile(r"\bUseSqlite\s*\("), "a `UseSqlite(...)` call"),
 ]
+
+# Rule 2, over STRING LITERAL CONTENT only — see PRECISION above.
+DATA_SOURCE_LITERAL = re.compile(r"Data\s*Source\s*=", re.IGNORECASE)
 
 # Rule 3.
 POOLING_OFF = re.compile(r"\bPooling\s*=\s*false\b", re.IGNORECASE)
 
 
-def strip_comments(source: str) -> str:
-    """Blank out // and /* */ comments, preserving string literals and line count.
+def split_code_and_literals(source: str) -> tuple[list[str], list[str]]:
+    """Separate C# source into per-line CODE and per-line STRING CONTENT.
 
-    Verbatim strings (@"...") and escaped quotes are both handled, because a path in a
-    test fixture is exactly where a stray `//` shows up inside a string.
+    Comments are dropped from both. Line numbering is preserved in each view, so a
+    match in either can be reported against the real line. Verbatim strings (@"...",
+    where "" escapes a quote) and backslash escapes are both handled, because a
+    Windows path in a fixture is exactly where a stray quote or `//` turns up.
     """
-    out = []
+    code: list[str] = []
+    literal: list[str] = []
+    line_code: list[str] = []
+    line_literal: list[str] = []
+
+    def end_line() -> None:
+        code.append("".join(line_code))
+        literal.append("".join(line_literal))
+        line_code.clear()
+        line_literal.clear()
+
     i = 0
     n = len(source)
     while i < n:
         char = source[i]
-        # Verbatim string: @"..." where "" is an escaped quote.
+
+        if char == "\n":
+            end_line()
+            i += 1
+            continue
+
+        # Verbatim string: @"..." with "" as the escaped quote.
         if char == "@" and i + 1 < n and source[i + 1] == '"':
-            out.append(source[i:i + 2])
             i += 2
             while i < n:
                 if source[i] == '"':
                     if i + 1 < n and source[i + 1] == '"':
-                        out.append('""')
+                        line_literal.append('"')
                         i += 2
                         continue
-                    out.append('"')
                     i += 1
                     break
-                out.append(source[i])
+                if source[i] == "\n":
+                    end_line()
+                else:
+                    line_literal.append(source[i])
                 i += 1
             continue
+
         # Regular string or char literal, with backslash escapes.
         if char in ('"', "'"):
             quote = char
-            out.append(char)
             i += 1
             while i < n:
                 if source[i] == "\\" and i + 1 < n:
-                    out.append(source[i:i + 2])
+                    line_literal.append(source[i + 1])
                     i += 2
                     continue
-                out.append(source[i])
                 if source[i] == quote:
                     i += 1
                     break
+                if source[i] == "\n":
+                    end_line()
+                else:
+                    line_literal.append(source[i])
                 i += 1
             continue
+
         # Line comment — covers /// doc comments.
         if char == "/" and i + 1 < n and source[i + 1] == "/":
             while i < n and source[i] != "\n":
                 i += 1
             continue
-        # Block comment. Newlines are kept so reported line numbers stay true.
+
+        # Block comment.
         if char == "/" and i + 1 < n and source[i + 1] == "*":
             i += 2
             while i < n and not (source[i] == "*" and i + 1 < n and source[i + 1] == "/"):
                 if source[i] == "\n":
-                    out.append("\n")
+                    end_line()
                 i += 1
             i += 2
             continue
-        out.append(char)
+
+        line_code.append(char)
         i += 1
-    return "".join(out)
+
+    end_line()
+    return code, literal
 
 
 def normalise(path: str) -> str:
@@ -156,7 +198,10 @@ def main(argv: list[str]) -> int:
         return 2
 
     if argv[1] == "--glob":
-        paths = sorted(glob.glob(f"{TEST_ROOT}/**/*.cs", recursive=True))
+        paths = [
+            path for path in sorted(glob.glob(f"{TEST_ROOT}/**/*.cs", recursive=True))
+            if not any(part in path.replace(os.sep, "/") for part in GENERATED_DIRS)
+        ]
         # A silent empty sweep would report success having checked nothing — the same
         # failure shape this guard exists to prevent.
         if not paths:
@@ -167,21 +212,19 @@ def main(argv: list[str]) -> int:
         paths = argv[1:]
 
     failures: list[str] = []
-    seam_source: str | None = None
+    seam_code: str | None = None
 
     for path in paths:
         rel = normalise(path)
         try:
             with open(path, encoding="utf-8") as handle:
-                code = strip_comments(handle.read())
+                code_lines, literal_lines = split_code_and_literals(handle.read())
         except OSError as exc:
             print(f"FAIL: cannot read {path}: {exc}")
             return 2
 
-        lines = code.splitlines()
-
         # Rule 1 — everywhere, including the seam.
-        for number, line in enumerate(lines, start=1):
+        for number, line in enumerate(code_lines, start=1):
             if CLEAR_ALL_POOLS.search(line):
                 failures.append(
                     f"{rel}:{number}: calls ClearAllPools(). It is process-global and "
@@ -190,26 +233,33 @@ def main(argv: list[str]) -> int:
                     "release — delete the call.")
 
         if rel.endswith(SEAM):
-            seam_source = code
+            seam_code = "\n".join(code_lines)
             continue
 
-        # Rule 2 — everywhere except the seam.
-        for number, line in enumerate(lines, start=1):
-            for pattern, what in DATA_SOURCE:
+        # Rule 2 — everywhere except the seam, each pattern over its own view.
+        for number, line in enumerate(code_lines, start=1):
+            for pattern, what in DATA_SOURCE_CODE:
                 if pattern.search(line):
                     failures.append(
                         f"{rel}:{number}: names a SQLite data source directly "
                         f"({what}). That connection is POOLED by default, which "
                         f"re-opens #210 for the whole suite. Route it through "
                         f"{SEAM} instead.")
+        for number, line in enumerate(literal_lines, start=1):
+            if DATA_SOURCE_LITERAL.search(line):
+                failures.append(
+                    f"{rel}:{number}: names a SQLite data source directly (a "
+                    f"`Data Source=` connection-string literal). That connection is "
+                    f"POOLED by default, which re-opens #210 for the whole suite. "
+                    f"Route it through {SEAM} instead.")
 
     # Rule 3 — the seam has to have been handed in, or rules 1 and 2 are vacuous.
-    if seam_source is None:
+    if seam_code is None:
         print(f"FAIL: {SEAM} was not among the {len(paths)} file(s) checked. "
               "Without it the other rules cannot be trusted.")
         return 2
 
-    if not POOLING_OFF.search(seam_source):
+    if not POOLING_OFF.search(seam_code):
         failures.append(
             f"{SEAM}: does not set `Pooling = false`. It is the one place that "
             "decides the suite's connections are unpooled; without it every fixture "

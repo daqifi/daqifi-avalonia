@@ -79,6 +79,14 @@ def main() -> int:
         check("clean suite passes", 0, run(tmp, seam, fixture))
         check("clean suite passes via --glob", 0, run(tmp, "--glob"))
 
+        # Restore writes .cs under obj/ (AssemblyInfo, GlobalUsings, source generators).
+        # It is not source anybody can edit, so --glob must skip it — otherwise the
+        # verdict depends on whether the tree happened to be built.
+        generated = os.path.join(
+            tmp, "Daqifi.Avalonia.Tests", "obj", "Debug", "net10.0", "Generated.g.cs")
+        write(generated, 'var x = "Data source=/generated.db";\n')
+        check("--glob ignores generated .cs under obj/", 0, run(tmp, "--glob"))
+
         # Rule 1 — the call, in a fixture and in the seam itself.
         write(fixture, CLEAN_FIXTURE.replace(
             "private void Open()", "public void Dispose() { SqliteConnection.ClearAllPools(); }\n    private void Open()"))
@@ -94,6 +102,24 @@ def main() -> int:
             "TestDatabase.ConnectionString(DatabasePath)",
             "new SqliteConnectionStringBuilder { DataSource = DatabasePath }.ToString()"))
         check("`DataSource =` initialiser in a fixture fails", 1, run(tmp, seam, fixture))
+
+        # The QUALIFIED form of the same thing. An earlier revision excluded any
+        # `DataSource` preceded by a dot — meant to permit reading the property, it also
+        # permitted assigning it, which is just as pooled. Caught in review on #225.
+        write(fixture, '''
+namespace Daqifi.Avalonia.Tests.Loggers;
+
+public class QualifiedAssignmentTests
+{
+    private string Build()
+    {
+        var builder = new SqliteConnectionStringBuilder();
+        builder.DataSource = DatabasePath;
+        return builder.ToString();
+    }
+}
+''')
+        check("qualified `builder.DataSource =` assignment fails", 1, run(tmp, seam, fixture))
 
         write(fixture, CLEAN_FIXTURE.replace(
             "new SqliteConnection(TestDatabase.ConnectionString(DatabasePath))",
@@ -131,6 +157,36 @@ public sealed class TestDatabasePoolingTests
 }
 ''')
         check("parsing a connection string to assert on it passes", 0, run(tmp, seam, fixture))
+
+        # An ordinary local called `dataSource`. `Data\\s*Source\\s*=` matches
+        # `dataSource =` case-insensitively, so searching CODE for the literal form
+        # would fail CI on innocent naming — the surest way to get a guard switched
+        # off. The literal form is therefore only looked for inside string literals.
+        write(fixture, '''
+namespace Daqifi.Avalonia.Tests.Loggers;
+
+public class LocalNamingTests
+{
+    private void Open()
+    {
+        var dataSource = TestDatabase.ConnectionString(DatabasePath);
+        using var connection = new SqliteConnection(dataSource);
+    }
+}
+''')
+        check("a local named dataSource is not a connection string", 0,
+              run(tmp, seam, fixture))
+
+        # Comparing the property is a read, not a declaration.
+        write(fixture, '''
+namespace Daqifi.Avalonia.Tests;
+
+public class ComparisonTests
+{
+    private bool Same(SqliteConnectionStringBuilder builder) => builder.DataSource == AnyPath;
+}
+''')
+        check("comparing `.DataSource ==` passes", 0, run(tmp, seam, fixture))
         write(fixture, CLEAN_FIXTURE)
 
         # A `//` inside a string must not be mistaken for a comment and blank out the
