@@ -298,12 +298,4 @@ public abstract partial class AbstractChannel : ObservableObject, IChannel
         return Name?.GetHashCode() ?? 0;
     }
     #endregion
-
-    #region IColorable overrides
-    // @port: Daqifi.Desktop.Channel.AbstractChannel.SetColor
-    public void SetColor(Brush color)
-    {
-        ChannelColorBrush = color;
-    }
-    #endregion
 }

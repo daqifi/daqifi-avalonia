@@ -4,7 +4,6 @@
 // the correspondence map.
 
 using Avalonia.Media;
-using Daqifi.Desktop.Configuration;
 using ChannelDirection = Daqifi.Core.Channel.ChannelDirection;
 using ChannelType = Daqifi.Core.Channel.ChannelType;
 
@@ -12,8 +11,11 @@ namespace Daqifi.Desktop.Channel;
 
 public delegate void OnChannelUpdatedHandler(object sender, DataSample e);
 
+// Upstream declares `IChannel : IColorable`. Here IColorable is gone: its single member
+// SetColor had no callers on either head, and the live colour path assigns
+// ChannelColorBrush directly (ChannelsPaneViewModel.SetColor). See #206.
 // @port: Daqifi.Desktop.Channel.IChannel
-public interface IChannel : IColorable
+public interface IChannel
 {
     #region Properties
     // @port: Daqifi.Desktop.Channel.IChannel.ID

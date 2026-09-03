@@ -89,9 +89,6 @@ public class LoggingSession : ObservableObject
           + "replace it, or delete it."
         : string.Empty;
 
-    // @port: Daqifi.Desktop.Logger.LoggingSession.Channels
-    public virtual ICollection<Channel.Channel> Channels { get; set; } = new List<Channel.Channel>();
-
     // @port: Daqifi.Desktop.Logger.LoggingSession.DataSamples
     public virtual ICollection<DataSample> DataSamples { get; set; } = new List<DataSample>();
 
