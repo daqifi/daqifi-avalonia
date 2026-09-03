@@ -201,11 +201,94 @@ public class DiskSpaceMonitor : IDiskSpaceMonitor
         return DiskSpaceLevel.Ok;
     }
 
+    /// <summary>
+    /// The default free-space provider: how much room is left on the volume that
+    /// <paramref name="path"/> lives on.
+    /// </summary>
+    /// <remarks>
+    /// This used to be <c>new DriveInfo(Path.GetPathRoot(path)!)</c>, which is correct on Windows
+    /// — where <c>Path.GetPathRoot</c> returns the drive letter — and wrong
+    /// everywhere else, because on Unix it returns <c>"/"</c> for every rooted path. Both desktop
+    /// heads that are not Windows therefore measured the root filesystem no matter where the data
+    /// directory actually was (#215). Handing <see cref="DriveInfo"/> the path itself fixes that:
+    /// on Unix .NET resolves it with <c>statvfs</c>, which reports the filesystem the path is on;
+    /// on Windows <see cref="DriveInfo"/> normalises a rooted path to its drive letter internally,
+    /// so the answer there is unchanged.
+    /// </remarks>
     // @port: Daqifi.Desktop.DiskSpace.DiskSpaceMonitor.GetAvailableFreeSpaceForPath
-    private static long GetAvailableFreeSpaceForPath(string path)
+    internal static long GetAvailableFreeSpaceForPath(string path)
     {
-        var driveInfo = new DriveInfo(Path.GetPathRoot(path)!);
-        return driveInfo.AvailableFreeSpace;
+        return new DriveInfo(ResolveVolumeProbePath(path)).AvailableFreeSpace;
+    }
+
+    /// <summary>
+    /// Turns a configured data-directory path into a path that is safe to ask
+    /// <see cref="DriveInfo"/> about, without changing which volume is being asked about.
+    /// </summary>
+    /// <remarks>
+    /// Three things have to happen before the query, and none of them is optional:
+    /// <list type="bullet">
+    /// <item><description>
+    /// <b>Absolutise.</b> <c>statvfs</c> on a relative path resolves it against the process's
+    /// current directory, which is not necessarily where the data directory is; and the old code
+    /// threw outright on one. <c>Path.GetFullPath</c> pins it.
+    /// </description></item>
+    /// <item><description>
+    /// <b>Walk up to something that exists.</b> <c>statvfs</c> fails with <c>ENOENT</c> for a path
+    /// that is not there, which .NET surfaces as <see cref="DriveNotFoundException"/>. The data
+    /// directory is created at startup, but it can be deleted underneath a running app — and the
+    /// nearest existing ancestor is on the same volume in every case that matters, so answering
+    /// from it is both safe and strictly more informative than failing.
+    /// </description></item>
+    /// <item><description>
+    /// <b>Follow a link.</b> Pointing the data directory at another volume through a symlink or a
+    /// Windows junction is a normal way to move it. Unix would have followed it anyway inside
+    /// <c>statvfs</c>; Windows would not, because <see cref="DriveInfo"/> reduces the path to its
+    /// drive letter purely lexically.
+    /// </description></item>
+    /// </list>
+    /// If nothing on the way up exists — only reachable on Windows, with a drive that is gone —
+    /// the original full path is returned so that <see cref="DriveInfo"/> raises the real error
+    /// rather than this method inventing an answer. The callers treat a throw as "space unknown"
+    /// and fail open.
+    /// </remarks>
+    internal static string ResolveVolumeProbePath(string path)
+    {
+        var fullPath = Path.GetFullPath(path);
+
+        for (string? candidate = fullPath; !string.IsNullOrEmpty(candidate); candidate = Path.GetDirectoryName(candidate))
+        {
+            if (Directory.Exists(candidate))
+            {
+                return ResolveLinkTarget(candidate);
+            }
+        }
+
+        return fullPath;
+    }
+
+    /// <summary>
+    /// The final target of <paramref name="directory"/> if it is a symlink or junction, otherwise
+    /// <paramref name="directory"/> itself. A link that cannot be followed — broken, cyclic, or
+    /// unreadable — falls back to the link itself, which still names a real filesystem.
+    /// </summary>
+    private static string ResolveLinkTarget(string directory)
+    {
+        try
+        {
+            // returnFinalTarget follows the whole chain and yields an absolute path, so a target
+            // stored as a path relative to the link is already resolved by the time it gets here.
+            if (Directory.ResolveLinkTarget(directory, returnFinalTarget: true) is not { } target)
+            {
+                return directory;
+            }
+
+            return Directory.Exists(target.FullName) ? target.FullName : directory;
+        }
+        catch (Exception ex) when (ex is IOException or UnauthorizedAccessException)
+        {
+            return directory;
+        }
     }
     #endregion
 }

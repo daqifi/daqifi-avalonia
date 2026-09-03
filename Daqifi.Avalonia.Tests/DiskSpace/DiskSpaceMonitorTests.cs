@@ -639,10 +639,10 @@ public class DiskSpaceMonitorTests
     #region The real free-space provider
 
     /// <summary>
-    /// The public constructor's default provider, which every production caller gets: resolve
-    /// the path's drive root and read its available space. Exercised against the temp directory
-    /// — read-only, and nowhere near the app's data directory — because the provider is
-    /// otherwise reachable only through <c>DriveInfo</c> and would go entirely unexercised.
+    /// The public constructor's default provider, which every production caller gets: read the
+    /// available space on the volume the path is on. Exercised against the temp directory —
+    /// read-only, and nowhere near the app's data directory — because the provider is otherwise
+    /// reachable only through <c>DriveInfo</c> and would go entirely unexercised.
     /// </summary>
     [Fact]
     public void The_default_provider_reads_the_real_drive()
@@ -657,6 +657,286 @@ public class DiskSpaceMonitorTests
         // error, so requiring a positive number would fail a CI box with a full temp volume
         // even though the provider had behaved perfectly.
         Assert.InRange(result.AvailableBytes, 0, long.MaxValue - 1);
+    }
+
+    #endregion
+
+    #region Which volume the provider measures (#215)
+
+    /// <summary>
+    /// The defect in one assertion. The provider used to ask <c>DriveInfo</c> about
+    /// <c>Path.GetPathRoot(path)</c>, which is the drive letter on Windows but <c>"/"</c> for
+    /// every rooted path on Unix — so on macOS and Linux it measured the root filesystem no
+    /// matter where the data directory was.
+    /// <para>
+    /// The assertion is made through a marker file rather than by string comparison, so it says
+    /// "the path handed to <c>DriveInfo</c> IS the monitored directory" rather than restating
+    /// whatever normalisation the implementation happens to perform.
+    /// </para>
+    /// </summary>
+    [Fact]
+    public void The_probe_path_for_an_existing_directory_is_that_directory_not_the_path_root()
+    {
+        var directory = CreateMarkedTempDirectory();
+        try
+        {
+            var probePath = DiskSpaceMonitor.ResolveVolumeProbePath(directory);
+
+            Assert.True(Path.IsPathRooted(probePath), $"'{probePath}' is not an absolute path");
+            AssertIsTheMarkedDirectory(probePath, directory);
+            Assert.NotEqual(Path.GetPathRoot(directory), probePath);
+        }
+        finally
+        {
+            Directory.Delete(directory, recursive: true);
+        }
+    }
+
+    /// <summary>
+    /// A data directory that has not been created yet. <c>statvfs</c> answers <c>ENOENT</c> for
+    /// a path that is not there, which .NET raises as <see cref="DriveNotFoundException"/>, so
+    /// the resolution walks up to the nearest ancestor that does exist — which is on the same
+    /// volume — instead of failing and leaving the monitor with no number at all.
+    /// </summary>
+    [Fact]
+    public void The_probe_path_for_a_directory_that_does_not_exist_yet_is_its_nearest_existing_ancestor()
+    {
+        var directory = CreateMarkedTempDirectory();
+        try
+        {
+            var notCreatedYet = Path.Combine(directory, "DAQiFi", "not", "created", "yet");
+
+            AssertIsTheMarkedDirectory(DiskSpaceMonitor.ResolveVolumeProbePath(notCreatedYet), directory);
+            Assert.InRange(DiskSpaceMonitor.GetAvailableFreeSpaceForPath(notCreatedYet), 0, long.MaxValue - 1);
+        }
+        finally
+        {
+            Directory.Delete(directory, recursive: true);
+        }
+    }
+
+    /// <summary>
+    /// The data directory deleted underneath a running app — the case the in-session monitor has
+    /// to survive, and the same shape as a removable volume being unmounted mid-session (the walk
+    /// then lands on the mount parent, which is a real filesystem and a real answer). The monitor
+    /// keeps reporting a number rather than throwing on every tick and going silently inert.
+    /// </summary>
+    [Fact]
+    public void The_probe_path_of_a_directory_deleted_underneath_the_app_falls_back_to_its_parent()
+    {
+        var parent = CreateMarkedTempDirectory();
+        try
+        {
+            var dataDirectory = Path.Combine(parent, "DAQiFi");
+            Directory.CreateDirectory(dataDirectory);
+            Directory.Delete(dataDirectory);
+
+            AssertIsTheMarkedDirectory(DiskSpaceMonitor.ResolveVolumeProbePath(dataDirectory), parent);
+            Assert.InRange(DiskSpaceMonitor.GetAvailableFreeSpaceForPath(dataDirectory), 0, long.MaxValue - 1);
+        }
+        finally
+        {
+            Directory.Delete(parent, recursive: true);
+        }
+    }
+
+    /// <summary>
+    /// A relative path. The old resolution rejected one outright — <c>Path.GetPathRoot</c>
+    /// returns the empty string and <c>DriveInfo</c> throws <see cref="ArgumentException"/> on
+    /// it — which the callers turned into "space unknown". It now resolves against the current
+    /// directory, the conventional meaning of a relative path and the same rule
+    /// <c>AppDataPaths</c> already applies to a relative <c>DAQIFI_DATA_DIR</c>.
+    /// </summary>
+    [Fact]
+    public void The_probe_path_for_a_relative_path_is_resolved_rather_than_rejected()
+    {
+        const string relative = "a-relative-daqifi-data-directory";
+
+        Assert.True(Path.IsPathRooted(DiskSpaceMonitor.ResolveVolumeProbePath(relative)));
+        Assert.InRange(DiskSpaceMonitor.GetAvailableFreeSpaceForPath(relative), 0, long.MaxValue - 1);
+    }
+
+    /// <summary>
+    /// A data directory that is a symlink (or, on Windows, a junction) onto another volume —
+    /// one of the two ordinary ways to move the store onto a bigger disk, the other being
+    /// <c>DAQIFI_DATA_DIR</c>. Unix would follow the link inside <c>statvfs</c> anyway; Windows
+    /// would not, because <c>DriveInfo</c> reduces a path to its drive letter lexically. So the
+    /// link is followed here, once, for both.
+    /// </summary>
+    [Fact]
+    public void The_probe_path_follows_a_symlinked_data_directory()
+    {
+        var target = CreateMarkedTempDirectory();
+        var link = Path.Combine(Path.GetTempPath(), "daqifi-diskspace-link-" + Guid.NewGuid().ToString("N"));
+        try
+        {
+            if (!TryCreateDirectorySymbolicLink(link, target))
+            {
+                // Creating a directory symlink needs Developer Mode or elevation on Windows and
+                // nothing at all anywhere else, so a refusal is only ever a Windows fact about
+                // the box — never a fact about the code under test.
+                Assert.True(OperatingSystem.IsWindows(),
+                    "creating a directory symlink should not be refused on this platform");
+                return;
+            }
+
+            var probePath = DiskSpaceMonitor.ResolveVolumeProbePath(link);
+
+            // Followed, not merely absolutised: the answer names the target, and the marker file
+            // proves it is the same directory.
+            Assert.NotEqual(Path.GetFullPath(link), probePath);
+            AssertIsTheMarkedDirectory(probePath, target);
+        }
+        finally
+        {
+            // Delete the link itself, never through it: a recursive delete on the link would take
+            // the target's contents with it on some platforms.
+            if (Directory.Exists(link) || new DirectoryInfo(link).LinkTarget is not null)
+            {
+                Directory.Delete(link);
+            }
+
+            Directory.Delete(target, recursive: true);
+        }
+    }
+
+    /// <summary>
+    /// The consequence, on a host that actually has a second volume: the provider reports that
+    /// volume's free space and not the root filesystem's. This is the reading the issue measured
+    /// against a 64 MB image mounted at <c>/Volumes/CRASHFUZZVOL</c>, where the old provider
+    /// answered 524 GB for a directory on a volume with 63 MB left — comfortably below the 50 MB
+    /// hard stop, and classified <c>Ok</c>.
+    /// <para>
+    /// The comparison is "nearer to one than to the other" rather than an equality with a
+    /// tolerance, because free space moves between two reads and a tolerance would have to guess
+    /// by how much. The two volumes are selected to differ by more than half a gigabyte, so the
+    /// question is never close.
+    /// </para>
+    /// </summary>
+    [Fact]
+    public void The_default_provider_measures_a_second_volume_rather_than_the_root_filesystem()
+    {
+        var rootFilesystem = new DriveInfo(Path.GetPathRoot(Path.GetFullPath(Path.GetTempPath()))!);
+        var secondVolume = FindAVolumeDistinctFrom(rootFilesystem);
+        if (secondVolume is null)
+        {
+            // A single-volume host — which is what CI is, and what a developer box usually is.
+            // The defect cannot be reproduced without somewhere else to write, and the
+            // resolution tests above pin the mechanism that causes it deterministically, so
+            // there is nothing further to assert here.
+            return;
+        }
+
+        var dataDirectory = Path.Combine(secondVolume.RootDirectory.FullName, "DAQiFi-not-created");
+
+        var measured = DiskSpaceMonitor.GetAvailableFreeSpaceForPath(dataDirectory);
+        var distanceToSecondVolume = Math.Abs(measured - secondVolume.AvailableFreeSpace);
+        var distanceToRootFilesystem = Math.Abs(measured - rootFilesystem.AvailableFreeSpace);
+
+        Assert.True(
+            distanceToSecondVolume < distanceToRootFilesystem,
+            $"the provider answered {measured} bytes for a directory on {secondVolume.RootDirectory.FullName} " +
+            $"({secondVolume.AvailableFreeSpace} free); the root filesystem has " +
+            $"{rootFilesystem.AvailableFreeSpace} free, and the answer is nearer to that one");
+    }
+
+    #endregion
+
+    #region Volume-resolution helpers
+
+    private const string MarkerFileName = "daqifi-volume-marker";
+
+    /// <summary>
+    /// A fresh temp directory holding a marker file, so that a path can be shown to BE this
+    /// directory without asserting on the exact string a resolution produced.
+    /// </summary>
+    private static string CreateMarkedTempDirectory()
+    {
+        var directory = Path.Combine(Path.GetTempPath(), "daqifi-diskspace-" + Guid.NewGuid().ToString("N"));
+        Directory.CreateDirectory(directory);
+        File.WriteAllText(Path.Combine(directory, MarkerFileName), string.Empty);
+        return directory;
+    }
+
+    private static void AssertIsTheMarkedDirectory(string probePath, string expectedDirectory) =>
+        Assert.True(
+            File.Exists(Path.Combine(probePath, MarkerFileName)),
+            $"the probe path '{probePath}' is not '{expectedDirectory}'");
+
+    /// <summary>
+    /// <c>true</c> if a directory symlink could be created. Only Windows refuses, and only for
+    /// want of Developer Mode or elevation.
+    /// </summary>
+    private static bool TryCreateDirectorySymbolicLink(string link, string target)
+    {
+        try
+        {
+            Directory.CreateSymbolicLink(link, target);
+            return true;
+        }
+        catch (Exception ex) when (ex is IOException or UnauthorizedAccessException)
+        {
+            return false;
+        }
+    }
+
+    /// <summary>
+    /// A mounted volume that is not <paramref name="other"/> and whose free space differs from it
+    /// by more than half a gigabyte, so the two readings cannot be confused. <c>null</c> on a
+    /// single-volume host.
+    /// </summary>
+    /// <remarks>
+    /// Candidates whose mount point is a symlink are rejected: the resolution under test follows
+    /// links, so such a mount would legitimately resolve somewhere else and the test would be
+    /// asserting against the wrong volume for a reason that has nothing to do with the fix.
+    /// </remarks>
+    private static DriveInfo? FindAVolumeDistinctFrom(DriveInfo other)
+    {
+        var otherFreeSpace = ReadableFreeSpace(other);
+        if (otherFreeSpace is null)
+        {
+            return null;
+        }
+
+        foreach (var drive in DriveInfo.GetDrives())
+        {
+            var root = drive.RootDirectory.FullName;
+            if (string.Equals(root, other.RootDirectory.FullName, StringComparison.Ordinal))
+            {
+                continue;
+            }
+
+            var freeSpace = ReadableFreeSpace(drive);
+            if (freeSpace is null or 0 || Math.Abs(freeSpace.Value - otherFreeSpace.Value) <= Mb(512))
+            {
+                continue;
+            }
+
+            if (!Directory.Exists(root) || new DirectoryInfo(root).LinkTarget is not null)
+            {
+                continue;
+            }
+
+            return drive;
+        }
+
+        return null;
+    }
+
+    /// <summary>
+    /// A drive's free space, or <c>null</c> for the pseudo-filesystems and unreadable mounts that
+    /// <see cref="DriveInfo.GetDrives"/> lists alongside the real ones.
+    /// </summary>
+    private static long? ReadableFreeSpace(DriveInfo drive)
+    {
+        try
+        {
+            return drive.IsReady ? drive.AvailableFreeSpace : null;
+        }
+        catch (Exception ex) when (ex is IOException or UnauthorizedAccessException or DriveNotFoundException)
+        {
+            return null;
+        }
     }
 
     #endregion
