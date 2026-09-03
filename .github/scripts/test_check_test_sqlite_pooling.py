@@ -188,61 +188,31 @@ public class ComparisonTests
 ''')
         check("comparing `.DataSource ==` passes", 0, run(tmp, seam, fixture))
 
-        # `DataSource` is an ordinary property name. A file that never touches SQLite
-        # cannot be building a SQLite connection string, so the assignment rule is
-        # scoped to files that mention it — otherwise this fails the build. Caught in
-        # review on #225.
-        write(fixture, '''
-namespace Daqifi.Avalonia.Tests.ViewModels;
-
-public class ChartBindingTests
-{
-    private void Bind()
-    {
-        var series = new LineSeries { DataSource = Rows };
-        series.DataSource = OtherRows;
-    }
-}
-''')
-        check("`DataSource =` in a file with no SQLite passes", 0,
-              run(tmp, seam, fixture))
-
-        # ...but the same assignment in a file that DOES touch SQLite is the real thing.
+        # A `DataSource =` assignment is rejected wherever it appears, WITHOUT trying to
+        # work out the receiver's type or whether the file mentions SQLite. Scoping it
+        # was tried during review of #225 and dropped, because the scope let a builder
+        # reached through a global using alias in another file go unchecked. `DataSource`
+        # appears exactly once in this repo outside the test project (the SQLite builder
+        # in DatabaseMigrator), so the false positive this accepts is hypothetical while
+        # the miss it refuses was not. See the standing bias in the guard's docstring.
         write(fixture, '''
 namespace Daqifi.Avalonia.Tests.Loggers;
 
-using Microsoft.Data.Sqlite;
-
-public class StillCaughtTests
+public class AliasedBuilderTests
 {
-    private void Build()
+    private string Build()
     {
-        var builder = new SqliteConnectionStringBuilder();
+        var builder = new Builder();
         builder.DataSource = DatabasePath;
+        return builder.ToString();
     }
 }
 ''')
-        check("`DataSource =` in a file that touches SQLite still fails", 1,
+        check("`DataSource =` is rejected without naming SQLite in the file", 1,
               run(tmp, seam, fixture))
 
-        # A `Data Source=` key split across two LINES lands on neither line's literal
-        # text, so the whole file's literal text is checked as well. Caught in review
-        # on #225.
-        write(fixture, '''
-namespace Daqifi.Avalonia.Tests.Loggers;
-
-public class SplitKeyTests
-{
-    private string Build() =>
-        "Data " +
-        "Source=" +
-        DatabasePath;
-}
-''')
-        check("a `Data Source=` key split across lines fails", 1,
-              run(tmp, seam, fixture))
-
-        # Split on ONE line already concatenates in that line's literal text.
+        # Split on ONE line concatenates into that line's literal text, so the spelling
+        # anyone would actually write is caught.
         write(fixture, '''
 namespace Daqifi.Avalonia.Tests.Loggers;
 
@@ -252,6 +222,39 @@ public class SameLineSplitTests
 }
 ''')
         check("a `Data Source=` key split on one line fails", 1,
+              run(tmp, seam, fixture))
+
+        # THE DOCUMENTED BOUNDARY, pinned so it cannot drift silently. A key split
+        # across LINES is not caught: the whole-file literal join that would catch it
+        # also reported two unrelated constants as one assembled connection string, and
+        # a key deliberately split across lines is evasion, not accident. If this case
+        # ever starts failing, that is a decision to make on purpose, not a bug.
+        write(fixture, '''
+namespace Daqifi.Avalonia.Tests.Loggers;
+
+public class SplitAcrossLinesTests
+{
+    private string Build() =>
+        "Data " +
+        "Source=" +
+        DatabasePath;
+}
+''')
+        check("a key split across LINES is a known, documented gap", 0,
+              run(tmp, seam, fixture))
+
+        # And the false positive that gap-closing attempt caused, pinned too.
+        write(fixture, '''
+namespace Daqifi.Avalonia.Tests.Loggers;
+
+public class UnrelatedConstantsTests
+{
+    private const string Heading = "Data ";
+    private const string Column = "Source=";
+    private string Label() => Heading + Column;
+}
+''')
+        check("unrelated literals are not read as one connection string", 0,
               run(tmp, seam, fixture))
         write(fixture, CLEAN_FIXTURE)
 
