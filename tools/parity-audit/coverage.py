@@ -28,7 +28,24 @@ import re
 import sys
 
 REPO = os.path.dirname(os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
-DEFAULT_UPSTREAM = "/Users/tylerkron/projects/daqifi/daqifi-desktop"
+
+
+def find_upstream():
+    """Locate a daqifi-desktop checkout by walking up from this repo.
+
+    Handles the plain checkout (sibling of daqifi-avalonia) and a git worktree
+    under .claude/worktrees/, where the sibling is several levels further up.
+    Returns None rather than guessing wrong; the caller then asks for the path.
+    """
+    d = REPO
+    while True:
+        cand = os.path.join(os.path.dirname(d), 'daqifi-desktop')
+        if os.path.isdir(os.path.join(cand, 'Daqifi.Desktop')):
+            return cand
+        parent = os.path.dirname(d)
+        if parent == d:
+            return None
+        d = parent
 
 NS_RE = re.compile(r'^\s*namespace\s+([A-Za-z0-9_.]+)\s*[;{]?\s*$')
 TYPE_RE = re.compile(
@@ -39,7 +56,10 @@ TYPE_RE = re.compile(
 MEMBER_RE = re.compile(
     r'^\s+(?:\[[^\]]*\]\s*)*'
     r'(?:public|internal)\s+'
-    r'(?:(?:static|virtual|override|async|sealed|partial|readonly|new|extern|unsafe)\s+)*'
+    # `const` and `volatile` belong here, not in the type slot: without them
+    # `public const int Foo = 1` parses `const` as the type and never matches.
+    r'(?:(?:static|virtual|override|async|sealed|partial|readonly|const|volatile'
+    r'|new|extern|unsafe|required|abstract)\s+)*'
     r'(?:[A-Za-z0-9_<>,\[\]\?\.]+)\s+'
     r'([A-Za-z0-9_]+)\s*[\(\{=]'
 )
@@ -108,15 +128,20 @@ def collect_upstream(upstream_root):
 def main():
     ap = argparse.ArgumentParser(
         description=__doc__, formatter_class=argparse.RawDescriptionHelpFormatter)
-    ap.add_argument('upstream', nargs='?', default=DEFAULT_UPSTREAM,
-                    help=f'daqifi-desktop checkout (default: {DEFAULT_UPSTREAM})')
+    ap.add_argument('upstream', nargs='?',
+                    help='daqifi-desktop checkout (default: found next to this repo)')
     ap.add_argument('--names', action='store_true',
                     help='only report candidates whose bare name is absent from the port')
     args = ap.parse_args()
 
-    up_proj = os.path.join(args.upstream, 'Daqifi.Desktop')
+    upstream = args.upstream or find_upstream()
+    if not upstream:
+        sys.exit("could not find a daqifi-desktop checkout next to this repo; "
+                 "pass its path: python3 tools/parity-audit/coverage.py <path>")
+
+    up_proj = os.path.join(upstream, 'Daqifi.Desktop')
     if not os.path.isdir(up_proj):
-        sys.exit(f"not a daqifi-desktop checkout: {args.upstream}")
+        sys.exit(f"not a daqifi-desktop checkout: {upstream}")
 
     port = os.path.join(REPO, 'Daqifi.Avalonia')
     linked_types, linked_members = collect_backlinks(port)

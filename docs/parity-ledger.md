@@ -41,9 +41,9 @@ drift before it can trust anything else.
 | Signal | Result |
 |---|---|
 | Views | WPF 22 XAML files → every one has an `.axaml` counterpart. Port adds 8 mobile views, 1 dialog, 1 resource dictionary. |
-| Command bindings | 65 distinct `Command=` bindings upstream, **0 absent** downstream; 13 new downstream. |
+| Command bindings | 67 distinct `Command=` bindings upstream, **0 absent** downstream; 13 new downstream. |
 | Types | 167 upstream types, **7** with no `@port:` backlink — all triaged below as non-gaps. |
-| Members | 606 upstream public/internal members, **19** with no backlink and no same-named symbol downstream — all triaged below. |
+| Members | 646 upstream public/internal members, **20** with no backlink and no same-named symbol downstream — all triaged below. |
 | User-visible labels | 9 upstream strings absent downstream, all renames/redesigns where the port is equal or richer. |
 
 Two signals earlier passes relied on are now spent and should not be re-run:
@@ -54,7 +54,7 @@ Two signals earlier passes relied on are now spent and should not be re-run:
   they read `// @port: <upstream fully-qualified symbol>`. Treating their count as a
   work queue was a false premise; their real value is enabling the coverage diff below.
 
-## Triage: the 26 unbacklinked symbols
+## Triage: the 27 unbacklinked symbols
 
 Reproduce with `python3 tools/parity-audit/coverage.py --names`.
 
@@ -89,6 +89,19 @@ the "port the capability, leave the scar tissue" rule working as intended.
 - `DeviceMessage.AnalogChannelCount` / `DigitalChannelCount` — only ever assigned `0`.
 - `ChannelBuffer.FirstSampleTicks` / `LastSampleTicks` and siblings — internal to the
   discarded buffer type above.
+
+**A defensive guard the port dropped (1).** `SessionDataRepository.FALLBACK_CHANNEL_COLOR`
+(`"#FF808080"`) — upstream substitutes it when a persisted sample row has no colour, so
+`OxyColor.Parse` cannot throw and abort a whole session load. The port passes `g.Color`
+straight through with no `??`
+(`Daqifi.Avalonia/Daqifi.Desktop/Loggers/SessionDataRepository.cs:164`).
+
+Recorded as a difference, **not filed as a gap**: both repos share the same
+`20250812090000_InitialSQLiteMigration` declaring `Color` as `nullable: false`, so a null
+cannot be produced through either app's own schema, and no failing case could be
+constructed. Note also that neither app guards the empty string, which `OxyColor.Parse`
+rejects just as hard — so this is at most equal-risk hardening, not a capability the WPF
+app has and this one lacks.
 
 ## Label differences, all in the port's favour
 
@@ -159,7 +172,11 @@ State these rather than round up:
   visual statement here comes from reading XAML, or from the Avalonia leg alone.
   A one-sided capture is not a parity comparison.
 - **The coverage diff is regex-based**, over declaration syntax rather than a
-  compiled symbol table. It finds candidates; each still needs reading by hand.
+  compiled symbol table. It finds candidates; each still needs reading by hand. Its
+  first revision silently skipped `const` declarations, which cost 40 members of the
+  denominator and hid one real difference (the fallback colour above) — so treat the
+  member regex as the part most likely to be wrong, and widen it before trusting a
+  zero.
 - **Behaviour behind a matching name is not verified.** A command that exists
   downstream is not proof it does the same thing. This ledger establishes that the
   *surface* is complete, not that every code path matches.
