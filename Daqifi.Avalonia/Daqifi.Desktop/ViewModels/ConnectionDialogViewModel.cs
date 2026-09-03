@@ -593,7 +593,13 @@ public partial class ConnectionDialogViewModel : ObservableObject
                 SerialConnectError =
                     $"Could not connect to '{device.Name}'. " +
                     "The device may be in use by another application or not responding.";
-                // Restart discovery so the dialog keeps finding devices after a failed connect attempt.
+                // Resume the discovery this method drained above, so the dialog is not left with a
+                // frozen list after a failed attempt. This does NOT clear AvailableSerialDevices, and
+                // deliberately so: the device that just failed is the one the user is most likely to
+                // retry, and blanking the list back to "Scanning…" would make them wait for it to be
+                // rediscovered first. Upstream does not clear here either. (The serial list is never
+                // cleared on finder recreate, unlike the WiFi one — a pre-existing asymmetry, see the
+                // clear in StartWiFiDiscovery.)
                 StartSerialDiscovery();
                 return;
             }
