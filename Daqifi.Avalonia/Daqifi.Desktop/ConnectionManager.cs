@@ -73,6 +73,19 @@ public partial class ConnectionManager : ObservableObject
     #endregion
 
     #region Properties
+    /// <summary>
+    /// The status of the most recent <see cref="Connect"/> call to reach a terminal state, as a
+    /// bindable process-wide signal (it drives <see cref="IsDisconnected"/> and
+    /// <see cref="ConnectionStatusString"/>, and mirrors the upstream WPF property this port
+    /// corresponds to).
+    /// </summary>
+    /// <remarks>
+    /// <b>Not a per-device result.</b> One field cannot answer "did <em>this</em> device connect?"
+    /// once two connects can overlap — and they can, because the connection dialog leaves all of
+    /// its Connect buttons live while one attempt is in flight. Callers must use the
+    /// <see cref="ConnectionAttemptResult"/> that <see cref="Connect"/> returns, which is bound to
+    /// the device that call was given. Reading this field after an await was issue #212.
+    /// </remarks>
     [ObservableProperty]
     private DAQiFiConnectionStatus _connectionStatus = DAQiFiConnectionStatus.Disconnected;
 
@@ -388,8 +401,31 @@ public partial class ConnectionManager : ObservableObject
 
     #endregion
 
+    /// <summary>
+    /// Connects <paramref name="device"/> and reports what happened to <em>that</em> device.
+    /// </summary>
+    /// <returns>
+    /// A result naming the device this call was given and the terminal status it reached. Callers
+    /// must branch on this rather than on <see cref="ConnectionStatus"/>, which any concurrent
+    /// attempt overwrites (issue #212).
+    /// </returns>
     // @port: Daqifi.Desktop.ConnectionManager.Connect
-    public async Task Connect(IStreamingDevice device)
+    public async Task<ConnectionAttemptResult> Connect(IStreamingDevice device)
+    {
+        var status = await RunConnectAttempt(device);
+
+        // Publishing the shared field is the LAST thing the attempt does, so the value a caller
+        // gets back cannot be a different device's. The field itself is still a race between
+        // overlapping attempts — it is one field — which is exactly why it is no longer the answer.
+        ConnectionStatus = status;
+        return new ConnectionAttemptResult(device, status);
+    }
+
+    /// <summary>
+    /// The connect itself, returning its own terminal status instead of publishing it. Every exit
+    /// is a <c>return</c>, so no path can leave the result to be inferred from shared state.
+    /// </summary>
+    private async Task<DAQiFiConnectionStatus> RunConnectAttempt(IStreamingDevice device)
     {
         try
         {
@@ -405,10 +441,10 @@ public partial class ConnectionManager : ObservableObject
                 AppLogger.Instance.Warning(
                     $"Refusing to connect USB device {device.Name} while a firmware update is in progress " +
                     "(the device reconnects itself after the flash).");
-                ConnectionStatus = DAQiFiConnectionStatus.Error;
-                return;
+                return DAQiFiConnectionStatus.Error;
             }
 
+            // Progress, not a result: this is the one write that is meant to be seen mid-flight.
             ConnectionStatus = DAQiFiConnectionStatus.Connecting;
 
             // Check for duplicate device before connecting
@@ -421,11 +457,9 @@ public partial class ConnectionManager : ObservableObject
                     switch (action)
                     {
                         case DuplicateDeviceAction.KeepExisting:
-                            ConnectionStatus = DAQiFiConnectionStatus.AlreadyConnected;
-                            return;
+                            return DAQiFiConnectionStatus.AlreadyConnected;
                         case DuplicateDeviceAction.Cancel:
-                            ConnectionStatus = DAQiFiConnectionStatus.Disconnected;
-                            return;
+                            return DAQiFiConnectionStatus.Disconnected;
                         case DuplicateDeviceAction.SwitchToNew:
                             // Disconnect the existing device and continue with connection
                             Disconnect(duplicateResult.ExistingDevice);
@@ -435,28 +469,25 @@ public partial class ConnectionManager : ObservableObject
                 else
                 {
                     // No handler set, default behavior is to reject the duplicate
-                    ConnectionStatus = duplicateResult.ExistingDevice != null ? DAQiFiConnectionStatus.AlreadyConnected : DAQiFiConnectionStatus.Error;
-                    return;
+                    return duplicateResult.ExistingDevice != null ? DAQiFiConnectionStatus.AlreadyConnected : DAQiFiConnectionStatus.Error;
                 }
             }
-            
+
             var isConnected = await Task.Run(() => device.Connect());
             if (!isConnected)
             {
-                ConnectionStatus = DAQiFiConnectionStatus.Error;
-                return;
+                return DAQiFiConnectionStatus.Error;
             }
-            
+
             // Check again after connection (in case serial number wasn't available before connect)
             var postConnectDuplicateResult = CheckForDuplicateDevice(device);
             if (postConnectDuplicateResult.IsDuplicate)
             {
                 // Disconnect the device we just connected since it's a duplicate
                 device.Disconnect();
-                ConnectionStatus = postConnectDuplicateResult.ExistingDevice != null ? DAQiFiConnectionStatus.AlreadyConnected : DAQiFiConnectionStatus.Error;
-                return;
+                return postConnectDuplicateResult.ExistingDevice != null ? DAQiFiConnectionStatus.AlreadyConnected : DAQiFiConnectionStatus.Error;
             }
-            
+
             // A transport that dies between device.Connect() returning and the loss handler going
             // live below is UNOBSERVABLE: there is no subscriber yet, and even with one the handler
             // would find the device not yet in ConnectedDevices and return. Subscribing earlier
@@ -471,8 +502,7 @@ public partial class ConnectionManager : ObservableObject
                     $"Device {device.DeviceDisplayName} connected but its transport was already gone " +
                     "before it could be accepted; reporting the connect as failed.");
                 device.Disconnect();
-                ConnectionStatus = DAQiFiConnectionStatus.Error;
-                return;
+                return DAQiFiConnectionStatus.Error;
             }
 
             ConnectedDevices.Add(device);
@@ -500,12 +530,10 @@ public partial class ConnectionManager : ObservableObject
                 AppLogger.Instance.Warning(
                     $"Device {device.DeviceDisplayName} dropped while its connection was settling; " +
                     "reporting the connect as failed rather than connected.");
-                ConnectionStatus = DAQiFiConnectionStatus.Error;
-                return;
+                return DAQiFiConnectionStatus.Error;
             }
 
             OnPropertyChanged("ConnectedDevices");
-            ConnectionStatus = DAQiFiConnectionStatus.Connected;
 
             var connectionType = device.ConnectionType == ConnectionType.Usb ? "usb" : "wifi";
             AppLogger.Instance.SetDeviceContext(
@@ -515,11 +543,13 @@ public partial class ConnectionManager : ObservableObject
                 connectionType,
                 ActiveChannelCount(device));
             AppLogger.Instance.AddBreadcrumb("device", $"Device connected: {device.Name} (S/N: {device.DeviceSerialNo}) via {connectionType}");
+
+            return DAQiFiConnectionStatus.Connected;
         }
         catch (Exception ex)
         {
             AppLogger.Instance.Error(ex, "Failed to Connect in Connection");
-            ConnectionStatus = DAQiFiConnectionStatus.Error;
+            return DAQiFiConnectionStatus.Error;
         }
     }
 
@@ -1270,6 +1300,43 @@ public enum DuplicateDeviceAction
     KeepExisting,
     SwitchToNew,
     Cancel
+}
+
+/// <summary>
+/// What one <see cref="ConnectionManager.Connect"/> call did, and which device it did it to.
+/// </summary>
+/// <remarks>
+/// Immutable and returned by value, so it cannot be overwritten by a connect that finishes later —
+/// which is the whole point of it existing. No app-level type without this shape can answer "did
+/// the device I just pressed Connect on actually connect?" while another attempt is in flight.
+/// </remarks>
+/// <param name="Device">The device this call was given.</param>
+/// <param name="Status">The terminal status that attempt reached.</param>
+public sealed record ConnectionAttemptResult(IStreamingDevice Device, DAQiFiConnectionStatus Status)
+{
+    /// <summary>
+    /// True when the user ended up with a connected device.
+    /// </summary>
+    /// <remarks>
+    /// <see cref="DAQiFiConnectionStatus.AlreadyConnected"/> counts as success and always has: the
+    /// user asked for a connected device and has one, so the dialog closes rather than showing an
+    /// error over a device sitting in the device list.
+    /// </remarks>
+    public bool IsConnected =>
+        Status is DAQiFiConnectionStatus.Connected or DAQiFiConnectionStatus.AlreadyConnected;
+
+    /// <summary>
+    /// True when the attempt ended because the user called it off, not because anything failed:
+    /// the only way <see cref="ConnectionManager.Connect"/> reports
+    /// <see cref="DAQiFiConnectionStatus.Disconnected"/> is <see cref="DuplicateDeviceAction.Cancel"/>
+    /// from the duplicate-device prompt (dismissing it counts).
+    /// </summary>
+    /// <remarks>
+    /// Worth a name of its own because it is neither outcome the caller would otherwise guess at.
+    /// Telling the user "could not connect" after they pressed Cancel blames the hardware for their
+    /// own decision, and closing the dialog on it acts on a connect they declined.
+    /// </remarks>
+    public bool WasCancelledByUser => Status is DAQiFiConnectionStatus.Disconnected;
 }
 
 // @port: Daqifi.Desktop.DAQiFiConnectionStatus

@@ -1,3 +1,4 @@
+using System.ComponentModel;
 using System.Reflection;
 using Daqifi.Core.Communication.Messages;
 using Daqifi.Desktop;
@@ -126,6 +127,37 @@ public class ConnectionDialogSerialConnectErrorTests : IDisposable
     }
 
     /// <summary>
+    /// Issue #212, at the surface the user sees it.
+    ///
+    /// <para>
+    /// The dialog leaves every tab's Connect button live while an attempt is in flight, so a second
+    /// connect can finish between this one failing and this one being reported. When the dialog read
+    /// the shared <c>ConnectionStatus</c> field to find out what happened, the value waiting for it
+    /// was the other connect's: it closed the dialog on a device that had failed, showing nothing,
+    /// and the device simply never appeared in the device list.
+    /// </para>
+    /// </summary>
+    [Fact]
+    public async Task A_connect_finishing_elsewhere_first_is_not_credited_to_this_device()
+    {
+        using var viewModel = CreateViewModel();
+        var closeRequested = false;
+        viewModel.Value.CloseRequested += (_, _) => closeRequested = true;
+
+        BlockUsbConnects();
+        using var elsewhere = new ConnectFinishingSuccessfullyElsewhere();
+
+        await ConnectSerialAsync(viewModel.Value, new SerialStreamingDevice("COM-TEST-A"));
+
+        Assert.False(
+            closeRequested,
+            "COM-TEST-A did not connect, so the dialog must stay open — another device's success is " +
+            "not this device's.");
+        Assert.NotNull(viewModel.Value.SerialConnectError);
+        Assert.Contains("COM-TEST-A", viewModel.Value.SerialConnectError);
+    }
+
+    /// <summary>
     /// The failure path restarts discovery so the list keeps refreshing after a failed attempt. It must
     /// still honour the firmware pause guard while doing so — otherwise recovering from a failed
     /// connect would sweep every COM port in the middle of a flash.
@@ -146,8 +178,51 @@ public class ConnectionDialogSerialConnectErrorTests : IDisposable
     /// Makes <c>ConnectionManager.Connect</c> refuse USB connects and report <c>Error</c> without
     /// opening anything, by claiming a firmware update is in flight.
     /// </summary>
-    private static void BlockUsbConnects() =>
+    private static void BlockUsbConnects()
+    {
+        ConnectionManager.Instance.ConnectionStatus = DAQiFiConnectionStatus.Disconnected;
         ConnectionManager.Instance.DeviceBeingUpdated = new TestDevice();
+    }
+
+    /// <summary>
+    /// A second connect that succeeds while the one under test is in flight — the WiFi tab's
+    /// Connect button, or a connect started from outside the dialog. Both are reachable: the dialog
+    /// disables nothing while an attempt runs.
+    /// </summary>
+    /// <remarks>
+    /// <para>
+    /// It is represented by the one effect it has on the code under test — a write of
+    /// <c>Connected</c> into the shared <c>ConnectionStatus</c> field, landing after this attempt's
+    /// own terminal write and before the dialog reads it. That ordering is what the defect turns
+    /// on; forcing the real thread interleaving that produces it would need a controlled scheduler
+    /// and would buy no extra coverage of the dialog. Subscribing to the manager's own
+    /// <c>PropertyChanged</c> is what puts the write in exactly that gap, because the field's setter
+    /// raises it synchronously.
+    /// </para>
+    /// <para>
+    /// Genuinely concurrent attempts are covered a level down, in
+    /// <c>ConnectionManagerConnectResultTests</c>, which runs two overlapping connects for real.
+    /// </para>
+    /// </remarks>
+    private sealed class ConnectFinishingSuccessfullyElsewhere : IDisposable
+    {
+        private bool _written;
+
+        public ConnectFinishingSuccessfullyElsewhere() =>
+            ConnectionManager.Instance.PropertyChanged += OnManagerPropertyChanged;
+
+        private void OnManagerPropertyChanged(object? sender, PropertyChangedEventArgs e)
+        {
+            if (_written || e.PropertyName != nameof(ConnectionManager.ConnectionStatus)) { return; }
+            if (ConnectionManager.Instance.ConnectionStatus != DAQiFiConnectionStatus.Error) { return; }
+
+            _written = true;
+            ConnectionManager.Instance.ConnectionStatus = DAQiFiConnectionStatus.Connected;
+        }
+
+        public void Dispose() =>
+            ConnectionManager.Instance.PropertyChanged -= OnManagerPropertyChanged;
+    }
 
     /// <summary>
     /// Invokes the dialog's private serial-connect handler the way the Connect button's command does,
