@@ -77,8 +77,9 @@ public partial class ConnectionDialogViewModel : ObservableObject
 
     /// <summary>
     /// How this view model creates the serial finder. Nothing in the app ever reassigns it — it is a
-    /// field rather than a direct <c>new</c> only so a test can replace it by reflection, the same
-    /// seam and for the same kind of reason as <see cref="_marshalToUiThread"/> above.
+    /// field rather than a direct <c>new</c> only so a test can replace it by reflection (not
+    /// <c>readonly</c>, because reflection may refuse an init-only field), the same seam and for the
+    /// same kind of reason as <see cref="_marshalToUiThread"/> above.
     /// </summary>
     /// <remarks>
     /// A real <c>SerialDeviceFinder</c> opens every DAQiFi VID/PID COM port on the machine the moment
@@ -665,8 +666,10 @@ public partial class ConnectionDialogViewModel : ObservableObject
                 return;
             }
 
+            // Named off the result, not off the loop variable: the message and the outcome it
+            // describes then cannot come from two different devices, whatever else is in flight.
             SerialConnectError =
-                $"Could not connect to '{device.Name}'. " +
+                $"Could not connect to '{result.Device.Name}'. " +
                 "The device may be in use by another application or not responding.";
             // Resume the discovery this method drained above, so the dialog is not left with a
             // frozen list after a failed attempt, and deliberately WITHOUT clearing the list: the

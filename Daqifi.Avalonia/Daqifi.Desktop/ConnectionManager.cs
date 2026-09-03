@@ -410,6 +410,8 @@ public partial class ConnectionManager : ObservableObject
     /// attempt overwrites (issue #212).
     /// </returns>
     // @port: Daqifi.Desktop.ConnectionManager.Connect
+    // Signature divergence: upstream returns void/Task and leaves callers to read ConnectionStatus.
+    // This port returns the attempt's own result, because its callers can overlap (issue #212).
     public async Task<ConnectionAttemptResult> Connect(IStreamingDevice device)
     {
         var status = await RunConnectAttempt(device);
