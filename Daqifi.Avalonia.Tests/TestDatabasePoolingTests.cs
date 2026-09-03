@@ -10,10 +10,13 @@ namespace Daqifi.Avalonia.Tests;
 /// <para>Pooling is what exposes a test to the process-global
 /// <see cref="SqliteConnection.ClearAllPools"/> that the app's own <c>DatabaseMigrator</c> calls
 /// on almost every path these tests drive — see the note on <see cref="TestDatabase"/> for the
-/// window it opens and the <c>ObjectDisposedException</c> it produces in an unrelated test. The
-/// two assertions below are cheap, deterministic, and the only kind of check that can catch the
-/// regression: the failure they prevent is rare enough (issue #210 saw it once in 32 full-suite
-/// runs) that no amount of running the suite would reliably notice pooling coming back.</para>
+/// window it opens and the <c>ObjectDisposedException</c> it produces in an unrelated test.</para>
+///
+/// <para>These two assertions are deterministic, which is the point. The failure they prevent is
+/// not: the reporter saw it once in 32 full-suite runs, and it has since been chased for 348 more
+/// runs on that machine without appearing once (issue #210 records the counts). So RUNNING it is
+/// not a check on this — the suite is equally green pooled or unpooled, and would stay green for
+/// months with the race wide open. Asserting on the connection string is.</para>
 /// </summary>
 public sealed class TestDatabasePoolingTests
 {

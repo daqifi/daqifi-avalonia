@@ -41,8 +41,13 @@ namespace Daqifi.Avalonia.Tests;
 /// and it is scoped to exactly that one class. Do not "simplify" it away — <c>App.ServiceProvider</c>
 /// is static, so an app host cannot be made per-test.</para>
 ///
-/// <para>Pinned by <c>TestDatabasePoolingTests</c>, which is what fails if a future fixture
-/// grows its own connection string instead of coming through here.</para>
+/// <para>Two different things hold this, because one check cannot reach both.
+/// <c>TestDatabasePoolingTests</c> pins THIS CLASS — that what it hands out is actually unpooled,
+/// on both the raw and the EF path. It cannot see a fixture that never asks: a new class writing
+/// its own <c>Data source=</c> would re-pool the suite and every test would still pass. That half
+/// is held at the source level by <c>.github/scripts/check_test_sqlite_pooling.py</c>, which fails
+/// the build if anything under <c>Daqifi.Avalonia.Tests/</c> names a data source outside this file
+/// or calls <c>ClearAllPools</c> at all.</para>
 /// </summary>
 internal static class TestDatabase
 {

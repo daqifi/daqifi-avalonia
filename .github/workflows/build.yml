@@ -172,6 +172,16 @@ jobs:
           dotnet build tools/parity-audit/AvaloniaCapture/AvaloniaCapture.csproj \
             -c Release --no-restore
 
+      # Runs BEFORE the suite, because it is the one #210 invariant the suite cannot
+      # check on itself. The tests assert that TestDatabase hands out unpooled
+      # connections; nothing at runtime can notice a NEW fixture that never asks it and
+      # quietly re-pools the process. Green tells you nothing here — the flake has been
+      # chased for 348 full runs without appearing — so the source is where it is held.
+      # Self-tested in the scripts job like every other guard; run in place here, next
+      # to the step whose verdict it gates.
+      - name: Guard — the unit suite opens no pooled SQLite connection
+        run: python3 .github/scripts/check_test_sqlite_pooling.py --glob
+
       # The unit suite. `dotnet test` builds Daqifi.Avalonia.Tests itself, so this is
       # also that project's compile gate — there is no separate build line for it above.
       #
