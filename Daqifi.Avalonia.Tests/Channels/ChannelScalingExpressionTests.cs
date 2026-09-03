@@ -162,7 +162,10 @@ public class ChannelScalingExpressionTests
     [InlineData("Pow(x, 2)", 3.0, 9.0)]
     [InlineData("Round(x, 1)", 2.349, 2.3)]
     [InlineData("Max(x, 0)", -5.0, 0.0)]
-    [InlineData("Min(x, 0)", -5.0, -5.0)]
+    // Min feeds 5 rather than -5 so the expected value differs from the raw input: a case whose
+    // expectation equals its input still passes when scaling silently stops being applied at all,
+    // which is the one drift these tests exist to catch.
+    [InlineData("Min(x, 0)", 5.0, 0.0)]
     public void Built_in_functions_keep_their_meaning(string expression, double raw, double expected)
     {
         Assert.Equal(expected, Push(Scaled(expression), raw), precision: 10);
