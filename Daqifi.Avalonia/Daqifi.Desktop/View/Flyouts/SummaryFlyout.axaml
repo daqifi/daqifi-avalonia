@@ -69,7 +69,16 @@
         </Grid>
 
         <HeaderedContentControl Grid.Row="1" Header="SETTINGS" Theme="{StaticResource GroupBoxTheme}">
-            <Grid Margin="15" ColumnDefinitions="150,*,75" RowDefinitions="Auto,Auto,Auto">
+            <!--
+                Two columns, both content-sized, because the flyout pane is a fixed 380px
+                (MainWindow's SplitView OpenPaneLength) and the longest label here is wider
+                than any number picked in advance: a pinned label column clipped it, and a
+                pinned button column then squeezed the middle until the ToggleSwitch's
+                "Stopped" ran under Reset. Reset is an action on the whole box rather than a
+                third field, so it sits on its own row instead of competing for that width.
+            -->
+            <Grid Margin="15" ColumnDefinitions="Auto,*" RowDefinitions="Auto,Auto,Auto,Auto"
+                  ColumnSpacing="8" RowSpacing="8">
                 <TextBlock Grid.Row="0" Grid.Column="0" Classes="cellHeader" Text="Log Session"/>
                 <TextBlock Grid.Row="0" Grid.Column="1" Classes="cell"
                            Text="{Binding SelectedLoggingSession.Name}" TextAlignment="Center"/>
@@ -77,17 +86,18 @@
                 <!-- Refresh cadence, not a window size: the measurement window itself runs until
                      Reset. Core's AcquisitionStatistics accumulates continuously, so this only
                      decides how often the figures below are re-read. -->
-                <TextBlock Grid.Row="1" Grid.Column="0" Classes="cellHeader" Text="Refresh Every (msgs)" Margin="5"/>
+                <TextBlock Grid.Row="1" Grid.Column="0" Classes="cellHeader" Text="Refresh Every (msgs)"/>
                 <NumericUpDown Grid.Row="1" Grid.Column="1"
                                Value="{Binding SummaryLogger.SampleSize}"
-                               Minimum="1" Increment="1" Width="150" HorizontalAlignment="Left"/>
+                               Minimum="1" Increment="1"/>
 
-                <TextBlock Grid.Row="2" Grid.Column="0" Classes="cellHeader" Text="Status" Margin="5"/>
+                <TextBlock Grid.Row="2" Grid.Column="0" Classes="cellHeader" Text="Status"/>
                 <ToggleSwitch Grid.Row="2" Grid.Column="1"
                               Command="{Binding SummaryLogger.ToggleEnabledCommand}"
                               IsChecked="{Binding SummaryLogger.Enabled, Mode=OneWay}"
                               OffContent="Stopped" OnContent="Running" HorizontalAlignment="Left"/>
-                <Button Grid.Row="2" Grid.Column="2" Content="Reset" Command="{Binding SummaryLogger.ResetCommand}"/>
+                <Button Grid.Row="3" Grid.Column="1" Content="Reset" HorizontalAlignment="Right"
+                        Command="{Binding SummaryLogger.ResetCommand}"/>
             </Grid>
         </HeaderedContentControl>
 

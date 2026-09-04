@@ -304,6 +304,19 @@ captures once and verifies against the one for the current host, failing on a ch
 screen, a missing one, and one the baseline does not list (`shasum -c` only checks the
 names it was given, so the extra-file direction is checked separately).
 
+`desktop-9-summary-flyout.png` alone was re-recorded 2026-09-03 for #228 (same host and
+environment as the #213 line below), which unclips the Log Summary SETTINGS label and
+moves Reset off the status toggle. **One** hash moved: the other twenty-three, including
+every mobile and dialog screen, are byte-for-byte unchanged against the pre-fix capture —
+which is the evidence that a fix inside one flyout's grid did not reach anything else.
+Five `--determinism` runs agreed 24/24 before the change and five after, and the pre-fix
+capture matched the then-committed manifest on all 24, so the recorded bytes are the ones
+that were shipping. The recording is **not** single-host: on the PR that made it, the
+`macos-latest` runner (macOS 26.5.2 / 25F84, `macos26/20260728.0273.1`) passed its own
+five-run determinism check 24/24 and then reproduced this manifest, new hash included —
+so the cross-machine agreement described further down holds for the re-recorded screen
+too, rather than being inherited from the recording that preceded it.
+
 `macos-arm64.sha256` was extended 2026-09-03 for #213 (macOS 26.5 build 25F71, Apple
 silicon, .NET SDK 10.0.302, Avalonia 12.1.1) with the six `dialog-*` screens, after 10
 consecutive `--determinism` runs on that host agreed 24/24. That recording is **purely
