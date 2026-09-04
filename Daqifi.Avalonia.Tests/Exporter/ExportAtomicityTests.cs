@@ -226,6 +226,36 @@ public sealed class ExportAtomicityTests : IDisposable
         AssertNoLeftovers();
     }
 
+    /// <summary>
+    /// The staging file has to be one the export itself created, never a path it assumed was free.
+    /// Staging both truncates and deletes, so a predictable name would let an export destroy a file
+    /// the app did not write — this bug again, one filename removed — and would let two exports of
+    /// one destination clobber each other's staged rows. A decoy sitting at the obvious staging path
+    /// must therefore come through untouched, whether the export finishes or is cancelled.
+    /// </summary>
+    [Theory]
+    [InlineData(true)]
+    [InlineData(false)]
+    public void An_export_does_not_touch_a_file_that_merely_looks_like_its_staging_file(bool cancelled)
+    {
+        const string decoyContent = "someone else's file";
+        var session = SeedSession("AI0", 1.25);
+        var destination = Path.Combine(_root, "readings.csv");
+        var decoyName = "readings.csv.exporting";
+        File.WriteAllText(Path.Combine(_root, decoyName), decoyContent);
+
+        using var cts = new CancellationTokenSource();
+        var exporter = new OptimizedLoggingSessionExporter(cancelled ? CancelOnceWriting(cts) : _contexts);
+
+        void Export() => exporter.ExportLoggingSession(
+            session, destination, exportRelativeTime: false, new Progress<int>(), cts.Token, 0, 1);
+
+        if (cancelled) { Assert.ThrowsAny<OperationCanceledException>(Export); } else { Export(); }
+
+        Assert.Equal(decoyContent, File.ReadAllText(Path.Combine(_root, decoyName)));
+        AssertNoLeftovers(decoyName);
+    }
+
     /// <summary>The destination still holds exactly what the previous export put there.</summary>
     private void AssertDestinationUntouched(string destination)
     {
@@ -234,13 +264,16 @@ public sealed class ExportAtomicityTests : IDisposable
         AssertNoLeftovers();
     }
 
-    /// <summary>No staging file was abandoned in the destination's folder. Only the database and,
-    /// where a test wrote one, the destination itself belong there.</summary>
-    private void AssertNoLeftovers()
+    /// <summary>No staging file was abandoned beside the destination. Matched by prefix rather than
+    /// against a whole-directory listing so the assertion cannot be tripped by SQLite's own
+    /// transient <c>-journal</c>/<c>-wal</c> files, which have nothing to do with the export.</summary>
+    /// <param name="alsoExpected">A sibling the test itself put there and expects to survive.</param>
+    private void AssertNoLeftovers(string? alsoExpected = null)
     {
         var stray = Directory.GetFiles(_root)
             .Select(Path.GetFileName)
-            .Where(name => name is not ("DAQiFiDatabase.db" or "readings.csv"))
+            .Where(name => name!.StartsWith("readings.csv", StringComparison.Ordinal))
+            .Where(name => name != "readings.csv" && name != alsoExpected)
             .ToArray();
         Assert.True(stray.Length == 0, $"the export abandoned {string.Join(", ", stray)}");
     }
