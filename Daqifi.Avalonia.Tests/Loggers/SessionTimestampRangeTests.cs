@@ -24,9 +24,9 @@ namespace Daqifi.Avalonia.Tests.Loggers;
 /// <item>a row BELOW the range (negative) is the session minimum, so it is the value converted — that
 /// throws <see cref="ArgumentOutOfRangeException"/> out of the load and the session will not open;</item>
 /// <item>a row ABOVE the range (e.g. <c>long.MaxValue</c>) is never the minimum when any healthy row
-/// exists, so nothing throws. It is plotted, at a delta-time of about 29,000 years, which stretches the
+/// exists, so nothing throws. It is plotted, at a delta-time of about 27,000 years, which stretches the
 /// X axis so far that the real data collapses into a single vertical line at the origin. The session
-/// "loads", and is unreadable. See <see cref="A_sample_above_the_range_is_silently_plotted_29000_years_out"/>.</item>
+/// "loads", and is unreadable. See <see cref="A_sample_above_the_range_is_silently_plotted_27000_years_out"/>.</item>
 /// </list>
 ///
 /// <para>The fix skips unreadable rows rather than clamping them, because a clamped origin would shift
@@ -39,8 +39,10 @@ namespace Daqifi.Avalonia.Tests.Loggers;
 /// the current schema can hold one. <see cref="A_session_database_can_hold_a_tick_value_no_date_can_represent"/>
 /// builds such a file rather than assuming it.</para>
 ///
-/// <para>Seven of the fourteen tests here fail against the unchanged code. Measured by running this
-/// file against the merge base, not by reasoning about which ones ought to fail.</para>
+/// <para>Thirteen of the seventeen cases here fail against the unchanged code: ten throw
+/// <see cref="ArgumentOutOfRangeException"/> out of the load, and three fail on an assertion having
+/// thrown nothing at all — the silent variant above. Measured by running this file against the merge
+/// base, not by reasoning about which ones ought to fail.</para>
 /// </summary>
 public sealed class SessionTimestampRangeTests : IDisposable
 {
@@ -108,22 +110,24 @@ public sealed class SessionTimestampRangeTests : IDisposable
     /// <summary>
     /// The headline for the high end, and the failure mode the issue said did not exist. With any
     /// healthy row present, an above-range row is not the session minimum, so nothing converts it and
-    /// nothing throws — it is simply plotted, ~9.2e14 ms (about 29,000 years) from the origin.
+    /// nothing throws — it is simply plotted. Unfixed, this fails on the delta-time assertion with
+    /// <c>858434381285477.6 ms</c>, about 27,000 years past the origin, which stretches the X axis far
+    /// enough that the real data collapses to a vertical line at zero.
     /// </summary>
     /// <remarks>
-    /// This is the one that made "skip" the right remedy rather than "clamp". A clamp only moves the
-    /// problem: the point still lands 29,000 years out, and clamping the ORIGIN instead would push
+    /// This is the one that made "skip" the right remedy rather than "clamp". Clamping the row's own
+    /// timestamp still leaves the point in the wrong place, and clamping the ORIGIN instead would push
     /// every healthy point out there together.
     /// </remarks>
     [Fact]
-    public void A_sample_above_the_range_is_silently_plotted_29000_years_out()
+    public void A_sample_above_the_range_is_silently_plotted_27000_years_out()
     {
         Seed(HealthyTicks, HealthyTicks + 10_000L, long.MaxValue);
 
         var points = Assert.Single(Repository().LoadInitialSession(SessionId).Points).Value;
 
-        Assert.Equal(2, points.Count);
         Assert.All(points, p => Assert.True(p.X < 1_000.0, $"delta-time {p.X} ms is not from a healthy row"));
+        Assert.Equal(2, points.Count);
     }
 
     /// <summary>
@@ -380,7 +384,10 @@ public sealed class SessionTimestampRangeTests : IDisposable
 
         public void Error(Exception ex, string message) { }
 
-        public void AddBreadcrumb(string category, string message, BreadcrumbLevel level = BreadcrumbLevel.Info) { }
+        public void AddBreadcrumb(
+            string category,
+            string message,
+            Daqifi.Desktop.Common.Loggers.BreadcrumbLevel level = Daqifi.Desktop.Common.Loggers.BreadcrumbLevel.Info) { }
 
         public void SetDeviceContext(string model, string serialNumber, string firmwareVersion, string connectionType, int activeChannels) { }
 

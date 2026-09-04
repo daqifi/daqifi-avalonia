@@ -3,10 +3,12 @@
 // DO NOT manually delete the `// @port:` markers — they link symbols back to
 // the correspondence map.
 
+using Daqifi.Desktop.Channel;
 using Daqifi.Desktop.Common.Loggers;
 using Daqifi.Desktop.Helpers;
 using Microsoft.EntityFrameworkCore;
 using OxyPlot;
+using System.Data.Common;
 using System.Diagnostics;
 using ChannelType = Daqifi.Core.Channel.ChannelType;
 
@@ -29,8 +31,13 @@ internal sealed record SessionChannelInfo(string ChannelName, string DeviceSeria
 /// </summary>
 /// <param name="Channels">Channels discovered at the first timestamp, naturally ordered and de-duplicated.</param>
 /// <param name="Points">One point list per discovered channel, filled with up to the initial-load cap of samples.</param>
-/// <param name="FirstTime">The session's earliest timestamp (the delta-time origin), or null for an empty session.</param>
-/// <param name="TotalSampleCount">Count of every sample row in the session.</param>
+/// <param name="FirstTime">The session's earliest readable timestamp (the delta-time origin), or null for an empty session.</param>
+/// <param name="TotalSampleCount">
+/// Count of the session's sample rows that can be placed on a time axis. Rows whose stored tick value
+/// is not a representable date are excluded, because this count is what the caller compares against
+/// <see cref="SessionDataRepository.INITIAL_LOAD_POINTS"/> to decide whether a full-range load is
+/// needed, and rows that will never be drawn must not drive that decision (#237).
+/// </param>
 // @port: Daqifi.Desktop.Logger.InitialSessionLoad
 internal sealed record InitialSessionLoad(
     IReadOnlyList<SessionChannelInfo> Channels,
@@ -82,6 +89,28 @@ public sealed class SessionDataRepository
     /// loaded" decision stays consistent with how this repository samples.
     /// </summary>
     internal const int SAMPLED_POINTS_PER_CHANNEL = 3000;
+
+    /// <summary>
+    /// The stored tick values this repository can put on a time axis — exactly what
+    /// <c>new DateTime(long)</c> accepts.
+    /// <para>
+    /// The guard exists because the stored value is not trustworthy. <c>Samples.TimestampTicks</c> is a
+    /// plain SQLite <c>INTEGER</c> with no <c>CHECK</c> constraint, so it holds anything a
+    /// <see cref="long"/> can. No current write path can put an unreadable value there — every producer
+    /// starts from a <see cref="DateTime"/> — but SQLite does not re-validate rows already sitting in an
+    /// existing database file, so a store written before the current schema can (issue #237; the same
+    /// reachability argument #231 makes for <c>Samples.Color</c>).
+    /// </para>
+    /// <para>
+    /// Rows outside the range are SKIPPED rather than clamped. The plot's X axis is a delta from the
+    /// session's first timestamp, so clamping would move the origin and shift every point on the graph
+    /// — trading a load that fails loudly for one that succeeds and is wrong.
+    /// </para>
+    /// </summary>
+    private static readonly long MIN_READABLE_TICKS = DateTime.MinValue.Ticks;
+
+    /// <summary>Upper end of the range described on <see cref="MIN_READABLE_TICKS"/>.</summary>
+    private static readonly long MAX_READABLE_TICKS = DateTime.MaxValue.Ticks;
     #endregion
 
     #region Private Fields
@@ -115,6 +144,14 @@ public sealed class SessionDataRepository
     /// via <see cref="DeduplicateChannelInfo"/> — a degenerate session must not materialize thousands
     /// of rows just to discover its channels, nor abort the whole load on a duplicate key (#572).
     /// </para>
+    /// <para>
+    /// Samples whose stored tick value is outside <see cref="MIN_READABLE_TICKS"/>..<see cref="MAX_READABLE_TICKS"/>
+    /// are skipped and reported once, rather than converted (#237). They are excluded before channel
+    /// discovery on purpose: discovery keys off the session's first timestamp, so a damaged row sorting
+    /// below the real data would otherwise BE that timestamp, and only the channel on that row would be
+    /// discovered — every other channel's samples are then dropped, because a point list is seeded only
+    /// for the channels found here.
+    /// </para>
     /// </summary>
     /// <param name="sessionId">The session to load.</param>
     /// <returns>The discovered channels, their seeded-and-filled point lists, the first timestamp, and the total sample count.</returns>
@@ -127,20 +164,51 @@ public sealed class SessionDataRepository
         var baseQuery = context.Samples.AsNoTracking()
             .Where(s => s.LoggingSessionID == sessionId);
 
-        // Get the first timestamp to extract channel info (instant via composite index)
-        var firstSample = baseQuery
-            .OrderBy(s => s.TimestampTicks)
-            .Select(s => new { s.TimestampTicks })
-            .FirstOrDefault();
+        // Everything below reads the session through this, so a row the time axis cannot hold is gone
+        // before anything can convert or plot it.
+        var readableQuery = baseQuery
+            .Where(s => s.TimestampTicks >= MIN_READABLE_TICKS && s.TimestampTicks <= MAX_READABLE_TICKS);
 
-        if (firstSample == null)
+        // The session's stored tick bounds, read UNFILTERED and only so that skipping can be reported.
+        // Both are one ordered row off the composite index — the same "instant" seek the first-timestamp
+        // read here has always been, taken from each end. Deliberately not a second COUNT: that would
+        // have added a whole index pass to every healthy load to detect a row almost no load has.
+        var lowestTicks = FirstTicks(baseQuery, descending: false);
+        if (lowestTicks is null)
         {
             return InitialSessionLoad.Empty;
         }
 
+        var highestTicks = FirstTicks(baseQuery, descending: true);
+        var hasUnreadableRows = lowestTicks < MIN_READABLE_TICKS || highestTicks > MAX_READABLE_TICKS;
+        if (hasUnreadableRows)
+        {
+            // A skipped sample is a dropped data point, so it may not be silent — this is what explains
+            // a shorter graph to whoever looks. Once per load, naming the session.
+            _appLogger.Warning(
+                $"Session {sessionId}: sample timestamps outside the range a date can represent " +
+                $"(stored ticks {lowestTicks}..{highestTicks}); those samples are skipped and the " +
+                "rest of the session is loaded.");
+        }
+
+        // With nothing out of range the readable minimum IS the session minimum already read above, so
+        // only a damaged session pays for the third seek.
+        var firstReadableTicks = hasUnreadableRows
+            ? FirstTicks(readableQuery, descending: false)
+            : lowestTicks;
+
+        if (firstReadableTicks is null)
+        {
+            // Every row in the session is unreadable. Same answer as a session with no samples, which
+            // the callers already handle.
+            return InitialSessionLoad.Empty;
+        }
+
+        var firstTicks = firstReadableTicks.Value;
+
         // Collapse duplicate (serial, channel) rows at the first timestamp in SQL.
-        var channelGroups = baseQuery
-            .Where(s => s.TimestampTicks == firstSample.TimestampTicks)
+        var channelGroups = readableQuery
+            .Where(s => s.TimestampTicks == firstTicks)
             .GroupBy(s => new { s.DeviceSerialNo, s.ChannelName })
             .Select(g => new
             {
@@ -172,17 +240,19 @@ public sealed class SessionDataRepository
             points[(channel.DeviceSerialNo, channel.ChannelName)] = [];
         }
 
-        // Load initial batch for fast display (100K rows, ~16ms via index)
-        DateTime? firstTime = null;
-        foreach (var sample in baseQuery
+        // Load initial batch for fast display (100K rows, ~16ms via index). The origin is known before
+        // the loop starts — it is the readable minimum, and the batch is ordered by the same column —
+        // so the delta is a subtraction of two values already inside the DateTime range and cannot
+        // overflow.
+        var firstTime = new DateTime(firstTicks);
+        foreach (var sample in readableQuery
             .OrderBy(s => s.TimestampTicks)
             .Select(s => new { s.ChannelName, s.DeviceSerialNo, s.TimestampTicks, s.Value })
             .Take(INITIAL_LOAD_POINTS)
             .AsEnumerable())
         {
             var key = (sample.DeviceSerialNo, sample.ChannelName);
-            firstTime ??= new DateTime(sample.TimestampTicks);
-            var deltaTime = (sample.TimestampTicks - firstTime.Value.Ticks) / 10000.0;
+            var deltaTime = (sample.TimestampTicks - firstTicks) / 10000.0;
 
             if (points.TryGetValue(key, out var channelPoints))
             {
@@ -190,10 +260,28 @@ public sealed class SessionDataRepository
             }
         }
 
-        var totalSampleCount = baseQuery.Count();
+        var totalSampleCount = readableQuery.Count();
 
         return new InitialSessionLoad(channels, points, firstTime, totalSampleCount);
     }
+
+    /// <summary>
+    /// The lowest (or, <paramref name="descending"/>, the highest) <c>TimestampTicks</c> in
+    /// <paramref name="samples"/>, or null when it is empty.
+    /// </summary>
+    /// <remarks>
+    /// Ordered-and-take-one rather than <c>MIN</c>/<c>MAX</c>, because that is the form SQLite is
+    /// certain to answer off <c>IX_Samples_LoggingSessionID_TimestampTicks</c> without walking the
+    /// session — it walks the index from whichever end is asked for and stops at the first row. The
+    /// aggregate form only avoids the walk when SQLite's min/max optimization applies, which the
+    /// session filter is not guaranteed to leave available.
+    /// </remarks>
+    private static long? FirstTicks(IQueryable<DataSample> samples, bool descending) =>
+        (descending
+            ? samples.OrderByDescending(s => s.TimestampTicks)
+            : samples.OrderBy(s => s.TimestampTicks))
+        .Select(s => (long?)s.TimestampTicks)
+        .FirstOrDefault();
 
     /// <summary>
     /// Collapses duplicate (device serial, channel name) rows to a single entry,
@@ -222,11 +310,17 @@ public sealed class SessionDataRepository
     /// seeks to each segment boundary via the composite index. Each seek
     /// reads one batch of interleaved channel data (~channelCount rows).
     /// Result: ~3000 points per channel in ~1-3 seconds regardless of total dataset size.
+    /// <para>
+    /// Samples outside <see cref="MIN_READABLE_TICKS"/>..<see cref="MAX_READABLE_TICKS"/> are excluded
+    /// from both the bounds query and the seeks, the same skip <see cref="LoadInitialSession"/> applies
+    /// (#237). Nothing is logged here: both callers run Phase 1 on the session first, and it has already
+    /// named it.
+    /// </para>
     /// </summary>
     /// <param name="sessionId">The session to load.</param>
     /// <param name="channelCount">Number of channels, used to size each seek batch.</param>
     /// <param name="localPoints">Pre-seeded (one entry per channel key) point lists to fill.</param>
-    /// <returns>The session's first timestamp, or null when the session has no usable time range.</returns>
+    /// <returns>The session's first readable timestamp, or null when the session has no usable time range.</returns>
     // @port: Daqifi.Desktop.Logger.SessionDataRepository.LoadSampledData
     public DateTime? LoadSampledData(
         int sessionId,
@@ -237,18 +331,21 @@ public sealed class SessionDataRepository
         var connection = context.Database.GetDbConnection();
         connection.Open();
 
-        // Get time bounds via index (instant)
+        // Get time bounds via index (instant). Bounding both ends by the readable range is what keeps
+        // `new DateTime(minTicks)` below from throwing, and it also settles the seek arithmetic: with
+        // minTicks and maxTicks both inside the DateTime range, `minTicks + i * tickStep` stays below
+        // maxTicks by construction and cannot leave `long`.
         long minTicks, maxTicks;
         using (var boundsCmd = connection.CreateCommand())
         {
             boundsCmd.CommandText = @"
                 SELECT MIN(TimestampTicks), MAX(TimestampTicks)
                 FROM Samples
-                WHERE LoggingSessionID = @id";
-            var idParam = boundsCmd.CreateParameter();
-            idParam.ParameterName = "@id";
-            idParam.Value = sessionId;
-            boundsCmd.Parameters.Add(idParam);
+                WHERE LoggingSessionID = @id
+                  AND TimestampTicks BETWEEN @minReadable AND @maxReadable";
+            AddParameter(boundsCmd, "@id", sessionId);
+            AddParameter(boundsCmd, "@minReadable", MIN_READABLE_TICKS);
+            AddParameter(boundsCmd, "@maxReadable", MAX_READABLE_TICKS);
 
             using var reader = boundsCmd.ExecuteReader();
             if (!reader.Read() || reader.IsDBNull(0))
@@ -270,29 +367,23 @@ public sealed class SessionDataRepository
         // Read at least channelCount rows per seek to get one sample per channel
         var batchSize = Math.Max(channelCount * 2, 100);
 
-        // Prepared statement for repeated seeks
+        // Prepared statement for repeated seeks. Only the upper end of the readable range is restated:
+        // @t never falls below minTicks, which the bounds query has already put inside the range, so a
+        // row below it cannot come back — but a row above it can, since the seek is open-ended.
         using var seekCmd = connection.CreateCommand();
         seekCmd.CommandText = @"
             SELECT ChannelName, DeviceSerialNo, TimestampTicks, Value
             FROM Samples
-            WHERE LoggingSessionID = @id AND TimestampTicks >= @t
+            WHERE LoggingSessionID = @id
+              AND TimestampTicks >= @t
+              AND TimestampTicks <= @maxReadable
             ORDER BY TimestampTicks
             LIMIT @limit";
 
-        var seekIdParam = seekCmd.CreateParameter();
-        seekIdParam.ParameterName = "@id";
-        seekIdParam.Value = sessionId;
-        seekCmd.Parameters.Add(seekIdParam);
-
-        var seekTParam = seekCmd.CreateParameter();
-        seekTParam.ParameterName = "@t";
-        seekTParam.Value = minTicks;
-        seekCmd.Parameters.Add(seekTParam);
-
-        var seekLimitParam = seekCmd.CreateParameter();
-        seekLimitParam.ParameterName = "@limit";
-        seekLimitParam.Value = batchSize;
-        seekCmd.Parameters.Add(seekLimitParam);
+        AddParameter(seekCmd, "@id", sessionId);
+        var seekTParam = AddParameter(seekCmd, "@t", minTicks);
+        AddParameter(seekCmd, "@maxReadable", MAX_READABLE_TICKS);
+        AddParameter(seekCmd, "@limit", batchSize);
 
         seekCmd.Prepare();
 
@@ -336,6 +427,20 @@ public sealed class SessionDataRepository
         }
 
         return localFirstTime;
+    }
+
+    /// <summary>
+    /// Binds a named parameter to <paramref name="command"/> and returns it, so the four-line ADO.NET
+    /// dance is written once. The return value matters for the one parameter whose value is reassigned
+    /// between executions (the seek position).
+    /// </summary>
+    private static DbParameter AddParameter(DbCommand command, string name, object value)
+    {
+        var parameter = command.CreateParameter();
+        parameter.ParameterName = name;
+        parameter.Value = value;
+        command.Parameters.Add(parameter);
+        return parameter;
     }
 
     /// <summary>
@@ -453,10 +558,7 @@ public sealed class SessionDataRepository
             {
                 cmd.Transaction = transaction;
                 cmd.CommandText = "DELETE FROM Samples WHERE LoggingSessionID = @id";
-                var param = cmd.CreateParameter();
-                param.ParameterName = "@id";
-                param.Value = session.ID;
-                cmd.Parameters.Add(param);
+                AddParameter(cmd, "@id", session.ID);
                 cmd.ExecuteNonQuery();
             }
 
@@ -464,10 +566,7 @@ public sealed class SessionDataRepository
             {
                 cmd.Transaction = transaction;
                 cmd.CommandText = "DELETE FROM SessionDeviceMetadata WHERE LoggingSessionID = @id";
-                var param = cmd.CreateParameter();
-                param.ParameterName = "@id";
-                param.Value = session.ID;
-                cmd.Parameters.Add(param);
+                AddParameter(cmd, "@id", session.ID);
                 cmd.ExecuteNonQuery();
             }
 
@@ -475,10 +574,7 @@ public sealed class SessionDataRepository
             {
                 cmd.Transaction = transaction;
                 cmd.CommandText = "DELETE FROM Sessions WHERE ID = @id";
-                var param = cmd.CreateParameter();
-                param.ParameterName = "@id";
-                param.Value = session.ID;
-                cmd.Parameters.Add(param);
+                AddParameter(cmd, "@id", session.ID);
                 cmd.ExecuteNonQuery();
             }
 
