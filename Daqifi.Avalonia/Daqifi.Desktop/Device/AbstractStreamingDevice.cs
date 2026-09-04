@@ -2358,8 +2358,6 @@ public abstract partial class AbstractStreamingDevice : ObservableObject, IStrea
                 DeviceId = DeviceSerialNo,
                 AnalogDataCount = message.AnalogInData.Count,
                 RawAnalogValues = message.AnalogInData.ToList(),
-                HasDigitalData = message.DigitalData.Length > 0,
-                MessageType = "AnalogData",
                 ActiveChannelNames = activeChannels.Select(c => c.Name).ToList(),
                 ActiveChannelIndices = activeChannels.Select(c => c.Index).ToList()
             };

@@ -70,8 +70,6 @@ public partial class ExportDialogViewModel : ObservableObject, IDisposable
     [ObservableProperty]
     private int _averageQuantity = 2;
     [ObservableProperty]
-    private string _exportProgressText = string.Empty;
-    [ObservableProperty]
     private bool _exportRelativeTime;
     private int _exportProgress;
     #endregion
@@ -99,7 +97,6 @@ public partial class ExportDialogViewModel : ObservableObject, IDisposable
         {
             _exportProgress = value;
             OnPropertyChanged();
-            ExportProgressText = $"Exporting progress: {ExportProgress}% completed";
         }
     }
 
