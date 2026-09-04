@@ -3,7 +3,6 @@ using Daqifi.Desktop.Channel;
 using Daqifi.Desktop.Exporter;
 using Daqifi.Desktop.Logger;
 using Daqifi.Desktop.ViewModels;
-using Microsoft.Data.Sqlite;
 using Microsoft.EntityFrameworkCore;
 using Xunit;
 using ChannelType = Daqifi.Core.Channel.ChannelType;
@@ -39,23 +38,22 @@ public sealed class ExportFileNameCollisionTests : IDisposable
     /// <summary>Throwaway root for this test's database and exported CSVs. Never the real DAQiFi
     /// data directory (see <see cref="TestDataDirectory"/>).</summary>
     private readonly string _root;
-    private readonly SqliteContextFactory _contexts;
+    private readonly IDbContextFactory<LoggingContext> _contexts;
     private int _nextSessionId;
 
     public ExportFileNameCollisionTests()
     {
         _root = Path.Combine(Path.GetTempPath(), "daqifi-export-collision-" + Guid.NewGuid().ToString("N"));
         Directory.CreateDirectory(_root);
-        _contexts = new SqliteContextFactory(Path.Combine(_root, "DAQiFiDatabase.db"));
+        _contexts = TestDatabase.Contexts(Path.Combine(_root, "DAQiFiDatabase.db"));
         using var context = _contexts.CreateDbContext();
         context.Database.EnsureCreated();
     }
 
     public void Dispose()
     {
-        // Microsoft.Data.Sqlite pools connections, which keeps a handle on the file; drop them
-        // before deleting so the cleanup is not a no-op on Windows.
-        SqliteConnection.ClearAllPools();
+        // Nothing to unpool first: TestDatabase's connections are not pooled, so each one has
+        // already released its handle on the file by the time it is disposed.
         try { Directory.Delete(_root, recursive: true); }
         catch (IOException) { /* best effort — a leftover temp directory must not fail a test */ }
         catch (UnauthorizedAccessException) { /* ditto */ }
@@ -229,20 +227,4 @@ public sealed class ExportFileNameCollisionTests : IDisposable
         Directory.Exists(directory)
             ? "[" + string.Join(", ", Directory.GetFiles(directory).Select(Path.GetFileName)) + "]"
             : "(destination directory does not exist)";
-
-    /// <summary>The production <see cref="LoggingContext"/> over a throwaway SQLite file, standing
-    /// in for the factory the app resolves from its DI container.</summary>
-    private sealed class SqliteContextFactory : IDbContextFactory<LoggingContext>
-    {
-        private readonly DbContextOptions<LoggingContext> _options;
-
-        internal SqliteContextFactory(string databasePath)
-        {
-            _options = new DbContextOptionsBuilder<LoggingContext>()
-                .UseSqlite($"Data Source={databasePath}")
-                .Options;
-        }
-
-        public LoggingContext CreateDbContext() => new(_options);
-    }
 }

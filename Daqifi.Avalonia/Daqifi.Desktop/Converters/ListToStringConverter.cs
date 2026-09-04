@@ -16,7 +16,7 @@ namespace Daqifi.Desktop.Converters;
 public class ListToStringConverter : IValueConverter
 {
     // @port: Daqifi.Desktop.Converters.ListToStringConverter.Convert
-    public object Convert(object value, Type targetType, object parameter, CultureInfo culture)
+    public object Convert(object? value, Type targetType, object? parameter, CultureInfo culture)
     {
         if (value == null)
             return string.Empty;
@@ -50,7 +50,7 @@ public class ListToStringConverter : IValueConverter
     }
 
     // @port: Daqifi.Desktop.Converters.ListToStringConverter.ConvertBack
-    public object ConvertBack(object value, Type targetType, object parameter, CultureInfo culture)
+    public object ConvertBack(object? value, Type targetType, object? parameter, CultureInfo culture)
     {
         throw new NotImplementedException("ListToStringConverter does not support ConvertBack");
     }

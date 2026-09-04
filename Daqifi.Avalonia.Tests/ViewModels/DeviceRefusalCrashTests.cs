@@ -18,10 +18,20 @@ namespace Daqifi.Avalonia.Tests.ViewModels;
 /// <see cref="DeviceRefusalCrashTests"/> calls <c>App.InitializeMobile()</c> — the only way to give
 /// <c>LoggingManager.Instance</c> the <c>IDbContextFactory</c> it resolves off
 /// <c>App.ServiceProvider</c>, which the <see cref="DaqifiViewModel.IsLogging"/> setter writes
-/// through on its first line. That makes this class a SQLite user, and the suite's other SQLite
-/// users call <c>SqliteConnection.ClearAllPools()</c>, which is process-wide and disposes
-/// connections other classes are mid-query on. Running this class on its own keeps it out of that
-/// race rather than adding to it.
+/// through on its first line.
+///
+/// <para><c>App.ServiceProvider</c> is STATIC, and that is the whole reason this class runs alone:
+/// two classes standing an app host up concurrently would overwrite each other's container. An app
+/// host cannot be made per-test, so serialising the one class that needs one is the narrowest
+/// available fix — and it is scoped to exactly that class, not to the suite.</para>
+///
+/// <para>It used to say something else. Before issue #210 this remark blamed the suite's other
+/// SQLite users, which each called the process-global <c>SqliteConnection.ClearAllPools()</c> and
+/// could dispose a connection this class was mid-query on. None of them call it any more — they
+/// go through <see cref="TestDatabase"/>, whose connections are unpooled and therefore invisible
+/// to a pool clear. This class is the one that stays pooled, because the connections it uses are
+/// production's own (<c>App.cs</c>), so keeping it off the parallel schedule still helps; it is no
+/// longer what justifies the collection.</para>
 /// </remarks>
 [CollectionDefinition(Name, DisableParallelization = true)]
 public sealed class AppHostCollection

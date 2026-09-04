@@ -14,7 +14,7 @@ namespace Daqifi.Desktop.Converters;
 public class ConnectionTypeToColorConverter : IValueConverter
 {
     // @port: Daqifi.Desktop.Converters.ConnectionTypeToColorConverter.Convert
-    public object Convert(object value, Type targetType, object parameter, CultureInfo culture)
+    public object Convert(object? value, Type targetType, object? parameter, CultureInfo culture)
     {
         if (value is ConnectionType connectionType)
         {
@@ -29,7 +29,7 @@ public class ConnectionTypeToColorConverter : IValueConverter
     }
 
     // @port: Daqifi.Desktop.Converters.ConnectionTypeToColorConverter.ConvertBack
-    public object ConvertBack(object value, Type targetType, object parameter, CultureInfo culture)
+    public object ConvertBack(object? value, Type targetType, object? parameter, CultureInfo culture)
     {
         throw new NotImplementedException();
     }

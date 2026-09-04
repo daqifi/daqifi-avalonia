@@ -2,7 +2,6 @@ using Daqifi.Desktop.Logger;
 using Daqifi.Desktop.Loggers;
 using Microsoft.Data.Sqlite;
 using Microsoft.EntityFrameworkCore;
-using Microsoft.EntityFrameworkCore.Diagnostics;
 using Microsoft.EntityFrameworkCore.Infrastructure;
 using Microsoft.EntityFrameworkCore.Migrations;
 using Xunit;
@@ -47,7 +46,6 @@ public sealed class SessionStatusUpgradeTests : IDisposable
 
     public void Dispose()
     {
-        SqliteConnection.ClearAllPools();
         try { Directory.Delete(_directory, recursive: true); } catch { /* best-effort cleanup */ }
     }
 
@@ -128,7 +126,7 @@ public sealed class SessionStatusUpgradeTests : IDisposable
 
     #region Helpers
 
-    private TestContextFactory Factory() => new(DatabasePath);
+    private IDbContextFactory<LoggingContext> Factory() => TestDatabase.Contexts(DatabasePath);
 
     private LoggingManager NewManager(IDbContextFactory<LoggingContext> factory) =>
         new(factory, Path.Combine(_directory, "DAQifiProfilesConfiguration.xml"));
@@ -142,7 +140,6 @@ public sealed class SessionStatusUpgradeTests : IDisposable
     {
         using var context = factory.CreateDbContext();
         context.GetService<IMigrator>().Migrate(LastShippedMigration);
-        SqliteConnection.ClearAllPools();
     }
 
     /// <summary>
@@ -152,7 +149,7 @@ public sealed class SessionStatusUpgradeTests : IDisposable
     /// </summary>
     private void InsertLegacySession(int id, string name, long? sampleCount, int? status = null)
     {
-        using var connection = new SqliteConnection($"Data source={DatabasePath}");
+        using var connection = new SqliteConnection(TestDatabase.ConnectionString(DatabasePath));
         connection.Open();
 
         using var insert = connection.CreateCommand();
@@ -173,7 +170,7 @@ public sealed class SessionStatusUpgradeTests : IDisposable
 
     private void InsertSampleRow(int loggingSessionId)
     {
-        using var connection = new SqliteConnection($"Data source={DatabasePath}");
+        using var connection = new SqliteConnection(TestDatabase.ConnectionString(DatabasePath));
         connection.Open();
 
         using var insert = connection.CreateCommand();
@@ -199,24 +196,11 @@ public sealed class SessionStatusUpgradeTests : IDisposable
 
     private object? Scalar(string sql)
     {
-        using var connection = new SqliteConnection($"Data source={DatabasePath}");
+        using var connection = new SqliteConnection(TestDatabase.ConnectionString(DatabasePath));
         connection.Open();
         using var command = connection.CreateCommand();
         command.CommandText = sql;
         return command.ExecuteScalar();
-    }
-
-    /// <summary>
-    /// The same SQLite context factory <c>App.Initialize</c> registers in DI, without the
-    /// container — as in <see cref="SdCardImportAtomicityTests"/>.
-    /// </summary>
-    private sealed class TestContextFactory(string databasePath) : IDbContextFactory<LoggingContext>
-    {
-        public LoggingContext CreateDbContext() => new(
-            new DbContextOptionsBuilder<LoggingContext>()
-                .UseSqlite($"Data source={databasePath}")
-                .ConfigureWarnings(w => w.Ignore(RelationalEventId.PendingModelChangesWarning))
-                .Options);
     }
 
     #endregion

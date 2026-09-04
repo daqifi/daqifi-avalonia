@@ -162,7 +162,10 @@ public class ChannelScalingExpressionTests
     [InlineData("Pow(x, 2)", 3.0, 9.0)]
     [InlineData("Round(x, 1)", 2.349, 2.3)]
     [InlineData("Max(x, 0)", -5.0, 0.0)]
-    [InlineData("Min(x, 0)", -5.0, -5.0)]
+    // Raw 5 -> 0 rather than the more natural-looking -5 -> -5: an expected value equal to the
+    // raw input cannot distinguish "Min evaluated correctly" from "scaling never ran at all", so
+    // that form of the case passed even with the whole scaling path stubbed out.
+    [InlineData("Min(x, 0)", 5.0, 0.0)]
     public void Built_in_functions_keep_their_meaning(string expression, double raw, double expected)
     {
         Assert.Equal(expected, Push(Scaled(expression), raw), precision: 10);

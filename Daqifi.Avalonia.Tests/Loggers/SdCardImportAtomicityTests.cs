@@ -4,7 +4,6 @@ using Daqifi.Desktop.Logger;
 using Daqifi.Desktop.Loggers;
 using Microsoft.Data.Sqlite;
 using Microsoft.EntityFrameworkCore;
-using Microsoft.EntityFrameworkCore.Diagnostics;
 using Xunit;
 
 namespace Daqifi.Avalonia.Tests.Loggers;
@@ -47,7 +46,6 @@ public sealed class SdCardImportAtomicityTests : IDisposable
 
     public void Dispose()
     {
-        SqliteConnection.ClearAllPools();
         try { Directory.Delete(_directory, recursive: true); } catch { /* best-effort cleanup */ }
     }
 
@@ -432,7 +430,7 @@ public sealed class SdCardImportAtomicityTests : IDisposable
 
     #region Database helpers
 
-    private TestContextFactory Factory() => new(DatabasePath);
+    private IDbContextFactory<LoggingContext> Factory() => TestDatabase.Contexts(DatabasePath);
 
     private LoggingManager NewManager(IDbContextFactory<LoggingContext> factory) =>
         new(factory, Path.Combine(_directory, "DAQifiProfilesConfiguration.xml"));
@@ -476,7 +474,7 @@ public sealed class SdCardImportAtomicityTests : IDisposable
     /// </summary>
     private void InsertSampleRow(int loggingSessionId)
     {
-        using var connection = new SqliteConnection($"Data source={DatabasePath}");
+        using var connection = new SqliteConnection(TestDatabase.ConnectionString(DatabasePath));
         connection.Open();
 
         using var pragma = connection.CreateCommand();
@@ -489,19 +487,6 @@ public sealed class SdCardImportAtomicityTests : IDisposable
             "VALUES ($id, 'AI0', 'Nq1', 'SERIAL-A', '#FFD32F2F', 0, 1.0, 0)";
         insert.Parameters.AddWithValue("$id", loggingSessionId);
         insert.ExecuteNonQuery();
-    }
-
-    /// <summary>
-    /// The same SQLite context factory <c>App.Initialize</c> registers in DI, without the
-    /// container — as in <see cref="DatabaseMigratorUnusableDatabaseTests"/>.
-    /// </summary>
-    private sealed class TestContextFactory(string databasePath) : IDbContextFactory<LoggingContext>
-    {
-        public LoggingContext CreateDbContext() => new(
-            new DbContextOptionsBuilder<LoggingContext>()
-                .UseSqlite($"Data source={databasePath}")
-                .ConfigureWarnings(w => w.Ignore(RelationalEventId.PendingModelChangesWarning))
-                .Options);
     }
 
     #endregion
