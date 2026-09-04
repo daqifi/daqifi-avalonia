@@ -1,7 +1,6 @@
 using System;
 using System.Collections.Generic;
 using System.Collections.ObjectModel;
-using System.IO;
 using System.Linq;
 using System.Threading;
 using System.Threading.Tasks;
@@ -238,8 +237,8 @@ public partial class LoggedSessionsMobileViewModel : ObservableObject
             else
             {
                 // Export all → one CSV per session into a picked folder. Each session must
-                // get its OWN file: the exporter opens its StreamWriter with append=false,
-                // so writing every session to a single path would leave only the last one.
+                // get its OWN file: a completed export REPLACES its destination, so writing
+                // every session to a single path would leave only the last one.
                 string? folder;
                 try
                 {
@@ -610,48 +609,20 @@ public partial class LoggedSessionsMobileViewModel : ObservableObject
 
     /// <summary>Exports one session; returns true only if the export actually completed and
     /// the destination now holds this run's CSV — so the caller reports a truthful count and
-    /// never claims "Exported…" for a failed/partial export or clobbers a good prior file.</summary>
-    private static bool ExportOne(OptimizedLoggingSessionExporter exporter, LoggingSession session, string filepath, int sessionIndex, int totalSessions)
-    {
-        // Export to a TEMP file and move it over the destination ONLY when the export
-        // actually completed. TryExportLoggingSession returns a real success signal (unlike
-        // the void overload, which swallows a mid-write failure and would leave a non-empty
-        // PARTIAL temp). So a failure — whether before the first write or after rows have
-        // flushed — cleans up the temp and leaves the destination (a good prior export)
-        // untouched, and is never counted as success. The non-empty check is a backstop.
-        // The exporter is passed in (one per batch) so the CSV delimiter it captured at
-        // construction stays fixed across a whole "Export all" even if Settings is toggled.
-        var tmp = filepath + ".exporting";
-        try { if (File.Exists(tmp)) { File.Delete(tmp); } } catch { /* best effort */ }
-
-        var exported = exporter.TryExportLoggingSession(
-            session, tmp, exportRelativeTime: false,
+    /// never claims "Exported…" for a failed export or clobbers a good prior file.</summary>
+    /// <remarks>
+    /// The staging this used to do for itself now lives in <see cref="OptimizedLoggingSessionExporter"/>
+    /// (issue #236), where the desktop export gets it too: every export is written beside its
+    /// destination and moved into place only once it has finished, so a failed or cancelled export
+    /// leaves a good prior CSV untouched. All that is left to do here is believe the return value.
+    /// The exporter is passed in (one per batch) so the CSV delimiter it captured at construction
+    /// stays fixed across a whole "Export all" even if Settings is toggled.
+    /// </remarks>
+    private static bool ExportOne(OptimizedLoggingSessionExporter exporter, LoggingSession session, string filepath, int sessionIndex, int totalSessions) =>
+        exporter.TryExportLoggingSession(
+            session, filepath, exportRelativeTime: false,
             new Progress<int>(), CancellationToken.None,
             sessionIndex, totalSessions);
-
-        if (!exported || !File.Exists(tmp) || new FileInfo(tmp).Length == 0)
-        {
-            // Export failed (incl. a mid-write error → partial temp) or wrote nothing —
-            // leave the destination (which may hold a good prior export) untouched, and
-            // clean up any partial/empty temp.
-            try { if (File.Exists(tmp)) { File.Delete(tmp); } } catch { /* best effort */ }
-            return false;
-        }
-
-        try
-        {
-            File.Move(tmp, filepath, overwrite: true);
-            return true;
-        }
-        catch (Exception ex)
-        {
-            // Couldn't place the file (destination locked / permission-denied). Log it (the
-            // caller reports failure), keep the destination's prior contents, drop the temp.
-            AppLogger.Instance.Error(ex, $"Mobile: export move failed (dest={filepath})");
-            try { if (File.Exists(tmp)) { File.Delete(tmp); } } catch { /* best effort */ }
-            return false;
-        }
-    }
 
 }
 

@@ -1,3 +1,4 @@
+using Daqifi.Desktop.Channel;
 using Daqifi.Desktop.Exporter;
 using Daqifi.Desktop.Logger;
 using Microsoft.EntityFrameworkCore;

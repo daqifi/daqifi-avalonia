@@ -25,6 +25,19 @@ public class OptimizedLoggingSessionExporter
 {
     #region Constants
     private const int BUFFER_SIZE = 1024 * 1024; // 1MB buffer for file writes
+
+    /// <summary>
+    /// Appended to the destination to name the file an export is written to before it is moved into
+    /// place. A sibling of the destination on purpose: <see cref="File.Move(string, string, bool)"/>
+    /// is only a rename — atomic, and no second copy of a large CSV — when both paths are on the same
+    /// volume, which the system temp directory does not guarantee.
+    /// <para>Derived from the destination rather than randomised, so a staging file orphaned by a
+    /// crash (the one case no <c>catch</c> can clean up) is reclaimed by the next export to that
+    /// destination instead of accumulating. Two exports racing the same destination would collide
+    /// here, but they already collide on the destination itself; <see cref="ExportFileNamer"/> is
+    /// what keeps one export's own sessions off a shared path.</para>
+    /// </summary>
+    private const string StagingSuffix = ".exporting";
     #endregion
 
     #region Static State
@@ -113,12 +126,14 @@ public class OptimizedLoggingSessionExporter
 
     /// <summary>
     /// As <see cref="ExportLoggingSession"/>, but RETURNS whether the export completed
-    /// successfully. Downstream addition (not in the upstream @port): the void overload
-    /// swallows every failure, so it cannot signal a mid-write error (disk full, a
-    /// transient DB/IO error after rows have already flushed) — which leaves a
-    /// partially-written, non-empty file. The mobile export needs a truthful signal so it
-    /// never promotes a truncated temp over a good prior CSV. Returns false on any failure
-    /// (logged); <see cref="OperationCanceledException"/> still propagates.
+    /// successfully instead of throwing. Downstream addition (not in the upstream @port): the
+    /// mobile export reports a per-session count to the user, so it needs a truthful signal for a
+    /// mid-export failure (disk full, a transient DB/IO error after rows have already flushed)
+    /// rather than an exception to catch around every session. The destination is safe either way —
+    /// <see cref="RunExport"/> stages the CSV and moves it into place only on success — so false
+    /// means "the destination still holds whatever it held before", never "the destination is now
+    /// half a file". Returns false on any failure (logged);
+    /// <see cref="OperationCanceledException"/> still propagates.
     /// </summary>
     public bool TryExportLoggingSession(LoggingSession loggingSession, string filepath, bool exportRelativeTime,
         IProgress<int> progress, CancellationToken cancellationToken, int sessionIndex, int totalSessions)
@@ -261,10 +276,48 @@ public class OptimizedLoggingSessionExporter
             });
         }
 
-        using var writer = new StreamWriter(filepath, false, Encoding.UTF8, BUFFER_SIZE);
-        SharedCsvExporter.ExportAsync(source, writer, options, wrappedProgress, cancellationToken)
-            .GetAwaiter()
-            .GetResult();
+        // Write-rename, NOT a write in place: stage the CSV beside the destination and move it over
+        // only once the export has finished. Opening the destination itself (append: false) truncates
+        // it the instant the stream is created — before the first row, and before the first
+        // cancellation checkpoint — so a Cancel click destroyed the complete CSV the user had exported
+        // earlier, and the dialog says nothing at all about a cancel (issue #236). The rename also
+        // covers a mid-write failure and a crash: until it runs, the destination is the user's file.
+        var stagingPath = filepath + StagingSuffix;
+        try
+        {
+            using (var writer = new StreamWriter(stagingPath, false, Encoding.UTF8, BUFFER_SIZE))
+            {
+                SharedCsvExporter.ExportAsync(source, writer, options, wrappedProgress, cancellationToken)
+                    .GetAwaiter()
+                    .GetResult();
+            }
+
+            File.Move(stagingPath, filepath, overwrite: true);
+        }
+        catch
+        {
+            DiscardStagedExport(stagingPath);
+            throw;
+        }
+    }
+
+    /// <summary>
+    /// Removes an abandoned staging file. Best effort on purpose: the export has already failed or
+    /// been cancelled, and the caller must see THAT, not a second failure from the cleanup. A leftover
+    /// is harmless — the next export to the same destination truncates it.
+    /// </summary>
+    private static void DiscardStagedExport(string stagingPath)
+    {
+        try
+        {
+            // File.Delete is a no-op when the file was never created (e.g. the staging open itself
+            // failed), so there is nothing to check first.
+            File.Delete(stagingPath);
+        }
+        catch (Exception ex) when (ex is IOException or UnauthorizedAccessException)
+        {
+            AppLogger.Instance.Warning(ex, $"Could not remove the partial export file '{stagingPath}'.");
+        }
     }
     #endregion
 }
