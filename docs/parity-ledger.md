@@ -29,7 +29,7 @@ XAML on both sides rather than the C#. Re-run at the same upstream revision:
 
 | | measured |
 |---|---|
-| Member names bound in WPF `.xaml` | **319** |
+| Member names bound in WPF `.xaml` | **321** |
 | …bound by no `.axaml` downstream | **4**, all triaged below as non-gaps |
 | Commands the port declares | **90** |
 | …bound by no `.axaml` | **10**; 4 reachable another way, **6 dead** |
@@ -112,7 +112,7 @@ drift before it can trust anything else.
 |---|---|
 | Views | WPF 22 XAML files → every one has an `.axaml` counterpart. Port adds 8 mobile views, 1 dialog, 1 resource dictionary. |
 | ~~Command bindings~~ | ~~67 distinct `Command=` bindings upstream, **0 absent** downstream; 13 new downstream.~~ **Superseded** — this measured declarations, not bindings. See the correction above. |
-| Bound members (2026-09-04) | 319 member names bound in WPF `.xaml`, **4** bound by no `.axaml` downstream — all triaged as non-gaps. Reproduce with `coverage.py --bindings`. |
+| Bound members (2026-09-04) | 321 member names bound in WPF `.xaml`, **4** bound by no `.axaml` downstream — all triaged as non-gaps. Reproduce with `coverage.py --bindings`. |
 | Types | 167 upstream types, **7** with no `@port:` backlink — all triaged below as non-gaps. |
 | Members | 646 upstream public/internal members, **20** with no backlink and no same-named symbol downstream — all triaged below. |
 | User-visible labels | 9 upstream strings absent downstream, all renames/redesigns where the port is equal or richer. |

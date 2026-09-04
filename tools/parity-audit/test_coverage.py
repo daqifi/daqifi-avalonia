@@ -129,6 +129,26 @@ paths('"{Binding Path=IsDropDownOpen, RelativeSource={RelativeSource TemplatedPa
 paths('"{TemplateBinding IsDropDownOpen}"', [])
 paths('Text="literal"', [])
 
+
+def element(markup, expected):
+    """The paths an element-syntax `<Binding .../>` yields."""
+    got = list(coverage.element_paths(markup))
+    if got != expected:
+        failures.append(f"element_paths {markup!r}: expected {expected}, got {got}")
+
+
+# Inside a <MultiBinding> a binding *has* to be written as an element, and both
+# trees do it — 19 times in the port, 5 upstream. Scanning only `{Binding …}`
+# reported every member reached this way as unreachable.
+element('<Binding Path="Shell.IsDebugModeEnabled"/>', ['Shell.IsDebugModeEnabled'])
+element('<Binding Path="DbLogger.HasSessionData" Converter="{StaticResource X}"/>',
+        ['DbLogger.HasSessionData'])
+element('<Binding Path="DataContext.Shell.IsOn" ElementName="Root"/>',
+        ['DataContext.Shell.IsOn'])
+element('<Binding RelativeSource="{RelativeSource TemplatedParent}" Path="IsChecked"/>', [])
+element('<Binding/>', [])
+element('<MultiBinding Converter="{StaticResource And}">', [])
+
 # Every segment of a path is a bound member: the port may reach the same value
 # through a different parent (upstream `Port.PortName` -> downstream `PortName`).
 names('SummaryLogger.SampleSize', ['SummaryLogger', 'SampleSize'])

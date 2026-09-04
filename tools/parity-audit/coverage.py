@@ -158,13 +158,19 @@ def collect_upstream(upstream_root):
 # member absent from every one of them is a member no view can show or invoke.
 
 MARKUP_RE = re.compile(r'\{\s*(?:Binding|CompiledBinding|ReflectionBinding)\b')
+# A binding can also be written as an element, and inside `<MultiBinding>` it has
+# to be. Both trees do: 19 in the port, 5 upstream. Scanning only the markup form
+# reports every member reached that way as unreachable.
+ELEMENT_RE = re.compile(r'<(?:Compiled|Reflection)?Binding\b([^>]*)>')
+ELEMENT_PATH_RE = re.compile(r'\bPath\s*=\s*"([^"]*)"')
 IDENT_RE = re.compile(r'[A-Za-z_][A-Za-z0-9_]*')
 # `$parent[Window]`, `$parent`, `$self` — Avalonia's relative-source prefixes.
 RELATIVE_RE = re.compile(r'\$(?:parent|self)(?:\[[^\]]*\])?\.?')
 # WPF's equivalents. TemplatedParent and Self address the control, not a
 # view-model, so those bindings are control-template plumbing and are dropped
 # whole — `IsDropDownOpen` on a ComboBox template is not a parity signal.
-TEMPLATE_SOURCE_RE = re.compile(r'RelativeSource\s*=\s*\{?\s*(?:RelativeSource\s+)?(?:TemplatedParent|Self)\b')
+TEMPLATE_SOURCE_RE = re.compile(
+    r'RelativeSource\s*=\s*[\'"{\s]*(?:RelativeSource\s+)?(?:TemplatedParent|Self)\b')
 
 
 def markup_bodies(text):
@@ -240,14 +246,25 @@ def path_members(path):
     return IDENT_RE.findall(p)
 
 
+def element_paths(text):
+    """Binding paths written as `<Binding Path="…"/>` rather than `{Binding …}`."""
+    for m in ELEMENT_RE.finditer(text):
+        attrs = m.group(1)
+        if TEMPLATE_SOURCE_RE.search(attrs):
+            continue
+        yield from ELEMENT_PATH_RE.findall(attrs)
+
+
 def collect_bound(root, exts):
     """name -> set of files whose XAML binds it."""
     by_name = {}
     for path in walk(root, exts):
-        for body in markup_bodies(read(path)):
-            for bp in binding_paths(body):
-                for name in path_members(bp):
-                    by_name.setdefault(name, set()).add(path)
+        text = read(path)
+        paths = [bp for body in markup_bodies(text) for bp in binding_paths(body)]
+        paths += element_paths(text)
+        for bp in paths:
+            for name in path_members(bp):
+                by_name.setdefault(name, set()).add(path)
     return by_name
 
 
