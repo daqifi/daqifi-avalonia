@@ -180,15 +180,27 @@ if coverage.strip_attributes('    private bool _x;') != ([], '    private bool _
 commands, properties = coverage.collect_declared(
     os.path.join(coverage.REPO, 'Daqifi.Avalonia'), coverage.REPO)
 bound = coverage.collect_bound(coverage.REPO, ('.axaml',))
-if 'CancelFirmwareUploadCommand' not in commands:
+command_names = [n for n, _, _ in commands]
+property_names = [n for n, _, _ in properties]
+if 'CancelFirmwareUploadCommand' not in command_names:
     failures.append("collect_declared no longer generates CancelFirmwareUploadCommand "
                     "from its [RelayCommand]; --bindings cannot see the control")
-if 'IsLoggingActive' not in properties:
+if 'IsLoggingActive' not in property_names:
     failures.append("collect_declared missed IsLoggingActive, an inline "
                     "[ObservableProperty] — the 32 inline declarations are being dropped")
 if 'ClearDebugDataCommand' not in bound:
     failures.append("collect_bound did not find ClearDebugDataCommand, which "
                     "DebugWindow.axaml binds; the .axaml scan is not reading bindings")
+if 'IsNotificationsOpen' not in bound:
+    failures.append("collect_bound did not find IsNotificationsOpen, which MainWindow.axaml "
+                    "binds as <Binding Path=…/> inside a MultiBinding; element syntax is "
+                    "not being read")
+# One entry per declaration, not per name. ChannelsPaneViewModel and
+# DevicesPaneViewModel each declare IsSettingsOpen; keying by name merged them,
+# undercounting the surface and reporting only the first site.
+if property_names.count('IsSettingsOpen') != 2:
+    failures.append("collect_declared collapsed the two IsSettingsOpen declarations "
+                    f"into {property_names.count('IsSettingsOpen')}; it must be per-declaration")
 
 if failures:
     print(f"FAIL ({len(failures)})")

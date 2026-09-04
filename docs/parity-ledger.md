@@ -31,9 +31,9 @@ XAML on both sides rather than the C#. Re-run at the same upstream revision:
 |---|---|
 | Member names bound in WPF `.xaml` | **321** |
 | …bound by no `.axaml` downstream | **4**, all triaged below as non-gaps |
-| Commands the port declares | **90** |
+| Commands the port declares | **98** |
 | …bound by no `.axaml` | **10**; 4 reachable another way, **6 dead** |
-| `[ObservableProperty]` state the port declares | **172** |
+| `[ObservableProperty]` state the port declares | **194** |
 | …bound by no `.axaml` | **38**, of which 8 are never read in C# either |
 
 **The parity conclusion survives, and is now better founded**: the 4 upstream-bound
@@ -291,14 +291,17 @@ State these rather than round up:
   guarantee matching *reachability* — six commands the port declares are bound by
   nothing at all.
 - **`--bindings` reads markup, not a compiled binding graph**, so it knows names and
-  not types. Section A matches on the bare identifier of every path segment, which is
+  not types. Matching is on the bare identifier of every path segment, which is
   deliberately generous — upstream's `Port.PortName` and the port's flattened
   `PortName` should agree — but it means a member bound downstream on a *different*
   view-model counts as bound. `DaqifiViewModel.IsFirmwareUploading` is the live
   example: nothing binds it, yet the identifier is bound in `FirmwareDialog.axaml`
   against `FirmwareDialogViewModel`, so section A cannot see it and section C does not
-  list it. Sections B and C are per-declaration and do not have this problem;
-  section A alone would not have found the control this mode exists for.
+  list it. Section A alone would not have found the control this mode exists for.
+  Four names are declared by two view-models each — `IsSettingsOpen`,
+  `HasConnectedDevice`, `IsLoggingActive`, `IsSelected` — so one being bound clears
+  both. B and C do list every *declaration* separately, which is what makes those
+  duplicates visible at all; the reachability verdict beside them is still per-name.
 - **Reachability is not the same as usefulness.** `--bindings` proves a view names
   the member. It cannot tell you the handler behind it does anything, or that the
   control is ever enabled — the next two classes down. Those still need reading.

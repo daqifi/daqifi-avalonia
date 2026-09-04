@@ -307,12 +307,18 @@ def strip_attributes(line):
 def collect_declared(port_root, repo_root):
     """MVVM-toolkit generated surface in the port: (commands, properties).
 
-    Each maps generated name -> (repo-relative file, line). `[RelayCommand]` on
-    `FooAsync` generates `FooCommand`, and `[ObservableProperty]` on `_foo`
-    generates `Foo` — the generated names are what XAML binds, and the only
-    place they appear in source is the attribute above the private member.
+    Each is a list of `(generated name, repo-relative file, line)`, one entry per
+    **declaration**. `[RelayCommand]` on `FooAsync` generates `FooCommand`, and
+    `[ObservableProperty]` on `_foo` generates `Foo` — the generated names are
+    what XAML binds, and the only place they appear in source is the attribute
+    above the private member.
+
+    Keying by name instead would silently merge declarations: `IsSettingsOpen`,
+    `HasConnectedDevice`, `IsLoggingActive` and `IsSelected` are each declared by
+    two different view-models here, so a name-keyed dict undercounts the surface
+    and reports only the first site of each.
     """
-    commands, properties = {}, {}
+    commands, properties = [], []
     for path in walk(port_root, ('.cs',)):
         rel = os.path.relpath(path, repo_root)
         pending = None
@@ -330,18 +336,18 @@ def collect_declared(port_root, repo_root):
                 if pending == 'cmd':
                     m = DECL_METHOD_RE.match(rest)
                     if m:
-                        commands.setdefault(
-                            re.sub(r'Async$', '', m.group(1)) + 'Command', (rel, i + 1))
+                        commands.append(
+                            (re.sub(r'Async$', '', m.group(1)) + 'Command', rel, i + 1))
                 else:
                     m = DECL_FIELD_RE.match(rest)
                     if m:
                         bare = m.group(1).lstrip('_')
-                        properties.setdefault(bare[:1].upper() + bare[1:], (rel, i + 1))
+                        properties.append((bare[:1].upper() + bare[1:], rel, i + 1))
                 pending = None
                 continue
             m = DECL_COMMAND_RE.match(rest)
             if m:
-                commands.setdefault(m.group(1), (rel, i + 1))
+                commands.append((m.group(1), rel, i + 1))
     return commands, properties
 
 
@@ -371,11 +377,12 @@ def report_bindings(upstream_proj, port):
     sources = csharp_index(REPO)
 
     absent = sorted(n for n in up_bound if n not in port_bound)
+    unbound_cmds = sorted(d for d in commands if d[0] not in port_bound)
+    unbound_props = sorted(d for d in properties if d[0] not in port_bound)
+
     print(f"bound upstream  {len(up_bound):5}   not bound downstream {len(absent):5}")
-    print(f"port commands   {len(commands):5}   bound by no .axaml   "
-          f"{sum(1 for c in commands if c not in port_bound):5}")
-    print(f"port observable {len(properties):5}   bound by no .axaml   "
-          f"{sum(1 for p in properties if p not in port_bound):5}")
+    print(f"port commands   {len(commands):5}   bound by no .axaml   {len(unbound_cmds):5}")
+    print(f"port observable {len(properties):5}   bound by no .axaml   {len(unbound_props):5}")
 
     print("\n== A. BOUND UPSTREAM, BOUND BY NO .axaml DOWNSTREAM")
     for name in absent:
@@ -383,16 +390,14 @@ def report_bindings(upstream_proj, port):
         print(f"   {name}\n       {where}")
 
     print("\n== B. PORT COMMANDS BOUND BY NO .axaml")
-    for name in sorted(c for c in commands if c not in port_bound):
-        rel, line = commands[name]
+    for name, rel, line in unbound_cmds:
         refs = referenced_in(name, sources, rel)
         via = f"invoked from {', '.join(os.path.basename(r) for r in refs)}" if refs \
             else "NOT invoked from any .cs either"
         print(f"   {name}\n       {rel}:{line}\n       {via}")
 
     print("\n== C. PORT OBSERVABLE PROPERTIES BOUND BY NO .axaml")
-    for name in sorted(p for p in properties if p not in port_bound):
-        rel, line = properties[name]
+    for name, rel, line in unbound_props:
         mark = '' if read_anywhere(name, sources) else '   [write-only]'
         print(f"   {name}{mark}\n       {rel}:{line}")
 
