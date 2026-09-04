@@ -1,7 +1,6 @@
 using Daqifi.Desktop.Logger;
 using Microsoft.Data.Sqlite;
 using Microsoft.EntityFrameworkCore;
-using Microsoft.EntityFrameworkCore.Diagnostics;
 using Microsoft.EntityFrameworkCore.Infrastructure;
 using Microsoft.EntityFrameworkCore.Migrations;
 using Microsoft.Extensions.DependencyInjection;
@@ -169,15 +168,12 @@ public class DropChannelTableMigrationTests : IDisposable
 
     /// <summary>
     /// The same SQLite context factory <c>App.Initialize</c> registers in DI, without the
-    /// container. The pending-model-changes warning is suppressed for the reason it is suppressed
-    /// everywhere else in this repo: the model snapshot carries a pre-existing drift in the
-    /// <c>Samples</c> index name that this change deliberately does not touch.
+    /// container — via <see cref="TestDatabase"/>, which is also where the pending-model-changes
+    /// suppression this class needs lives. That warning is suppressed for the reason it is
+    /// suppressed everywhere else in this repo: the model snapshot carries a pre-existing drift in
+    /// the <c>Samples</c> index name that this change deliberately does not touch.
     /// </summary>
-    private LoggingContext CreateContext() => new(
-        new DbContextOptionsBuilder<LoggingContext>()
-            .UseSqlite($"Data source={DatabasePath}")
-            .ConfigureWarnings(w => w.Ignore(RelationalEventId.PendingModelChangesWarning))
-            .Options);
+    private LoggingContext CreateContext() => TestDatabase.Contexts(DatabasePath).CreateDbContext();
 
     /// <summary>Migrates to a named migration, forwards or backwards, through EF's own migrator.</summary>
     private void MigrateTo(string migrationId)
@@ -209,7 +205,7 @@ public class DropChannelTableMigrationTests : IDisposable
 
     private SqliteConnection OpenConnection()
     {
-        var connection = new SqliteConnection($"Data source={DatabasePath}");
+        var connection = new SqliteConnection(TestDatabase.ConnectionString(DatabasePath));
         connection.Open();
         return connection;
     }

@@ -3,9 +3,7 @@ using Daqifi.Desktop.Common.Loggers;
 using Daqifi.Desktop.Logger;
 using Daqifi.Desktop.Models;
 using Daqifi.Desktop.ViewModels;
-using Microsoft.Data.Sqlite;
 using Microsoft.EntityFrameworkCore;
-using Microsoft.EntityFrameworkCore.Diagnostics;
 using Xunit;
 
 namespace Daqifi.Avalonia.Tests.Loggers;
@@ -38,7 +36,6 @@ public class DeleteAllSessionsRecoveryTests : IDisposable
 
     public void Dispose()
     {
-        SqliteConnection.ClearAllPools();
         try { Directory.Delete(_directory, recursive: true); } catch { /* best-effort cleanup */ }
         GC.SuppressFinalize(this);
     }
@@ -137,7 +134,6 @@ public class DeleteAllSessionsRecoveryTests : IDisposable
         Assert.NotNull(staleSession);
 
         // What a half-finished "Delete All" leaves at the same path: a valid, table-less database.
-        SqliteConnection.ClearAllPools();
         File.Delete(DatabasePath);
         File.WriteAllBytes(DatabasePath, []);
 
@@ -197,7 +193,6 @@ public class DeleteAllSessionsRecoveryTests : IDisposable
         await listViewModel.DeleteAllSessionsAsync();
 
         factory.FailNextCreate = false;
-        SqliteConnection.ClearAllPools();
         using var context = factory.CreateDbContext();
         Assert.Equal("Session_0", Assert.Single(context.Sessions.ToList()).Name);
 
@@ -403,8 +398,6 @@ public class DeleteAllSessionsRecoveryTests : IDisposable
             context.Sessions.Add(new LoggingSession(0, "Session_0"));
             context.SaveChanges();
         }
-
-        SqliteConnection.ClearAllPools();
     }
 
     private FailableContextFactory Factory() => new(DatabasePath);
@@ -449,11 +442,7 @@ public class DeleteAllSessionsRecoveryTests : IDisposable
                 throw new IOException("The process cannot access the file because it is being used by another process.");
             }
 
-            return new LoggingContext(
-                new DbContextOptionsBuilder<LoggingContext>()
-                    .UseSqlite($"Data source={databasePath}")
-                    .ConfigureWarnings(w => w.Ignore(RelationalEventId.PendingModelChangesWarning))
-                    .Options);
+            return new LoggingContext(TestDatabase.Options(databasePath));
         }
     }
 
