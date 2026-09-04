@@ -4,7 +4,6 @@ using Daqifi.Desktop.Common.Loggers;
 using Daqifi.Desktop.Logger;
 using Microsoft.Data.Sqlite;
 using Microsoft.EntityFrameworkCore;
-using Microsoft.EntityFrameworkCore.Diagnostics;
 using OxyPlot;
 using Xunit;
 using ChannelType = Daqifi.Core.Channel.ChannelType;
@@ -231,9 +230,19 @@ public class ChannelColorFallbackTests : IDisposable
     /// stores <c>""</c>, which the CURRENT <c>NOT NULL</c> column accepts perfectly happily, so that
     /// half of the exposure does not even need an old file.
     /// </param>
+    /// <remarks>
+    /// The contexts come from <see cref="TestDatabase"/>, which is the one place in this project
+    /// allowed to name a SQLite data source (#225, enforced by
+    /// <c>.github/scripts/check_test_sqlite_pooling.py</c>). Going through it is not only what
+    /// satisfies the guard: it is what keeps this fixture's connections UNPOOLED, so the
+    /// process-global <c>ClearAllPools()</c> that <see cref="DatabaseMigrator"/> calls on the very
+    /// path invoked below cannot dispose a <c>sqlite3</c> handle another test class is mid-query on
+    /// (#210). It also carries the pending-model-changes suppression this fixture needs, since
+    /// <see cref="RelaxTheColourConstraint"/> moves the schema away from the model snapshot.
+    /// </remarks>
     private IDbContextFactory<LoggingContext> SeedLegacySession(bool nullColour)
     {
-        var factory = new TestContextFactory(DatabasePath);
+        var factory = TestDatabase.Contexts(DatabasePath);
         DatabaseMigrator.ApplyMigrations(factory, DatabasePath);
 
         using var context = factory.CreateDbContext();
@@ -294,28 +303,6 @@ public class ChannelColorFallbackTests : IDisposable
             CREATE INDEX "IX_Samples_LoggingSessionID_TimestampTicks"
                 ON "Samples" ("LoggingSessionID", "TimestampTicks");
             """);
-    }
-
-    /// <summary>
-    /// The same SQLite context factory <c>App.Initialize</c> registers in DI, without the container —
-    /// spelled the way the suite's six other database fixtures spell it today.
-    /// </summary>
-    /// <remarks>
-    /// Deliberately the ONLY connection string in this file, because PR #225 makes
-    /// <c>Daqifi.Avalonia.Tests/TestDatabase.cs</c> the one place in this project allowed to name a
-    /// data source and fails the build on anything else. Run against that branch's guard, this file
-    /// reports exactly two findings, both on the <c>UseSqlite</c> line below, and no
-    /// <c>ClearAllPools</c> (which is avoided on purpose). So whichever of the two PRs lands second
-    /// replaces this one method body with <c>TestDatabase.Contexts(databasePath)</c> — the same edit
-    /// #225 already makes to those six.
-    /// </remarks>
-    private sealed class TestContextFactory(string databasePath) : IDbContextFactory<LoggingContext>
-    {
-        public LoggingContext CreateDbContext() => new(
-            new DbContextOptionsBuilder<LoggingContext>()
-                .UseSqlite($"Data source={databasePath}")
-                .ConfigureWarnings(w => w.Ignore(RelationalEventId.PendingModelChangesWarning))
-                .Options);
     }
 
     /// <summary>
