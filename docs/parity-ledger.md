@@ -11,15 +11,16 @@ method was shown to be measuring the wrong thing.
 this port. Feature parity is no longer what blocks retiring daqifi-desktop —
 shipping and validation are.
 
-Five independent signals were swept, then a sixth added on 2026-09-04. All six
-return zero user-reachable gaps. The triage that got there is below, so the next
-pass can check the reasoning rather than repeat the sweep.
+Five independent signals were swept. On 2026-09-04 one of them was found to be
+measuring the wrong thing and was replaced by a stronger one; the other four are
+unchanged. All five return zero user-reachable gaps. The triage that got there is
+below, so the next pass can check the reasoning rather than repeat the sweep.
 
 ## Correction, 2026-09-04: declared is not bound
 
 The 2026-09-03 row "67 command bindings upstream, **0 absent** downstream" was
-**true but not evidence for what it was used for**, and the sentence above only
-survives re-measurement by luck. It came from a *symbol* diff: it asked whether
+**true but not evidence for what it was used for**, and the verdict above was
+resting partly on it. It came from a *symbol* diff: it asked whether
 each upstream command exists downstream as a declaration. A command can be
 declared downstream and bound by **no view at all**, and to a symbol diff that is
 indistinguishable from a command a user can press. Declared ≠ bound ≠ reachable.
@@ -106,7 +107,7 @@ is not moving, so the gap set is fixed rather than a moving target. This is the
 single most important fact for planning — a parity pass no longer has to re-measure
 drift before it can trust anything else.
 
-## The six signals
+## The five signals
 
 | Signal | Result |
 |---|---|
