@@ -44,6 +44,15 @@ public class FirmwareUpdateCoordinator
     /// its flasher keeps exclusive access. Null is tolerated (tests / no watcher).
     /// </summary>
     private readonly IBootloaderWatcher? _watcher;
+
+    /// <summary>
+    /// The in-flight firmware run's cancellation source, or null when nothing is running. The single
+    /// owner for every entry point — both <see cref="UploadFirmwareAsync"/> and
+    /// <see cref="UpdateWifiModuleOnlyAsync"/> take theirs from <see cref="BeginUpload"/> — so
+    /// <see cref="CancelUpload"/> can never be pointed at a different source than the flash received
+    /// (issue #234). Written on the UI thread (command handlers and their continuations) and never
+    /// disposed; see <see cref="EndUpload"/> for why.
+    /// </summary>
     private CancellationTokenSource? _firmwareUploadCts;
     private string _latestFirmwareVersion = string.Empty;
 
@@ -323,29 +332,35 @@ public class FirmwareUpdateCoordinator
     }
 
     /// <summary>
-    /// Opens a cancellable firmware run: replaces the cancellation source and marks the host as
+    /// Opens a cancellable firmware run: adopts a fresh cancellation source and marks the host as
     /// uploading, in that order, so the Cancel button is never enabled over a source that does not
     /// exist yet. Returns the run's token — callers use the returned value rather than re-reading the
-    /// field, which the run's own completion nulls.
+    /// field, which the run's own completion clears.
     /// </summary>
     private CancellationToken BeginUpload()
     {
-        _firmwareUploadCts?.Dispose();
         _firmwareUploadCts = new CancellationTokenSource();
         _host.IsFirmwareUploading = true;
         return _firmwareUploadCts.Token;
     }
 
     /// <summary>
-    /// Closes a firmware run. The field is cleared before the source is disposed so a Cancel arriving
-    /// as the run finishes reads null and no-ops rather than touching a disposed source.
+    /// Closes a firmware run by dropping its cancellation source, so a later <see cref="CancelUpload"/>
+    /// reads null and no-ops.
+    /// <para>
+    /// The retired source is deliberately NOT disposed — the same call PR #26 made for the session
+    /// viewer's source, for the same reason. Nothing here reads its <c>WaitHandle</c> or gives it a
+    /// timer, so there is no unmanaged resource to release, and not disposing removes the
+    /// <c>Cancel()</c>-versus-<c>Dispose()</c> race outright: a <see cref="CancelUpload"/> that has
+    /// already read the field can then only ever signal a live-or-finished source, which is a harmless
+    /// no-op, never a disposed one. Clearing the field first would not achieve that on its own — it
+    /// protects only readers that have not read yet. GC reclaims the retired source.
+    /// </para>
     /// </summary>
     private void EndUpload()
     {
-        var cts = _firmwareUploadCts;
         _firmwareUploadCts = null;
         _host.IsFirmwareUploading = false;
-        cts?.Dispose();
     }
 
     // @port: Daqifi.Desktop.Device.Firmware.FirmwareUpdateCoordinator.UpdateWifiModuleAsync
