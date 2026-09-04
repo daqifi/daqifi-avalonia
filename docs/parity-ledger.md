@@ -290,6 +290,12 @@ State these rather than round up:
   caveat is doubly true, because a matching surface has now been shown not even to
   guarantee matching *reachability* — six commands the port declares are bound by
   nothing at all.
+- **`--bindings` corrected its own denominator four times on its first run**, and
+  every one of those was a silent under- or over-count, not a crash: inline
+  `[ObservableProperty]` declarations, `RelativeSource TemplatedParent`,
+  element-syntax `<Binding Path="…"/>`, and two view-models sharing a property
+  name. None changed a finding, which is the only reason the counts above are
+  worth quoting — but re-run it rather than quoting them from here.
 - **`--bindings` reads markup, not a compiled binding graph**, so it knows names and
   not types. Matching is on the bare identifier of every path segment, which is
   deliberately generous — upstream's `Port.PortName` and the port's flattened
