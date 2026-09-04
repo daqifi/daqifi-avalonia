@@ -285,7 +285,7 @@ public abstract partial class AbstractChannel : ObservableObject, IChannel
 
     #region Object overrides
     // @port: Daqifi.Desktop.Channel.AbstractChannel.Equals
-    public override bool Equals(object obj)
+    public override bool Equals(object? obj)
     {
         if (obj is not AbstractChannel channel) { return false; }
 

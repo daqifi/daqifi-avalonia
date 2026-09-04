@@ -13,7 +13,7 @@ namespace Daqifi.Desktop.Converters;
 public class BoolToStatusColorConverter : IValueConverter
 {
     // @port: Daqifi.Desktop.Converters.BoolToStatusColorConverter.Convert
-    public object Convert(object value, Type targetType, object parameter, CultureInfo culture)
+    public object Convert(object? value, Type targetType, object? parameter, CultureInfo culture)
     {
         if (value is bool isActive)
         {
@@ -23,7 +23,7 @@ public class BoolToStatusColorConverter : IValueConverter
     }
 
     // @port: Daqifi.Desktop.Converters.BoolToStatusColorConverter.ConvertBack
-    public object ConvertBack(object value, Type targetType, object parameter, CultureInfo culture)
+    public object ConvertBack(object? value, Type targetType, object? parameter, CultureInfo culture)
     {
         throw new NotImplementedException();
     }

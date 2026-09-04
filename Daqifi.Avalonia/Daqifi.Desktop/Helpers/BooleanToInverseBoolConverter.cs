@@ -12,13 +12,13 @@ namespace Daqifi.Desktop.Helpers;
 public class BooleanToInverseBoolConverter : IValueConverter
 {
     // @port: Daqifi.Desktop.Helpers.BooleanToInverseBoolConverter.Convert
-    public object Convert(object value, Type targetType, object parameter, CultureInfo culture)
+    public object Convert(object? value, Type targetType, object? parameter, CultureInfo culture)
     {
         return value is bool boolValue ? !boolValue : false;
     }
 
     // @port: Daqifi.Desktop.Helpers.BooleanToInverseBoolConverter.ConvertBack
-    public object ConvertBack(object value, Type targetType, object parameter, CultureInfo culture)
+    public object ConvertBack(object? value, Type targetType, object? parameter, CultureInfo culture)
     {
         return value is bool boolValue ? !boolValue : false;
     }

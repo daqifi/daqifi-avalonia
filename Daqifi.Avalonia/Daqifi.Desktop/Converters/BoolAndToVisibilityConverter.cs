@@ -22,7 +22,7 @@ public class BoolAndToVisibilityConverter : IMultiValueConverter
     /// Returns <c>true</c> when every bound value is boolean <c>true</c>.
     /// </summary>
     // @port: Daqifi.Desktop.Converters.BoolAndToVisibilityConverter.Convert
-    public object Convert(IList<object?> values, Type targetType, object parameter, CultureInfo culture)
+    public object Convert(IList<object?> values, Type targetType, object? parameter, CultureInfo culture)
     {
         var allTrue = values != null && values.Count > 0 && values.All(v => v is true);
         return allTrue;

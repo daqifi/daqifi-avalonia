@@ -14,7 +14,7 @@ namespace Daqifi.Desktop.Helpers;
 public class IntToVisibilityConverter : IValueConverter
 {
     // @port: Daqifi.Desktop.Helpers.IntToVisibilityConverter.Convert
-    public object Convert(object value, Type targetType, object parameter, CultureInfo culture)
+    public object Convert(object? value, Type targetType, object? parameter, CultureInfo culture)
     {
         if (value is int count)
         {
@@ -24,7 +24,7 @@ public class IntToVisibilityConverter : IValueConverter
     }
 
     // @port: Daqifi.Desktop.Helpers.IntToVisibilityConverter.ConvertBack
-    public object ConvertBack(object value, Type targetType, object parameter, CultureInfo culture)
+    public object ConvertBack(object? value, Type targetType, object? parameter, CultureInfo culture)
     {
         throw new NotImplementedException();
     }

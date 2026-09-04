@@ -263,7 +263,7 @@ public class LoggingSession : ObservableObject
 
     #region Object Overrides
     // @port: Daqifi.Desktop.Logger.LoggingSession.Equals
-    public override bool Equals(object obj)
+    public override bool Equals(object? obj)
     {
         return obj is LoggingSession sessionObj && sessionObj.ID == ID;
     }
