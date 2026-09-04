@@ -312,6 +312,54 @@ public sealed class SessionTimestampRangeTests : IDisposable
 
     #endregion
 
+    #region The single-timestamp fallback
+
+    /// <summary>
+    /// The one path on which a skipped row could still reach the plot, found by review rather than by
+    /// the issue. Skipping it from the two loads is not enough on its own, because BOTH viewers have a
+    /// third path: when a session is past <see cref="SessionDataRepository.INITIAL_LOAD_POINTS"/> and
+    /// <see cref="SessionDataRepository.LoadSampledData"/> finds no time range to sample across, they
+    /// fall back to <see cref="SessionDataRepository.LoadSingleTickValueSpread"/>, which draws each
+    /// channel as a MIN..MAX vertical segment aggregated over the whole session. That aggregation was
+    /// keyed on the session id alone, so a damaged row's VALUE was still the segment's extreme — the
+    /// row skipped everywhere else, back on the graph.
+    /// </summary>
+    /// <remarks>
+    /// <para>This fix made the path MORE reachable, which is why it belongs in this PR rather than a
+    /// follow-up: excluding unreadable rows from the bounds is exactly what makes a damaged session's
+    /// readable rows share one timestamp, and therefore what sends the caller down this branch.</para>
+    /// <para>The chain is exercised for real — over the cap, no time range, then the fallback — rather
+    /// than by calling the fallback directly, because "the fallback is reached" is half the claim. The
+    /// 100,001 rows go in with one recursive-CTE insert, so the test still runs in well under a second.
+    /// The two callers themselves (<c>DatabaseLogger</c>, <c>LoggedSessionsMobileViewModel</c>) are the
+    /// only part not covered here; both make exactly these three calls in this order.</para>
+    /// </remarks>
+    [Fact]
+    public void The_single_timestamp_fallback_does_not_bring_a_skipped_row_back_as_a_channel_extreme()
+    {
+        SeedSession();
+        SeedManyRows(SessionDataRepository.INITIAL_LOAD_POINTS + 1, HealthyTicks, value: 1.0);
+        SeedRow(long.MaxValue, value: 999_999.0);
+
+        var repository = Repository();
+        var load = repository.LoadInitialSession(SessionId);
+
+        // The caller's gate: without this the fallback is never reached and the test proves nothing.
+        Assert.True(load.TotalSampleCount > SessionDataRepository.INITIAL_LOAD_POINTS);
+
+        // And the branch: every readable row shares one timestamp, so there is no range to sample.
+        Assert.Null(repository.LoadSampledData(SessionId, load.Channels.Count, Seeded()));
+
+        var spread = SessionDataRepository.LoadSingleTickValueSpread(
+            TestDatabase.Contexts(DatabasePath), SessionId, [("SERIAL-A", "AI0")]);
+
+        // One point, not a segment: the channel's value never changes once the damaged row is out.
+        var point = Assert.Single(Assert.Single(spread).Value);
+        Assert.Equal(1.0, point.Y);
+    }
+
+    #endregion
+
     #region Helpers
 
     private SessionDataRepository Repository() => new(TestDatabase.Contexts(DatabasePath), _logger);
@@ -347,17 +395,40 @@ public sealed class SessionTimestampRangeTests : IDisposable
     /// paths all start from a <see cref="DateTime"/> and so cannot produce these values — which is the
     /// point: the damaged row comes from an older store, not from this build.
     /// </summary>
-    private void SeedRow(long ticks, string channelName = "AI0")
+    private void SeedRow(long ticks, string channelName = "AI0", double value = 1.0)
     {
         using var connection = new SqliteConnection(TestDatabase.ConnectionString(DatabasePath));
         connection.Open();
         using var insert = connection.CreateCommand();
         insert.CommandText =
             "INSERT INTO Samples (LoggingSessionID, ChannelName, DeviceName, DeviceSerialNo, Color, Type, Value, TimestampTicks) " +
-            "VALUES ($session, $channel, 'Nq1', 'SERIAL-A', '#FFD32F2F', 0, 1.0, $ticks)";
+            "VALUES ($session, $channel, 'Nq1', 'SERIAL-A', '#FFD32F2F', 0, $value, $ticks)";
         insert.Parameters.AddWithValue("$session", SessionId);
         insert.Parameters.AddWithValue("$channel", channelName);
+        insert.Parameters.AddWithValue("$value", value);
         insert.Parameters.AddWithValue("$ticks", ticks);
+        insert.ExecuteNonQuery();
+    }
+
+    /// <summary>
+    /// <paramref name="count"/> identical "AI0" rows at one timestamp, inserted by a recursive CTE in a
+    /// single statement. Needed only by the fallback test, which has to get a session past
+    /// <see cref="SessionDataRepository.INITIAL_LOAD_POINTS"/> — a hundred thousand round trips would
+    /// have made that test too slow to keep, and this takes well under a second.
+    /// </summary>
+    private void SeedManyRows(int count, long ticks, double value)
+    {
+        using var connection = new SqliteConnection(TestDatabase.ConnectionString(DatabasePath));
+        connection.Open();
+        using var insert = connection.CreateCommand();
+        insert.CommandText =
+            "INSERT INTO Samples (LoggingSessionID, ChannelName, DeviceName, DeviceSerialNo, Color, Type, Value, TimestampTicks) " +
+            "SELECT $session, 'AI0', 'Nq1', 'SERIAL-A', '#FFD32F2F', 0, $value, $ticks " +
+            "FROM (WITH RECURSIVE rows(i) AS (SELECT 1 UNION ALL SELECT i + 1 FROM rows WHERE i < $count) SELECT i FROM rows)";
+        insert.Parameters.AddWithValue("$session", SessionId);
+        insert.Parameters.AddWithValue("$value", value);
+        insert.Parameters.AddWithValue("$ticks", ticks);
+        insert.Parameters.AddWithValue("$count", count);
         insert.ExecuteNonQuery();
     }
 

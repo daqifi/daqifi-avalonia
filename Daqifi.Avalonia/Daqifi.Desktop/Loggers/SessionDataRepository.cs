@@ -449,6 +449,13 @@ public sealed class SessionDataRepository
     /// MIN/MAX over every row in SQL — exact without materializing the rows —
     /// and represents each channel as a two-point vertical segment at delta-time
     /// zero (one point when the value never changes).
+    /// <para>
+    /// It aggregates over the readable rows only, for the same reason the other two loads read
+    /// through that filter (#237). This is the fallback both callers take when
+    /// <see cref="LoadSampledData"/> finds no time range, and a skipped row that still contributed
+    /// its VALUE here would be back on the plot as a channel's minimum or maximum — skipped on one
+    /// path and drawn on another is worse than either answer taken consistently.
+    /// </para>
     /// </summary>
     /// <param name="contextFactory">Factory for the logging database context.</param>
     /// <param name="sessionId">The session whose samples are aggregated.</param>
@@ -469,6 +476,7 @@ public sealed class SessionDataRepository
         using var context = contextFactory.CreateDbContext();
         var spreads = context.Samples.AsNoTracking()
             .Where(s => s.LoggingSessionID == sessionId)
+            .Where(s => s.TimestampTicks >= MIN_READABLE_TICKS && s.TimestampTicks <= MAX_READABLE_TICKS)
             .GroupBy(s => new { s.DeviceSerialNo, s.ChannelName })
             .Select(g => new
             {
