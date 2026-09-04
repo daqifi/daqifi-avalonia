@@ -46,10 +46,10 @@ namespace Daqifi.Avalonia.Tests.Loggers;
 /// </summary>
 public sealed class SessionTimestampRangeTests : IDisposable
 {
-    /// <summary>Lowest tick value <c>new DateTime(long)</c> accepts.</summary>
-    private static readonly long LowestReadableTicks = DateTime.MinValue.Ticks;
-
-    /// <summary>Highest tick value <c>new DateTime(long)</c> accepts.</summary>
+    /// <summary>
+    /// Highest tick value <c>new DateTime(long)</c> accepts. The low end needs no constant: it is
+    /// <c>0</c>, and <see cref="The_edges_of_the_representable_range_are_kept"/> writes it as such.
+    /// </summary>
     private static readonly long HighestReadableTicks = DateTime.MaxValue.Ticks;
 
     /// <summary>An ordinary, healthy timestamp for the rows that are meant to survive.</summary>
@@ -131,14 +131,15 @@ public sealed class SessionTimestampRangeTests : IDisposable
     }
 
     /// <summary>
-    /// <c>long.MaxValue</c> and "one tick past <see cref="DateTime.MaxValue"/>" are the same defect;
-    /// the boundary matters more than the magnitude, so the row immediately outside it is tested too.
+    /// The magnitude of the damage does not matter, only which side of the boundary it falls on — so
+    /// each extreme is paired with a row exactly ONE tick past <see cref="DateTime.MaxValue"/>, which
+    /// is the value an off-by-one in the guard would let through.
     /// </summary>
     [Theory]
     [InlineData(long.MinValue)]
     [InlineData(-1L)]
     [InlineData(long.MaxValue)]
-    public void A_sample_just_outside_the_range_is_dropped(long hostileTicks)
+    public void Rows_outside_the_range_are_dropped_at_the_boundary_and_at_the_extremes(long hostileTicks)
     {
         Seed(hostileTicks, HealthyTicks);
         SeedRow(HighestReadableTicks + 1);
@@ -267,7 +268,7 @@ public sealed class SessionTimestampRangeTests : IDisposable
 
     /// <summary>
     /// The high end at the second site, which fails the same silent way as Phase 1: the origin is
-    /// fine, so nothing throws, and the damaged row is plotted 29,000 years out.
+    /// fine, so nothing throws, and the damaged row is plotted 27,000 years out.
     /// </summary>
     [Fact]
     public void A_sample_above_the_range_is_dropped_from_the_full_range_load()
