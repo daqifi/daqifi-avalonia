@@ -134,7 +134,14 @@ public sealed class SessionSampleWriterDurabilityTests : IDisposable
         writer.WaitForIdle(TimeSpan.FromSeconds(15));
 
         Assert.Equal(0, writer.PendingRetryCount);
-        Assert.Equal(3, CountSamples());
+
+        // Per-sample identity, not a row count: three rows is also what you get from dropping one
+        // sample and writing another twice, which is precisely the corruption this test exists to
+        // catch. Each submitted value must be present exactly once.
+        using var context = Verification();
+        Assert.Equal(
+            [1d, 2d, 3d],
+            context.Samples.OrderBy(sample => sample.TimestampTicks).Select(sample => sample.Value).ToList());
     }
 
     /// <summary>
