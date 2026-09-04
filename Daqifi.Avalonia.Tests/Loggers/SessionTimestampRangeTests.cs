@@ -39,10 +39,11 @@ namespace Daqifi.Avalonia.Tests.Loggers;
 /// the current schema can hold one. <see cref="A_session_database_can_hold_a_tick_value_no_date_can_represent"/>
 /// builds such a file rather than assuming it.</para>
 ///
-/// <para>Thirteen of the seventeen cases here fail against the unchanged code: ten throw
-/// <see cref="ArgumentOutOfRangeException"/> out of the load, and three fail on an assertion having
+/// <para>Fourteen of the eighteen cases here fail against the unchanged code: ten throw
+/// <see cref="ArgumentOutOfRangeException"/> out of the load, and four fail on an assertion having
 /// thrown nothing at all — the silent variant above. Measured by running this file against the merge
-/// base, not by reasoning about which ones ought to fail.</para>
+/// base, not by reasoning about which ones ought to fail. The four that pass unfixed are meant to:
+/// the reachability demonstration, the no-false-alarm guard, and the two range edges.</para>
 /// </summary>
 public sealed class SessionTimestampRangeTests : IDisposable
 {
