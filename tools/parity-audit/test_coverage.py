@@ -18,6 +18,12 @@ stays visible instead of being rediscovered. Those forms were swept by hand
 against upstream: 39 symbols fall in the blind spot and exactly one
 (ServiceLocator.RegisterSingleton) is absent from the port, a refactor rather
 than a gap. See "Limits of this ledger" in docs/parity-ledger.md.
+
+The third block covers `--bindings`, whose failure mode is the mirror image:
+there, reading one binding path too generously *invents* reachability and hides
+a gap. Its cases are the syntax that nearly did so — nested extensions,
+`RelativeSource TemplatedParent`, and attributes sharing a line with the
+declaration they decorate.
 """
 import importlib.util
 import os
@@ -87,6 +93,82 @@ typ('internal class ChannelBuffer', 'ChannelBuffer')
 found = coverage.find_upstream()
 if found is not None and not os.path.isdir(os.path.join(found, 'Daqifi.Desktop')):
     failures.append(f"find_upstream returned {found!r}, which has no Daqifi.Desktop")
+
+
+# --- --bindings ------------------------------------------------------------
+# The binding half answers "does any view reach this member", so its failure
+# mode is the opposite of the member regex's: over-reading a binding path
+# invents reachability and hides a gap, exactly what these pin against.
+
+def paths(markup, expected):
+    """The binding paths one XAML attribute value yields."""
+    got = [p for body in coverage.markup_bodies(markup)
+           for p in coverage.binding_paths(body)]
+    if got != expected:
+        failures.append(f"binding_paths {markup!r}: expected {expected}, got {got}")
+
+
+def names(path, expected):
+    got = coverage.path_members(path)
+    if got != expected:
+        failures.append(f"path_members {path!r}: expected {expected}, got {got}")
+
+
+paths('"{Binding SaveCommand}"', ['SaveCommand'])
+paths('"{CompiledBinding SaveCommand}"', ['SaveCommand'])
+paths('"{ReflectionBinding SaveCommand}"', ['SaveCommand'])
+paths('"{Binding Path=SaveCommand}"', ['SaveCommand'])
+# A nested extension must not end the outer one early, and the named arguments
+# after the path are not themselves paths.
+paths('"{Binding IsBusy, Converter={StaticResource BoolToVis}, Mode=OneWay}"', ['IsBusy'])
+paths('"{Binding Value, StringFormat=HH:mm:ss}"', ['Value'])
+# TemplatedParent / Self address the control, not a view-model. Counting a
+# ComboBox template's IsDropDownOpen as a view-model member put it on the
+# 2026-09-04 gap list until this dropped it.
+paths('"{Binding Path=IsDropDownOpen, RelativeSource={RelativeSource TemplatedParent}}"', [])
+paths('"{TemplateBinding IsDropDownOpen}"', [])
+paths('Text="literal"', [])
+
+# Every segment of a path is a bound member: the port may reach the same value
+# through a different parent (upstream `Port.PortName` -> downstream `PortName`).
+names('SummaryLogger.SampleSize', ['SummaryLogger', 'SampleSize'])
+names('$parent[UserControl].DataContext.Shell.IsDebugModeEnabled',
+      ['DataContext', 'Shell', 'IsDebugModeEnabled'])
+names('#DeviceList.SelectedItem', ['SelectedItem'])
+names('!IsBusy', ['IsBusy'])
+names('Devices[0].Name', ['Devices', 'Name'])
+
+# Attributes and declarations share a line 32 times in this repo. Reading them
+# as separate lines dropped all 32 and blamed each on the declaration below it.
+if coverage.strip_attributes('    [ObservableProperty] private bool _isLoggingActive;') \
+        != (['ObservableProperty'], 'private bool _isLoggingActive;'):
+    failures.append("strip_attributes: inline [ObservableProperty] not split")
+if coverage.strip_attributes('    [ObservableProperty]') != (['ObservableProperty'], ''):
+    failures.append("strip_attributes: bare [ObservableProperty] not recognised")
+if coverage.strip_attributes('    [RelayCommand(CanExecute = nameof(CanSave))]') \
+        != (['RelayCommand'], ''):
+    failures.append("strip_attributes: [RelayCommand(...)] not recognised")
+if coverage.strip_attributes('    private bool _x;') != ([], '    private bool _x;'):
+    failures.append("strip_attributes: plain declaration altered")
+
+# Both halves against the real trees, so a silently-empty scan cannot pass.
+# `CancelFirmwareUploadCommand` is the control the whole mode exists for — the
+# 2026-09-03 symbol diff called it present, and no XAML in either app binds it.
+# Pinned here is the *mechanism* that finds it (the generated name is collected,
+# and the .axaml scan is real), not the gap itself: binding a Cancel button is a
+# fix, and a fix must not turn this red.
+commands, properties = coverage.collect_declared(
+    os.path.join(coverage.REPO, 'Daqifi.Avalonia'), coverage.REPO)
+bound = coverage.collect_bound(coverage.REPO, ('.axaml',))
+if 'CancelFirmwareUploadCommand' not in commands:
+    failures.append("collect_declared no longer generates CancelFirmwareUploadCommand "
+                    "from its [RelayCommand]; --bindings cannot see the control")
+if 'IsLoggingActive' not in properties:
+    failures.append("collect_declared missed IsLoggingActive, an inline "
+                    "[ObservableProperty] — the 32 inline declarations are being dropped")
+if 'ClearDebugDataCommand' not in bound:
+    failures.append("collect_bound did not find ClearDebugDataCommand, which "
+                    "DebugWindow.axaml binds; the .axaml scan is not reading bindings")
 
 if failures:
     print(f"FAIL ({len(failures)})")

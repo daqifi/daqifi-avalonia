@@ -1,7 +1,9 @@
 # Parity ledger: what is still only possible in daqifi-desktop
 
 **Measured 2026-09-03** against daqifi-desktop `36995fe` (upstream `main`) and this
-repo at `5414c07`.
+repo at `5414c07`. **Re-measured 2026-09-04** at the binding level, against the same
+upstream `36995fe` — still `identical` to upstream `main` — after the 2026-09-03
+method was shown to be measuring the wrong thing.
 
 ## Verdict
 
@@ -9,9 +11,77 @@ repo at `5414c07`.
 this port. Feature parity is no longer what blocks retiring daqifi-desktop —
 shipping and validation are.
 
-Five independent signals were swept. All five return zero user-reachable gaps.
-The triage that got there is below, so the next pass can check the reasoning
-rather than repeat the sweep.
+Five independent signals were swept, then a sixth added on 2026-09-04. All six
+return zero user-reachable gaps. The triage that got there is below, so the next
+pass can check the reasoning rather than repeat the sweep.
+
+## Correction, 2026-09-04: declared is not bound
+
+The 2026-09-03 row "67 command bindings upstream, **0 absent** downstream" was
+**true but not evidence for what it was used for**, and the sentence above only
+survives re-measurement by luck. It came from a *symbol* diff: it asked whether
+each upstream command exists downstream as a declaration. A command can be
+declared downstream and bound by **no view at all**, and to a symbol diff that is
+indistinguishable from a command a user can press. Declared ≠ bound ≠ reachable.
+
+`coverage.py --bindings` now asks the binding question directly, by reading the
+XAML on both sides rather than the C#. Re-run at the same upstream revision:
+
+| | measured |
+|---|---|
+| Member names bound in WPF `.xaml` | **319** |
+| …bound by no `.axaml` downstream | **4**, all triaged below as non-gaps |
+| Commands the port declares | **90** |
+| …bound by no `.axaml` | **10**; 4 reachable another way, **6 dead** |
+| `[ObservableProperty]` state the port declares | **172** |
+| …bound by no `.axaml` | **38**, of which 8 are never read in C# either |
+
+**The parity conclusion survives, and is now better founded**: the 4 upstream-bound
+names with no downstream binding are `FlyoutWidth`/`FlyoutHeight` (MahApps `Flyout`
+sizing, which Avalonia's `SplitView` does not have), `ElapsedTime` (dropped on
+purpose, with the reasoning at `SummaryLogger.cs`), and `Port` — the container of
+upstream's `Port.PortName`, which the port binds flattened as `PortName`.
+
+**What the binding check found instead is on the port's own side**, and it is a
+different defect class: six commands and a pile of observable state that nothing
+can reach. Filed as #241–#243. **None of them is a parity gap.** Every one is
+either dead upstream too — this port faithfully copied the WPF app's dead MVVM
+surface — or a port-only addition that was never wired up. All **48** unbound
+names were checked back against upstream: **none of them is bound in any WPF
+`.xaml` either**, and 9 do not appear in upstream's C# at all.
+
+### The unreachable surface, ranked by user impact
+
+Ranked by what a user loses, not by how many lines it is. Nothing here is a
+regression against the WPF app; the top two are capabilities **neither** app
+offers, which is why they rank above the merely dead code below them.
+
+| # | What | Where | Filed |
+|---|---|---|---|
+| 1 | **A firmware upload cannot be cancelled.** `CancelUploadFirmwareCommand` and `CancelFirmwareUploadCommand` both exist, both work, and no view binds either. The upload scrim is modal and can run for minutes. | `FirmwareDialogViewModel.cs:337`, `DaqifiViewModel.cs:983` | #241 |
+| 2 | **The WiFi-firmware update reports progress to nobody.** `FirmwareUpdateStatusText` is assigned 18 times (15 in `FirmwareUpdateCoordinator`, 3 in the view-model) and read nowhere; `DaqifiViewModel.IsFirmwareUploading` gates `CanExecute` but drives no visual. | `DaqifiViewModel.cs:188` | #241 |
+| 3 | **Dead commands with a live duplicate.** `RemoveChannelCommand` re-implements what `ChannelsPaneViewModel` and `MobileShellViewModel` already do; `ToggleDebugModeCommand` duplicates the bound `IsDebugModeEnabled` toggle; `ShutdownCommand` wraps a method nothing calls in either app. | `DaqifiViewModel.cs` 1031 / 2862 / 1069 | #242 |
+| 4 | **Observable state nothing reads.** 8 `[ObservableProperty]` fields are assigned and never read back, in C# or XAML — `ExportProgressText`, `LoggedSessionName`, `IsDeviceSettingsOpen`, `Flag`, `DeviceResponse`, `HasDigitalData`, `MessageType`, `SelectedProfileDevices`. Each one costs a generated property, a change notification and a reader's attention. | various | #243 |
+
+**#241 is deliberately not fixed here.** PR #239 is open against
+`DaqifiViewModel`'s cancellation ownership; a Cancel button written against `main`
+would bind a surface that is about to move.
+
+Two corrections of record that came out of the same pass:
+
+- The finding that reopened this file was reported as "the WPF `FirmwareFlyout.xaml`
+  Cancel button was never ported". **There is no `FirmwareFlyout.xaml` upstream.**
+  `Daqifi.Desktop/View/Flyouts/` at `36995fe` holds `LiveGraphFlyout`,
+  `NotificationsFlyout` and `SummaryFlyout` and nothing else; the file exists only in
+  branch worktrees under the sibling checkout's `.claude/worktrees/`, which is why a
+  `find` over that checkout appears to show it. Upstream's own
+  `CancelFirmwareUploadCommand` is bound by nothing either. **Read the sibling
+  repo at the watermark, not at whatever its worktrees are on.**
+- Three `@port:` backlinks name upstream symbols that do not exist at `36995fe`:
+  `DaqifiViewModel.RemoveChannel`, `.ToggleDebugMode`, and — as `[RelayCommand]` —
+  `.Shutdown`, which upstream declares as a plain method. A backlink to a
+  nonexistent symbol cannot be validated by the declared-level diff, which only
+  ever reads backlinks in the other direction.
 
 ## Why this file exists
 
@@ -36,12 +106,13 @@ is not moving, so the gap set is fixed rather than a moving target. This is the
 single most important fact for planning — a parity pass no longer has to re-measure
 drift before it can trust anything else.
 
-## The five signals
+## The six signals
 
 | Signal | Result |
 |---|---|
 | Views | WPF 22 XAML files → every one has an `.axaml` counterpart. Port adds 8 mobile views, 1 dialog, 1 resource dictionary. |
-| Command bindings | 67 distinct `Command=` bindings upstream, **0 absent** downstream; 13 new downstream. |
+| ~~Command bindings~~ | ~~67 distinct `Command=` bindings upstream, **0 absent** downstream; 13 new downstream.~~ **Superseded** — this measured declarations, not bindings. See the correction above. |
+| Bound members (2026-09-04) | 319 member names bound in WPF `.xaml`, **4** bound by no `.axaml` downstream — all triaged as non-gaps. Reproduce with `coverage.py --bindings`. |
 | Types | 167 upstream types, **7** with no `@port:` backlink — all triaged below as non-gaps. |
 | Members | 646 upstream public/internal members, **20** with no backlink and no same-named symbol downstream — all triaged below. |
 | User-visible labels | 9 upstream strings absent downstream, all renames/redesigns where the port is equal or richer. |
@@ -215,4 +286,19 @@ State these rather than round up:
   `protected` members remain out of scope by design.
 - **Behaviour behind a matching name is not verified.** A command that exists
   downstream is not proof it does the same thing. This ledger establishes that the
-  *surface* is complete, not that every code path matches.
+  *surface* is complete, not that every code path matches. Since 2026-09-04 that
+  caveat is doubly true, because a matching surface has now been shown not even to
+  guarantee matching *reachability* — six commands the port declares are bound by
+  nothing at all.
+- **`--bindings` reads markup, not a compiled binding graph**, so it knows names and
+  not types. Section A matches on the bare identifier of every path segment, which is
+  deliberately generous — upstream's `Port.PortName` and the port's flattened
+  `PortName` should agree — but it means a member bound downstream on a *different*
+  view-model counts as bound. `DaqifiViewModel.IsFirmwareUploading` is the live
+  example: nothing binds it, yet the identifier is bound in `FirmwareDialog.axaml`
+  against `FirmwareDialogViewModel`, so section A cannot see it and section C does not
+  list it. Sections B and C are per-declaration and do not have this problem;
+  section A alone would not have found the control this mode exists for.
+- **Reachability is not the same as usefulness.** `--bindings` proves a view names
+  the member. It cannot tell you the handler behind it does anything, or that the
+  control is ever enabled — the next two classes down. Those still need reading.

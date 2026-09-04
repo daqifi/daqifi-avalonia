@@ -15,6 +15,11 @@ Used for the 2026-07-22 parity audit → issues **#5–#14**.
 | `WpfCapture/` | the original WPF app | runs the **real** app off-screen, captures via `RenderTargetBitmap` | `<out>/wpf/wpf-*.png` |
 | `montage.py` | — | pairs them left/right with labels | `<out>/montage/*.png` |
 
+`coverage.py` in this directory is the **non**-visual half of the same question:
+it diffs the two source trees rather than their pixels, at the symbol level by
+default and at the *binding* level with `--bindings`. Nothing else here depends
+on it; see its module docstring and `docs/parity-ledger.md`.
+
 Both harnesses render **without a device connected** (empty states), driving the
 UI by reflection — desktop tabs via `SelectedIndex` (0–4) and flyouts via the
 VM booleans (`IsAppSettingsOpen`, `IsNotificationsOpen`,
