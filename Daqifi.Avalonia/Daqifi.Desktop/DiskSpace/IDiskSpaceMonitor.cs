@@ -30,7 +30,8 @@ public interface IDiskSpaceMonitor : IDisposable
     DiskSpaceCheckResult CheckPreLoggingSpace();
 
     /// <summary>
-    /// Starts periodic monitoring of disk space during an active logging session.
+    /// Starts periodic monitoring of disk space during an active logging session. Starting a
+    /// monitor that is already running, or one that has been disposed, does nothing.
     /// </summary>
     /// <param name="suppressInitialWarning">
     /// When true, suppresses the first warning-level notification (e.g., because a pre-session
@@ -46,7 +47,9 @@ public interface IDiskSpaceMonitor : IDisposable
     void StopMonitoring();
 
     /// <summary>
-    /// Whether monitoring is currently active.
+    /// Whether monitoring is currently active — that is, whether a further tick will happen.
+    /// False once <see cref="StopMonitoring"/> or <see cref="IDisposable.Dispose"/> has been
+    /// called, and false after the critical threshold's hard stop, which ends monitoring too.
     /// </summary>
     // @port: Daqifi.Desktop.DiskSpace.IDiskSpaceMonitor.IsMonitoring
     bool IsMonitoring { get; }
