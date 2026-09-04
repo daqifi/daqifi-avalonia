@@ -124,11 +124,11 @@ public sealed class SessionDataRepository
         using var context = _loggingContext.CreateDbContext();
         context.ChangeTracker.AutoDetectChangesEnabled = false;
 
-        var baseQuery = context.Samples.AsNoTracking()
-            .Where(s => s.LoggingSessionID == sessionId);
+        var sid = sessionId;
 
         // Get the first timestamp to extract channel info (instant via composite index)
-        var firstSample = baseQuery
+        var firstSample = context.Samples.AsNoTracking()
+            .Where(s => s.LoggingSessionID == sid)
             .OrderBy(s => s.TimestampTicks)
             .Select(s => new { s.TimestampTicks })
             .FirstOrDefault();
@@ -139,8 +139,10 @@ public sealed class SessionDataRepository
         }
 
         // Collapse duplicate (serial, channel) rows at the first timestamp in SQL.
-        var channelGroups = baseQuery
-            .Where(s => s.TimestampTicks == firstSample.TimestampTicks)
+        var firstTicks = firstSample.TimestampTicks;
+        var channelGroups = context.Samples.AsNoTracking()
+            .Where(s => s.LoggingSessionID == sid)
+            .Where(s => s.TimestampTicks == firstTicks)
             .GroupBy(s => new { s.DeviceSerialNo, s.ChannelName })
             .Select(g => new
             {
@@ -174,10 +176,12 @@ public sealed class SessionDataRepository
 
         // Load initial batch for fast display (100K rows, ~16ms via index)
         DateTime? firstTime = null;
-        foreach (var sample in baseQuery
+        var takeCount = INITIAL_LOAD_POINTS;
+        foreach (var sample in context.Samples.AsNoTracking()
+            .Where(s => s.LoggingSessionID == sid)
             .OrderBy(s => s.TimestampTicks)
             .Select(s => new { s.ChannelName, s.DeviceSerialNo, s.TimestampTicks, s.Value })
-            .Take(INITIAL_LOAD_POINTS)
+            .Take(takeCount)
             .AsEnumerable())
         {
             var key = (sample.DeviceSerialNo, sample.ChannelName);
@@ -190,7 +194,9 @@ public sealed class SessionDataRepository
             }
         }
 
-        var totalSampleCount = baseQuery.Count();
+        var totalSampleCount = context.Samples.AsNoTracking()
+            .Where(s => s.LoggingSessionID == sid)
+            .Count();
 
         return new InitialSessionLoad(channels, points, firstTime, totalSampleCount);
     }
@@ -362,8 +368,9 @@ public sealed class SessionDataRepository
         }
 
         using var context = contextFactory.CreateDbContext();
+        var sid = sessionId;
         var spreads = context.Samples.AsNoTracking()
-            .Where(s => s.LoggingSessionID == sessionId)
+            .Where(s => s.LoggingSessionID == sid)
             .GroupBy(s => new { s.DeviceSerialNo, s.ChannelName })
             .Select(g => new
             {
@@ -407,8 +414,9 @@ public sealed class SessionDataRepository
         try
         {
             using var context = _loggingContext.CreateDbContext();
+            var sid = sessionId;
             var metadata = context.SessionDeviceMetadata.AsNoTracking()
-                .Where(m => m.LoggingSessionID == sessionId)
+                .Where(m => m.LoggingSessionID == sid)
                 .Select(m => new { m.DeviceSerialNo, m.SamplingFrequencyHz })
                 .ToList();
 

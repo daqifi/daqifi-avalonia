@@ -568,9 +568,10 @@ public partial class ExportDialogViewModel : ObservableObject, IDisposable
     private async Task<LoggingSession?> GetLoggingSessionFromId(int sessionId)
     {
         await using var context = _loggingContext.CreateDbContext();
+        var sid = sessionId;
         var loggingSession = await context.Sessions
             .AsNoTracking()
-            .Where(s => s.ID == sessionId)
+            .Where(s => s.ID == sid)
             .Select(s => new LoggingSession
             {
                 ID = s.ID

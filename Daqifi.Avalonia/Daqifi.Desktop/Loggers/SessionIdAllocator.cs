@@ -43,7 +43,8 @@ internal static class SessionIdAllocator
                 UNION ALL SELECT MAX(LoggingSessionID) AS id FROM Samples
             )";
 
-        var maxKnownId = context.Database.SqlQueryRaw<int?>(nextSessionIdSql)
+        var ctx = context;
+        var maxKnownId = ctx.Database.SqlQueryRaw<int?>(nextSessionIdSql)
             .AsEnumerable()
             .FirstOrDefault() ?? -1;
 

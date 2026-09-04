@@ -692,11 +692,14 @@ public class SdCardSessionImporter : ISdCardSessionImporter
         try
         {
             using var ctx = _loggingContext.CreateDbContext();
+            var sid = session.ID;
+            long? count = samplesProcessed;
+            var newStatus = status;
             recorded = ctx.Sessions
-                .Where(s => s.ID == session.ID)
+                .Where(s => s.ID == sid)
                 .ExecuteUpdate(setters => setters
-                    .SetProperty(s => s.SampleCount, samplesProcessed)
-                    .SetProperty(s => s.Status, status)) > 0;
+                    .SetProperty(s => s.SampleCount, count)
+                    .SetProperty(s => s.Status, newStatus)) > 0;
 
             if (!recorded)
             {
@@ -788,9 +791,10 @@ public class SdCardSessionImporter : ISdCardSessionImporter
             using var context = _loggingContext.CreateDbContext();
             using var transaction = context.Database.BeginTransaction();
 
-            context.Samples.Where(s => sessionIds.Contains(s.LoggingSessionID)).ExecuteDelete();
-            context.SessionDeviceMetadata.Where(m => sessionIds.Contains(m.LoggingSessionID)).ExecuteDelete();
-            context.Sessions.Where(s => sessionIds.Contains(s.ID)).ExecuteDelete();
+            var ids = sessionIds;
+            context.Samples.Where(s => ids.Contains(s.LoggingSessionID)).ExecuteDelete();
+            context.SessionDeviceMetadata.Where(m => ids.Contains(m.LoggingSessionID)).ExecuteDelete();
+            context.Sessions.Where(s => ids.Contains(s.ID)).ExecuteDelete();
 
             transaction.Commit();
             return true;

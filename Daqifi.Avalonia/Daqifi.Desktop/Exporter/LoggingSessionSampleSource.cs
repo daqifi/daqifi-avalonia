@@ -91,9 +91,10 @@ public sealed class LoggingSessionSampleSource : ISampleSource
         // a channel virtually always has a single Type, so the result set is the same size.
         // The (pathological) multi-type collapse and the ordering happen client-side on the
         // handful of resulting rows.
+        var sid = _session.ID;
         _channelsCache = InCsvColumnOrder(context.Samples
             .AsNoTracking()
-            .Where(s => s.LoggingSessionID == _session.ID)
+            .Where(s => s.LoggingSessionID == sid)
             .Select(s => new { s.DeviceName, s.DeviceSerialNo, s.ChannelName, s.Type })
             .Distinct()
             .AsEnumerable()
@@ -151,9 +152,10 @@ public sealed class LoggingSessionSampleSource : ISampleSource
 
         await using var context = _contextFactory.CreateDbContext();
         context.ChangeTracker.AutoDetectChangesEnabled = false;
+        var sid = _session.ID;
         _countCache = await context.Samples
             .AsNoTracking()
-            .CountAsync(s => s.LoggingSessionID == _session.ID, cancellationToken)
+            .CountAsync(s => s.LoggingSessionID == sid, cancellationToken)
             .ConfigureAwait(false);
         return _countCache.Value;
     }

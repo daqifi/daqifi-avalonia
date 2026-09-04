@@ -865,7 +865,8 @@ public partial class LoggingManager : ObservableObject
     {
         try
         {
-            var flagged = context.Sessions
+            var ctx = context;
+            var flagged = ctx.Sessions
                 .Where(session => session.Status == SessionStatus.Importing)
                 .ExecuteUpdate(setters => setters.SetProperty(s => s.Status, SessionStatus.ImportFailed));
 
@@ -923,9 +924,10 @@ public partial class LoggingManager : ObservableObject
             dbLogger?.WaitForIdle(TimeSpan.FromSeconds(10));
 
             using var context = _loggingContext.CreateDbContext();
-            var count = context.Samples.LongCount(s => s.LoggingSessionID == session.ID);
+            var sid = session.ID;
+            var count = context.Samples.LongCount(s => s.LoggingSessionID == sid);
 
-            var tracked = context.Sessions.FirstOrDefault(s => s.ID == session.ID);
+            var tracked = context.Sessions.FirstOrDefault(s => s.ID == sid);
             if (tracked != null)
             {
                 tracked.SampleCount = count;
@@ -948,7 +950,7 @@ public partial class LoggingManager : ObservableObject
             if (Daqifi.Desktop.Common.AppDataPaths.IsTestMode)
             {
                 var distinctPositions = context.Samples
-                    .Where(s => s.LoggingSessionID == session.ID)
+                    .Where(s => s.LoggingSessionID == sid)
                     .Select(s => new { s.TimestampTicks, s.DeviceName, s.DeviceSerialNo, s.ChannelName })
                     .Distinct()
                     .LongCount();
@@ -985,20 +987,21 @@ public partial class LoggingManager : ObservableObject
     {
         try
         {
-            var sessionsMissingCount = context.Sessions
+            var ctx = context;
+            var sessionsMissingCount = ctx.Sessions
                 .Where(s => s.SampleCount == null)
                 .Select(s => s.ID)
                 .ToList();
 
             if (sessionsMissingCount.Count == 0) { return; }
 
-            var countsBySession = context.Samples
+            var countsBySession = ctx.Samples
                 .Where(sample => sessionsMissingCount.Contains(sample.LoggingSessionID))
                 .GroupBy(sample => sample.LoggingSessionID)
                 .Select(g => new { SessionId = g.Key, Count = g.LongCount() })
                 .ToDictionary(g => g.SessionId, g => g.Count);
 
-            var trackedSessions = context.Sessions
+            var trackedSessions = ctx.Sessions
                 .Where(s => sessionsMissingCount.Contains(s.ID))
                 .ToList();
 
