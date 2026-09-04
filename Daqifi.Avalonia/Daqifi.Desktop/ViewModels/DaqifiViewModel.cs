@@ -220,8 +220,6 @@ public partial class DaqifiViewModel : ObservableObject, IFirmwareUpdateHost, IL
     // any byte that lands while the WINC is bridging corrupts the program (bricks the module).
     private Task? _wifiProbeTask;
 
-    // Owns the WiFi-only flash lifecycle (the PIC32 path's CTS lives in the coordinator).
-    private CancellationTokenSource? _firmwareUploadCts;
     private readonly LoggingSessionListViewModel _loggingSessionList;
     private ConnectionDialogViewModel? _connectionDialogViewModel;
     private string _selectedLoggingMode = "Stream to App";
@@ -2478,17 +2476,12 @@ public partial class DaqifiViewModel : ObservableObject, IFirmwareUpdateHost, IL
 
         ConnectionManager.Instance.DeviceBeingUpdated = SelectedDevice;
 
-        _firmwareUploadCts?.Dispose();
-        _firmwareUploadCts = new CancellationTokenSource();
-        IsFirmwareUploading = true;
         CancelWifiFirmwareCheck();
         _appLogger.AddBreadcrumb("firmware", $"WiFi-only firmware update started for {serialStreamingDevice.Name}");
 
         try
         {
-            var coreDevice = serialStreamingDevice.ConnectedCoreStreamingDevice;
-
-            if (!coreDevice.IsConnected)
+            if (!serialStreamingDevice.ConnectedCoreStreamingDevice.IsConnected)
             {
                 _appLogger.Error($"Device {serialStreamingDevice.Name} is not connected. Cannot update WiFi firmware on a disconnected device.");
                 NotificationList.Add(new Notifications
@@ -2500,7 +2493,10 @@ public partial class DaqifiViewModel : ObservableObject, IFirmwareUpdateHost, IL
                 return;
             }
 
-            await _firmwareCoordinator.UpdateWifiModuleAsync(coreDevice, serialStreamingDevice, _firmwareUploadCts.Token, force: true);
+            // The coordinator owns the run's cancellation source, so the Cancel button — which routes
+            // to FirmwareUpdateCoordinator.CancelUpload — signals the token this flash is running on
+            // rather than a second, unrelated source held here (issue #234).
+            await _firmwareCoordinator.UpdateWifiModuleOnlyAsync(serialStreamingDevice);
 
             IsUploadComplete = true;
             _appLogger.AddBreadcrumb("firmware", "WiFi firmware update completed");
@@ -2563,9 +2559,6 @@ public partial class DaqifiViewModel : ObservableObject, IFirmwareUpdateHost, IL
         }
         finally
         {
-            IsFirmwareUploading = false;
-            _firmwareUploadCts?.Dispose();
-            _firmwareUploadCts = null;
             ConnectionManager.Instance.DeviceBeingUpdated = null;
         }
     }

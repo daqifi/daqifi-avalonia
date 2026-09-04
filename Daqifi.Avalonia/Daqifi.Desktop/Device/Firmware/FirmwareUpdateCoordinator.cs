@@ -158,9 +158,7 @@ public class FirmwareUpdateCoordinator
 
         var isManualUpload = !string.IsNullOrWhiteSpace(_host.FirmwareFilePath);
 
-        _firmwareUploadCts?.Dispose();
-        _firmwareUploadCts = new CancellationTokenSource();
-        _host.IsFirmwareUploading = true;
+        var cancellationToken = BeginUpload();
         _appLogger.AddBreadcrumb("firmware", $"Firmware update started for {serialStreamingDevice.Name}");
 
         try
@@ -168,7 +166,7 @@ public class FirmwareUpdateCoordinator
             // Quiesce inside the try so a fault here still runs the finally (which clears
             // IsFirmwareUploading and DeviceBeingUpdated); otherwise the UI could stay stuck "uploading".
             // Pass the upload token so a CancelUpload() interrupts the wait rather than blocking on it.
-            await _host.QuiesceWifiFirmwareProbeAsync(_firmwareUploadCts.Token);
+            await _host.QuiesceWifiFirmwareProbeAsync(cancellationToken);
 
             var coreDevice = serialStreamingDevice.ConnectedCoreStreamingDevice;
 
@@ -199,7 +197,7 @@ public class FirmwareUpdateCoordinator
                 effectiveFirmwarePath = await _firmwareDownloadService.DownloadLatestFirmwareAsync(
                     GetFirmwareDownloadDirectory(),
                     includePreRelease: true,
-                    cancellationToken: _firmwareUploadCts.Token);
+                    cancellationToken: cancellationToken);
             }
             else
             {
@@ -236,12 +234,12 @@ public class FirmwareUpdateCoordinator
                     pic32Progress,
                     targetDevicePath: null,
                     targetLocationKey: serialStreamingDevice.LocationKey,
-                    _firmwareUploadCts.Token);
+                    cancellationToken);
             }
 
             if (!isManualUpload)
             {
-                await UpdateWifiModuleAsync(coreDevice, serialStreamingDevice, _firmwareUploadCts.Token);
+                await UpdateWifiModuleAsync(serialStreamingDevice, cancellationToken);
             }
 
             _host.IsUploadComplete = true;
@@ -267,9 +265,7 @@ public class FirmwareUpdateCoordinator
         }
         finally
         {
-            _host.IsFirmwareUploading = false;
-            _firmwareUploadCts?.Dispose();
-            _firmwareUploadCts = null;
+            EndUpload();
             _host.DeviceBeingUpdated = null;
 
             // Consume any manual .hex selection so the auto/manual decision is a per-run input,
@@ -284,23 +280,76 @@ public class FirmwareUpdateCoordinator
     }
 
     /// <summary>
+    /// Runs a user-initiated WiFi-module-only flash, force-flashing whatever version the module
+    /// reports. Like <see cref="UploadFirmwareAsync"/>, the run's cancellation source is created and
+    /// owned here, so <see cref="CancelUpload"/> signals the token this flash is actually running on.
+    /// <para>
+    /// The caller previously created its own source and passed only the token, which
+    /// <see cref="CancelUpload"/> had no way to reach: Cancel wrote "Canceling firmware update..."
+    /// into the status line and the flash ran to completion (issue #234).
+    /// </para>
+    /// Failures propagate to the caller, which owns this path's notifications and dialogs.
+    /// </summary>
+    internal async Task UpdateWifiModuleOnlyAsync(SerialStreamingDevice serialStreamingDevice)
+    {
+        var cancellationToken = BeginUpload();
+        try
+        {
+            await UpdateWifiModuleAsync(serialStreamingDevice, cancellationToken, force: true);
+        }
+        finally
+        {
+            EndUpload();
+        }
+    }
+
+    /// <summary>
     /// Requests cancellation of an in-flight firmware upload. No-op when nothing is uploading.
     /// </summary>
     // @port: Daqifi.Desktop.Device.Firmware.FirmwareUpdateCoordinator.CancelUpload
     public void CancelUpload()
     {
-        if (!_host.IsFirmwareUploading)
+        // Gate on the source itself rather than on the host's IsFirmwareUploading flag: the flag only
+        // says a run is in flight, while a non-null source is what says this object can actually stop
+        // it. Announcing a cancellation that cannot be delivered is the defect in issue #234.
+        var cts = _firmwareUploadCts;
+        if (cts == null)
         {
             return;
         }
 
         _host.FirmwareUpdateStatusText = "Canceling firmware update...";
-        _firmwareUploadCts?.Cancel();
+        cts.Cancel();
+    }
+
+    /// <summary>
+    /// Opens a cancellable firmware run: replaces the cancellation source and marks the host as
+    /// uploading, in that order, so the Cancel button is never enabled over a source that does not
+    /// exist yet. Returns the run's token — callers use the returned value rather than re-reading the
+    /// field, which the run's own completion nulls.
+    /// </summary>
+    private CancellationToken BeginUpload()
+    {
+        _firmwareUploadCts?.Dispose();
+        _firmwareUploadCts = new CancellationTokenSource();
+        _host.IsFirmwareUploading = true;
+        return _firmwareUploadCts.Token;
+    }
+
+    /// <summary>
+    /// Closes a firmware run. The field is cleared before the source is disposed so a Cancel arriving
+    /// as the run finishes reads null and no-ops rather than touching a disposed source.
+    /// </summary>
+    private void EndUpload()
+    {
+        var cts = _firmwareUploadCts;
+        _firmwareUploadCts = null;
+        _host.IsFirmwareUploading = false;
+        cts?.Dispose();
     }
 
     // @port: Daqifi.Desktop.Device.Firmware.FirmwareUpdateCoordinator.UpdateWifiModuleAsync
-    internal async Task UpdateWifiModuleAsync(
-        Daqifi.Core.Device.IStreamingDevice coreDevice,
+    private async Task UpdateWifiModuleAsync(
         SerialStreamingDevice serialStreamingDevice,
         CancellationToken cancellationToken,
         bool force = false)
@@ -392,7 +441,7 @@ public class FirmwareUpdateCoordinator
         });
 
         await FlashWifiPackageAsync(
-            coreDevice, serialStreamingDevice, wifiVersion, wifiPackage.Value.ExtractedPath, wifiUpdateProgress, cancellationToken);
+            serialStreamingDevice, wifiVersion, wifiPackage.Value.ExtractedPath, wifiUpdateProgress, cancellationToken);
     }
 
     /// <summary>
@@ -403,7 +452,6 @@ public class FirmwareUpdateCoordinator
     /// </summary>
     // @port: Daqifi.Desktop.Device.Firmware.FirmwareUpdateCoordinator.FlashWifiPackageAsync
     private async Task FlashWifiPackageAsync(
-        Daqifi.Core.Device.IStreamingDevice coreDevice,
         SerialStreamingDevice serialStreamingDevice,
         string wifiVersion,
         string extractedBasePath,

@@ -1,5 +1,4 @@
 using System.Collections.ObjectModel;
-using Daqifi.Core.Device;
 using Daqifi.Core.Firmware;
 using Daqifi.Desktop.Common.Loggers;
 using Daqifi.Desktop.Device.Firmware;
@@ -69,19 +68,33 @@ public class FirmwareUpdateCancellationTests : IDisposable
     public async Task Canceling_a_wifi_only_flash_cancels_the_flash()
     {
         var coordinator = CreateCoordinator();
-        var device = WincDevice();
-        var core = new BootloaderSessionStreamingDeviceAdapter(device.Name);
 
-        // Reproduces DaqifiViewModel.UpdateWifiFirmwareOnly's wiring on main: the caller marks the host
-        // as uploading (which is what enables the Cancel button) and owns the CancellationTokenSource.
-        _host.IsFirmwareUploading = true;
-        using var callerCts = new CancellationTokenSource();
-        var flash = coordinator.UpdateWifiModuleAsync(core, device, callerCts.Token, force: true);
-
+        var flash = coordinator.UpdateWifiModuleOnlyAsync(WincDevice());
         await _downloads.WaitUntilRunningAsync();
+
         coordinator.CancelUpload();
 
-        await AssertCanceledAsync(flash, callerCts);
+        await Assert.ThrowsAnyAsync<OperationCanceledException>(() => flash.WaitAsync(UnwindTimeout));
+        Assert.Equal("Canceling firmware update...", _host.FirmwareUpdateStatusText);
+    }
+
+    /// <summary>
+    /// The Cancel button's CanExecute is the host's uploading flag, so the WiFi-only run must raise it
+    /// — and must have a cancellable source by the time it does, which is what the flag now implies.
+    /// </summary>
+    [Fact]
+    public async Task A_wifi_only_flash_marks_the_host_uploading_while_it_runs()
+    {
+        var coordinator = CreateCoordinator();
+
+        var flash = coordinator.UpdateWifiModuleOnlyAsync(WincDevice());
+        await _downloads.WaitUntilRunningAsync();
+
+        Assert.True(_host.IsFirmwareUploading);
+
+        coordinator.CancelUpload();
+        await Assert.ThrowsAnyAsync<OperationCanceledException>(() => flash.WaitAsync(UnwindTimeout));
+        Assert.False(_host.IsFirmwareUploading);
     }
 
     /// <summary>
@@ -130,22 +143,17 @@ public class FirmwareUpdateCancellationTests : IDisposable
     public async Task Cancel_after_a_wifi_only_flash_has_finished_is_a_no_op()
     {
         var coordinator = CreateCoordinator();
-        var device = WincDevice();
-        var core = new BootloaderSessionStreamingDeviceAdapter(device.Name);
+
+        // "No package found" is the cheapest clean exit from the WiFi flash that never touches serial.
         _downloads.CompleteImmediatelyWithNoPackage();
-
-        _host.IsFirmwareUploading = true;
-        using var callerCts = new CancellationTokenSource();
-
-        // No package found is the cheapest clean exit from the WiFi flash that never touches serial.
         await Assert.ThrowsAsync<InvalidOperationException>(
-            () => coordinator.UpdateWifiModuleAsync(core, device, callerCts.Token, force: true));
+            () => coordinator.UpdateWifiModuleOnlyAsync(WincDevice()));
 
         _host.FirmwareUpdateStatusText = string.Empty;
-        _host.IsFirmwareUploading = false;
         coordinator.CancelUpload();
 
         Assert.Equal(string.Empty, _host.FirmwareUpdateStatusText);
+        Assert.False(_host.IsFirmwareUploading);
     }
 
     #region Helpers
@@ -158,19 +166,6 @@ public class FirmwareUpdateCancellationTests : IDisposable
         var device = new SerialStreamingDevice("COM-TEST-234");
         device.Metadata.Capabilities.HasWincWifiModule = true;
         return device;
-    }
-
-    private static async Task AssertCanceledAsync(Task flash, CancellationTokenSource callerCts)
-    {
-        try
-        {
-            await Assert.ThrowsAnyAsync<OperationCanceledException>(() => flash.WaitAsync(UnwindTimeout));
-        }
-        finally
-        {
-            // Whatever the outcome, don't leave the parked flash running for the rest of the run.
-            callerCts.Cancel();
-        }
     }
     #endregion
 
