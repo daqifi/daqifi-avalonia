@@ -35,10 +35,15 @@ namespace Daqifi.Avalonia.Tests.Loggers;
 /// these tests pin a reachable failure rather than a hypothetical one. The empty string needs no old
 /// file at all: <c>NOT NULL</c> has always accepted <c>""</c>.</para>
 ///
-/// <para>Seven of the twelve fail against the unchanged code — five by throwing, two by coming back
-/// the wrong colour — which is the evidence that the defect was real. The five that pass unchanged
-/// are meant to: the three good-colour guards, and the two above that describe today's behaviour
-/// rather than the fix's. The blank case is the one a <c>?? fallback</c> alone would have left open.</para>
+/// <para>NINE of the eighteen tests in this file fail against the unchanged code, which is the
+/// evidence that the defect was real: seven throw <see cref="FormatException"/>, and two come back
+/// <c>#00000000</c> — the invisible one — where <c>#FF808080</c> was expected. Of this class's
+/// thirteen, seven fail (five throwing, two silently wrong) and six pass because they are meant to:
+/// the three good-colour guards, and the three above that characterise today's behaviour rather than
+/// the fix's. The other two failures are in <see cref="ChannelColorLivePlotTests"/>. Measured by
+/// checking the merge base out, applying only this file to it and running it — not by reasoning
+/// about which ones ought to fail. The blank case is the one a <c>?? fallback</c> alone would have
+/// left open.</para>
 /// </summary>
 public class ChannelColorFallbackTests : IDisposable
 {
@@ -358,6 +363,12 @@ public class ChannelColorFallbackTests : IDisposable
 /// re-converted on every sample, with an unusable one throwing and being caught every time. The
 /// logger now remembers the string each series was built from and compares raw against raw, which
 /// also stops rendering a string per sample just to compare it.</para>
+///
+/// <para>Two of these five fail against the unchanged code, both by throwing out of
+/// <c>AddChannelSeries</c> — so they do pin the live path's share of the crash. What they do NOT
+/// prove is the remembering: the thing review flagged is a cost rather than an output, and every
+/// test here passes under either comparison. They are guards on what a stale cache would break,
+/// not a measurement of how often the conversion runs.</para>
 ///
 /// <para>Separate class, and on the app-host collection, because <c>AddChannelSeries</c> reads
 /// <c>LoggingManager.Instance</c> to mirror channel visibility, and that singleton's lazy constructor
