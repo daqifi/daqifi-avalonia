@@ -1528,9 +1528,9 @@ public abstract partial class AbstractStreamingDevice : ObservableObject, IStrea
 
         // Prevent computer sleep when starting streaming. The P/Invoke
         // targets kernel32.dll — a DllNotFoundException on mobile — so it
-        // is Windows-guarded, and non-Windows heads log-and-skip. Mobile
-        // sleep-prevention (a wake lock) is a future divergence, not
-        // required to stream.
+        // is Windows-guarded; other heads skip the block entirely and log
+        // nothing. Mobile sleep-prevention (a wake lock) is a future
+        // divergence, not required to stream.
         if (OperatingSystem.IsWindows())
         {
             var previousState = NativeMethods.SetThreadExecutionState(NativeMethods.EsContinuous | NativeMethods.EsSystemRequired);
