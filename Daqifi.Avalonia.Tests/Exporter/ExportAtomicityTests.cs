@@ -1,3 +1,4 @@
+using System.Text;
 using Daqifi.Desktop.Channel;
 using Daqifi.Desktop.Exporter;
 using Daqifi.Desktop.Logger;
@@ -224,6 +225,12 @@ public sealed class ExportAtomicityTests : IDisposable
         Assert.Contains("AI0", csv, StringComparison.Ordinal);
         Assert.DoesNotContain("AI9", csv, StringComparison.Ordinal);
         AssertNoLeftovers();
+
+        // Staging swapped the writer from the path constructor to one over a FileStream, and only
+        // the path constructor's own defaults guaranteed the UTF-8 byte-order mark. Excel reads a
+        // BOM-less CSV as the system code page and mangles non-ASCII channel names, so the bytes
+        // this export writes are part of its contract, not an implementation detail.
+        Assert.Equal(Encoding.UTF8.GetPreamble(), File.ReadAllBytes(destination).Take(3).ToArray());
     }
 
     /// <summary>
@@ -256,6 +263,29 @@ public sealed class ExportAtomicityTests : IDisposable
         AssertNoLeftovers(decoyName);
     }
 
+    /// <summary>
+    /// Staging must not cost the destination any of its name budget. A 250-character file name is
+    /// legal on every file system this ships to (the limit is 255 bytes per component) and exported
+    /// fine before staging existed; a staging name built by appending to it would be 272 and fail to
+    /// open, breaking an export that used to work. So the staging file carries a short fixed name of
+    /// its own in the destination's folder — which keeps it on the same volume, and therefore keeps
+    /// the final move a rename.
+    /// </summary>
+    [Fact]
+    public void A_destination_whose_name_fills_the_file_system_limit_still_exports()
+    {
+        var session = SeedSession("AI0", 1.25);
+        var longName = new string('n', 246) + ".csv";
+        Assert.Equal(250, longName.Length);
+        var destination = Path.Combine(_root, longName);
+
+        new OptimizedLoggingSessionExporter(_contexts).ExportLoggingSession(
+            session, destination, exportRelativeTime: false, new Progress<int>(), CancellationToken.None, 0, 1);
+
+        Assert.Contains("AI0", File.ReadAllText(destination), StringComparison.Ordinal);
+        AssertNoLeftovers();
+    }
+
     /// <summary>The destination still holds exactly what the previous export put there.</summary>
     private void AssertDestinationUntouched(string destination)
     {
@@ -272,7 +302,10 @@ public sealed class ExportAtomicityTests : IDisposable
     {
         var stray = Directory.GetFiles(_root)
             .Select(Path.GetFileName)
-            .Where(name => name!.StartsWith("readings.csv", StringComparison.Ordinal))
+            // The staging name the exporter uses today, and anything hanging off the destination's
+            // name — which is what it used to use, so a revert to that shape is caught too.
+            .Where(name => name!.StartsWith("daqifi-exporting-", StringComparison.Ordinal)
+                        || name.StartsWith("readings.csv", StringComparison.Ordinal))
             .Where(name => name != "readings.csv" && name != alsoExpected)
             .ToArray();
         Assert.True(stray.Length == 0, $"the export abandoned {string.Join(", ", stray)}");

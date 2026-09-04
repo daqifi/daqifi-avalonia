@@ -27,19 +27,21 @@ public class OptimizedLoggingSessionExporter
     private const int BUFFER_SIZE = 1024 * 1024; // 1MB buffer for file writes
 
     /// <summary>
-    /// Marks the file an export is written to before it is moved into place; a random suffix is
-    /// appended to it, so the full name is <c>readings.csv.exporting-u3wp2sza.3vz</c>.
-    /// <para>A sibling of the destination, not a temp-directory file:
+    /// Names the file an export is written to before it is moved into place: this prefix plus
+    /// <see cref="Path.GetRandomFileName"/>, in the destination's own folder — e.g.
+    /// <c>daqifi-exporting-u3wp2sza.3vz</c>.
+    /// <para>In that folder, not the system temp directory, because
     /// <see cref="File.Move(string, string, bool)"/> is only a rename — atomic, and no second copy of
-    /// a large CSV — when both paths are on the same volume, which the system temp directory does not
-    /// guarantee.</para>
-    /// <para>Random rather than derived from the destination, because this method both TRUNCATES and
-    /// DELETES that path: a predictable name would let an export destroy a file the app did not
-    /// write, and would let two exports of the same destination clobber each other's staged rows —
-    /// the very failure staging exists to prevent. The marker is there so a human who finds one can
-    /// tell what it is.</para>
+    /// a large CSV — when both paths are on the same volume.</para>
+    /// <para>Random, because this method both TRUNCATES and DELETES that path: a predictable name
+    /// would let an export destroy a file the app did not write, and would let two exports of one
+    /// destination clobber each other's staged rows — the very failure staging exists to prevent.</para>
+    /// <para>A fixed-length name of its own rather than the destination's name with something appended:
+    /// a destination whose file name is already near the file system's 255-byte limit is perfectly
+    /// legal and used to export fine, and extending it would push the staging file over and fail an
+    /// export that previously worked. The prefix is there so a human who finds one knows what it is.</para>
     /// </summary>
-    private const string StagingMarker = ".exporting-";
+    private const string StagingPrefix = "daqifi-exporting-";
     #endregion
 
     #region Static State
@@ -284,7 +286,12 @@ public class OptimizedLoggingSessionExporter
         // cancellation checkpoint — so a Cancel click destroyed the complete CSV the user had exported
         // earlier, and the dialog says nothing at all about a cancel (issue #236). The rename also
         // covers a mid-write failure and a crash: until it runs, the destination is the user's file.
-        var stagingPath = filepath + StagingMarker + Path.GetRandomFileName();
+        // GetDirectoryName is null only for a root path, which no destination file can be; an empty
+        // string (a bare relative file name) resolves against the same working directory the
+        // destination would, so the two stay on one volume either way.
+        var stagingPath = Path.Combine(
+            Path.GetDirectoryName(filepath) ?? string.Empty,
+            StagingPrefix + Path.GetRandomFileName());
 
         // Opened OUTSIDE the cleanup below, and with CreateNew rather than Create: the staging file
         // has to be one this call brought into existence, so that truncating it and deleting it can
