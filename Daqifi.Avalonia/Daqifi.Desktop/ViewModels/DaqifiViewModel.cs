@@ -1025,19 +1025,6 @@ public partial class DaqifiViewModel : ObservableObject, IFirmwareUpdateHost, IL
     private void CloseAppSettings() => IsAppSettingsOpen = false;
 
     [RelayCommand]
-    // @port: Daqifi.Desktop.ViewModels.DaqifiViewModel.RemoveChannel
-    private void RemoveChannel(IChannel channelToRemove)
-    {
-        var device = ConnectionManager.Instance.ConnectedDevices.FirstOrDefault(x => x.DeviceSerialNo == channelToRemove.DeviceSerialNo);
-        var channel = device.DataChannels.FirstOrDefault(x => x.DeviceSerialNo == channelToRemove.DeviceSerialNo && x.Name == channelToRemove.Name);
-        if (device != null && channel != null)
-        {
-            LoggingManager.Instance.Unsubscribe(channel);
-            device.RemoveChannel(channel);
-        }
-    }
-
-    [RelayCommand]
     // @port: Daqifi.Desktop.ViewModels.DaqifiViewModel.DisconnectDevice
     private void DisconnectDevice(IStreamingDevice? deviceToDisconnect)
     {
@@ -1581,14 +1568,6 @@ public partial class DaqifiViewModel : ObservableObject, IFirmwareUpdateHost, IL
     }
 
     #region Firmware version checking methods
-
-    /// <summary>
-    /// The latest published firmware version, surfaced for display. The firmware coordinator
-    /// owns the value and performs the underlying version check via
-    /// <see cref="FirmwareUpdateCoordinator.RefreshFirmwareUpdatesAsync"/>.
-    /// </summary>
-    // @port: Daqifi.Desktop.ViewModels.DaqifiViewModel.LatestFirmwareVersionText
-    public string LatestFirmwareVersionText => _firmwareCoordinator.LatestFirmwareVersion;
 
     /// <summary>
     /// Adds a standing notification when USB hotplug-removal detection is not running on a platform
@@ -2845,16 +2824,6 @@ public partial class DaqifiViewModel : ObservableObject, IFirmwareUpdateHost, IL
                 streamingDevice.SetDebugMode(value);
             }
         }
-    }
-
-    /// <summary>
-    /// Command to toggle debug mode
-    /// </summary>
-    [RelayCommand]
-    // @port: Daqifi.Desktop.ViewModels.DaqifiViewModel.ToggleDebugMode
-    private void ToggleDebugMode()
-    {
-        IsDebugModeEnabled = !IsDebugModeEnabled;
     }
 
     /// <summary>
