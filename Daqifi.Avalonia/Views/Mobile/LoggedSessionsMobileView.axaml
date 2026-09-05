@@ -17,7 +17,9 @@
              No "Logged Data" heading: the nav already names this pane in both orientations
              (bottom bar in portrait, left rail in landscape) and the pivot strip above names
              this half of it, so a third copy was chrome the 360px-tall landscape viewport
-             could not afford (#252). Channels and Profiles carry no pane heading either. -->
+             could not afford (#252). Neither of the other two mobile panes with an empty
+             state renders a pane title in landscape — Channels has none at all, and
+             Profiles hides its header there — which is why theirs already fit. -->
         <WrapPanel>
           <Button Content="Refresh" Theme="{StaticResource PillButton}"
                   Command="{Binding ReloadCommand}" MinHeight="36" Margin="0,0,8,8" />
