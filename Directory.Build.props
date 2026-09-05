@@ -54,8 +54,8 @@
 
     NOTE: tools/parity-audit/WpfCapture opts OUT (see its csproj). It ProjectReferences the
     sibling daqifi-desktop repo, so a lock file there would encode another repo's closure and
-    go stale on that repo's package bumps, with no PR here able to refresh it. Six of the seven
-    projects carry lock files; that one is the deliberate exception.
+    go stale on that repo's package bumps, with no PR here able to refresh it. Seven of the
+    eight projects this file governs carry lock files; that one is the deliberate exception.
   -->
   <!--
     The application's marketing version, in ONE place.
