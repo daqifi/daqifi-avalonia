@@ -39,6 +39,12 @@ public class StreamingFrequencyRangeTests
         /// reaches it the way the real subclasses do rather than through reflection.
         /// </summary>
         public void Sync(DaqifiDevice coreDevice) => SyncFromCoreDevice(coreDevice);
+
+        /// <summary>
+        /// The re-clamp both acquisition paths run immediately before handing the rate to Core.
+        /// Reached the same way the base class's own subclasses reach it.
+        /// </summary>
+        public void ClampForHandoff() => ClampRateToAdvertisedCeiling();
     }
 
     private static TestDevice DeviceAdvertising(int maxSamplingRate)
@@ -203,6 +209,38 @@ public class StreamingFrequencyRangeTests
         core.Metadata.Capabilities = new DeviceCapabilities { MaxSamplingRate = 22000 };
 
         device.Sync(core);
+
+        Assert.Equal(250, device.StreamingFrequency);
+    }
+
+    [Fact]
+    public void The_handoff_re_clamps_against_a_ceiling_that_moved_after_hydration()
+    {
+        var device = DeviceAdvertising(22000);
+        device.StreamingFrequency = 5000;
+
+        // Capabilities can be replaced without the re-clamp having run yet — hydration installs
+        // the new set before it corrects the rate, and Capabilities is a public mutable property
+        // besides. Acquisition starting in that window must not hand Core the old rate.
+        device.Metadata.Capabilities = new DeviceCapabilities { MaxSamplingRate = 1000 };
+
+        device.ClampForHandoff();
+
+        Assert.Equal(1000, device.StreamingFrequency);
+
+        var core = new DaqifiStreamingDevice("core");
+        core.Metadata.Capabilities = new DeviceCapabilities { MaxSamplingRate = 1000 };
+        core.StreamingFrequency = device.StreamingFrequency;
+        Assert.Equal(1000, core.StreamingFrequency);
+    }
+
+    [Fact]
+    public void The_handoff_leaves_a_rate_that_still_fits_alone()
+    {
+        var device = DeviceAdvertising(1000);
+        device.StreamingFrequency = 250;
+
+        device.ClampForHandoff();
 
         Assert.Equal(250, device.StreamingFrequency);
     }

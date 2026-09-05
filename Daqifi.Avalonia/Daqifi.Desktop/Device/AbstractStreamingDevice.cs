@@ -91,6 +91,41 @@ public abstract partial class AbstractStreamingDevice : ObservableObject, IStrea
         }
     }
 
+    /// <summary>
+    /// Brings the stored streaming rate back under the ceiling the device advertises right now.
+    /// </summary>
+    /// <remarks>
+    /// The ceiling moves. Core re-hydrates capabilities on every <c>ChannelsPopulated</c>, and a
+    /// reconnect re-describes the device onto this same wrapper while keeping the rate the user
+    /// already chose, so a rate that fitted when it was chosen can stop fitting later. This runs in
+    /// two places for two different reasons: from <see cref="HydrateDeviceMetadata"/>, so the
+    /// stored rate follows a ceiling that has just moved; and immediately before each handoff to
+    /// Core, which is the only moment where being out of range costs the user anything — and which
+    /// closes the window between capabilities being replaced and the rate being corrected.
+    /// <para>
+    /// It assigns the ceiling itself, never a value re-read from the field: hydration runs on
+    /// Core's callback thread while the UI and profile apply write this property from theirs, and a
+    /// read-then-write would let a rate chosen in between be overwritten by the stale one. Losing
+    /// that race to the ceiling costs a rate the hardware could not have run at anyway. A rate that
+    /// still fits writes nothing at all.
+    /// </para>
+    /// <para>
+    /// A residual interleaving is not closable at this layer: Core reads its own copy of the
+    /// ceiling inside its own setter, so capabilities changing between this call and that read
+    /// would still be rejected there. This removes the systematic case — a stored rate that is
+    /// permanently out of range — not every possible ordering of an unsynchronized wrapper.
+    /// </para>
+    /// </remarks>
+    // Downstream-only: no upstream counterpart.
+    protected void ClampRateToAdvertisedCeiling()
+    {
+        var advertisedCeiling = Math.Max(1, Capabilities.MaxSamplingRate);
+        if (_streamingFrequency > advertisedCeiling)
+        {
+            StreamingFrequency = advertisedCeiling;
+        }
+    }
+
     // DeviceType property with default value of Unknown.
     // HasWincWifiModule now reads Core's capability flag rather than DeviceType, but the two are
     // refreshed by the same HydrateDeviceMetadata call, so this notification is still the one that
@@ -1345,6 +1380,8 @@ public abstract partial class AbstractStreamingDevice : ObservableObject, IStrea
                 : ScpiMessageProducer.DisableDioPorts());
 
             var coreDevice = GetConnectedCoreDevice(CoreDeviceForSd);
+            // Against the ceiling in force now, not the one in force when the rate was chosen.
+            ClampRateToAdvertisedCeiling();
             coreDevice.StreamingFrequency = StreamingFrequency;
 
             // The Core package resumes StartSdCardLoggingAsync continuations on the caller's
@@ -1590,6 +1627,8 @@ public abstract partial class AbstractStreamingDevice : ObservableObject, IStrea
         }
 
         var coreStreamingDevice = GetConnectedCoreDevice(CoreDeviceForStreaming);
+        // Against the ceiling in force now, not the one in force when the rate was chosen.
+        ClampRateToAdvertisedCeiling();
         coreStreamingDevice.StreamingFrequency = StreamingFrequency;
 
         // A session must never anchor its time axis on prior-session data (issue #573).
@@ -2246,25 +2285,9 @@ public abstract partial class AbstractStreamingDevice : ObservableObject, IStrea
         // re-derived capability set on an unchanged board would otherwise go unannounced.
         OnPropertyChanged(nameof(HasWincWifiModule));
 
-        // Capabilities was replaced above, so the rate ceiling StreamingFrequency was clamped
-        // against may have moved — and this wrapper outlives it: SyncFromCoreDevice re-hydrates on
-        // every ChannelsPopulated, and a reconnect builds a new Core device but keeps the wrapper
-        // and the rate the user already chose. Bringing the stored rate back under the new ceiling
-        // is what keeps "whatever is stored is a rate Core will accept" true; without it a rate
-        // chosen under a higher ceiling would still be handed to Core at the next start, and
-        // rejected there.
-        //
-        // The assignment is the ceiling itself, never a value re-read from the field. Hydration
-        // runs on Core's callback thread while the UI and profile apply write this property from
-        // theirs, and a read-then-write of the field would let a rate written in between be
-        // overwritten by the stale one. Losing that race to the ceiling costs the user a rate the
-        // hardware could not have run at anyway; losing it to a stale re-read would discard a rate
-        // they had just chosen. The common case — a rate that still fits — writes nothing at all.
-        var advertisedCeiling = Math.Max(1, Capabilities.MaxSamplingRate);
-        if (_streamingFrequency > advertisedCeiling)
-        {
-            StreamingFrequency = advertisedCeiling;
-        }
+        // Capabilities was replaced above, so the ceiling the stored rate was clamped against may
+        // just have moved.
+        ClampRateToAdvertisedCeiling();
 
         if (!string.IsNullOrWhiteSpace(Metadata.Ssid))
         {
