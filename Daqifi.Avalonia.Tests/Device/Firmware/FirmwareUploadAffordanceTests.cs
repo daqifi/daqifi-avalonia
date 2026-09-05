@@ -108,6 +108,24 @@ public class FirmwareUploadAffordanceTests : IDisposable
     }
 
     /// <summary>
+    /// Opening the run before the first status write puts the uploading flag up before anything that
+    /// can throw. Everything after <c>BeginUpload</c> must therefore sit inside the try: a throw
+    /// between the two would leave the flag raised with no finally to lower it, and the pane stuck
+    /// "uploading" behind a Cancel button with nothing left to cancel.
+    /// </summary>
+    [Fact]
+    public async Task A_throw_from_the_first_status_write_still_ends_the_run()
+    {
+        var coordinator = CreateCoordinator();
+        _host.SelectedDevice = UsbDevice();
+        _host.ThrowOnStatusWrite = true;
+
+        await coordinator.UploadFirmwareAsync();
+
+        Assert.False(_host.IsFirmwareUploading);
+    }
+
+    /// <summary>
     /// The status line now has exactly one writer — the coordinator, through the host seam. The view
     /// model's own three writes all ran outside a run and could never have been displayed.
     /// </summary>
@@ -216,6 +234,12 @@ public class FirmwareUploadAffordanceTests : IDisposable
     {
         public List<(string Text, bool WasUploading)> Writes { get; } = [];
 
+        /// <summary>
+        /// Makes the bound setter throw, standing in for a binding handler that faults. Nothing here
+        /// simulates Avalonia; it only needs to be a throw from the first statement of a run.
+        /// </summary>
+        public bool ThrowOnStatusWrite { get; set; }
+
         public DesktopStreamingDevice? SelectedDevice { get; set; }
 
         public IReadOnlyList<DesktopStreamingDevice> ConnectedDevices { get; } = [];
@@ -236,7 +260,14 @@ public class FirmwareUploadAffordanceTests : IDisposable
 
         public string FirmwareUpdateStatusText
         {
-            set => Writes.Add((value, IsFirmwareUploading));
+            set
+            {
+                Writes.Add((value, IsFirmwareUploading));
+                if (ThrowOnStatusWrite)
+                {
+                    throw new InvalidOperationException("bound status setter faulted");
+                }
+            }
         }
 
         public ObservableCollection<Notifications> Notifications { get; } = [];

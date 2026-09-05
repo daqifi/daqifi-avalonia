@@ -165,17 +165,21 @@ public class FirmwareUpdateCoordinator
         // Open the run BEFORE the first status write. The status line is rendered only while
         // IsFirmwareUploading is true (issue #241), so a message written ahead of this call can
         // never reach the user — which is what made "Preparing firmware update..." invisible.
+        //
+        // Nothing may sit between this call and the try: BeginUpload raises the uploading flag, and
+        // a throw before the try would leave it raised with no finally to lower it — the pane stuck
+        // "uploading" behind a Cancel button with nothing left to cancel. Every statement the
+        // preamble used to run before opening the run therefore moved inside.
         var cancellationToken = BeginUpload();
-        _host.FirmwareUpdateStatusText = "Preparing firmware update...";
-
-        _host.DeviceBeingUpdated = _host.SelectedDevice;
-
-        var isManualUpload = !string.IsNullOrWhiteSpace(_host.FirmwareFilePath);
-
-        _appLogger.AddBreadcrumb("firmware", $"Firmware update started for {serialStreamingDevice.Name}");
-
         try
         {
+            _host.FirmwareUpdateStatusText = "Preparing firmware update...";
+            _host.DeviceBeingUpdated = _host.SelectedDevice;
+
+            var isManualUpload = !string.IsNullOrWhiteSpace(_host.FirmwareFilePath);
+
+            _appLogger.AddBreadcrumb("firmware", $"Firmware update started for {serialStreamingDevice.Name}");
+
             // Quiesce inside the try so a fault here still runs the finally (which clears
             // IsFirmwareUploading and DeviceBeingUpdated); otherwise the UI could stay stuck "uploading".
             // Pass the upload token so a CancelUpload() interrupts the wait rather than blocking on it.
@@ -306,13 +310,14 @@ public class FirmwareUpdateCoordinator
     internal async Task UpdateWifiModuleOnlyAsync(SerialStreamingDevice serialStreamingDevice)
     {
         var cancellationToken = BeginUpload();
-
-        // Written here rather than by the caller for the same reason as UploadFirmwareAsync's
-        // "Preparing firmware update...": only text written while IsFirmwareUploading is true is
-        // rendered (issue #241), and the caller sets neither the flag nor the token.
-        _host.FirmwareUpdateStatusText = "Preparing WiFi firmware update...";
         try
         {
+            // Written here rather than by the caller for the same reason as UploadFirmwareAsync's
+            // "Preparing firmware update...": only text written while IsFirmwareUploading is true is
+            // rendered (issue #241), and the caller sets neither the flag nor the token. Inside the
+            // try, so a throw from the bound setter still reaches the finally that lowers the flag.
+            _host.FirmwareUpdateStatusText = "Preparing WiFi firmware update...";
+
             await UpdateWifiModuleAsync(serialStreamingDevice, cancellationToken, force: true);
         }
         finally
