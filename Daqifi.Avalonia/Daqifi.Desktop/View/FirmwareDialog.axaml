@@ -68,6 +68,7 @@
                            HorizontalAlignment="Center" Margin="0,4,0,0"
                            Foreground="{StaticResource TextPrimary}"/>
                 <Button Grid.Row="4"
+                        AutomationProperties.AutomationId="FirmwareCancelUpload"
                         Content="Cancel Upload"
                         Width="130" Height="30"
                         HorizontalAlignment="Center" VerticalAlignment="Top" Margin="0,16,0,0"
