@@ -55,8 +55,6 @@ public partial class DaqifiViewModel : ObservableObject, IFirmwareUpdateHost, IL
     [ObservableProperty]
     private bool _isLoggedDataBusy;
     [ObservableProperty]
-    private bool _isDeviceSettingsOpen;
-    [ObservableProperty]
     private bool _isNotificationsOpen;
     [ObservableProperty]
     private bool _isLogSummaryOpen;
@@ -615,8 +613,6 @@ public partial class DaqifiViewModel : ObservableObject, IFirmwareUpdateHost, IL
             OnPropertyChanged("FlyoutHeight");
         }
     }
-    [ObservableProperty]
-    private string _loggedSessionName;
 
     // @port: Daqifi.Desktop.ViewModels.DaqifiViewModel.SelectedLoggingMode
     public string SelectedLoggingMode
@@ -1374,15 +1370,6 @@ public partial class DaqifiViewModel : ObservableObject, IFirmwareUpdateHost, IL
 
         CloseFlyouts();
         SelectedLoggingSession = session;
-        if (session.Name.Length == 0)
-        {
-            LoggedSessionName = "Session_" + session.ID;
-        }
-        else
-        {
-            LoggedSessionName = session.Name;
-        }
-        LoggedSessionName = session.Name;
         IsLoggingSessionSettingsOpen = true;
     }
 
@@ -2068,7 +2055,6 @@ public partial class DaqifiViewModel : ObservableObject, IFirmwareUpdateHost, IL
     // @port: Daqifi.Desktop.ViewModels.DaqifiViewModel.CloseFlyouts
     public void CloseFlyouts()
     {
-        IsDeviceSettingsOpen = false;
         IsLoggingSessionSettingsOpen = false;
         IsLiveGraphSettingsOpen = false;
         IsLogSummaryOpen = false;
