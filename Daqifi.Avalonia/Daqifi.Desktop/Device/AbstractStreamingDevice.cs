@@ -71,6 +71,8 @@ public abstract partial class AbstractStreamingDevice : ObservableObject, IStrea
     /// </para>
     /// </remarks>
     // @port: Daqifi.Desktop.Device.AbstractStreamingDevice.StreamingFrequency
+    // The member exists upstream; the guard does not — upstream is the same unguarded
+    // [ObservableProperty] field this replaces, so it stores 0, -1 and 1001 too.
     public int StreamingFrequency
     {
         get => _streamingFrequency;
