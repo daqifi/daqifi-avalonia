@@ -344,6 +344,9 @@ change. This is the first entry in this list to move **two** screens, and the pa
 point rather than a slip: the fix is orientation-agnostic — nothing about it is gated on
 landscape — so the portrait rendering of the same pane necessarily moves with it, and a
 recording that touched only the landscape screen would be recording half of what changed.
+The recording is **not** single-host: on the PR that made it the `macos-latest` runner — macOS
+**26.6.2** (25G83), arm64, image `macos26/20260831.0337.3` — passed its own five-run
+determinism check and then reproduced this manifest, both new hashes included.
 Deliberately placed between the #251 and #213 paragraphs: three other open PRs were writing
 to this file at the same time, at the head of this list and at its foot, and this position
 keeps every entry in a hunk that does not touch the others. No screen count is stated above
