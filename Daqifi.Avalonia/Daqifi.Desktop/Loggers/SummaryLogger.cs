@@ -304,6 +304,23 @@ public partial class SummaryLogger : ObservableObject, ILogger
     /// One section per reporting device, each carrying its own totals and channel rows.
     /// </summary>
     public IEnumerable<DeviceSummary> Devices => _summaries;
+
+    /// <summary>
+    /// True once at least one device has reported into the current window. Drives the flyout's
+    /// device-list / empty-state swap, the same way <c>HasNotifications</c> drives the
+    /// notifications flyout's.
+    /// </summary>
+    /// <remarks>
+    /// It has to be a property with its own notification rather than something the view derives.
+    /// <see cref="Devices"/> is an <see cref="IEnumerable{T}"/> over a list that is replaced
+    /// wholesale on every publish, not an observable collection, so a binding has nothing to watch
+    /// for the transition back to empty — which is exactly the transition that matters, because
+    /// <see cref="Reset"/> clears the window and the empty state has to come back with it.
+    /// Raising it from <see cref="NotifyResultsChanged"/> covers every mutation by construction:
+    /// <c>_summaries</c> is assigned in one place, <see cref="PublishSnapshot"/>, which calls that
+    /// method immediately afterwards.
+    /// </remarks>
+    public bool HasDevices => _summaries.Count > 0;
     #endregion
 
     #region ILogger
@@ -546,6 +563,7 @@ public partial class SummaryLogger : ObservableObject, ILogger
     private void NotifyResultsChanged()
     {
         OnPropertyChanged(nameof(Devices));
+        OnPropertyChanged(nameof(HasDevices));
     }
 
     /// <summary>

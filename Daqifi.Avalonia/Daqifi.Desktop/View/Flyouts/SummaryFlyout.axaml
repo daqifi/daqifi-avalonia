@@ -2,51 +2,39 @@
              xmlns="https://github.com/avaloniaui"
              xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml"
              xmlns:i="https://github.com/projektanker/icons.avalonia"
-             Background="{DynamicResource SurfaceRaised}">
+             Background="{DynamicResource SurfaceRaised}"
+             Foreground="{DynamicResource TextPrimary}">
 
     <!--
         Pane content for the single SplitView flyout host in MainWindow
         (hal: flyout_host). MahApps Flyout chrome lives on the host.
-        WPF GroupBox has no Avalonia counterpart — HeaderedContentControl
-        with the groupBox theme below reproduces it.
+
+        Section chrome (#249). This pane used to reproduce the MahApps GroupBox literally, through
+        a local ControlTheme that drew a filled Accent bar with bold white text over an inset,
+        fully bordered card. It was the last MahApps-blue section header left in the app: every
+        other drawer — including the Plot Settings flyout that shares this very SplitView pane and
+        sits next to it in the same toolbar — is a full-bleed section with a small grey caps header
+        and a single hairline rule along its bottom edge. The theme is gone and the four sections
+        here are that idiom, on the app-wide TextBlock.sectionLabel class already in
+        Resources/Components.axaml; Reset is on the app-wide PillButton theme from
+        Resources/Shell.axaml. Nothing new was defined for either.
     -->
 
-    <UserControl.Resources>
-        <ControlTheme x:Key="GroupBoxTheme" TargetType="HeaderedContentControl">
-            <Setter Property="Template">
-                <ControlTemplate>
-                    <Border BorderBrush="{DynamicResource BorderDim}"
-                            BorderThickness="1"
-                            CornerRadius="3"
-                            Margin="8">
-                        <Grid RowDefinitions="Auto,*">
-                            <!-- Filled accent header bar, matching the original MahApps
-                                 GroupBox blue uppercase section headers (#6). -->
-                            <Border Grid.Row="0"
-                                    Background="{DynamicResource Accent}"
-                                    CornerRadius="2,2,0,0"
-                                    Padding="10,5">
-                                <ContentPresenter Content="{TemplateBinding Header}"
-                                                  TextElement.FontWeight="Bold"
-                                                  TextElement.Foreground="White"/>
-                            </Border>
-                            <ContentPresenter Grid.Row="1"
-                                              Content="{TemplateBinding Content}"/>
-                        </Grid>
-                    </Border>
-                </ControlTemplate>
-            </Setter>
-        </ControlTheme>
-    </UserControl.Resources>
-
     <UserControl.Styles>
+        <!--
+            The per-device data tables further down. Retuned to the label/value scale the rest of
+            the app uses: the header was 16px bold white — heavier than this flyout's own title —
+            which left a row's label indistinguishable from the figure sitting beside it.
+        -->
         <Style Selector="TextBlock.cell">
-            <Setter Property="FontSize" Value="16"/>
+            <Setter Property="FontSize" Value="{DynamicResource FontSizeBody}"/>
+            <Setter Property="Foreground" Value="{DynamicResource TextPrimary}"/>
             <Setter Property="VerticalAlignment" Value="Center"/>
         </Style>
         <Style Selector="TextBlock.cellHeader">
-            <Setter Property="FontSize" Value="16"/>
-            <Setter Property="FontWeight" Value="Bold"/>
+            <Setter Property="FontSize" Value="11"/>
+            <Setter Property="FontWeight" Value="SemiBold"/>
+            <Setter Property="Foreground" Value="{DynamicResource TextSecondary}"/>
             <Setter Property="VerticalAlignment" Value="Center"/>
         </Style>
     </UserControl.Styles>
@@ -68,38 +56,79 @@
                           IsChecked="{Binding IsLogSummaryOpen, Mode=TwoWay}"/>
         </Grid>
 
-        <HeaderedContentControl Grid.Row="1" Header="SETTINGS" Theme="{StaticResource GroupBoxTheme}">
-            <!--
-                Two columns, both content-sized, because the flyout pane is a fixed 380px
-                (MainWindow's SplitView OpenPaneLength) and the longest label here is wider
-                than any number picked in advance: a pinned label column clipped it, and a
-                pinned button column then squeezed the middle until the ToggleSwitch's
-                "Stopped" ran under Reset. Reset is an action on the whole box rather than a
-                third field, so it sits on its own row instead of competing for that width.
-            -->
-            <Grid Margin="15" ColumnDefinitions="Auto,*" RowDefinitions="Auto,Auto,Auto,Auto"
-                  ColumnSpacing="8" RowSpacing="8">
-                <TextBlock Grid.Row="0" Grid.Column="0" Classes="cellHeader" Text="Log Session"/>
-                <TextBlock Grid.Row="0" Grid.Column="1" Classes="cell"
-                           Text="{Binding SelectedLoggingSession.Name}" TextAlignment="Center"/>
+        <Border Grid.Row="1"
+                BorderBrush="{DynamicResource BorderDim}"
+                BorderThickness="0,0,0,1"
+                Padding="20,16,20,16">
+            <StackPanel>
+                <TextBlock Text="SETTINGS" Classes="sectionLabel" Margin="0,0,0,12"/>
+                <!--
+                    Two columns, both content-sized, because the flyout pane is a fixed 380px
+                    (MainWindow's SplitView OpenPaneLength) and the longest label here is wider
+                    than any number picked in advance: a pinned label column clipped it, and a
+                    pinned button column then squeezed the middle until the ToggleSwitch's
+                    "Stopped" ran under Reset (#228). Reset is an action on the whole box rather
+                    than a third field, so it sits on its own row instead of competing for that
+                    width.
+                -->
+                <Grid ColumnDefinitions="Auto,*" RowDefinitions="Auto,Auto,Auto,Auto"
+                      ColumnSpacing="8" RowSpacing="10">
+                    <TextBlock Grid.Row="0" Grid.Column="0" Classes="cellHeader" Text="Log Session"/>
+                    <TextBlock Grid.Row="0" Grid.Column="1" Classes="cell"
+                               Text="{Binding SelectedLoggingSession.Name}" TextAlignment="Right"/>
 
-                <!-- Refresh cadence, not a window size: the measurement window itself runs until
-                     Reset. Core's AcquisitionStatistics accumulates continuously, so this only
-                     decides how often the figures below are re-read. -->
-                <TextBlock Grid.Row="1" Grid.Column="0" Classes="cellHeader" Text="Refresh Every (msgs)"/>
-                <NumericUpDown Grid.Row="1" Grid.Column="1"
-                               Value="{Binding SummaryLogger.SampleSize}"
-                               Minimum="1" Increment="1"/>
+                    <!-- Refresh cadence, not a window size: the measurement window itself runs until
+                         Reset. Core's AcquisitionStatistics accumulates continuously, so this only
+                         decides how often the figures below are re-read. -->
+                    <TextBlock Grid.Row="1" Grid.Column="0" Classes="cellHeader" Text="Refresh Every (msgs)"/>
+                    <!-- Spinners hidden, matching the export dialog's "Average Every N Samples"
+                         box, which is the app's other type-a-number field. They were the only
+                         square-cornered chrome in the pane, and stepping a four-digit message
+                         count by one was never the way this value gets changed; arrow keys still
+                         spin it, since AllowSpin is untouched. -->
+                    <NumericUpDown Grid.Row="1" Grid.Column="1"
+                                   Value="{Binding SummaryLogger.SampleSize}"
+                                   Minimum="1" Increment="1"
+                                   ShowButtonSpinner="False"
+                                   HorizontalAlignment="Right" Width="110"/>
 
-                <TextBlock Grid.Row="2" Grid.Column="0" Classes="cellHeader" Text="Status"/>
-                <ToggleSwitch Grid.Row="2" Grid.Column="1"
-                              Command="{Binding SummaryLogger.ToggleEnabledCommand}"
-                              IsChecked="{Binding SummaryLogger.Enabled, Mode=OneWay}"
-                              OffContent="Stopped" OnContent="Running" HorizontalAlignment="Left"/>
-                <Button Grid.Row="3" Grid.Column="1" Content="Reset" HorizontalAlignment="Right"
-                        Command="{Binding SummaryLogger.ResetCommand}"/>
-            </Grid>
-        </HeaderedContentControl>
+                    <TextBlock Grid.Row="2" Grid.Column="0" Classes="cellHeader" Text="Status"/>
+                    <ToggleSwitch Grid.Row="2" Grid.Column="1"
+                                  Command="{Binding SummaryLogger.ToggleEnabledCommand}"
+                                  IsChecked="{Binding SummaryLogger.Enabled, Mode=OneWay}"
+                                  OffContent="Stopped" OnContent="Running" HorizontalAlignment="Right"/>
+                    <Button Grid.Row="3" Grid.Column="1" Content="Reset" HorizontalAlignment="Right"
+                            Theme="{StaticResource PillButton}"
+                            Command="{Binding SummaryLogger.ResetCommand}"/>
+                </Grid>
+            </StackPanel>
+        </Border>
+
+        <!--
+            Empty state (#249). The device sections live in the star row, so with nothing reporting
+            the lower two thirds of a full-height 380px pane rendered as bare panel. The pane cannot
+            size itself to its content — it is one shared SplitView whose OpenPaneLength and height
+            are fixed for all three flyouts — so the region is filled deliberately instead, on the
+            app-wide emptyTitle/emptyBody classes in Resources/Components.axaml that the mobile
+            channels, devices, profiles and sessions panes already use for this state.
+        -->
+        <StackPanel Grid.Row="2"
+                    IsVisible="{Binding !SummaryLogger.HasDevices}"
+                    Spacing="10"
+                    Margin="20,0,20,40"
+                    HorizontalAlignment="Center"
+                    VerticalAlignment="Center">
+            <i:Icon Value="mdi-chip"
+                    FontSize="34"
+                    HorizontalAlignment="Center"
+                    Foreground="{DynamicResource TextTertiary}"/>
+            <TextBlock Classes="emptyTitle"
+                       AutomationProperties.AutomationId="SummaryEmptyTitle"
+                       Text="NO DEVICES REPORTING"/>
+            <TextBlock Classes="emptyBody"
+                       AutomationProperties.AutomationId="SummaryEmptyBody"
+                       Text="Sample counts, rates and latencies appear here once a connected device starts streaming."/>
+        </StackPanel>
 
         <!--
             One section per reporting device. Core keys its per-channel accumulators by channel
@@ -107,109 +136,126 @@
             here merges statistics across devices, and two boards' channel 0 can no longer land in
             a single row.
         -->
-        <ScrollViewer Grid.Row="2" HorizontalAlignment="Stretch" VerticalAlignment="Stretch">
+        <ScrollViewer Grid.Row="2" IsVisible="{Binding SummaryLogger.HasDevices}"
+                      HorizontalAlignment="Stretch" VerticalAlignment="Stretch">
             <ItemsControl ItemsSource="{Binding SummaryLogger.Devices}">
               <ItemsControl.ItemTemplate>
                 <DataTemplate>
             <Grid RowDefinitions="Auto,Auto">
 
-                <HeaderedContentControl Grid.Row="0" Header="{Binding Title}" Theme="{StaticResource GroupBoxTheme}">
-                    <Grid Margin="5" ColumnDefinitions="150,*,*,*"
-                          RowDefinitions="Auto,Auto,Auto,Auto,Auto,Auto">
-                        <TextBlock Grid.Row="0" Grid.Column="0" Classes="cellHeader" Text="Updated"/>
-                        <TextBlock Grid.Row="0" Grid.Column="1" Grid.ColumnSpan="3" Classes="cell"
-                                   Text="{Binding LastUpdate, StringFormat=HH:mm:ss.fffffff}"/>
+                <Border Grid.Row="0"
+                        BorderBrush="{DynamicResource BorderDim}"
+                        BorderThickness="0,0,0,1"
+                        Padding="20,16,20,16">
+                    <StackPanel>
+                        <TextBlock Text="{Binding Title}" Classes="sectionLabel" Margin="0,0,0,12"/>
+                        <Grid ColumnDefinitions="Auto,*,*,*"
+                              RowDefinitions="Auto,Auto,Auto,Auto,Auto,Auto"
+                              ColumnSpacing="8" RowSpacing="8">
+                            <TextBlock Grid.Row="0" Grid.Column="0" Classes="cellHeader" Text="Updated"/>
+                            <TextBlock Grid.Row="0" Grid.Column="1" Grid.ColumnSpan="3" Classes="cell"
+                                       Text="{Binding LastUpdate, StringFormat=HH:mm:ss.fffffff}"
+                                       TextAlignment="Right"/>
 
-                        <TextBlock Grid.Row="1" Grid.Column="0" Classes="cellHeader" Text="Samples"/>
-                        <TextBlock Grid.Row="1" Grid.Column="1" Grid.ColumnSpan="3" Classes="cell"
-                                   Text="{Binding SampleCount}"/>
+                            <TextBlock Grid.Row="1" Grid.Column="0" Classes="cellHeader" Text="Samples"/>
+                            <TextBlock Grid.Row="1" Grid.Column="1" Grid.ColumnSpan="3" Classes="cell"
+                                       Text="{Binding SampleCount}" TextAlignment="Right"/>
 
-                        <!-- Total throughput, NOT the per-channel rate this row used to show.
-                             The per-channel rate now has its own pair of columns below, measured
-                             against both clocks, which is the number worth reading. -->
-                        <TextBlock Grid.Row="2" Grid.Column="0" Classes="cellHeader" Text="Total Samples/s"
-                                   ToolTip.Tip="Every channel of this device combined, measured against the host clock. Per-channel rates are in the CHANNELS section."/>
-                        <TextBlock Grid.Row="2" Grid.Column="1" Grid.ColumnSpan="3" Classes="cell"
-                                   Text="{Binding SampleRate}" TextAlignment="Center"/>
+                            <!-- Total throughput, NOT the per-channel rate this row used to show.
+                                 The per-channel rate now has its own pair of columns below, measured
+                                 against both clocks, which is the number worth reading. -->
+                            <TextBlock Grid.Row="2" Grid.Column="0" Classes="cellHeader" Text="Total Samples/s"
+                                       ToolTip.Tip="Every channel of this device combined, measured against the host clock. Per-channel rates are in the CHANNELS section."/>
+                            <TextBlock Grid.Row="2" Grid.Column="1" Grid.ColumnSpan="3" Classes="cell"
+                                       Text="{Binding SampleRate}" TextAlignment="Right"/>
 
-                        <TextBlock Grid.Row="3" Grid.Column="0" Classes="cellHeader" Text="Statuses"/>
-                        <TextBlock Grid.Row="3" Grid.Column="1" Classes="cell"
-                                   Text="{Binding StatusList}" TextAlignment="Right"/>
+                            <TextBlock Grid.Row="3" Grid.Column="0" Classes="cellHeader" Text="Statuses"/>
+                            <TextBlock Grid.Row="3" Grid.Column="1" Grid.ColumnSpan="3" Classes="cell"
+                                       Text="{Binding StatusList}" TextAlignment="Right"/>
 
-                        <TextBlock Grid.Row="4" Grid.Column="1" Classes="cellHeader" Text="Min"/>
-                        <TextBlock Grid.Row="4" Grid.Column="2" Classes="cellHeader" Text="Avg"/>
-                        <TextBlock Grid.Row="4" Grid.Column="3" Classes="cellHeader" Text="Max"/>
+                            <TextBlock Grid.Row="4" Grid.Column="1" Classes="cellHeader" Text="Min" TextAlignment="Right"/>
+                            <TextBlock Grid.Row="4" Grid.Column="2" Classes="cellHeader" Text="Avg" TextAlignment="Right"/>
+                            <TextBlock Grid.Row="4" Grid.Column="3" Classes="cellHeader" Text="Max" TextAlignment="Right"/>
 
-                        <TextBlock Grid.Row="5" Grid.Column="0" Classes="cellHeader" Text="Latency (ms)"
-                                   ToolTip.Tip="How far behind the device's own account of when a sample was taken the host was when it saw it. Negative means the device clock is running ahead of the host's."/>
-                        <TextBlock Grid.Row="5" Grid.Column="1" Classes="cell"
-                                   Text="{Binding MinLatency}" TextAlignment="Right"/>
-                        <TextBlock Grid.Row="5" Grid.Column="2" Classes="cell"
-                                   Text="{Binding AverageLatency}" TextAlignment="Right"/>
-                        <TextBlock Grid.Row="5" Grid.Column="3" Classes="cell"
-                                   Text="{Binding MaxLatency}" TextAlignment="Right"/>
-                    </Grid>
-                </HeaderedContentControl>
+                            <TextBlock Grid.Row="5" Grid.Column="0" Classes="cellHeader" Text="Latency (ms)"
+                                       ToolTip.Tip="How far behind the device's own account of when a sample was taken the host was when it saw it. Negative means the device clock is running ahead of the host's."/>
+                            <TextBlock Grid.Row="5" Grid.Column="1" Classes="cell"
+                                       Text="{Binding MinLatency}" TextAlignment="Right"/>
+                            <TextBlock Grid.Row="5" Grid.Column="2" Classes="cell"
+                                       Text="{Binding AverageLatency}" TextAlignment="Right"/>
+                            <TextBlock Grid.Row="5" Grid.Column="3" Classes="cell"
+                                       Text="{Binding MaxLatency}" TextAlignment="Right"/>
+                        </Grid>
+                    </StackPanel>
+                </Border>
 
-                <HeaderedContentControl Grid.Row="1" Header="CHANNELS" Theme="{StaticResource GroupBoxTheme}">
-                    <ItemsControl ItemsSource="{Binding Channels}">
-                        <ItemsControl.ItemTemplate>
-                            <DataTemplate>
-                                <Grid Margin="5" ColumnDefinitions="150,*,*,*"
-                                      RowDefinitions="Auto,Auto,Auto,Auto,Auto,Auto,Auto">
-                                    <!-- No per-channel "last update" column: the device stamps every
-                                         channel in a frame with the same time, so all sixteen read
-                                         identically and duplicate the device's own Updated row. -->
-                                    <TextBlock Grid.Row="0" Grid.Column="0" Classes="cell"
-                                               Text="{Binding Name}"/>
-                                    <TextBlock Grid.Row="0" Grid.Column="2" Classes="cell"
-                                               Text="Count" TextAlignment="Right"/>
-                                    <TextBlock Grid.Row="0" Grid.Column="3" Classes="cell"
-                                               Text="{Binding SampleCount}" TextAlignment="Right"/>
+                <Border Grid.Row="1"
+                        BorderBrush="{DynamicResource BorderDim}"
+                        BorderThickness="0,0,0,1"
+                        Padding="20,16,20,16">
+                    <StackPanel>
+                        <TextBlock Text="CHANNELS" Classes="sectionLabel" Margin="0,0,0,12"/>
+                        <ItemsControl ItemsSource="{Binding Channels}">
+                            <ItemsControl.ItemTemplate>
+                                <DataTemplate>
+                                    <Grid ColumnDefinitions="Auto,*,*,*"
+                                          RowDefinitions="Auto,Auto,Auto,Auto,Auto,Auto,Auto"
+                                          ColumnSpacing="8" RowSpacing="8"
+                                          Margin="0,0,0,14">
+                                        <!-- No per-channel "last update" column: the device stamps every
+                                             channel in a frame with the same time, so all sixteen read
+                                             identically and duplicate the device's own Updated row. -->
+                                        <TextBlock Grid.Row="0" Grid.Column="0" Classes="cell"
+                                                   Text="{Binding Name}"/>
+                                        <TextBlock Grid.Row="0" Grid.Column="2" Classes="cellHeader"
+                                                   Text="Count" TextAlignment="Right"/>
+                                        <TextBlock Grid.Row="0" Grid.Column="3" Classes="cell"
+                                                   Text="{Binding SampleCount}" TextAlignment="Right"/>
 
-                                    <!-- The two rates side by side are the point of the panel: both
-                                         low means samples went missing, a disagreement means the
-                                         device and host clocks have drifted apart. -->
-                                    <TextBlock Grid.Row="1" Grid.Column="2" Classes="cellHeader"
-                                               Text="Host clock" TextAlignment="Right"/>
-                                    <TextBlock Grid.Row="1" Grid.Column="3" Classes="cellHeader"
-                                               Text="Device clock" TextAlignment="Right"/>
+                                        <!-- The two rates side by side are the point of the panel: both
+                                             low means samples went missing, a disagreement means the
+                                             device and host clocks have drifted apart. -->
+                                        <TextBlock Grid.Row="1" Grid.Column="2" Classes="cellHeader"
+                                                   Text="Host clock" TextAlignment="Right"/>
+                                        <TextBlock Grid.Row="1" Grid.Column="3" Classes="cellHeader"
+                                                   Text="Device clock" TextAlignment="Right"/>
 
-                                    <TextBlock Grid.Row="2" Grid.Column="0" Classes="cellHeader" Text="Sample Rate (Hz)"/>
-                                    <TextBlock Grid.Row="2" Grid.Column="2" Classes="cell"
-                                               Text="{Binding SampleRate}" TextAlignment="Right"/>
-                                    <TextBlock Grid.Row="2" Grid.Column="3" Classes="cell"
-                                               Text="{Binding DeviceClockSampleRate}" TextAlignment="Right"/>
+                                        <TextBlock Grid.Row="2" Grid.Column="0" Classes="cellHeader" Text="Sample Rate (Hz)"/>
+                                        <TextBlock Grid.Row="2" Grid.Column="2" Classes="cell"
+                                                   Text="{Binding SampleRate}" TextAlignment="Right"/>
+                                        <TextBlock Grid.Row="2" Grid.Column="3" Classes="cell"
+                                                   Text="{Binding DeviceClockSampleRate}" TextAlignment="Right"/>
 
-                                    <TextBlock Grid.Row="3" Grid.Column="1" Classes="cellHeader" Text="Min" TextAlignment="Right"/>
-                                    <TextBlock Grid.Row="3" Grid.Column="2" Classes="cellHeader" Text="Avg" TextAlignment="Right"/>
-                                    <TextBlock Grid.Row="3" Grid.Column="3" Classes="cellHeader" Text="Max" TextAlignment="Right"/>
+                                        <TextBlock Grid.Row="3" Grid.Column="1" Classes="cellHeader" Text="Min" TextAlignment="Right"/>
+                                        <TextBlock Grid.Row="3" Grid.Column="2" Classes="cellHeader" Text="Avg" TextAlignment="Right"/>
+                                        <TextBlock Grid.Row="3" Grid.Column="3" Classes="cellHeader" Text="Max" TextAlignment="Right"/>
 
-                                    <TextBlock Grid.Row="4" Grid.Column="0" Classes="cellHeader" Text="Interval (ms)"/>
-                                    <TextBlock Grid.Row="4" Grid.Column="1" Classes="cell"
-                                               Text="{Binding MinDelta}" TextAlignment="Right"/>
-                                    <TextBlock Grid.Row="4" Grid.Column="2" Classes="cell"
-                                               Text="{Binding AverageDelta}" TextAlignment="Right"/>
-                                    <TextBlock Grid.Row="4" Grid.Column="3" Classes="cell"
-                                               Text="{Binding MaxDelta}" TextAlignment="Right"/>
+                                        <TextBlock Grid.Row="4" Grid.Column="0" Classes="cellHeader" Text="Interval (ms)"/>
+                                        <TextBlock Grid.Row="4" Grid.Column="1" Classes="cell"
+                                                   Text="{Binding MinDelta}" TextAlignment="Right"/>
+                                        <TextBlock Grid.Row="4" Grid.Column="2" Classes="cell"
+                                                   Text="{Binding AverageDelta}" TextAlignment="Right"/>
+                                        <TextBlock Grid.Row="4" Grid.Column="3" Classes="cell"
+                                                   Text="{Binding MaxDelta}" TextAlignment="Right"/>
 
-                                    <TextBlock Grid.Row="5" Grid.Column="0" Classes="cellHeader" Text="Value"/>
-                                    <TextBlock Grid.Row="5" Grid.Column="1" Classes="cell"
-                                               Text="{Binding MinValue}" TextAlignment="Right"/>
-                                    <TextBlock Grid.Row="5" Grid.Column="2" Classes="cell"
-                                               Text="{Binding AverageValue}" TextAlignment="Right"/>
-                                    <TextBlock Grid.Row="5" Grid.Column="3" Classes="cell"
-                                               Text="{Binding MaxValue}" TextAlignment="Right"/>
+                                        <TextBlock Grid.Row="5" Grid.Column="0" Classes="cellHeader" Text="Value"/>
+                                        <TextBlock Grid.Row="5" Grid.Column="1" Classes="cell"
+                                                   Text="{Binding MinValue}" TextAlignment="Right"/>
+                                        <TextBlock Grid.Row="5" Grid.Column="2" Classes="cell"
+                                                   Text="{Binding AverageValue}" TextAlignment="Right"/>
+                                        <TextBlock Grid.Row="5" Grid.Column="3" Classes="cell"
+                                                   Text="{Binding MaxValue}" TextAlignment="Right"/>
 
-                                    <TextBlock Grid.Row="6" Grid.Column="0" Classes="cellHeader" Text="Out of order"
-                                               ToolTip.Tip="Samples that arrived stamped behind one already seen on this channel."/>
-                                    <TextBlock Grid.Row="6" Grid.Column="3" Classes="cell"
-                                               Text="{Binding OutOfOrderSampleCount}" TextAlignment="Right"/>
-                                </Grid>
-                            </DataTemplate>
-                        </ItemsControl.ItemTemplate>
-                    </ItemsControl>
-                </HeaderedContentControl>
+                                        <TextBlock Grid.Row="6" Grid.Column="0" Classes="cellHeader" Text="Out of order"
+                                                   ToolTip.Tip="Samples that arrived stamped behind one already seen on this channel."/>
+                                        <TextBlock Grid.Row="6" Grid.Column="3" Classes="cell"
+                                                   Text="{Binding OutOfOrderSampleCount}" TextAlignment="Right"/>
+                                    </Grid>
+                                </DataTemplate>
+                            </ItemsControl.ItemTemplate>
+                        </ItemsControl>
+                    </StackPanel>
+                </Border>
             </Grid>
                 </DataTemplate>
               </ItemsControl.ItemTemplate>
