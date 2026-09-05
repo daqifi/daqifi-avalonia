@@ -253,6 +253,20 @@ public partial class DaqifiViewModel : ObservableObject, IFirmwareUpdateHost, IL
 
     // @port: Daqifi.Desktop.ViewModels.DaqifiViewModel.NotificationList
     public ObservableCollection<Notifications> NotificationList { get; } = [];
+
+    /// <summary>
+    /// True when there is at least one notification. Drives the notifications flyout's list /
+    /// empty-state swap, the same way <see cref="HasLoggingSessions"/> drives the Logged Data pane's.
+    /// <para>
+    /// Derived from <see cref="NotificationList"/> and refreshed from its CollectionChanged, NOT from
+    /// <see cref="NotificationCount"/>: that property is also assigned the *version*-notification count
+    /// straight off <c>VersionNotification</c> in <c>UpdateUi</c>, so it can differ from the list's own
+    /// Count, and two sites add to the list without touching it at all. Only CollectionChanged fires on
+    /// every mutation by construction.
+    /// </para>
+    /// </summary>
+    public bool HasNotifications => NotificationList.Count > 0;
+
     // @port: Daqifi.Desktop.ViewModels.DaqifiViewModel.ActiveChannels
     public ObservableCollection<IChannel> ActiveChannels { get; } = [];
     // @port: Daqifi.Desktop.ViewModels.DaqifiViewModel.ActiveInputChannels
@@ -792,6 +806,10 @@ public partial class DaqifiViewModel : ObservableObject, IFirmwareUpdateHost, IL
         // This catches cases like reconnecting to a device that's still SD-logging from
         // a previous desktop session, where _isLogging would otherwise stay false.
         ConnectedDevices.CollectionChanged += OnConnectedDevicesCollectionChanged;
+
+        // HasNotifications is computed from NotificationList, so it only change-notifies if something
+        // watches the collection itself (see the property's remarks for why NotificationCount won't do).
+        NotificationList.CollectionChanged += OnNotificationListCollectionChanged;
 
         // Daqifi.Desktop.App is the startup host in the Avalonia port (not an Application
         // subclass); App.IsStarted stands in for WPF's `Application.Current as App` null test
@@ -1799,6 +1817,12 @@ public partial class DaqifiViewModel : ObservableObject, IFirmwareUpdateHost, IL
     // GetHashCode over mutable fields, so a default HashSet would lose a device once its Name/IP/MAC
     // changed after insertion. Subscribe/unsubscribe symmetry requires tracking the exact instances.
     private readonly HashSet<IStreamingDevice> _subscribedDevices = new(ReferenceComparer<IStreamingDevice>.Instance);
+
+    // Keeps the flyout's list / empty-state swap in step with the collection it renders. Every add,
+    // remove, clear and replace raises this, including the two add sites that never touch
+    // NotificationCount, so the empty state cannot be left showing over a non-empty list.
+    private void OnNotificationListCollectionChanged(object? sender, NotifyCollectionChangedEventArgs e)
+        => OnPropertyChanged(nameof(HasNotifications));
 
     // @port: Daqifi.Desktop.ViewModels.DaqifiViewModel.OnConnectedDevicesCollectionChanged
     private void OnConnectedDevicesCollectionChanged(object? sender, NotifyCollectionChangedEventArgs e)
@@ -2955,6 +2979,7 @@ public partial class DaqifiViewModel : ObservableObject, IFirmwareUpdateHost, IL
         ConnectionManager.Instance.PropertyChanged -= UpdateUi;
         LoggingManager.Instance.PropertyChanged -= UpdateUi;
         ConnectedDevices.CollectionChanged -= OnConnectedDevicesCollectionChanged;
+        NotificationList.CollectionChanged -= OnNotificationListCollectionChanged;
 
         // Per-device subscriptions (logging-state PropertyChanged + debug-data) wired up as devices
         // are added in OnConnectedDevicesCollectionChanged. Left subscribed, a device keeps this VM
