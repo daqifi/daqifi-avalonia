@@ -447,14 +447,17 @@
                         </Border>
 
                         <!-- Main plot -->
-                        <!-- divergence: upstream style-trigger set Visibility=Hidden (keep layout
-                             space) when no session data; Avalonia IsVisible collapses instead, but
-                             the plot sits in a star-sized row so the layout is unchanged. -->
+                        <!-- divergence (#251): upstream hid this until a session was loaded and the
+                             port collapsed it, so with nothing plotted the region was blank. The
+                             model is built with its three labelled axes in DatabaseLogger's
+                             constructor and holds no series until DisplayLoggingSession runs, so
+                             leaving the view visible draws the same empty Analog (V) / Time (ms) /
+                             Digital frame LiveGraphPane already draws in this state, with the
+                             empty-state card below overlaid on it exactly as it is there. -->
                         <oxy:PlotView Grid.Row="1"
                                       Model="{Binding DbLogger.PlotModel}"
                                       Background="{DynamicResource Surface}"
-                                      Margin="16,8,16,0"
-                                      IsVisible="{Binding DbLogger.HasSessionData}">
+                                      Margin="16,8,16,0">
                             <oxy:PlotView.DefaultTrackerTemplate>
                                 <ControlTemplate>
                                     <oxy:TrackerControl Position="{Binding Position}"
@@ -495,29 +498,39 @@
                                    Opacity="0"
                                    IsHitTestVisible="False"/>
 
-                        <!-- Empty state (no session selected) - only when sessions exist but none picked -->
+                        <!-- Empty state: shown whenever nothing is plotted (#251). Upstream's
+                             MultiDataTrigger also required HasLoggingSessions, which suppressed the
+                             card in the one state that needed it most — a fresh install with no
+                             sessions at all, where the region then explained itself not at all. -->
                         <StackPanel Grid.Row="1"
+                                    IsVisible="{Binding !DbLogger.HasSessionData}"
                                     HorizontalAlignment="Center"
                                     VerticalAlignment="Center">
-                            <StackPanel.IsVisible>
-                                <!-- upstream MultiDataTrigger: !DbLogger.HasSessionData AND HasLoggingSessions -->
-                                <MultiBinding Converter="{StaticResource BoolAndToVis}">
-                                    <Binding Path="DbLogger.HasSessionData" Converter="{StaticResource BooleanToInverse}"/>
-                                    <Binding Path="HasLoggingSessions"/>
-                                </MultiBinding>
-                            </StackPanel.IsVisible>
                             <i:Icon Value="mdi-chart-line"
                                     FontSize="48"
                                     HorizontalAlignment="Center"
                                     Foreground="{DynamicResource TextTertiary}"
                                     Opacity="0.5"
                                     Margin="0,0,0,16"/>
-                            <TextBlock Text="Select a session to view data"
+                            <!-- Names the state rather than instructing, so it stays true whether or
+                                 not any session exists — the same split LiveGraphPane's card uses
+                                 ("No channels streaming" / "Enable channels in the Channels tab…").
+                                 It read "Select a session to view data" until review pointed out that
+                                 a fresh install would then request an impossible action directly
+                                 above a list reporting NO SESSIONS. -->
+                            <TextBlock Text="No session selected"
                                        FontSize="15"
                                        FontWeight="Light"
                                        Foreground="{DynamicResource TextPrimary}"
                                        HorizontalAlignment="Center"/>
+                            <!-- The call to action, and the only part of the card that needs a
+                                 non-empty list: HasLoggingSessions gates this line alone rather than
+                                 the whole card. With no sessions the list directly below already says
+                                 NO SESSIONS / "Start logging or import an SD card log to get
+                                 started.", so showing this here would point at an empty list and
+                                 repeat guidance the pane already gives. -->
                             <TextBlock Text="Choose a session from the list below"
+                                       IsVisible="{Binding HasLoggingSessions}"
                                        FontSize="11"
                                        Foreground="{DynamicResource TextTertiary}"
                                        HorizontalAlignment="Center"
