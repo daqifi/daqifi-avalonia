@@ -553,15 +553,8 @@ public class DeviceRefusalCrashTests : IDisposable
         ConnectionType connectionType = ConnectionType.Usb)
         => new(serialNumber, connectionType);
 
-    private sealed class NullDialogService : IDialogService
-    {
-        public void Register(Control view) { }
-
-        public void Unregister(Control view) { }
-
-        public Task<bool?> ShowDialogAsync<T>(object ownerViewModel, object viewModel) where T : Window
-            => Task.FromResult<bool?>(true);
-    }
+    // NullDialogService moved to its own file when the notifications suite (#250) needed the same
+    // stub; it is in this namespace, so the use above is unchanged.
 
     #endregion
 }
