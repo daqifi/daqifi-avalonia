@@ -517,7 +517,14 @@
                                        FontWeight="Light"
                                        Foreground="{DynamicResource TextPrimary}"
                                        HorizontalAlignment="Center"/>
+                            <!-- The call to action, and the only part of the card that needs a
+                                 non-empty list: HasLoggingSessions now gates this line alone rather
+                                 than the whole card. With no sessions the list directly below already
+                                 says NO SESSIONS / "Start logging or import an SD card log to get
+                                 started.", so showing this here would point at an empty list and
+                                 repeat guidance the pane already gives. -->
                             <TextBlock Text="Choose a session from the list below"
+                                       IsVisible="{Binding HasLoggingSessions}"
                                        FontSize="11"
                                        Foreground="{DynamicResource TextTertiary}"
                                        HorizontalAlignment="Center"

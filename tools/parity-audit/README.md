@@ -322,6 +322,17 @@ five-run determinism check 24/24 and then reproduced this manifest, new hash inc
 so the cross-machine agreement described further down holds for the re-recorded screen
 too, rather than being inherited from the recording that preceded it.
 
+`desktop-2-loggeddata.png` alone was re-recorded 2026-09-05 for #251 (macOS 26.5, Apple
+silicon, .NET SDK 10.0.302), which stops collapsing the Logged Data plot when no session is
+selected, so the region draws the same empty labelled axes Live Graph already draws instead
+of a featureless black rectangle. **One** hash moved: the other twenty-three are
+byte-for-byte unchanged against the pre-fix capture, and the pre-fix capture matched the
+then-committed manifest on all 24 — so the void is what was shipping rather than an artifact
+of the harness. Five `--determinism` runs agreed 24/24 after the change. Deliberately placed
+below the #228 paragraph rather than at the top of this list: #250 was re-recording
+`desktop-7` in a separate open PR at the same time, and the two entries land in different
+hunks this way. Both touch `macos-arm64.sha256`, but on different lines.
+
 `macos-arm64.sha256` was extended 2026-09-03 for #213 (macOS 26.5 build 25F71, Apple
 silicon, .NET SDK 10.0.302, Avalonia 12.1.1) with the six `dialog-*` screens, after 10
 consecutive `--determinism` runs on that host agreed 24/24. That recording is **purely
