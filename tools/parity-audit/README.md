@@ -344,11 +344,15 @@ empty state instead of two thirds of a pane of bare panel. **One** hash moved: t
 twenty-three, every mobile and dialog screen included, are byte-for-byte unchanged against
 the pre-fix capture, and that pre-fix capture matched the then-committed manifest on all 24
 — so the unstyled pane is what was shipping rather than an artefact of the harness. Five
-`--determinism` runs agreed 24/24 after the change. Deliberately placed at the foot of this
-list rather than at its head: three other open PRs were writing to this file at the same
-time (one adding a screen, two re-recording `desktop-7` and `desktop-2`), and this position
-keeps all four entries in hunks that do not touch. In the manifest itself the four are on
-different lines for the same reason.
+`--determinism` runs agreed 24/24 after the change. The recording is **not** single-host: on
+the PR that made it the `macos-latest` runner — macOS **26.6.2** (25G83), arm64, image
+`macos26/20260831.0337.3`, a newer OS build than either this manifest's recording Mac or the
+runner that confirmed the #228 recording — passed its own five-run determinism check 24/24 and
+then reproduced this manifest, new hash included. Deliberately placed at the foot of this list
+rather than at its head: three other open PRs were writing to this file at the same time (one
+adding a screen, two re-recording `desktop-7` and `desktop-2`), and this position keeps all
+four entries in hunks that do not touch. In the manifest itself the four are on different
+lines for the same reason.
 
 **A mismatch is a prompt, not a verdict** — re-read that environment line first. In CI
 the same applies with one addition: the baseline step prints the runner's macOS build and
