@@ -32,6 +32,13 @@ public class StreamingFrequencyRangeTests
 
         protected override void SendMessage(IOutboundMessage<string> message) =>
             throw new NotSupportedException();
+
+        /// <summary>
+        /// Re-hydrates from a Core device, as <c>ChannelsPopulated</c> and a reconnect do.
+        /// <see cref="AbstractStreamingDevice.SyncFromCoreDevice"/> is protected, so the test
+        /// reaches it the way the real subclasses do rather than through reflection.
+        /// </summary>
+        public void Sync(DaqifiDevice coreDevice) => SyncFromCoreDevice(coreDevice);
     }
 
     private static TestDevice DeviceAdvertising(int maxSamplingRate)
@@ -159,6 +166,45 @@ public class StreamingFrequencyRangeTests
         device.StreamingFrequency = 250;
 
         Assert.Contains(nameof(AbstractStreamingDevice.StreamingFrequency), raised);
+    }
+
+    // ---- A ceiling that moves under a rate already chosen ---------------------------------
+
+    [Fact]
+    public void A_stored_rate_is_brought_inside_a_ceiling_that_moves_down()
+    {
+        var device = DeviceAdvertising(22000);
+        device.StreamingFrequency = 5000;
+        Assert.Equal(5000, device.StreamingFrequency);
+
+        // The wrapper outlives the ceiling it was clamped against: Core raises ChannelsPopulated
+        // repeatedly on a live device and a reconnect builds a fresh Core device, and each of
+        // those re-hydrates Capabilities onto this same instance. A board that then describes a
+        // lower ceiling must not leave the old rate stored.
+        var core = new DaqifiStreamingDevice("core");
+        core.Metadata.Capabilities = new DeviceCapabilities { MaxSamplingRate = 1000 };
+
+        device.Sync(core);
+
+        Assert.Equal(1000, device.StreamingFrequency);
+
+        // And the value is one the re-described device will take, which is the whole point.
+        core.StreamingFrequency = device.StreamingFrequency;
+        Assert.Equal(1000, core.StreamingFrequency);
+    }
+
+    [Fact]
+    public void A_rate_that_still_fits_survives_re_hydration_untouched()
+    {
+        var device = DeviceAdvertising(1000);
+        device.StreamingFrequency = 250;
+
+        var core = new DaqifiStreamingDevice("core");
+        core.Metadata.Capabilities = new DeviceCapabilities { MaxSamplingRate = 22000 };
+
+        device.Sync(core);
+
+        Assert.Equal(250, device.StreamingFrequency);
     }
 
     // ---- The two halves together ----------------------------------------------------------

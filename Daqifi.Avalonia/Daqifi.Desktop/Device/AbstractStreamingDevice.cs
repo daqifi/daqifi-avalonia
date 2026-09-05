@@ -2246,6 +2246,16 @@ public abstract partial class AbstractStreamingDevice : ObservableObject, IStrea
         // re-derived capability set on an unchanged board would otherwise go unannounced.
         OnPropertyChanged(nameof(HasWincWifiModule));
 
+        // Capabilities was replaced above, so the rate ceiling StreamingFrequency was clamped
+        // against may have moved — and this wrapper outlives it: SyncFromCoreDevice re-hydrates on
+        // every ChannelsPopulated, and a reconnect builds a new Core device but keeps the wrapper
+        // and the rate the user already chose. Re-running the setter against the new ceiling is
+        // what keeps "whatever is stored is a rate Core will accept" true; without it a rate
+        // chosen under a higher ceiling would still be handed to Core at the next start, and
+        // rejected there. SetProperty is a no-op when the rate already fits, which is the
+        // overwhelmingly common case on a per-status-message path.
+        StreamingFrequency = _streamingFrequency;
+
         if (!string.IsNullOrWhiteSpace(Metadata.Ssid))
         {
             NetworkConfiguration.Ssid = Metadata.Ssid;
