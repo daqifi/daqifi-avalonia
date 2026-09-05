@@ -333,6 +333,23 @@ below the #228 paragraph rather than at the top of this list: #250 was re-record
 `desktop-7` in a separate open PR at the same time, and the two entries land in different
 hunks this way. Both touch `macos-arm64.sha256`, but on different lines.
 
+`mobile-landscape-3-storage.png` **and** `mobile-portrait-3-storage.png` were re-recorded
+2026-09-05 for #252 (macOS 26.5, Apple silicon, .NET SDK 10.0.302), which stops the mobile
+Storage pane pushing its empty state below the fold. **Two** hashes moved, and they are the
+two orientations of the one view that changed — every other screen in the manifest is
+byte-for-byte unchanged against the pre-fix capture, and that pre-fix capture matched the
+then-committed manifest on every screen it lists, so the clipped empty state is what was
+shipping rather than an artifact of the harness. Five `--determinism` runs agreed after the
+change. This is the first entry in this list to move **two** screens, and the pair is the
+point rather than a slip: the fix is orientation-agnostic — nothing about it is gated on
+landscape — so the portrait rendering of the same pane necessarily moves with it, and a
+recording that touched only the landscape screen would be recording half of what changed.
+Deliberately placed between the #251 and #213 paragraphs: three other open PRs were writing
+to this file at the same time, at the head of this list and at its foot, and this position
+keeps every entry in a hunk that does not touch the others. No screen count is stated above
+because one of those PRs adds a screen; the counts in the neighbouring paragraphs are true
+as of the recordings they describe.
+
 `macos-arm64.sha256` was extended 2026-09-03 for #213 (macOS 26.5 build 25F71, Apple
 silicon, .NET SDK 10.0.302, Avalonia 12.1.1) with the six `dialog-*` screens, after 10
 consecutive `--determinism` runs on that host agreed 24/24. That recording is **purely
