@@ -59,8 +59,9 @@ cd "$(dirname "${BASH_SOURCE[0]}")/../.."
 # Every project that carries a committed packages.lock.json. Restore walks
 # ProjectReferences, so the vendored OxyPlot is reached from the others — but it is
 # listed anyway, because "something else will have covered it" is exactly how a lock
-# file goes stale unnoticed. AvaloniaCapture is NOT in Daqifi.Avalonia.slnx, so a
-# solution-level restore misses it; that is why this iterates projects, not the slnx.
+# file goes stale unnoticed. Neither AvaloniaCapture nor HeadlessBench is in
+# Daqifi.Avalonia.slnx, so a solution-level restore misses them; that is why this
+# iterates projects, not the slnx.
 # tools/parity-audit/WpfCapture is absent on purpose — it opts out of the lock-file
 # policy entirely (see its csproj), since it ProjectReferences the sibling
 # daqifi-desktop repo and no PR here could ever refresh such a lock file.
@@ -71,6 +72,7 @@ PROJECTS=(
   Daqifi.Avalonia.iOS/Daqifi.Avalonia.iOS.csproj
   Daqifi.Avalonia.Tests/Daqifi.Avalonia.Tests.csproj
   tools/parity-audit/AvaloniaCapture/AvaloniaCapture.csproj
+  tools/system-test/HeadlessBench/HeadlessBench.csproj
   third_party/oxyplot-avalonia/OxyPlot.Avalonia/OxyPlot.Avalonia.csproj
 )
 

@@ -255,7 +255,8 @@ is what the checks on [#130] show. It is a real gate against a split graph and i
 cannot fire on a Dependabot PR, because on a Dependabot PR it never runs.
 
 **Which PRs escape.** `Daqifi.Avalonia` is the only managed project with dependents;
-the Desktop, Android, iOS and `AvaloniaCapture` heads are leaves. So a PR confined to a
+the Desktop, Android, iOS, `AvaloniaCapture` and `HeadlessBench` heads are leaves. So a PR
+confined to a
 leaf — the five packages that live nowhere else, `Avalonia.Desktop`, `Avalonia.Android`,
 `Avalonia.Headless`, `Avalonia.Skia`, `Avalonia.HarfBuzz` — stales no other lock file
 and needs no refresh. Two caveats: an Android-head-only PR fails a *different* way (the
@@ -294,8 +295,9 @@ and `RestoreLockedMode` evaluating `true` — a plain restore of a stale head fa
 works as-is inside a workflow, should the automation below ever get built.
 
 It iterates projects rather than restoring `Daqifi.Avalonia.slnx`, because
-`tools/parity-audit/AvaloniaCapture` is not in the solution and a solution-level restore
-would silently miss it. It never passes `-r`, which would prune the lock file to a
+`tools/parity-audit/AvaloniaCapture` and `tools/system-test/HeadlessBench` are not in the
+solution and a solution-level restore would silently miss them. It never passes `-r`, which
+would prune the lock file to a
 single RID (see the warning at the top of `Directory.Build.props`).
 
 `--force-evaluate` is also the only thing that catches a lock file that is *stale* rather
