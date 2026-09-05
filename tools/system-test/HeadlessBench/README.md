@@ -33,8 +33,14 @@ Every step renders the live window to a PNG and appends one JSON line to
 # Restore separately — it is deliberately NOT in Daqifi.Avalonia.slnx (see below).
 dotnet restore tools/system-test/HeadlessBench/HeadlessBench.csproj
 dotnet run   --project tools/system-test/HeadlessBench/HeadlessBench.csproj --no-restore -- \
-  --port /dev/cu.usbmodem1101 --out /tmp/headlessbench-run --rate 100 --seconds 5
+  --port /dev/cu.usbmodem1101 --out "/tmp/headlessbench-$(date +%Y%m%d-%H%M%S)" \
+  --rate 100 --seconds 5
 ```
+
+**Give every run a fresh `--out`.** `results.jsonl` is **appended**, never truncated, and
+the rig does not refuse a directory that already has one. Reuse the same path twice and
+the file holds two runs' verdicts with nothing marking the boundary — which is why the
+example above stamps the directory with the time.
 
 | flag | meaning | default |
 | --- | --- | --- |
@@ -71,6 +77,29 @@ connection — the hardware path is the point.
 three `unexpected`-check probes (sample-arrival gaps and device-clock skew, thread growth
 across connect/disconnect, and UI pump latency). Add a row by adding a `Step`; keep the
 shape — drive, assert the device, pump, assert the UI, capture, emit.
+
+## Known gaps — read before trusting a green run
+
+These are real limits of the current rig, not of the app. Tracked in #260.
+
+- **`CONN-DISC` is one layer below the user's click.** It calls
+  `ConnectionManager.Instance.Disconnect(device)`, but a user's disconnect runs
+  `DaqifiViewModel.DisconnectDeviceCommand`, which *also* unsubscribes every active channel
+  from `LoggingManager`, calls `RemoveFirmwareNotification`, and clears `SelectedDevice`.
+  So `CONN-DISC` can pass while that cleanup is broken, and the channel this rig subscribed
+  in `CH-AI` is still subscribed when the run ends. (The connect side does not have this
+  problem — it goes through the dialog's own command.)
+- **`LOG-SESSION` does not check the database.** It asserts only that a sample arrived and
+  that the logging toggles returned to false. Session finalization is a fire-and-forget
+  task the rig neither awaits nor validates, so a persistence failure still reports a pass.
+  The emitted evidence string says so too.
+- **No cleanup on the exception path.** `RunHardwareSequence` stops logging and disconnects
+  only on the normal path; an exception partway through leaves the board streaming until
+  the process exits.
+- **Setup is unguarded.** Creating `--out`, setting the environment and registering icons
+  all run before the try block, so a bad path or a permission error crashes with a stack
+  trace rather than the documented exit codes.
+- **`--scripted` is a stub**, so every test-double state is unreachable.
 
 ## Two traps it encodes, for whoever edits it
 
