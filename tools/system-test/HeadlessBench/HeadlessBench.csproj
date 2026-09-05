@@ -1,0 +1,33 @@
+<Project Sdk="Microsoft.NET.Sdk">
+  <!--
+    System-test rig for the avalonia-full-test skill. Boots the REAL Daqifi.Avalonia app
+    headless (Skia, no display) and drives it against a real DAQiFi board over serial —
+    through the app's own connection dialog view model, so what runs is the code a user's
+    click runs. Emits one JSON line per check to <out>/results.jsonl and PNGs to <out>/shots.
+
+    Same shape as ../../parity-audit/AvaloniaCapture, and for the same reasons:
+      - RID-less. Do NOT add -r on any host: an explicit-RID restore rewrites
+        packages.lock.json to one RID and CI's locked restore then fails NU1004.
+      - Not in Daqifi.Avalonia.slnx. Restore it separately.
+  -->
+  <PropertyGroup>
+    <OutputType>Exe</OutputType>
+    <TargetFramework>net10.0</TargetFramework>
+    <Nullable>enable</Nullable>
+    <ImplicitUsings>enable</ImplicitUsings>
+    <AvaloniaUseCompiledBindingsByDefault>false</AvaloniaUseCompiledBindingsByDefault>
+  </PropertyGroup>
+
+  <ItemGroup>
+    <PackageReference Include="Avalonia.Headless" Version="12.1.1" />
+    <PackageReference Include="Avalonia.Skia" Version="12.1.1" />
+    <PackageReference Include="Avalonia.HarfBuzz" Version="12.1.1" />
+    <PackageReference Include="Avalonia.Desktop" Version="12.1.1" />
+    <PackageReference Include="Avalonia.Fonts.Inter" Version="12.1.1" />
+    <PackageReference Include="Optris.Icons.Avalonia.MaterialDesign" Version="12.0.7" />
+  </ItemGroup>
+
+  <ItemGroup>
+    <ProjectReference Include="../../../Daqifi.Avalonia/Daqifi.Avalonia.csproj" />
+  </ItemGroup>
+</Project>

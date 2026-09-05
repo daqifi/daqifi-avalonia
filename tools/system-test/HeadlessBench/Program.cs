@@ -1,0 +1,380 @@
+using System.Diagnostics;
+using System.Globalization;
+using System.Text.Json;
+using Avalonia;
+using Avalonia.Controls;
+using Avalonia.Controls.ApplicationLifetimes;
+using Avalonia.Headless;
+using Avalonia.Media.Imaging;
+using Avalonia.Platform;
+using Avalonia.Threading;
+using Daqifi.Desktop;
+using Daqifi.Desktop.Channel;
+using Daqifi.Desktop.Device;
+using Daqifi.Desktop.Logger;
+using Daqifi.Desktop.ViewModels;
+using Optris.Icons.Avalonia;
+using Optris.Icons.Avalonia.MaterialDesign;
+
+// HeadlessBench — the avalonia-full-test skill's T2/T3 rig. See
+// ~/.claude/skills/avalonia-full-test/references/harness.md for the why; the short version:
+//
+//   * Boots the real app headless the way tools/parity-audit/AvaloniaCapture does.
+//   * Connects through ConnectionDialogViewModel.ConnectManualSerialCommand — the user's path —
+//     not by constructing a SerialStreamingDevice, so registration, duplicate check, status
+//     string and hot-plug hand-off all run.
+//   * Every Step: drive → assert what Core/the device says → pump → assert what the UI shows →
+//     capture a PNG → emit a results.jsonl line. Both assertions, always: a device that streams
+//     while the graph stays flat is the lie this rig exists to catch.
+//   * DAQIFI_TEST_MODE=1 swaps the firewall message box for a no-op and leaves the HID bootloader
+//     watcher unstarted (it takes exclusive HID handles). It does not disable serial connection.
+//   * DAQIFI_DATA_DIR is always set — under <out>/appdata — so a run can never touch the user's
+//     real ~/Library/Application Support/DAQiFi.
+//
+// Usage:
+//   HeadlessBench --port /dev/cu.usbmodemNNNN --out <run-dir> [--rate 100] [--seconds 5]
+//   HeadlessBench --scripted <state> --out <run-dir>          (T1; states not yet implemented)
+//
+// Exit code 1 on any [FAIL]. Rows covered by this stub: CONN-USB, DEV-INFO, CH-AI, STREAM-AI,
+// LOG-SESSION, GRAPH-LIVE, CONN-DISC. Add a Step per matrix row; keep the shape.
+
+internal static class HeadlessBench
+{
+    private static string _out = "";
+    private static string _port = "";
+    private static int _rate = 100;
+    private static int _seconds = 5;
+    private static string? _scripted;
+    private static bool _failed;
+    private static readonly List<double> PumpLatenciesMs = [];
+    private static readonly Vector Dpi = new(96, 96);
+    private static readonly JsonSerializerOptions Json = new() { WriteIndented = false };
+
+    public static int Main(string[] args)
+    {
+        if (!ParseArgs(args)) { return 2; }
+
+        Directory.CreateDirectory(Path.Combine(_out, "shots"));
+        Directory.CreateDirectory(Path.Combine(_out, "appdata"));
+        Environment.SetEnvironmentVariable("DAQIFI_TEST_MODE", "1");
+        Environment.SetEnvironmentVariable("DAQIFI_DATA_DIR", Path.Combine(_out, "appdata"));
+        IconProvider.Current.Register<MaterialDesignIconProvider>();
+
+        var lifetime = new ClassicDesktopStyleApplicationLifetime
+        {
+            Args = args,
+            ShutdownMode = ShutdownMode.OnExplicitShutdown,
+        };
+
+        try
+        {
+            AppBuilder.Configure<Daqifi.Avalonia.App>()
+                .UseSkia()
+                .UseHarfBuzz()
+                .UseHeadless(new AvaloniaHeadlessPlatformOptions { UseHeadlessDrawing = false })
+                .SetupWithLifetime(lifetime);
+            Console.WriteLine("[OK]   app boot");
+        }
+        catch (Exception ex)
+        {
+            Console.WriteLine($"[FAIL] app boot: {ex}");
+            return 1;
+        }
+
+        try
+        {
+            var main = lifetime.MainWindow ?? throw new InvalidOperationException("no MainWindow after boot");
+            main.Width = 1440; main.Height = 900;
+            Pump();
+            var shell = main.DataContext as DaqifiViewModel
+                        ?? throw new InvalidOperationException($"MainWindow.DataContext is {main.DataContext?.GetType().Name ?? "null"}, expected DaqifiViewModel");
+
+            if (_scripted is not null)
+            {
+                Emit(1, "SCRIPTED", "works", "not-run", $"--scripted {_scripted}: state not implemented in this stub");
+                Console.WriteLine($"[INFO] scripted state '{_scripted}' not implemented yet");
+            }
+            else
+            {
+                RunHardwareSequence(main, shell);
+            }
+        }
+        catch (Exception ex)
+        {
+            _failed = true;
+            Console.WriteLine($"[FAIL] run: {ex}");
+        }
+        finally
+        {
+            try { lifetime.Shutdown(); Pump(); }
+            catch (Exception ex) { Console.WriteLine($"[WARN] shutdown: {ex.Message}"); }
+        }
+
+        ReportPumpLatency();
+        Console.WriteLine($"done -> {_out}");
+        return _failed ? 1 : 0;
+    }
+
+    // ---------------------------------------------------------------- the T2 sequence
+
+    private static void RunHardwareSequence(Window main, DaqifiViewModel shell)
+    {
+        var threadsBefore = Process.GetCurrentProcess().Threads.Count;
+
+        // CONN-USB — through the dialog's manual-port path, the same code a user's click runs.
+        var dialog = new ConnectionDialogViewModel();
+        dialog.ManualPortName = _port;
+        var sw = Stopwatch.StartNew();
+        var connectTask = dialog.ConnectManualSerialCommand.ExecuteAsync(null);
+        PumpUntil(() => connectTask.IsCompleted && shell.ConnectedDevices.Count > 0, TimeSpan.FromSeconds(20));
+        var device = shell.ConnectedDevices.FirstOrDefault();
+        Step(2, "CONN-USB", "works", device is not null,
+             device is not null
+                 ? $"connected {_port} in {sw.Elapsed.TotalSeconds:F1} s; ConnectedDevices={shell.ConnectedDevices.Count}; status='{ConnectionManager.Instance.ConnectionStatusString}'"
+                 : $"no device in ConnectedDevices after 20 s; status='{ConnectionManager.Instance.ConnectionStatusString}'",
+             Capture(main, "t2-01-connected"), sw.Elapsed.TotalSeconds);
+        if (device is null) { return; }
+
+        // DEV-INFO — what the app knows about the board. The UI half of this row is the PNG.
+        var serial = device.DeviceSerialNo;
+        var fw = device.DeviceVersion;
+        Step(2, "DEV-INFO", "works", !string.IsNullOrWhiteSpace(serial) && !string.IsNullOrWhiteSpace(fw),
+             $"serial='{serial}' fw='{fw}' name='{device.DeviceDisplayName}' channels={device.DataChannels.Count}",
+             Capture(main, "t2-02-devices"));
+
+        var ai = device.DataChannels.FirstOrDefault(c => !c.IsDigital && !c.IsOutput);
+        if (ai is null)
+        {
+            Emit(2, "CH-AI", "works", "not-run", $"device reports no analog inputs ({device.DataChannels.Count} channels total)");
+            Emit(2, "STREAM-AI", "works", "not-run", "no analog input to stream");
+            Emit(2, "GRAPH-LIVE", "works", "not-run", "no analog input to stream");
+            Emit(2, "LOG-SESSION", "works", "not-run", "no analog input to stream");
+        }
+        else
+        {
+            // CH-AI — mirrors ChannelsPaneViewModel.ToggleChannel (private): the device gets the
+            // channel AND the logging manager subscribes it. Only the second half feeds the live plot;
+            // calling AddChannel alone streams into nothing, which is how the first run of this rig
+            // produced a "No channels streaming" graph while samples arrived.
+            device.AddChannel(ai);
+            LoggingManager.Instance.Subscribe(ai);
+            Pump();
+            var subscribed = LoggingManager.Instance.SubscribedChannels.Any(c => ReferenceEquals(c, ai));
+            Step(2, "CH-AI", "works", ai.IsActive && subscribed,
+                 $"'{ai.Name}' IsActive={ai.IsActive} subscribed={subscribed}; CanToggleLogging={shell.CanToggleLogging}",
+                 Capture(main, "t2-03-channel-on"));
+
+            // STREAM-AI + LOG-SESSION + GRAPH-LIVE — the user path is the LOGGING toggle: it checks
+            // disk space, opens a session, and LoggingFleet.Start streams every connected device.
+            // Count samples AND record when each one reached the app's channel object, plus the
+            // device's own timestamp. A bare count over a window under-reads when delivery is batched
+            // (a 1 s batch missing from a 5 s window looks like an 80 Hz device); the max arrival gap
+            // and the device-clock span separate "the device sampled slower" from "the app got the
+            // samples late", which are different findings against different layers.
+            var samples = 0;
+            DateTime? first = null;
+            var arrivals = new List<long>(_rate * (_seconds + 2));
+            long firstTicks = 0, lastTicks = 0;
+            var arrivalSw = Stopwatch.StartNew();
+            OnChannelUpdatedHandler counter = (_, sample) =>
+            {
+                first ??= DateTime.UtcNow;
+                Interlocked.Increment(ref samples);
+                lock (arrivals)
+                {
+                    arrivals.Add(arrivalSw.ElapsedMilliseconds);
+                    if (firstTicks == 0) { firstTicks = sample.TimestampTicks; }
+                    lastTicks = sample.TimestampTicks;
+                }
+            };
+            ai.OnChannelUpdated += counter;
+            device.StreamingFrequency = _rate;
+            sw.Restart();
+            shell.IsLogging = true;
+            var started = PumpUntil(() => first is not null, TimeSpan.FromSeconds(10));
+            var latency = sw.Elapsed.TotalSeconds;
+            if (started) { PumpFor(TimeSpan.FromSeconds(_seconds)); }
+            var window = first is null ? 0 : (DateTime.UtcNow - first.Value).TotalSeconds;
+            var counted = samples;
+            // Read the plot BEFORE stopping: LoggingManager clears the PlotLogger when Active goes false.
+            // LoggedPoints, not LoggedChannels[..].Points: the LineSeries render through ItemsSource,
+            // so their own Points lists stay empty while the plot is visibly drawing.
+            var plotted = shell.Plotter?.LoggedPoints?.Values.Sum(l => l.Count) ?? -1;
+            var plotSeries = shell.Plotter?.LoggedChannels?.Count ?? 0;
+            shell.IsLogging = false;
+            PumpUntil(() => !LoggingManager.Instance.Active, TimeSpan.FromSeconds(5));
+            ai.OnChannelUpdated -= counter;
+            Pump();
+
+            var shot = Capture(main, "t2-04-streamed");
+            var effective = window > 0 ? counted / window : 0;
+            var within = started && Math.Abs(effective - _rate) <= _rate * 0.1;
+            Step(2, "STREAM-AI", "works", within,
+                 started
+                     ? $"{counted} samples in {window:F1} s after a {latency:F1} s start latency -> {effective:F1} Hz effective (set {_rate} Hz) on '{ai.Name}'; IsStreaming after stop={(device as AbstractStreamingDevice)?.IsStreaming}"
+                     : $"no sample within 10 s of IsLogging=true at {_rate} Hz; LoggingManager.Active={LoggingManager.Instance.Active}",
+                 shot, window);
+            Step(2, "LOG-SESSION", "works", started && !LoggingManager.Instance.Active && !shell.IsLogging,
+                 $"IsLogging toggled on/off; LoggingManager.Active={LoggingManager.Instance.Active}; IsLogging={shell.IsLogging} (DB row count is a follow-up Step)",
+                 shot);
+            Step(2, "GRAPH-LIVE", "works", plotted > 0,
+                 plotted >= 0
+                     ? $"PlotLogger had {plotted} points across {plotSeries} series while streaming (read before stop clears it)"
+                     : "shell.Plotter is null — live plot not constructed",
+                 shot);
+
+            // Delivery shape — the "unexpected" half of STREAM-AI.
+            long maxGap = 0, gapsOver100 = 0;
+            lock (arrivals)
+            {
+                for (var i = 1; i < arrivals.Count; i++)
+                {
+                    var g = arrivals[i] - arrivals[i - 1];
+                    if (g > maxGap) { maxGap = g; }
+                    if (g > 100) { gapsOver100++; }
+                }
+            }
+            // DataSample.TimestampTicks are DateTime ticks (100 ns) — Core has already converted the
+            // device's counter (TimestampFrequency, 42 MHz on an Nq1) into a DateTime. So the span
+            // below is "how much time the device *claims* passed"; the wall-clock window above is how
+            // much actually did. When the two disagree the finding is about the device's timebase.
+            var tsFreq = (device as AbstractStreamingDevice)?.TimestampFrequency ?? 0;
+            var deviceSpan = lastTicks > firstTicks ? (lastTicks - firstTicks) / (double)TimeSpan.TicksPerSecond : double.NaN;
+            var deviceRate = double.IsNaN(deviceSpan) || deviceSpan <= 0 ? double.NaN : (counted - 1) / deviceSpan;
+            var clockSkew = double.IsNaN(deviceSpan) || window <= 0 ? double.NaN : deviceSpan / window;
+            Emit(2, "STREAM-AI", "unexpected", maxGap > 250 || Math.Abs(clockSkew - 1) > 0.05 ? "finding" : "pass",
+                 $"arrival gaps: max {maxGap} ms, {gapsOver100} over 100 ms across {arrivals.Count} samples; " +
+                 $"device-stamped span {deviceSpan:F2} s vs wall-clock {window:F2} s (ratio {clockSkew:F3}; device counter {tsFreq} Hz) " +
+                 $"-> {deviceRate:F1} Hz by device timestamps, {(window > 0 ? counted / window : 0):F1} Hz by wall clock");
+        }
+
+        // CONN-DISC — through the connection manager, which is what the Devices pane calls. Calling
+        // device.Disconnect() directly closes the port but leaves the device registered in the UI,
+        // which is exactly the stale-"Connected" state this row exists to catch — so do not.
+        sw.Restart();
+        ConnectionManager.Instance.Disconnect(device);
+        PumpUntil(() => shell.ConnectedDevices.Count == 0 && ConnectionManager.Instance.ConnectedDevices.Count == 0, TimeSpan.FromSeconds(10));
+        Pump();
+        var threadsAfter = Process.GetCurrentProcess().Threads.Count;
+        Step(2, "CONN-DISC", "works", shell.ConnectedDevices.Count == 0 && ConnectionManager.Instance.ConnectedDevices.Count == 0,
+             $"shell.ConnectedDevices={shell.ConnectedDevices.Count}; manager.ConnectedDevices={ConnectionManager.Instance.ConnectedDevices.Count}; status='{ConnectionManager.Instance.ConnectionStatusString}'",
+             Capture(main, "t2-05-disconnected"), sw.Elapsed.TotalSeconds);
+        Emit(2, "CONN-DISC", "unexpected", threadsAfter > threadsBefore + 2 ? "finding" : "pass",
+             $"threads before connect={threadsBefore}, after disconnect={threadsAfter}");
+        Emit(2, "CONN-DISC", "unexpected", "not-run",
+             "port-free check runs outside the process: `lsof /dev/cu.usbmodem*` after exit");
+    }
+
+    // ---------------------------------------------------------------- plumbing
+
+    private static void Step(int tier, string row, string check, bool pass, string evidence, string? artifact, double? seconds = null)
+    {
+        Emit(tier, row, check, pass ? "pass" : "fail", evidence, artifact, seconds);
+        if (!pass) { _failed = true; }
+        Console.WriteLine($"[{(pass ? "OK]  " : "FAIL]")} {row}/{check}: {evidence}");
+    }
+
+    private static void Emit(int tier, string row, string check, string status, string evidence, string? artifact = null, double? seconds = null)
+    {
+        var rec = new Dictionary<string, object?>
+        {
+            ["tier"] = tier, ["row"] = row, ["check"] = check, ["status"] = status, ["evidence"] = evidence,
+        };
+        if (artifact is not null) { rec["artifact"] = artifact; }
+        if (seconds is not null) { rec["seconds"] = Math.Round(seconds.Value, 2); }
+        File.AppendAllText(Path.Combine(_out, "results.jsonl"), JsonSerializer.Serialize(rec, Json) + "\n");
+    }
+
+    /// <summary>Drain the dispatcher and tick the headless render timer. Also the UI-stall probe:
+    /// a single RunJobs that takes long is exactly what a user experiences as a freeze.</summary>
+    private static void Pump()
+    {
+        for (var i = 0; i < 4; i++)
+        {
+            var sw = Stopwatch.StartNew();
+            Dispatcher.UIThread.RunJobs();
+            PumpLatenciesMs.Add(sw.Elapsed.TotalMilliseconds);
+            AvaloniaHeadlessPlatform.ForceRenderTimerTick();
+        }
+    }
+
+    private static void PumpFor(TimeSpan duration)
+    {
+        var deadline = DateTime.UtcNow + duration;
+        while (DateTime.UtcNow < deadline) { Pump(); Thread.Sleep(10); }
+    }
+
+    private static bool PumpUntil(Func<bool> condition, TimeSpan timeout)
+    {
+        var deadline = DateTime.UtcNow + timeout;
+        while (DateTime.UtcNow < deadline)
+        {
+            Pump();
+            if (condition()) { return true; }
+            Thread.Sleep(20);
+        }
+        return condition();
+    }
+
+    private static void ReportPumpLatency()
+    {
+        if (PumpLatenciesMs.Count == 0) { return; }
+        var max = PumpLatenciesMs.Max();
+        var over100 = PumpLatenciesMs.Count(l => l > 100);
+        Emit(2, "GRAPH-LIVE", "unexpected", max > 250 ? "finding" : "pass",
+             $"UI pump max {max:F0} ms; {over100} of {PumpLatenciesMs.Count} pumps over 100 ms");
+    }
+
+    /// <summary>Render the window to an opaque PNG, as AvaloniaCapture.Encode does. Returns the
+    /// run-relative path for results.jsonl, or null (and a [WARN]) if rendering failed — a missing
+    /// screenshot is worth knowing about but is not itself the test.</summary>
+    private static string? Capture(Window w, string name)
+    {
+        try
+        {
+            Pump();
+            var size = new PixelSize((int)Math.Max(1, w.Bounds.Width), (int)Math.Max(1, w.Bounds.Height));
+            using var rendered = new RenderTargetBitmap(size, Dpi);
+            rendered.Render(w);
+            using var opaque = new WriteableBitmap(size, Dpi, PixelFormat.Rgba8888, AlphaFormat.Opaque);
+            using (var locked = opaque.Lock())
+            {
+                rendered.CopyPixels(new PixelRect(size), locked.Address, locked.RowBytes * locked.Size.Height, locked.RowBytes);
+            }
+            var rel = Path.Combine("shots", name + ".png");
+            using var fs = File.Create(Path.Combine(_out, rel));
+            opaque.Save(fs);
+            return rel;
+        }
+        catch (Exception ex)
+        {
+            Console.WriteLine($"[WARN] capture {name}: {ex.Message}");
+            return null;
+        }
+    }
+
+    private static bool ParseArgs(string[] args)
+    {
+        for (var i = 0; i < args.Length; i++)
+        {
+            string Next() => i + 1 < args.Length ? args[++i] : throw new ArgumentException($"{args[i]} needs a value");
+            try
+            {
+                switch (args[i])
+                {
+                    case "--port": _port = Next(); break;
+                    case "--out": _out = Path.GetFullPath(Next()); break;
+                    case "--rate": _rate = int.Parse(Next(), CultureInfo.InvariantCulture); break;
+                    case "--seconds": _seconds = int.Parse(Next(), CultureInfo.InvariantCulture); break;
+                    case "--scripted": _scripted = Next(); break;
+                    default: Console.WriteLine($"unknown argument '{args[i]}'"); return false;
+                }
+            }
+            catch (Exception ex) { Console.WriteLine(ex.Message); return false; }
+        }
+        if (string.IsNullOrEmpty(_out)) { Console.WriteLine("--out <run-dir> is required"); return false; }
+        if (_scripted is null && string.IsNullOrEmpty(_port)) { Console.WriteLine("--port <serial port> or --scripted <state> is required"); return false; }
+        if (_rate < 1 || _seconds < 1) { Console.WriteLine("--rate and --seconds must be >= 1"); return false; }
+        return true;
+    }
+}
