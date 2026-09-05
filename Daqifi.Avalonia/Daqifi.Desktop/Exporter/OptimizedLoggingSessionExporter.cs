@@ -25,6 +25,23 @@ public class OptimizedLoggingSessionExporter
 {
     #region Constants
     private const int BUFFER_SIZE = 1024 * 1024; // 1MB buffer for file writes
+
+    /// <summary>
+    /// Names the file an export is written to before it is moved into place: this prefix plus
+    /// <see cref="Path.GetRandomFileName"/>, in the destination's own folder — e.g.
+    /// <c>daqifi-exporting-u3wp2sza.3vz</c>.
+    /// <para>In that folder, not the system temp directory, because
+    /// <see cref="File.Move(string, string, bool)"/> is only a rename — atomic, and no second copy of
+    /// a large CSV — when both paths are on the same volume.</para>
+    /// <para>Random, because this method both TRUNCATES and DELETES that path: a predictable name
+    /// would let an export destroy a file the app did not write, and would let two exports of one
+    /// destination clobber each other's staged rows — the very failure staging exists to prevent.</para>
+    /// <para>A fixed-length name of its own rather than the destination's name with something appended:
+    /// a destination whose file name is already near the file system's 255-byte limit is perfectly
+    /// legal and used to export fine, and extending it would push the staging file over and fail an
+    /// export that previously worked. The prefix is there so a human who finds one knows what it is.</para>
+    /// </summary>
+    private const string StagingPrefix = "daqifi-exporting-";
     #endregion
 
     #region Static State
@@ -113,12 +130,14 @@ public class OptimizedLoggingSessionExporter
 
     /// <summary>
     /// As <see cref="ExportLoggingSession"/>, but RETURNS whether the export completed
-    /// successfully. Downstream addition (not in the upstream @port): the void overload
-    /// swallows every failure, so it cannot signal a mid-write error (disk full, a
-    /// transient DB/IO error after rows have already flushed) — which leaves a
-    /// partially-written, non-empty file. The mobile export needs a truthful signal so it
-    /// never promotes a truncated temp over a good prior CSV. Returns false on any failure
-    /// (logged); <see cref="OperationCanceledException"/> still propagates.
+    /// successfully instead of throwing. Downstream addition (not in the upstream @port): the
+    /// mobile export reports a per-session count to the user, so it needs a truthful signal for a
+    /// mid-export failure (disk full, a transient DB/IO error after rows have already flushed)
+    /// rather than an exception to catch around every session. The destination is safe either way —
+    /// <see cref="RunExport"/> stages the CSV and moves it into place only on success — so false
+    /// means "the destination still holds whatever it held before", never "the destination is now
+    /// half a file". Returns false on any failure (logged);
+    /// <see cref="OperationCanceledException"/> still propagates.
     /// </summary>
     public bool TryExportLoggingSession(LoggingSession loggingSession, string filepath, bool exportRelativeTime,
         IProgress<int> progress, CancellationToken cancellationToken, int sessionIndex, int totalSessions)
@@ -261,10 +280,68 @@ public class OptimizedLoggingSessionExporter
             });
         }
 
-        using var writer = new StreamWriter(filepath, false, Encoding.UTF8, BUFFER_SIZE);
-        SharedCsvExporter.ExportAsync(source, writer, options, wrappedProgress, cancellationToken)
-            .GetAwaiter()
-            .GetResult();
+        // Write-rename, NOT a write in place: stage the CSV beside the destination and move it over
+        // only once the export has finished. Opening the destination itself (append: false) truncates
+        // it the instant the stream is created — before the first row, and before the first
+        // cancellation checkpoint — so a Cancel click destroyed the complete CSV the user had exported
+        // earlier, and the dialog says nothing at all about a cancel (issue #236). The rename also
+        // covers a mid-write failure and a crash: until it runs, the destination is the user's file.
+        // GetDirectoryName is null only for a root path, which no destination file can be; an empty
+        // string (a bare relative file name) resolves against the same working directory the
+        // destination would, so the two stay on one volume either way.
+        var stagingPath = Path.Combine(
+            Path.GetDirectoryName(filepath) ?? string.Empty,
+            StagingPrefix + Path.GetRandomFileName());
+
+        // Opened OUTSIDE the cleanup below, and with CreateNew rather than Create: the staging file
+        // has to be one this call brought into existence, so that truncating it and deleting it can
+        // never reach a file the app did not write. If this open fails, nothing of ours is on disk
+        // and there is correspondingly nothing to clean up.
+        var staging = File.Open(stagingPath, FileMode.CreateNew, FileAccess.Write, FileShare.Read);
+        try
+        {
+            using (var writer = new StreamWriter(staging, Encoding.UTF8, BUFFER_SIZE))
+            {
+                SharedCsvExporter.ExportAsync(source, writer, options, wrappedProgress, cancellationToken)
+                    .GetAwaiter()
+                    .GetResult();
+            }
+
+            File.Move(stagingPath, filepath, overwrite: true);
+        }
+        catch
+        {
+            // Release the handle before unlinking — Windows refuses to delete an open file, and the
+            // writer above has not closed the stream if constructing the writer is what failed.
+            // Stream.Dispose is idempotent, so the ordinary path double-disposing is a no-op.
+            staging.Dispose();
+            DiscardStagedExport(stagingPath);
+            throw;
+        }
+    }
+
+    /// <summary>
+    /// Removes the staging file this export created. Best effort on purpose: this runs while the real
+    /// failure — or the user's cancellation — is unwinding, and the caller must see THAT, not whatever
+    /// the cleanup hit. Hence the deliberately unfiltered catch: a narrower one lets an unexpected
+    /// exception type escape and REPLACE the exception being reported.
+    /// <para>Nothing sweeps up a staging file orphaned by a hard crash, which is the one case no
+    /// <c>catch</c> reaches. That is deliberate: a sweep could not tell a dead file from another
+    /// export's in-flight one, and deleting a path this call did not create is exactly what the
+    /// random name exists to rule out. An orphan is inert and named so a human can recognise it.</para>
+    /// </summary>
+    private static void DiscardStagedExport(string stagingPath)
+    {
+        try
+        {
+            // File.Delete is a no-op when the file was never created (e.g. the staging open itself
+            // failed), so there is nothing to check first.
+            File.Delete(stagingPath);
+        }
+        catch (Exception ex)
+        {
+            AppLogger.Instance.Warning(ex, $"Could not remove the partial export file '{stagingPath}'.");
+        }
     }
     #endregion
 }

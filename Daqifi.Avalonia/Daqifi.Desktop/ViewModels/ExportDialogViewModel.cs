@@ -350,8 +350,10 @@ public partial class ExportDialogViewModel : ObservableObject, IDisposable
             _cts?.Dispose();
             _cts = null;
 
-            // A cancel returns to the configuration form; a success or failure shows the
-            // result state (set complete before clearing IsExporting so IsConfiguring never
+            // A cancel returns to the configuration form with nothing to report — which is only
+            // honest because the exporter stages each CSV and moves it into place on success, so a
+            // cancelled export changed no file the user had (issue #236). A success or failure shows
+            // the result state (set complete before clearing IsExporting so IsConfiguring never
             // flips true in between).
             if (!cancelled)
             {
