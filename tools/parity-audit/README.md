@@ -309,6 +309,14 @@ captures once and verifies against the one for the current host, failing on a ch
 screen, a missing one, and one the baseline does not list (`shasum -c` only checks the
 names it was given, so the extra-file direction is checked separately).
 
+`desktop-7-notifications-flyout.png` alone was re-recorded 2026-09-05 for #250 (macOS 26.5,
+Apple silicon, .NET SDK 10.0.302), which gives the notifications flyout the named empty state
+every other pane already has instead of a blank panel. **One** hash moved: the other
+twenty-three are byte-for-byte unchanged against the pre-fix capture. The pre-fix capture
+matched the then-committed manifest on all 24 — so the blank panel is what was shipping,
+rather than an artifact of the harness — and five `--determinism` runs agreed 24/24 after the
+change.
+
 `desktop-9-summary-flyout.png` alone was re-recorded 2026-09-03 for #228 (same host and
 environment as the #213 line below), which unclips the Log Summary SETTINGS label and
 moves Reset off the status toggle. **One** hash moved: the other twenty-three, including
