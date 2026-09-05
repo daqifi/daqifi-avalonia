@@ -31,8 +31,9 @@ namespace Daqifi.Avalonia.Tests.Device.Firmware;
 /// The status line is rendered only while <c>IsFirmwareUploading</c> is true, which makes it
 /// unambiguously "what the running flash is doing" and means it can never be left displaying a
 /// finished run's last message. The coordinator facts pin the invariant that design depends on:
-/// every status write happens inside a run. Two writes did not, and were moved; two more could never
-/// satisfy it and were deleted (see <c>DaqifiViewModel</c>).
+/// every status write happens inside a run. Four writes did not satisfy it — one was fixed by opening
+/// the run earlier, one moved out of <c>DaqifiViewModel</c> into the coordinator, and two could never
+/// satisfy it from where they stood and were deleted (see <c>DaqifiViewModel</c>).
 /// </para>
 ///
 /// <para>
