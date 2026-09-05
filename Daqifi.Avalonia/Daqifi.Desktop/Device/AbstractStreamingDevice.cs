@@ -2249,12 +2249,22 @@ public abstract partial class AbstractStreamingDevice : ObservableObject, IStrea
         // Capabilities was replaced above, so the rate ceiling StreamingFrequency was clamped
         // against may have moved — and this wrapper outlives it: SyncFromCoreDevice re-hydrates on
         // every ChannelsPopulated, and a reconnect builds a new Core device but keeps the wrapper
-        // and the rate the user already chose. Re-running the setter against the new ceiling is
-        // what keeps "whatever is stored is a rate Core will accept" true; without it a rate
+        // and the rate the user already chose. Bringing the stored rate back under the new ceiling
+        // is what keeps "whatever is stored is a rate Core will accept" true; without it a rate
         // chosen under a higher ceiling would still be handed to Core at the next start, and
-        // rejected there. SetProperty is a no-op when the rate already fits, which is the
-        // overwhelmingly common case on a per-status-message path.
-        StreamingFrequency = _streamingFrequency;
+        // rejected there.
+        //
+        // The assignment is the ceiling itself, never a value re-read from the field. Hydration
+        // runs on Core's callback thread while the UI and profile apply write this property from
+        // theirs, and a read-then-write of the field would let a rate written in between be
+        // overwritten by the stale one. Losing that race to the ceiling costs the user a rate the
+        // hardware could not have run at anyway; losing it to a stale re-read would discard a rate
+        // they had just chosen. The common case — a rate that still fits — writes nothing at all.
+        var advertisedCeiling = Math.Max(1, Capabilities.MaxSamplingRate);
+        if (_streamingFrequency > advertisedCeiling)
+        {
+            StreamingFrequency = advertisedCeiling;
+        }
 
         if (!string.IsNullOrWhiteSpace(Metadata.Ssid))
         {
