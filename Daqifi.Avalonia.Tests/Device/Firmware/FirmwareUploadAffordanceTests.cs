@@ -336,7 +336,11 @@ public class FirmwareUploadAffordanceTests : IDisposable
 
         public void Error(Exception ex, string message) { }
 
-        public void AddBreadcrumb(string category, string message, BreadcrumbLevel level = BreadcrumbLevel.Info) { }
+        public void AddBreadcrumb(
+            string category,
+            string message,
+            Daqifi.Desktop.Common.Loggers.BreadcrumbLevel level = Daqifi.Desktop.Common.Loggers.BreadcrumbLevel.Info)
+        { }
 
         public void SetDeviceContext(
             string model, string serialNumber, string firmwareVersion, string connectionType, int activeChannels) { }
