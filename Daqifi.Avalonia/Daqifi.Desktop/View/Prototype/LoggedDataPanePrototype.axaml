@@ -512,15 +512,21 @@
                                     Foreground="{DynamicResource TextTertiary}"
                                     Opacity="0.5"
                                     Margin="0,0,0,16"/>
-                            <TextBlock Text="Select a session to view data"
+                            <!-- Names the state rather than instructing, so it stays true whether or
+                                 not any session exists — the same split LiveGraphPane's card uses
+                                 ("No channels streaming" / "Enable channels in the Channels tab…").
+                                 It read "Select a session to view data" until review pointed out that
+                                 a fresh install would then request an impossible action directly
+                                 above a list reporting NO SESSIONS. -->
+                            <TextBlock Text="No session selected"
                                        FontSize="15"
                                        FontWeight="Light"
                                        Foreground="{DynamicResource TextPrimary}"
                                        HorizontalAlignment="Center"/>
                             <!-- The call to action, and the only part of the card that needs a
-                                 non-empty list: HasLoggingSessions now gates this line alone rather
-                                 than the whole card. With no sessions the list directly below already
-                                 says NO SESSIONS / "Start logging or import an SD card log to get
+                                 non-empty list: HasLoggingSessions gates this line alone rather than
+                                 the whole card. With no sessions the list directly below already says
+                                 NO SESSIONS / "Start logging or import an SD card log to get
                                  started.", so showing this here would point at an empty list and
                                  repeat guidance the pane already gives. -->
                             <TextBlock Text="Choose a session from the list below"
