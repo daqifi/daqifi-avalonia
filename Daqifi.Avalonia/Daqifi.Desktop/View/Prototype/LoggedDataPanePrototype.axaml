@@ -447,14 +447,17 @@
                         </Border>
 
                         <!-- Main plot -->
-                        <!-- divergence: upstream style-trigger set Visibility=Hidden (keep layout
-                             space) when no session data; Avalonia IsVisible collapses instead, but
-                             the plot sits in a star-sized row so the layout is unchanged. -->
+                        <!-- divergence (#251): upstream hid this until a session was loaded and the
+                             port collapsed it, so with nothing plotted the region was blank. The
+                             model is built with its three labelled axes in DatabaseLogger's
+                             constructor and holds no series until DisplayLoggingSession runs, so
+                             leaving the view visible draws the same empty Analog (V) / Time (ms) /
+                             Digital frame LiveGraphPane already draws in this state, with the
+                             empty-state card below overlaid on it exactly as it is there. -->
                         <oxy:PlotView Grid.Row="1"
                                       Model="{Binding DbLogger.PlotModel}"
                                       Background="{DynamicResource Surface}"
-                                      Margin="16,8,16,0"
-                                      IsVisible="{Binding DbLogger.HasSessionData}">
+                                      Margin="16,8,16,0">
                             <oxy:PlotView.DefaultTrackerTemplate>
                                 <ControlTemplate>
                                     <oxy:TrackerControl Position="{Binding Position}"
@@ -495,17 +498,14 @@
                                    Opacity="0"
                                    IsHitTestVisible="False"/>
 
-                        <!-- Empty state (no session selected) - only when sessions exist but none picked -->
+                        <!-- Empty state: shown whenever nothing is plotted (#251). Upstream's
+                             MultiDataTrigger also required HasLoggingSessions, which suppressed the
+                             card in the one state that needed it most — a fresh install with no
+                             sessions at all, where the region then explained itself not at all. -->
                         <StackPanel Grid.Row="1"
+                                    IsVisible="{Binding !DbLogger.HasSessionData}"
                                     HorizontalAlignment="Center"
                                     VerticalAlignment="Center">
-                            <StackPanel.IsVisible>
-                                <!-- upstream MultiDataTrigger: !DbLogger.HasSessionData AND HasLoggingSessions -->
-                                <MultiBinding Converter="{StaticResource BoolAndToVis}">
-                                    <Binding Path="DbLogger.HasSessionData" Converter="{StaticResource BooleanToInverse}"/>
-                                    <Binding Path="HasLoggingSessions"/>
-                                </MultiBinding>
-                            </StackPanel.IsVisible>
                             <i:Icon Value="mdi-chart-line"
                                     FontSize="48"
                                     HorizontalAlignment="Center"
