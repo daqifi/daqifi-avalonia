@@ -45,9 +45,49 @@ public abstract partial class AbstractStreamingDevice : ObservableObject, IStrea
     // @port: Daqifi.Desktop.Device.AbstractStreamingDevice.ConnectionType
     public abstract ConnectionType ConnectionType { get; }
 
-    // Converted StreamingFrequency property to [ObservableProperty] field
-    [ObservableProperty]
     private int _streamingFrequency = 1;
+
+    /// <summary>
+    /// Gets or sets the streaming rate in Hz, held to the range the device says it can run at:
+    /// 1 to <see cref="DeviceCapabilities.MaxSamplingRate"/>. A value outside that range is
+    /// brought to the nearest end of it rather than stored.
+    /// </summary>
+    /// <remarks>
+    /// This value is not private state — every path that starts acquisition assigns it straight
+    /// onto the Core device (see <see cref="InitializeStreaming"/> and
+    /// <see cref="StartSdCardLogging"/>), and Core's setter validates against the same range and
+    /// throws <see cref="ArgumentOutOfRangeException"/> outside it. Storing a rate Core will not
+    /// take therefore does not produce a wrong rate at the hardware; it makes the device refuse
+    /// to start recording, several screens away from wherever the rate was set. The UI sliders
+    /// all clamp to 1..1000 so they cannot cause that, but a profile can: an applied profile
+    /// assigns its saved <c>SamplingFrequency</c> here unfiltered, and that number comes from an
+    /// XML file on disk.
+    /// <para>
+    /// The ceiling is the device's own advertised maximum, not the sliders' 1000: a board that
+    /// describes itself as faster is entitled to be driven faster, and Core validates against
+    /// the advertised figure too. It is sanitized the same way Core sanitizes it, because
+    /// <see cref="DeviceCapabilities.MaxSamplingRate"/> is a mutable unvalidated property and a
+    /// zero there would otherwise mean an impossible "1..0" range that rejects every rate.
+    /// </para>
+    /// </remarks>
+    // @port: Daqifi.Desktop.Device.AbstractStreamingDevice.StreamingFrequency
+    public int StreamingFrequency
+    {
+        get => _streamingFrequency;
+        set
+        {
+            var ceiling = Math.Max(1, Capabilities.MaxSamplingRate);
+            var clamped = Math.Clamp(value, 1, ceiling);
+            if (clamped != value)
+            {
+                AppLogger.Warning(
+                    $"Streaming frequency {value} Hz is outside device {DisplayIdentifier}'s " +
+                    $"1-{ceiling} Hz range; using {clamped} Hz.");
+            }
+
+            SetProperty(ref _streamingFrequency, clamped);
+        }
+    }
 
     // DeviceType property with default value of Unknown.
     // HasWincWifiModule now reads Core's capability flag rather than DeviceType, but the two are
@@ -299,8 +339,6 @@ public abstract partial class AbstractStreamingDevice : ObservableObject, IStrea
     {
         return "USB";
     }
-
-    // Removed original StreamingFrequency property definition
 
     // @port: Daqifi.Desktop.Device.AbstractStreamingDevice.NetworkConfiguration
     public NetworkConfiguration NetworkConfiguration { get; set; } = new();
