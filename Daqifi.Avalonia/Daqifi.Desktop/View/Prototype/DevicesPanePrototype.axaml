@@ -830,24 +830,26 @@
                                 </StackPanel>
 
                                 <!--
-                                    Shared status + cancel for BOTH firmware paths above (UPDATE and
+                                    Live status + cancel for BOTH firmware paths above (UPDATE and
                                     FLASH WIFI): they write the same FirmwareUpdateStatusText and set
                                     the same IsFirmwareUploading flag, so one of each serves both.
 
                                     FirmwareUpdateStatusText is where the coordinator explains what a
-                                    long flash is doing ("Waiting for WiFi module to enter update
-                                    mode...", "Failed to enter WiFi update mode. Reconnect the device
-                                    and try again."). It was written 18 times and rendered nowhere,
-                                    leaving a bare percentage as the user's only signal (issue #241).
-                                    Shown whenever it is non-empty — not gated on IsFirmwareUploading
-                                    — because the messages that matter most are the terminal ones,
-                                    written after the run has already cleared that flag.
+                                    multi-minute flash is doing ("Downloading latest firmware
+                                    package...", "Waiting for WiFi module to enter update mode...",
+                                    "Failed to enter WiFi update mode. Reconnect the device and try
+                                    again."). Nothing rendered it, so a bare percentage was the user's
+                                    only signal that the app had not hung (issue #241).
 
-                                    The cancel is gated on IsFirmwareUploading so the drawer stays
-                                    uncluttered when idle; CanCancelFirmwareUpload is the same flag.
+                                    Both are gated on IsFirmwareUploading, which makes the status line
+                                    unambiguously "what the running flash is doing" — it can never be
+                                    left showing a finished run's last message. Outcomes are already
+                                    owned by the success/failure dialogs and by HasErrorOccured /
+                                    IsUploadComplete. CanCancelFirmwareUpload reads the same flag, so
+                                    the button is enabled for exactly as long as it is visible.
                                 -->
                                 <TextBlock Text="{Binding Shell.FirmwareUpdateStatusText}"
-                                           IsVisible="{Binding Shell.FirmwareUpdateStatusText, Converter={x:Static StringConverters.IsNotNullOrEmpty}}"
+                                           IsVisible="{Binding Shell.IsFirmwareUploading}"
                                            FontSize="11"
                                            TextWrapping="Wrap"
                                            Margin="0,12,0,0"

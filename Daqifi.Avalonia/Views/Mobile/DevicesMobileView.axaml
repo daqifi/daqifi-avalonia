@@ -361,11 +361,11 @@
                       Command="{Binding Shell.UpdateWifiFirmwareOnlyCommand}" />
             </StackPanel>
 
-            <!-- Shared status + cancel for BOTH firmware paths above; see the matching block in
-                 DevicesPanePrototype.axaml for why the status line is gated on being non-empty
-                 rather than on IsFirmwareUploading (issue #241). -->
+            <!-- Live status + cancel for BOTH firmware paths above; see the matching block in
+                 DevicesPanePrototype.axaml for why both are gated on IsFirmwareUploading
+                 (issue #241). -->
             <TextBlock Text="{Binding Shell.FirmwareUpdateStatusText}"
-                       IsVisible="{Binding Shell.FirmwareUpdateStatusText, Converter={x:Static StringConverters.IsNotNullOrEmpty}}"
+                       IsVisible="{Binding Shell.IsFirmwareUploading}"
                        FontSize="{DynamicResource FontSizeCaption}"
                        TextWrapping="Wrap"
                        Foreground="{DynamicResource TextSecondary}" />

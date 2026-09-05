@@ -161,13 +161,17 @@ public class FirmwareUpdateCoordinator
         _host.IsUploadComplete = false;
         _host.UploadFirmwareProgress = 0;
         _host.UploadWiFiProgress = 0;
+
+        // Open the run BEFORE the first status write. The status line is rendered only while
+        // IsFirmwareUploading is true (issue #241), so a message written ahead of this call can
+        // never reach the user — which is what made "Preparing firmware update..." invisible.
+        var cancellationToken = BeginUpload();
         _host.FirmwareUpdateStatusText = "Preparing firmware update...";
 
         _host.DeviceBeingUpdated = _host.SelectedDevice;
 
         var isManualUpload = !string.IsNullOrWhiteSpace(_host.FirmwareFilePath);
 
-        var cancellationToken = BeginUpload();
         _appLogger.AddBreadcrumb("firmware", $"Firmware update started for {serialStreamingDevice.Name}");
 
         try
@@ -302,6 +306,11 @@ public class FirmwareUpdateCoordinator
     internal async Task UpdateWifiModuleOnlyAsync(SerialStreamingDevice serialStreamingDevice)
     {
         var cancellationToken = BeginUpload();
+
+        // Written here rather than by the caller for the same reason as UploadFirmwareAsync's
+        // "Preparing firmware update...": only text written while IsFirmwareUploading is true is
+        // rendered (issue #241), and the caller sets neither the flag nor the token.
+        _host.FirmwareUpdateStatusText = "Preparing WiFi firmware update...";
         try
         {
             await UpdateWifiModuleAsync(serialStreamingDevice, cancellationToken, force: true);
