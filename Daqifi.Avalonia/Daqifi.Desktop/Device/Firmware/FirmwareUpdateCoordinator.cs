@@ -341,7 +341,20 @@ public class FirmwareUpdateCoordinator
             return;
         }
 
-        _host.FirmwareUpdateStatusText = "Canceling firmware update...";
+        // Announce only while the status line is on screen, which is what IsFirmwareUploading gates
+        // (issue #241). The two conditions coincide on the UI thread, where this field is documented
+        // to be written — but they part in the one window that is not atomic: a Cancel that has
+        // already read a live source, arriving after the run's completion has lowered the flag, would
+        // otherwise write "Canceling..." to a hidden control, where the NEXT run would reveal it.
+        //
+        // The cancel itself is deliberately NOT gated on the flag. A run whose flag has come down
+        // must still be stopped; suppressing the announcement costs a message nobody could read,
+        // while suppressing the Cancel would be issue #234 all over again.
+        if (_host.IsFirmwareUploading)
+        {
+            _host.FirmwareUpdateStatusText = "Canceling firmware update...";
+        }
+
         cts.Cancel();
     }
 

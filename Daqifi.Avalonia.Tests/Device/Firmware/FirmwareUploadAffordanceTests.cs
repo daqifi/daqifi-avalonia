@@ -31,9 +31,18 @@ namespace Daqifi.Avalonia.Tests.Device.Firmware;
 /// The status line is rendered only while <c>IsFirmwareUploading</c> is true, which makes it
 /// unambiguously "what the running flash is doing" and means it can never be left displaying a
 /// finished run's last message. The coordinator facts pin the invariant that design depends on:
-/// every status write happens inside a run. Four writes did not satisfy it — one was fixed by opening
+/// no status write reaches a hidden line. Four writes did not satisfy it — one was fixed by opening
 /// the run earlier, one moved out of <c>DaqifiViewModel</c> into the coordinator, and two could never
 /// satisfy it from where they stood and were deleted (see <c>DaqifiViewModel</c>).
+///
+/// <para>
+/// The invariant is deliberately stated as "reaches a hidden line" rather than "happens inside a
+/// run", because the two are not the same for the one write a run does not make:
+/// <see cref="FirmwareUpdateCoordinator.CancelUpload"/> gates on the cancellation source, not on the
+/// flag, and must keep doing so (issue #234). Its announcement is separately gated on the flag, and
+/// <c>A_cancel_arriving_after_the_flag_is_down_writes_nothing</c> forces the window where those two
+/// conditions disagree.
+/// </para>
 /// </para>
 ///
 /// <para>
@@ -124,6 +133,35 @@ public class FirmwareUploadAffordanceTests : IDisposable
         await coordinator.UploadFirmwareAsync();
 
         Assert.False(_host.IsFirmwareUploading);
+    }
+
+    /// <summary>
+    /// The one write that is not made by a run itself is <see cref="FirmwareUpdateCoordinator.CancelUpload"/>'s,
+    /// and it gates on the cancellation source rather than on the flag (issue #234: a flag with no
+    /// source must not announce a cancellation it cannot deliver). The two conditions coincide on the
+    /// UI thread, where the source is documented to be written — but not in the window this test
+    /// forces open, where a Cancel has already read a live source and the run's completion has since
+    /// lowered the flag. The announcement must be suppressed there; the cancel itself must not be.
+    /// </summary>
+    [Fact]
+    public async Task A_cancel_arriving_after_the_flag_is_down_writes_nothing()
+    {
+        var coordinator = CreateCoordinator();
+
+        // Runs inside the flash, so the coordinator's source is live while the flag is forced down.
+        _downloads.OnWifiDownload = () =>
+        {
+            _host.IsFirmwareUploading = false;
+            coordinator.CancelUpload();
+        };
+
+        // Which exception ends the run is not this test's subject — the download reports no package
+        // and the token is now cancelled, and either is a clean end.
+        var thrown = await Record.ExceptionAsync(() => coordinator.UpdateWifiModuleOnlyAsync(WincDevice()));
+
+        Assert.NotNull(thrown);
+        Assert.DoesNotContain(_host.Writes, write => write.Text == "Canceling firmware update...");
+        Assert.All(_host.Writes, write => Assert.True(write.WasUploading, $"'{write.Text}' was written while the status line was hidden."));
     }
 
     /// <summary>
@@ -288,11 +326,20 @@ public class FirmwareUploadAffordanceTests : IDisposable
     /// <summary>Download service that reports no publishable package, the cheapest clean exit from a flash.</summary>
     private sealed class NoPackageDownloadService : IFirmwareDownloadService
     {
+        /// <summary>
+        /// Runs mid-flash, when the coordinator's cancellation source is live. The seam a test uses to
+        /// reach a state the run's own callers cannot construct from outside.
+        /// </summary>
+        public Action? OnWifiDownload { get; set; }
+
         public Task<(string ExtractedPath, string Version)?> DownloadWifiFirmwareAsync(
             string destinationDirectory,
             IProgress<int>? progress = null,
             CancellationToken cancellationToken = default)
-            => Task.FromResult<(string, string)?>(null);
+        {
+            OnWifiDownload?.Invoke();
+            return Task.FromResult<(string, string)?>(null);
+        }
 
         public Task<string?> DownloadLatestFirmwareAsync(
             string destinationDirectory,
