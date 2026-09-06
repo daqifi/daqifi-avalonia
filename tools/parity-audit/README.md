@@ -110,7 +110,8 @@ every PNG to be byte-identical to the first run's, failing non-zero if any diffe
 is missing, or if there is nothing to compare at all.
 
 Since #191 this is also a **CI gate**: the `Desktop head on macOS` job runs it on every
-pull request, additionally asserts that the capture produced all 25 screens, and uploads
+pull request, additionally asserts the size of the capture set independently of the
+harness's own `ExpectedScreens` list (the workflow states the number itself), and uploads
 `<out>/determinism/` as an artifact when it fails, so the differing PNGs are in hand.
 
 Since #188 the **baseline is gated there too, over the same captures**: the job runs
@@ -173,6 +174,21 @@ Switching left 15 of the 18 screens byte-identical; the three that moved are the
 `SplitView` flyouts, by those 18 pixels, and their new hashes are the ones CI had been
 intermittently producing all along. The settle loop stays — it fixes a tree that is
 genuinely still moving, which this does nothing about.
+
+**The fourth was a settle problem again**, and it is the reason `SettledFrame` now wants
+**three** identical frames rather than two (#253). Spacing the samples makes "nothing
+changed" evidence only while the thing that might be moving moves faster than a pixel per
+interval — and an *eased* transition does not, at its end. The three right-hand drawers open
+by animating the `SplitView` pane's width to `OpenPaneLength=380`, and the last 1% of that
+ease crawls: one 50 ms gap can pass with every pixel rounding to the same value. Instrumented
+immediately after the capture returned, the pane came back `340, 0, 380, 447` on most runs
+and `344, 0, 376, 447` on others — settled, saved, and four pixels short of open, which
+re-lays out every glyph inside the pane and moves **7,063** of its pixels. It flipped about
+one run in three, on the minimum-size drawer screens that first ran into it; the full-size
+ones have the same shape and have simply been landing past the end of the ease. Requiring the
+agreement to hold across two intervals instead of one fixed it, and moved **no** bytes: all
+34 screens are identical to the pre-fix capture, so the rule removed a chance of saving the
+wrong frame rather than changing which frame is right.
 
 **Why five runs and not two.** Both defects above were roughly coin-flips per run, and
 two runs miss a 50/50 flip half the time; five gets that to ~6%, ten to ~0.2%, at about
@@ -313,10 +329,70 @@ starts a network fetch (`LoadFirmwareOptionsAsync`) that populates a bound `Comb
 asynchronously, so its rendered state is a race against github.com. Capturing it needs an
 injected stub `IFirmwareDownloadService`, which makes the picture a picture of a stub.
 
+## Window size, and the theme the whole manifest assumes
+
+Two things every hash here silently depended on until #253, both of which the harness now
+states out loud.
+
+### The minimum window size (`desktop-min-*`)
+
+The desktop sweep runs **twice**: once at 1440x900, and once at the window's own declared
+minimum. `CaptureDesktop` reads that minimum off `MainWindow` (`MainWindow.axaml`:
+`MinWidth="720" MinHeight="480"`) rather than restating it, so changing the AXAML
+re-renders these screens and the baseline check reports it, instead of the two quietly
+disagreeing. A window that declares no minimum arrives as `0x0` and fails the run — a
+capture at a size the app does not name would gate nothing but the harness's own opinion,
+which is also why there is no third, invented size.
+
+The minimum is where clipping and overlap happen, and it had never been rendered: a green
+visual gate meant "1440x900 did not change". It is a desktop-only sweep, because it is the
+desktop `Window` that carries the constraint — the mobile shell is already captured at the
+Galaxy A16's true logical size, and each dialog at the size its own AXAML declares.
+
+Worth knowing before reading a `desktop-min-*` diff: the flyouts are one `SplitView` with a
+fixed `OpenPaneLength="380"`, so at 720 wide the pane covers 380 of the window and the
+pane's own content does **not** reflow with width. Measured when these were recorded, the
+pane region of `desktop-min-6` and `desktop-min-8` was pixel-identical to the 1440-wide
+capture's; `-7` and `-9` differed, because their empty states are vertically centred and
+the window is 480 tall rather than 900. All nine are captured anyway — "the desktop set, at
+both sizes" is a rule that needs no per-screen re-derivation and stays right when a flyout
+later grows content that does reflow, which a curated subset would not.
+
+### The theme pin (no light-theme screens, and why)
+
+Every screen in this manifest is a **Dark** rendering. That is a property of the app, not of
+the harness: `App.axaml` pins `RequestedThemeVariant="Dark"`, `DesignTokens.axaml` ships
+`Dark` and `Default` carrying identical dark values and **no `Light` dictionary**, and no
+view-model, view or setting exposes a theme switch. There is no light theme to gate.
+
+The harness can nonetheless *render* one — it is one property assignment, and #253 measured
+what comes back. With the pin removed the app follows the host, and this headless platform
+reports **Light**: the resulting capture is byte-identical to one with `ThemeVariant.Light`
+forced, and **10 of the 25 screens then in the manifest changed** — `desktop-8`,
+`desktop-9`, `dialog-connect-wifi-scanning`, `dialog-export-configure`,
+`dialog-firmware-uploading`, and all five mobile Stream/Storage/Settings screens. Those are
+the surfaces built from Fluent's stock control chrome rather than from `DesignTokens.axaml`
+brushes, and Fluent's chrome is the half of the app that *has* a light variant. The app's
+own tokens do not, so what comes out is a hybrid — light controls on dark panels — that no
+user can reach while the pin holds.
+
+So there are no light baselines, and adding them would be worse than adding nothing:
+it would freeze an unreachable hybrid as "correct" and double the gate's flake surface for
+it. What the harness does instead is `RequireThemePinnedDark()`, which fails the run if
+`RequestedThemeVariant` or `ActualThemeVariant` is anything but `Dark` and prints the host's
+own variant beside them for context. That catches the one edit that makes the hybrid
+reachable — deleting an attribute from `App.axaml`, which breaks no build and fails no other
+test — for zero screens and zero run time. If the app ever grows a real light variant, that
+assert is what to replace with light captures, and the ten screens above are the ones that
+will move.
+
 ## Baselines
 
-`baselines/<os>-<arch>.sha256` records the SHA-256 of all 25 Avalonia screens for one
-host — a dated reference point for "has anything moved". `./run.sh --check-baseline`
+`baselines/<os>-<arch>.sha256` records the SHA-256 of every Avalonia screen the harness
+produces, for one host — a dated reference point for "has anything moved". The count is
+deliberately not restated here: it is `ExpectedScreens` in `AvaloniaCapture/Program.cs`,
+and the workflow's own `expected=` in `.github/workflows/build.yml`, which are the two
+places that are checked against reality on every run. `./run.sh --check-baseline`
 captures once and verifies against the one for the current host, failing on a changed
 screen, a missing one, and one the baseline does not list (`shasum -c` only checks the
 names it was given, so the extra-file direction is checked separately).
@@ -463,6 +539,52 @@ rather than at its head: three other open PRs were writing to this file at the s
 adding a screen, two re-recording `desktop-7` and `desktop-2`), and this position keeps all
 four entries in hunks that do not touch. In the manifest itself the four are on different
 lines for the same reason.
+
+`macos-arm64.sha256` was extended 2026-09-05 for #253 (macOS 26.5, Apple silicon, .NET SDK
+10.0.302) with the nine `desktop-min-*` screens — the desktop sweep repeated at
+`MainWindow`'s own declared `MinWidth=720 MinHeight=480`, see [Window
+size](#window-size-and-the-theme-the-whole-manifest-assumes). The recording is **purely
+additive**: every screen the manifest already listed is byte-for-byte unchanged against a
+capture taken from the unmodified tree (first at `acc5886`, and re-confirmed at `84ceb05`
+after the rebase described below), which is the evidence that adding a
+second sweep — and the settle-rule change it needed — moved nothing that was already gated.
+Six `--determinism` runs agreed on all of them afterwards, against a pre-fix run in which
+`desktop-min-7` and `desktop-min-9` flipped about one run in three. The nine new lines land
+in one contiguous block between `desktop-9-*` and `dialog-*`, touching no existing line.
+Deliberately placed at the foot of this list: three other open PRs were writing near the head
+of the manifest at the time.
+
+The recording is **not** single-host: on the PR that made it the `macos-latest` runner — macOS
+**26.6.2** (25G83), arm64, image `macos26/20260831.0337.3`, a newer OS build than the recording
+Mac's 26.5 — passed its own five-run determinism check **34/34** and then reproduced this
+manifest, all nine new hashes included. So the settle-rule change reproduces across machines
+too, which matters more here than for a pure re-recording: a rule about *when* a frame is still
+enough to keep is exactly the kind of thing that could have been tuned to one machine's timing.
+
+**Four of those nine lines were then re-recorded 2026-09-06 against `84ceb05`** (macOS 26.5,
+Apple silicon, .NET SDK 10.0.302 — the same host as the entry above), and the reason
+is the rule this section opens with, arriving for real: a hash records a rendering of a **base
+commit**, not of a diff. The nine were first captured at `acc5886`; the empty-state
+consolidation (#276) landed on `main` afterwards and restyled the five desktop panes, so
+`desktop-min-2-loggeddata`, `-3-channels`, `-4-devices` and `-5-profiles` — the four
+minimum-size screens that photograph four of those panes — described a rendering that no longer
+existed. Nothing warned: `git merge` is clean (the two manifest hunks do not touch), the
+mergeability badge is computed pairwise against `main`, and the branch's own green CI run
+predates the merge. **`--check-baseline` on the merged tree is what found it**, failing on
+exactly those four and passing the other thirty.
+
+The delta is #276's change and nothing else, and the set correspondence is the proof: the four
+full-size panes #276 re-recorded (`desktop-2`, `-3`, `-4`, `-5`) map one-to-one onto the four
+minimum-size screens that moved, and the five desktop screens #276 left alone map onto the five
+`desktop-min-*` that stayed byte-identical. Measured on the two screens where both sizes were
+captured either side of the merge, the pixel delta is *the same count at both sizes* —
+`desktop-2`/`desktop-min-2` differ by 3,733 px, `desktop-3`/`desktop-min-3` by 6,280 px — which
+is what a recolour and a font-size step on centred content should do when the window shrinks
+around it. Nothing clips, overlaps or falls below the fold at 720x480; the visible change is
+Logged Data's sentence going 13 → 15px and `TextPrimary` → `TextSecondary`, with room to spare.
+Five `--determinism` runs agreed **34/34** on the merged tree before the four were re-recorded
+from that run's `r1`, and the four hashes reproduce a second host's independent capture of the
+same tree byte for byte.
 
 **A mismatch is a prompt, not a verdict** — re-read that environment line first. In CI
 the same applies with one addition: the baseline step prints the runner's macOS build and
