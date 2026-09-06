@@ -1136,6 +1136,28 @@ internal static class AvaloniaCapture
     // that never settles — which fails the capture rather than saving it — pays the full 2 s.
     private static readonly TimeSpan SettleSampleInterval = TimeSpan.FromMilliseconds(50);
 
+    // ...and require the agreement to HOLD, which is the half that was missing after that.
+    //
+    // Spacing the samples makes "nothing changed" evidence only while the thing that could be
+    // moving moves faster than a pixel per interval. An EASED transition does not, at its end:
+    // the last 1% of a cubic ease-out crawls, so one 50 ms gap can pass with every pixel
+    // rounding to the same value, and the loop declares victory on a tree that is still moving.
+    //
+    // Measured on this harness (#253), and it is not subtle. The three right-hand drawers are
+    // one SplitView whose pane opens by animating PART_PaneRoot's width to OpenPaneLength=380.
+    // Instrumented immediately after Capture returned, the pane's Bounds came back
+    // `340, 0, 380, 447` on most runs and `344, 0, 376, 447` on others — settled, saved, and
+    // four pixels short of open. That is ~1% of the animation, invisible as motion between two
+    // samples and glaring in a byte comparison: 7,063 pixels differ, because a pane four pixels
+    // narrower re-lays out every glyph inside it. It flipped roughly one run in three.
+    //
+    // Three samples rather than two, because the failure needs the crawl to look still TWICE in
+    // a row across 100 ms rather than once across 50 ms. Cheap — one extra interval per screen
+    // that settles first time — and it is the same argument the interval itself rests on, taken
+    // one step further: two samples agreeing is not evidence unless something could have changed
+    // between them, and at the tail of an ease, something could not.
+    private const int SettleStableSamples = 3;
+
     // 96 DPI, matching the headless framebuffer this capture path replaced, so the PNG's pHYs
     // chunk — and therefore its bytes — are unchanged for every screen whose pixels are.
     private static readonly Vector Dpi = new(96, 96);
@@ -1248,6 +1270,10 @@ internal static class AvaloniaCapture
     {
         Pump();
         var previous = Encode(w);
+        // Consecutive samples that matched the one before them. The frame is accepted once
+        // SettleStableSamples frames in a row are identical, i.e. after the agreement has
+        // survived more than one sample interval — see the note on SettleStableSamples.
+        var agreed = 1;
         for (var round = 1; round <= SettleMaxRounds; round++)
         {
             Thread.Sleep(SettleSampleInterval);
@@ -1255,7 +1281,13 @@ internal static class AvaloniaCapture
             var current = Encode(w);
             if (current.Length == previous.Length && current.AsSpan().SequenceEqual(previous))
             {
-                return (current, true, round);
+                if (++agreed >= SettleStableSamples) { return (current, true, round); }
+            }
+            else
+            {
+                // Any change restarts the count, including one that undoes an earlier change:
+                // the question is whether the tree moved at all since the frame being kept.
+                agreed = 1;
             }
             previous = current;
         }

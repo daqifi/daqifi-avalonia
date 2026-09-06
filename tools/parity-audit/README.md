@@ -175,6 +175,21 @@ Switching left 15 of the 18 screens byte-identical; the three that moved are the
 intermittently producing all along. The settle loop stays — it fixes a tree that is
 genuinely still moving, which this does nothing about.
 
+**The fourth was a settle problem again**, and it is the reason `SettledFrame` now wants
+**three** identical frames rather than two (#253). Spacing the samples makes "nothing
+changed" evidence only while the thing that might be moving moves faster than a pixel per
+interval — and an *eased* transition does not, at its end. The three right-hand drawers open
+by animating the `SplitView` pane's width to `OpenPaneLength=380`, and the last 1% of that
+ease crawls: one 50 ms gap can pass with every pixel rounding to the same value. Instrumented
+immediately after the capture returned, the pane came back `340, 0, 380, 447` on most runs
+and `344, 0, 376, 447` on others — settled, saved, and four pixels short of open, which
+re-lays out every glyph inside the pane and moves **7,063** of its pixels. It flipped about
+one run in three, on the minimum-size drawer screens that first ran into it; the full-size
+ones have the same shape and have simply been landing past the end of the ease. Requiring the
+agreement to hold across two intervals instead of one fixed it, and moved **no** bytes: all
+34 screens are identical to the pre-fix capture, so the rule removed a chance of saving the
+wrong frame rather than changing which frame is right.
+
 **Why five runs and not two.** Both defects above were roughly coin-flips per run, and
 two runs miss a 50/50 flip half the time; five gets that to ~6%, ten to ~0.2%, at about
 15 s a run. portomatic's own `--determinism` captures twice — this is the same check at
@@ -478,6 +493,19 @@ rather than at its head: three other open PRs were writing to this file at the s
 adding a screen, two re-recording `desktop-7` and `desktop-2`), and this position keeps all
 four entries in hunks that do not touch. In the manifest itself the four are on different
 lines for the same reason.
+
+`macos-arm64.sha256` was extended 2026-09-05 for #253 (macOS 26.5, Apple silicon, .NET SDK
+10.0.302) with the nine `desktop-min-*` screens — the desktop sweep repeated at
+`MainWindow`'s own declared `MinWidth=720 MinHeight=480`, see [Window
+size](#window-size-and-the-theme-the-whole-manifest-assumes). The recording is **purely
+additive**: every screen the manifest already listed is byte-for-byte unchanged against a
+capture taken from the unmodified tree at `acc5886`, which is the evidence that adding a
+second sweep — and the settle-rule change it needed — moved nothing that was already gated.
+Six `--determinism` runs agreed on all of them afterwards, against a pre-fix run in which
+`desktop-min-7` and `desktop-min-9` flipped about one run in three. The nine new lines land
+in one contiguous block between `desktop-9-*` and `dialog-*`, touching no existing line.
+Deliberately placed at the foot of this list: three other open PRs were writing near the head
+of the manifest at the time.
 
 **A mismatch is a prompt, not a verdict** — re-read that environment line first. In CI
 the same applies with one addition: the baseline step prints the runner's macOS build and
