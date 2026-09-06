@@ -242,15 +242,24 @@
                             </ListBox.ItemTemplate>
                         </ListBox>
 
-                        <!-- Scanning overlay (MahApps ProgressRing → indeterminate ProgressBar) -->
+                        <!-- Scanning overlay (MahApps ProgressRing → indeterminate ProgressBar), and
+                             the place discovery says it has stopped instead of animating for ever (#290) -->
                         <StackPanel VerticalAlignment="Center" HorizontalAlignment="Center"
                                     IsVisible="{Binding HasNoWiFiDevices}">
-                            <ProgressBar IsIndeterminate="True" Width="120" Height="4"
-                                         Foreground="{StaticResource Accent}"/>
-                            <TextBlock Text="Scanning for WiFi devices…"
-                                       Foreground="{StaticResource TextSecondary}"
-                                       FontSize="11" Margin="0,10,0,0"
-                                       HorizontalAlignment="Center"/>
+                            <StackPanel IsVisible="{Binding IsWiFiDiscoveryScanning}">
+                                <ProgressBar IsIndeterminate="True" Width="120" Height="4"
+                                             Foreground="{StaticResource Accent}"/>
+                                <TextBlock Text="Scanning for WiFi devices…"
+                                           Foreground="{StaticResource TextSecondary}"
+                                           FontSize="11" Margin="0,10,0,0"
+                                           HorizontalAlignment="Center"/>
+                            </StackPanel>
+                            <TextBlock Text="{Binding WiFiDiscoveryError}"
+                                       AutomationProperties.AutomationId="WiFiDiscoveryError"
+                                       Foreground="{StaticResource StatusRed}"
+                                       FontSize="11" MaxWidth="320"
+                                       TextWrapping="Wrap" TextAlignment="Center"
+                                       IsVisible="{Binding WiFiDiscoveryError, Converter={StaticResource NotNullToVis}}"/>
                         </StackPanel>
                     </Grid>
 
@@ -348,15 +357,24 @@
                             </ListBox.ItemTemplate>
                         </ListBox>
 
-                        <!-- Scanning overlay -->
+                        <!-- Scanning overlay, and the place discovery says it has stopped instead of
+                             animating for ever (#290) -->
                         <StackPanel VerticalAlignment="Center" HorizontalAlignment="Center"
                                     IsVisible="{Binding HasNoSerialDevices}">
-                            <ProgressBar IsIndeterminate="True" Width="120" Height="4"
-                                         Foreground="{StaticResource Accent}"/>
-                            <TextBlock Text="Scanning for USB devices…"
-                                       Foreground="{StaticResource TextSecondary}"
-                                       FontSize="11" Margin="0,10,0,0"
-                                       HorizontalAlignment="Center"/>
+                            <StackPanel IsVisible="{Binding IsSerialDiscoveryScanning}">
+                                <ProgressBar IsIndeterminate="True" Width="120" Height="4"
+                                             Foreground="{StaticResource Accent}"/>
+                                <TextBlock Text="Scanning for USB devices…"
+                                           Foreground="{StaticResource TextSecondary}"
+                                           FontSize="11" Margin="0,10,0,0"
+                                           HorizontalAlignment="Center"/>
+                            </StackPanel>
+                            <TextBlock Text="{Binding SerialDiscoveryError}"
+                                       AutomationProperties.AutomationId="SerialDiscoveryError"
+                                       Foreground="{StaticResource StatusRed}"
+                                       FontSize="11" MaxWidth="320"
+                                       TextWrapping="Wrap" TextAlignment="Center"
+                                       IsVisible="{Binding SerialDiscoveryError, Converter={StaticResource NotNullToVis}}"/>
                         </StackPanel>
                     </Grid>
 
