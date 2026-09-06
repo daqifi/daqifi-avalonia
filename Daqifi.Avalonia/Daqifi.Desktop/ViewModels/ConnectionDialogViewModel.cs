@@ -91,9 +91,11 @@ public partial class ConnectionDialogViewModel : ObservableObject
         static () => new Daqifi.Core.Device.Discovery.SerialDeviceFinder();
 
     [ObservableProperty]
+    [NotifyPropertyChangedFor(nameof(IsWiFiDiscoveryScanning))]
     private bool _hasNoWiFiDevices = true;
 
     [ObservableProperty]
+    [NotifyPropertyChangedFor(nameof(IsSerialDiscoveryScanning))]
     private bool _hasNoSerialDevices = true;
 
     [ObservableProperty]
@@ -134,6 +136,36 @@ public partial class ConnectionDialogViewModel : ObservableObject
     // @port: Daqifi.Desktop.ViewModels.ConnectionDialogViewModel.SerialConnectError
     [ObservableProperty]
     private string? _serialConnectError;
+
+    /// <summary>
+    /// Why serial discovery is no longer running, or null while it is. Set only on the paths that
+    /// end <see cref="RunContinuousSerialDiscoveryAsync"/> for good — the watchdog's deliberate
+    /// give-up after repeatedly wedged sweeps, and repeated sweep faults — and cleared whenever
+    /// discovery is started again. Shown in place of the USB tab's "Scanning for USB devices…"
+    /// overlay, which otherwise keeps animating over a discovery that has stopped (issue #290).
+    /// </summary>
+    [ObservableProperty]
+    [NotifyPropertyChangedFor(nameof(IsSerialDiscoveryScanning))]
+    private string? _serialDiscoveryError;
+
+    /// <summary>
+    /// The WiFi counterpart of <see cref="SerialDiscoveryError"/>: why WiFi discovery is no longer
+    /// running, or null while it is.
+    /// </summary>
+    [ObservableProperty]
+    [NotifyPropertyChangedFor(nameof(IsWiFiDiscoveryScanning))]
+    private string? _wiFiDiscoveryError;
+
+    /// <summary>
+    /// Whether the USB tab may claim to be scanning: nothing found yet AND discovery has not given
+    /// up. The animated "Scanning for USB devices…" overlay binds to this rather than to
+    /// <see cref="HasNoSerialDevices"/> alone, so it stops making that claim the moment
+    /// <see cref="SerialDiscoveryError"/> says why it stopped (issue #290).
+    /// </summary>
+    public bool IsSerialDiscoveryScanning => HasNoSerialDevices && SerialDiscoveryError is null;
+
+    /// <summary>The WiFi counterpart of <see cref="IsSerialDiscoveryScanning"/>.</summary>
+    public bool IsWiFiDiscoveryScanning => HasNoWiFiDevices && WiFiDiscoveryError is null;
 
     [ObservableProperty]
     private string? _manualPortName;
@@ -374,6 +406,8 @@ public partial class ConnectionDialogViewModel : ObservableObject
         {
             AvailableWiFiDevices.Clear();
             HasNoWiFiDevices = true;
+            // Discovery is live again, so retire whatever the previous run gave up with (issue #290).
+            WiFiDiscoveryError = null;
         });
 
         _wifiFinder = new WiFiDeviceFinder(30303);
@@ -450,15 +484,18 @@ public partial class ConnectionDialogViewModel : ObservableObject
         // The per-port dedup in AddSerialDeviceFromDiscovery is RETAINED: this clear runs on finder
         // recreate, not per sweep, and one finder is reused across many sweeps while Core's own
         // dedup set is per-sweep.
-        if (clearDiscoveredDevices)
+        // Routed through the UI marshal like every other AvailableSerialDevices mutation. The
+        // message clear is unconditional — both entry points are starting discovery again, so
+        // whatever the previous run gave up with is stale either way (issue #290).
+        _marshalToUiThread(() =>
         {
-            // Routed through the UI marshal like every other AvailableSerialDevices mutation.
-            _marshalToUiThread(() =>
+            SerialDiscoveryError = null;
+            if (clearDiscoveredDevices)
             {
                 AvailableSerialDevices.Clear();
                 HasNoSerialDevices = true;
-            });
-        }
+            }
+        });
 
         _serialFinder = _createSerialFinder();
         _serialDiscoveryCts = new CancellationTokenSource();
@@ -476,9 +513,18 @@ public partial class ConnectionDialogViewModel : ObservableObject
         }, TaskScheduler.Default);
     }
 
+    /// <summary>
+    /// How many consecutive faulted sweeps either discovery loop tolerates before it stops for good.
+    /// A single fault is a bad sweep, not a broken finder — Core's <c>DiscoverAsync</c> enumerates
+    /// ports and sockets on every pass, and one hiccup there used to end discovery for the life of
+    /// the dialog because the general <c>catch</c> sat outside the <c>while</c> (issue #290).
+    /// </summary>
+    private const int MaxConsecutiveDiscoveryFaults = 3;
+
     // @port: Daqifi.Desktop.ViewModels.ConnectionDialogViewModel.RunContinuousWiFiDiscoveryAsync
     private async Task RunContinuousWiFiDiscoveryAsync(CancellationToken cancellationToken)
     {
+        var consecutiveFaults = 0;
         try
         {
             while (!cancellationToken.IsCancellationRequested && _wifiFinder != null)
@@ -486,7 +532,27 @@ public partial class ConnectionDialogViewModel : ObservableObject
                 // Task.Run for the same reason as the serial loop below: keep any
                 // synchronous-before-first-await work inside Core's finder off the UI thread.
                 var finder = _wifiFinder;
-                await Task.Run(() => finder.DiscoverAsync(cancellationToken), cancellationToken);
+                try
+                {
+                    await Task.Run(() => finder.DiscoverAsync(cancellationToken), cancellationToken);
+                    consecutiveFaults = 0;
+                }
+                catch (Exception ex) when (ex is not OperationCanceledException and not ObjectDisposedException)
+                {
+                    // Per-sweep, not per-loop (issue #290). Cancellation and a disposed finder are
+                    // still the two terminal exits and are deliberately left to the outer catches.
+                    consecutiveFaults++;
+                    Common.Loggers.AppLogger.Instance.Error(
+                        ex,
+                        $"WiFi discovery sweep failed (fault {consecutiveFaults}/{MaxConsecutiveDiscoveryFaults}).");
+                    if (consecutiveFaults >= MaxConsecutiveDiscoveryFaults)
+                    {
+                        _marshalToUiThread(() => WiFiDiscoveryError =
+                            "WiFi discovery stopped after repeated errors. Close and reopen this " +
+                            "window to search again.");
+                        return;
+                    }
+                }
                 // Brief pause before next discovery cycle
                 await Task.Delay(3000, cancellationToken);
             }
@@ -501,7 +567,12 @@ public partial class ConnectionDialogViewModel : ObservableObject
         }
         catch (Exception ex)
         {
+            // Backstop only: the per-sweep handler above now catches everything the sweep itself can
+            // raise, so reaching here means the handler's own logging or marshal threw. Say so in
+            // the dialog anyway — the loop is over either way.
             Common.Loggers.AppLogger.Instance.Error(ex, "Error in WiFi discovery loop");
+            _marshalToUiThread(() => WiFiDiscoveryError =
+                "WiFi discovery stopped unexpectedly. Close and reopen this window to search again.");
         }
     }
 
@@ -510,13 +581,18 @@ public partial class ConnectionDialogViewModel : ObservableObject
     // per-port timeout, and DeviceDiscovered gated behind Task.WhenAll, so one zombie port
     // silences every healthy device). Remove once the app consumes a core release with the
     // #294 fix (PR daqifi-core#295).
-    private const int SerialSweepWatchdogMs = 10_000;
+    //
+    // A field rather than a const only so a test can shorten it by reflection — the same seam, and
+    // for the same kind of reason, as _createSerialFinder above: at the shipped 10 s, pinning the
+    // give-up path costs half a minute of wall clock. Nothing in the app ever assigns it.
+    private int _serialSweepWatchdogMs = 10_000;
     private const int MaxConsecutiveWatchdogTrips = 3;
 
     // @port: Daqifi.Desktop.ViewModels.ConnectionDialogViewModel.RunContinuousSerialDiscoveryAsync
     private async Task RunContinuousSerialDiscoveryAsync(CancellationToken cancellationToken)
     {
         var consecutiveTrips = 0;
+        var consecutiveFaults = 0;
         try
         {
             while (!cancellationToken.IsCancellationRequested && _serialFinder != null)
@@ -529,7 +605,7 @@ public partial class ConnectionDialogViewModel : ObservableObject
                 var finder = _serialFinder;
                 var sweep = Task.Run(() => finder.DiscoverAsync(cancellationToken), cancellationToken);
 
-                var winner = await Task.WhenAny(sweep, Task.Delay(SerialSweepWatchdogMs, cancellationToken));
+                var winner = await Task.WhenAny(sweep, Task.Delay(_serialSweepWatchdogMs, cancellationToken));
                 if (winner != sweep)
                 {
                     if (cancellationToken.IsCancellationRequested)
@@ -556,7 +632,7 @@ public partial class ConnectionDialogViewModel : ObservableObject
 
                     consecutiveTrips++;
                     Common.Loggers.AppLogger.Instance.Warning(
-                        $"Serial discovery sweep exceeded {SerialSweepWatchdogMs / 1000}s " +
+                        $"Serial discovery sweep exceeded {_serialSweepWatchdogMs / 1000}s " +
                         $"(trip {consecutiveTrips}/{MaxConsecutiveWatchdogTrips}) — a serial port is " +
                         "likely wedged; USB discovery may be incomplete.");
                     // Observe the abandoned sweep's eventual fault so it can't surface as an
@@ -575,6 +651,13 @@ public partial class ConnectionDialogViewModel : ObservableObject
                         Common.Loggers.AppLogger.Instance.Error(
                             "Serial discovery stopped after repeated wedged sweeps. Power-cycle the " +
                             "unresponsive USB device and reopen the connection dialog.");
+                        // Stopping here is deliberate — a wedged port cannot be un-wedged from this
+                        // side. What was wrong is that only the log said so while the USB tab kept
+                        // animating "Scanning for USB devices…" for ever, so put the same remedy
+                        // where the user is actually looking (issue #290).
+                        _marshalToUiThread(() => SerialDiscoveryError =
+                            "USB discovery stopped: a connected USB device is not responding. " +
+                            "Power-cycle it, then close and reopen this window to search again.");
                         return;
                     }
 
@@ -586,7 +669,29 @@ public partial class ConnectionDialogViewModel : ObservableObject
                 }
 
                 consecutiveTrips = 0;
-                await sweep; // propagate faults/cancellation exactly like the bare await did
+                try
+                {
+                    await sweep; // propagate faults/cancellation exactly like the bare await did
+                    consecutiveFaults = 0;
+                }
+                catch (Exception ex) when (ex is not OperationCanceledException and not ObjectDisposedException)
+                {
+                    // Per-sweep, not per-loop (issue #290): Core's SerialDeviceFinder enumerates the
+                    // machine's ports on every pass, and one enumeration hiccup used to end USB
+                    // discovery for the life of the dialog. Cancellation and a disposed finder are
+                    // still the two terminal exits and are deliberately left to the outer catches.
+                    consecutiveFaults++;
+                    Common.Loggers.AppLogger.Instance.Error(
+                        ex,
+                        $"Serial discovery sweep failed (fault {consecutiveFaults}/{MaxConsecutiveDiscoveryFaults}).");
+                    if (consecutiveFaults >= MaxConsecutiveDiscoveryFaults)
+                    {
+                        _marshalToUiThread(() => SerialDiscoveryError =
+                            "USB discovery stopped after repeated errors. Close and reopen this " +
+                            "window to search again.");
+                        return;
+                    }
+                }
                 // Serial discovery is quick, pause longer between scans
                 await Task.Delay(2000, cancellationToken);
             }
@@ -601,7 +706,12 @@ public partial class ConnectionDialogViewModel : ObservableObject
         }
         catch (Exception ex)
         {
+            // Backstop only: the per-sweep handler above now catches everything a sweep can raise,
+            // so reaching here means the handler's own logging or marshal threw, or the watchdog's
+            // finder rebuild did. Say so in the dialog anyway — the loop is over either way.
             Common.Loggers.AppLogger.Instance.Error(ex, "Error in Serial discovery loop");
+            _marshalToUiThread(() => SerialDiscoveryError =
+                "USB discovery stopped unexpectedly. Close and reopen this window to search again.");
         }
     }
 
