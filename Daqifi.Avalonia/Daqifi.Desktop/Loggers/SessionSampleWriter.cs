@@ -166,7 +166,14 @@ public sealed class SessionSampleWriter : IDisposable
         // Only the infinities and the extremes reach here among the unusual values: they store and
         // read back without complaint, so refusing them would be the writer discarding readings the
         // database would have kept, on its own opinion about what a meaningful reading is.
-        var storable = HasEveryLabel(dataSample) ? dataSample : WithLabelsFilledIn(dataSample);
+        var storable = dataSample;
+        if (!HasEveryLabel(dataSample))
+        {
+            Report(
+                OriginOf(dataSample),
+                "a reading arrived without all of its labels and was stored with the missing ones empty");
+            storable = WithLabelsFilledIn(dataSample);
+        }
 
         try
         {
@@ -189,13 +196,13 @@ public sealed class SessionSampleWriter : IDisposable
     /// A copy of the row with its missing labels filled in with the empty string, so the reading is
     /// kept rather than discarded over a label the producer failed to supply. A copy rather than a
     /// mutation because the properties are <c>init</c>-only, and because the caller's instance is
-    /// also the one the plot and the summary hold.
+    /// also the one the plot and the summary hold. The unmapped members
+    /// (<see cref="DataSample.FirmwareDeltaMs"/>, <see cref="DataSample.CoreChannel"/>) are not
+    /// carried over: this copy exists only to be persisted, and the original is what every other
+    /// consumer received.
     /// </summary>
-    private DataSample WithLabelsFilledIn(DataSample dataSample)
-    {
-        Report(OriginOf(dataSample), "a reading arrived without all of its labels and was stored with the missing ones empty");
-
-        return new DataSample
+    private static DataSample WithLabelsFilledIn(DataSample dataSample) =>
+        new()
         {
             LoggingSessionID = dataSample.LoggingSessionID,
             Value = dataSample.Value,
@@ -206,7 +213,6 @@ public sealed class SessionSampleWriter : IDisposable
             DeviceSerialNo = dataSample.DeviceSerialNo ?? string.Empty,
             Color = dataSample.Color ?? string.Empty
         };
-    }
 
     /// <summary>
     /// Reports a row the schema could not take as offered, at a rate that stays readable whether it
@@ -240,12 +246,11 @@ public sealed class SessionSampleWriter : IDisposable
 
     /// <summary>
     /// The stream a row belongs to, used both as the rate-limiter key and as the identifying part
-    /// of the report. Invariant culture so a support log reads the same whatever machine produced
-    /// it, and a reader is never left deciding whether an unfamiliar symbol is the value or the
-    /// locale.
+    /// of the report. Names only — no number is formatted here, so there is no culture to pin — and
+    /// the null placeholders matter because a missing label is one of the things being reported.
     /// </summary>
     private static string OriginOf(DataSample dataSample) =>
-        FormattableString.Invariant($"{dataSample.DeviceName ?? "?"}/{dataSample.ChannelName ?? "?"}");
+        $"{dataSample.DeviceName ?? "?"}/{dataSample.ChannelName ?? "?"}";
 
     /// <summary>The rate-limiter key for a sample that is itself null, so has no channel to name.</summary>
     private const string NullSampleOrigin = "(no sample)";
