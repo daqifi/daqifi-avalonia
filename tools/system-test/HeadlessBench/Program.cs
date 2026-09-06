@@ -260,9 +260,19 @@ internal static class HeadlessBench
                     lastTicks = sample.TimestampTicks;
                 }
             };
-            ai.OnChannelUpdated += counter;
             sw.Restart();
             shell.IsLogging = true;
+            // Subscribe AFTER the toggle, and the ordering is load-bearing. The setter assigns
+            // LoggingManager.Active synchronously, and OnActiveChanged re-adds HandleChannelUpdate
+            // to every subscribed channel — so a handler added here runs AFTER it in the multicast
+            // delegate, and anything this counter has seen, the logger was already offered.
+            // Subscribing before the toggle put this counter FIRST, which made `counted` unsound as
+            // the persistence floor below: the stop can land between the two callbacks, so a sample
+            // could increment `counted` and then be dropped by HandleChannelUpdate's own guard —
+            // reading out as database loss that never happened. The reverse order is safe, because
+            // a sample that arrives before this line is missed by `counted` and only makes the
+            // floor lower.
+            ai.OnChannelUpdated += counter;
             var started = PumpUntil(() => first is not null, TimeSpan.FromSeconds(10));
             var latency = sw.Elapsed.TotalSeconds;
             if (started) { PumpFor(TimeSpan.FromSeconds(_seconds)); }
