@@ -562,14 +562,48 @@ public abstract partial class AbstractStreamingDevice : ObservableObject, IStrea
     public event Action<DebugDataModel>? DebugDataReceived;
     #endregion
 
-    #region Abstract Methods
+    #region Device Messaging
     /// <summary>
-    /// Sends a message to the device. Must be implemented in derived classes.
-    /// Core-based devices use DaqifiDevice.Send() for sending messages.
+    /// Sends a SCPI message to the device through Core, doing nothing but logging when the
+    /// device is unavailable.
     /// </summary>
+    /// <remarks>
+    /// <para>
+    /// Checking <see cref="DaqifiDevice.IsConnected"/> and then calling <c>Send</c> is a race, not
+    /// a guard: Core documents that <see cref="DaqifiDevice.Send{T}"/> throws
+    /// <see cref="DeviceNotConnectedException"/> "with <c>IsShuttingDown</c> set, when a disconnect,
+    /// dispose or auto-reconnect on another thread tears the send path down after this call has
+    /// passed its connectivity guard — an ordinary race a long-lived sender should expect, not a
+    /// defect". Every caller of this method is a UI command or property setter
+    /// (<see cref="AddChannel"/>, <see cref="RemoveChannel"/>, <see cref="AddChannels"/>,
+    /// <see cref="RemoveAllChannels"/>, <see cref="SetFriendlyName"/>, the mode switches), so an
+    /// escaping throw reaches <c>Dispatcher.UIThread.UnhandledException</c> and ends the process
+    /// (issue #291). Core 1.7.0 offers no try/no-throw <c>Send</c> overload, so the app owns this.
+    /// </para>
+    /// <para>
+    /// Routed through <see cref="ExecuteDeviceCommand(string, Action{CoreStreamingDevice})"/> so
+    /// unavailability behaves the same here as it already does for the DIO and PWM commands, and
+    /// so all three transports answer the question once instead of three times over. Swallowing is
+    /// right rather than merely convenient: <see cref="DaqifiDevice.Send{T}"/> is documented
+    /// fire-and-forget — it returns before the write happens and reports delivery failures only via
+    /// <c>SendFailed</c> — so a caller never had a synchronous success signal to lose.
+    /// </para>
+    /// <para>
+    /// Virtual only so test doubles can capture traffic without a transport; the three real
+    /// transports share this implementation. The command text is logged because a swallowed command
+    /// is otherwise undiagnosable; nothing sensitive travels this path (Wi-Fi credentials go
+    /// through Core's <c>UpdateNetworkConfigurationAsync</c>, never <c>SendMessage</c>).
+    /// </para>
+    /// </remarks>
     /// <param name="message">The SCPI message to send.</param>
     // @port: Daqifi.Desktop.Device.AbstractStreamingDevice.SendMessage
-    protected abstract void SendMessage(IOutboundMessage<string> message);
+    // @port: Daqifi.Desktop.Device.SerialDevice.SerialStreamingDevice.SendMessage
+    // @port: Daqifi.Desktop.Device.UsbDevice.UsbStreamingDevice.SendMessage
+    // @port: Daqifi.Desktop.Device.WiFiDevice.DaqifiStreamingDevice.SendMessage
+    protected virtual void SendMessage(IOutboundMessage<string> message)
+    {
+        ExecuteDeviceCommand($"send '{message.Data}'", coreDevice => coreDevice.Send(message));
+    }
     #endregion
 
     #region Core Connection Template

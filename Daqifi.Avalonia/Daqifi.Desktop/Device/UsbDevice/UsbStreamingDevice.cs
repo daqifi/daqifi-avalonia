@@ -153,19 +153,6 @@ public class UsbStreamingDevice : AbstractStreamingDevice
     }
 
     /// <summary>
-    /// Sends a message to the device using Core's DaqifiDevice.
-    /// </summary>
-    protected override void SendMessage(IOutboundMessage<string> message)
-    {
-        if (CoreDevice == null || !CoreDevice.IsConnected)
-        {
-            AppLogger.Warning($"Cannot send to {Name}: Core device not connected");
-            return;
-        }
-        CoreDevice.Send(message);
-    }
-
-    /// <summary>
     /// Tears down the Core device (base) then DISCONNECTS the transport.
     /// </summary>
     /// <remarks>

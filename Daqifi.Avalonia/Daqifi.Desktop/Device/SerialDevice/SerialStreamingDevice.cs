@@ -243,20 +243,6 @@ public class SerialStreamingDevice : AbstractStreamingDevice, ILanChipInfoProvid
             $"Device on {PortName} did not report status within {InitialStatusTimeout.TotalSeconds:F0} seconds of connect.");
     }
 
-    /// <summary>
-    /// Sends a message to the device using Core's DaqifiDevice.
-    /// </summary>
-    // @port: Daqifi.Desktop.Device.SerialDevice.SerialStreamingDevice.SendMessage
-    protected override void SendMessage(IOutboundMessage<string> message)
-    {
-        if (CoreDevice == null || !CoreDevice.IsConnected)
-        {
-            AppLogger.Warning($"Cannot send to {PortName}: Core device not connected");
-            return;
-        }
-        CoreDevice.Send(message);
-    }
-
     // @port: Daqifi.Desktop.Device.SerialDevice.SerialStreamingDevice.CleanupConnection
     protected override void CleanupConnection()
     {

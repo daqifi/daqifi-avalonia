@@ -179,30 +179,6 @@ public class DaqifiStreamingDevice : AbstractStreamingDevice
         }
     }
 
-    /// <summary>
-    /// Sends messages directly through Core's DaqifiDevice instead of using adapters.
-    /// </summary>
-    // @port: Daqifi.Desktop.Device.WiFiDevice.DaqifiStreamingDevice.SendMessage
-    protected override void SendMessage(IOutboundMessage<string> message)
-    {
-        if (CoreDevice == null || !CoreDevice.IsConnected)
-        {
-            AppLogger.Warning(
-                $"Cannot send message to {IpAddress}:{Port}: Core device is not connected " +
-                $"(MessageType={message?.GetType().Name})");
-            return;
-        }
-
-        try
-        {
-            CoreDevice.Send(message);
-        }
-        catch (Exception ex)
-        {
-            AppLogger.Error(
-                ex, $"Failed to send message to {IpAddress}:{Port} (MessageType={message?.GetType().Name})");
-        }
-    }
     #endregion
 
     #region Object overrides
