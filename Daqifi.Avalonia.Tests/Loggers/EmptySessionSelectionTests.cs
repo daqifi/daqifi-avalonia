@@ -6,39 +6,38 @@ using Xunit;
 namespace Daqifi.Avalonia.Tests.Loggers;
 
 /// <summary>
-/// Issue #262: opening a logging session that holds no samples left the Logged Data pane saying
-/// <c>No session selected</c>, directly under a session list where that very session was highlighted.
+/// Issue #262: opening a logging session that holds no plottable samples left the Logged Data pane
+/// saying <c>No session selected</c>, directly under a session list where that very session was
+/// highlighted.
 ///
-/// <para>The cause is a single boolean asked to carry two meanings. <see cref="DatabaseLogger"/> sets
+/// <para>The cause is one boolean asked to carry two meanings. <see cref="DatabaseLogger"/> sets
 /// <c>HasSessionData = false</c> both when nothing is open and when an empty session is open, and the
 /// view had nothing else to read, so it rendered the "nothing is open" card for both.
-/// <c>CurrentSession</c> already separates them — it is null in the first case and the opened session
-/// in the second — so the fix is the view reading that instead of inferring selection from
-/// <c>HasSessionData</c>.</para>
+/// <c>CurrentSession</c> already separated them — null in the first case, the opened session in the
+/// second — and the fix is a named <c>IsSessionOpen</c> the view can bind instead of inferring
+/// selection from <c>HasSessionData</c>.</para>
 ///
-/// <para>The gate itself is XAML and cannot be asserted here: views in this repo carry no
-/// <c>x:DataType</c>, so <c>IsVisible</c> bindings resolve by reflection at run time (the same
-/// limitation <c>EmptyLoggedPlotFrameTests</c> records for #251). What these tests hold is the
-/// view-model invariant the new gate rests on, in both directions:</para>
+/// <para>What this file pins is the SESSION-SIDE half: that a session with nothing to draw is a real,
+/// reachable state, and by which routes. Two things put the other half out of reach here, and both are
+/// worth writing down because each looks surmountable until it is tried:</para>
 /// <list type="bullet">
-/// <item>the empty-session branch of <c>DisplayLoggingSession</c> returns early, and must leave
-/// <c>CurrentSession</c> pointing at the session it was asked to open — nulling it there would look
-/// like tidying and would silently restore the bug, because the pane would go back to having no way
-/// to tell the two states apart;</item>
-/// <item><c>ClearPlot</c> must keep nulling it, or the pane would claim a session is open after the
-/// last one is deleted.</item>
+/// <item>The gate itself is XAML. Views in this repo carry no <c>x:DataType</c>, so <c>IsVisible</c>
+/// bindings resolve by reflection at run time and no test in this project can see them — the same
+/// limitation <c>EmptyLoggedPlotFrameTests</c> records for #251. The before/after evidence on the PR
+/// is a render, for exactly that reason.</item>
+/// <item>The view-model state behind it is out of reach too, and NOT merely by the csproj's
+/// library-code-only policy. <c>DisplayLoggingSession</c> and <c>ClearPlot</c> reach shared state
+/// through <c>Dispatcher.UIThread.Invoke</c>. Outside a running Avalonia app that dispatcher binds to
+/// whichever thread touches it FIRST and is never pumped, so the same three tests that pass in
+/// isolation deadlock the whole run when another class got there first: measured here, the suite went
+/// from 11 s to a testhost blocked indefinitely at 0.6% CPU, reproducible by pairing this class with
+/// anything under <c>Tests/Device</c>. There is no ordering a test can assert, so the tests were
+/// removed rather than left as a suite-wide hang waiting for a scheduling change.</item>
 /// </list>
 ///
-/// <para><b>Run against the unchanged code, every test in this file passes.</b> That is the finding,
-/// not a gap: the view model already distinguished the two states correctly and only the view was
-/// wrong, so there is no failing unit test to write for the fix itself — the before/after evidence is
-/// rendered, and these pin the state the render depends on.</para>
-///
-/// <para>The reachability section below is why the state is worth pinning at all. "Zero samples" is
-/// reachable two ways, not one, and the second was not in the issue: a session whose rows all carry a
-/// tick value no <see cref="DateTime"/> can represent (#237) is dropped to empty by
-/// <see cref="SessionDataRepository.LoadInitialSession"/> as well, so a session that visibly reports
-/// thousands of samples in the list can still land in this branch.</para>
+/// <para>Every test below passes against the unchanged code, and that IS the finding rather than a
+/// gap: the view model already distinguished the two states correctly and only the view conflated
+/// them, so there is no failing unit test to write for this fix.</para>
 /// </summary>
 public sealed class EmptySessionSelectionTests : IDisposable
 {
@@ -61,12 +60,21 @@ public sealed class EmptySessionSelectionTests : IDisposable
         try { Directory.Delete(_directory, recursive: true); } catch { /* best-effort cleanup */ }
     }
 
-    #region How a session ends up with nothing to plot
-
     /// <summary>
-    /// The case the issue names: a session row with no sample rows at all — a run stopped before the
-    /// first sample landed, or an SD import that wrote the session record and no data.
+    /// The case the issue names: a session row with no sample rows at all. It is the condition the
+    /// issue points at (<c>LoadInitialSession(id).IsEmpty</c>) and it is the one a reader will try
+    /// first, so it is pinned even though the route to it is the harder half — see the remark.
     /// </summary>
+    /// <remarks>
+    /// Getting a session in this shape IN FRONT OF A USER is another matter, and looking for the way
+    /// in is what turned up the test below. Every path traced from here defends against it:
+    /// <c>LoggingManager.OnActiveChanged</c> adds a finished session to the bound list only when it
+    /// recorded samples; <c>LoadPersistedLoggingSessions</c> DELETES sample-less non-importing rows at
+    /// startup and then returns only sessions that have samples; and the SD importer reports
+    /// <c>SessionPersisted = false</c> for a log with no samples, which is what the import callers
+    /// gate their <c>LoggingSessions.Add</c> on. No live route to a truly sample-less row in the list
+    /// was found — which does not make the branch dead, because the next test reaches it another way.
+    /// </remarks>
     [Fact]
     public void A_session_with_no_samples_at_all_loads_as_empty()
     {
@@ -80,11 +88,16 @@ public sealed class EmptySessionSelectionTests : IDisposable
     }
 
     /// <summary>
-    /// The second route, which the issue does not mention and which running this file surfaced: a
-    /// session with rows whose stored ticks are all outside the range a date can represent is skipped
-    /// down to empty by #237's filter, and reaches the identical branch. It matters because such a
-    /// session is NOT visibly empty anywhere else — the row count is real, so the list can advertise a
-    /// sample count while the pane has nothing to draw.
+    /// The second route, which the issue does not mention and which writing this file surfaced: a
+    /// session whose stored ticks are ALL outside the range a date can represent is skipped down to
+    /// empty by #237's filter and reaches the identical branch.
+    ///
+    /// <para>This is the route that matters, because it is the one that survives a restart. Such a
+    /// session has real sample rows, so it passes both of the guards the test above describes — the
+    /// startup purge keeps it and the "has samples" filter lists it — and it is on screen, clickable,
+    /// on every launch. Its provenance is the same argument <c>SessionTimestampRangeTests</c> makes
+    /// for #237 and no stronger: no current write path produces such a tick value, but SQLite does not
+    /// re-validate rows already in a file, so an older store can hold one.</para>
     /// </summary>
     [Fact]
     public void A_session_whose_every_sample_is_unreadable_also_loads_as_empty()
@@ -98,7 +111,8 @@ public sealed class EmptySessionSelectionTests : IDisposable
         Assert.True(load.IsEmpty);
         Assert.Equal(0, load.TotalSampleCount);
 
-        // The rows are still there — this is a full session by every other measure.
+        // The rows are still there — this is a populated session by every other measure, which is
+        // why nothing upstream of the plot treats it as empty.
         Assert.Equal(2L, ScalarLong("SELECT COUNT(*) FROM Samples"));
     }
 
@@ -118,82 +132,9 @@ public sealed class EmptySessionSelectionTests : IDisposable
         Assert.Equal(1, load.TotalSampleCount);
     }
 
-    #endregion
-
-    #region What the pane is left holding
-
-    /// <summary>
-    /// The invariant the fix binds to. An empty session is still an OPEN session: the early return in
-    /// <c>DisplayLoggingSession</c>'s empty branch happens after <c>CurrentSession</c> is assigned, so
-    /// the pane can name the session it is showing nothing for, and the session-list highlight has
-    /// something in the pane that agrees with it.
-    /// </summary>
-    [Fact]
-    public void An_empty_session_stays_open_on_the_plot_with_no_data()
-    {
-        SeedSession();
-        var session = new LoggingSession(SessionId, "Session");
-
-        using var logger = Logger();
-        logger.DisplayLoggingSession(session);
-
-        Assert.Same(session, logger.CurrentSession);
-        Assert.True(logger.IsSessionOpen);
-        Assert.False(logger.HasSessionData);
-        Assert.Equal(0, logger.CurrentSessionSampleCount);
-        Assert.Empty(logger.PlotModel.Series);
-    }
-
-    /// <summary>
-    /// The other direction, and the one that keeps "no session selected" honest: clearing really does
-    /// close the session. Deleting the last session goes through here.
-    /// </summary>
-    [Fact]
-    public void Clearing_the_plot_closes_the_session()
-    {
-        SeedSession();
-
-        using var logger = Logger();
-        logger.DisplayLoggingSession(new LoggingSession(SessionId, "Session"));
-        logger.ClearPlot();
-
-        Assert.Null(logger.CurrentSession);
-        Assert.False(logger.IsSessionOpen);
-        Assert.False(logger.HasSessionData);
-    }
-
-    /// <summary>
-    /// A session that does hold samples is open AND has data, so the two flags are not silently the
-    /// same thing — which is what would make the new gate indistinguishable from the old one.
-    /// </summary>
-    [Fact]
-    public void A_session_with_samples_is_open_and_has_data()
-    {
-        SeedSession();
-        SeedRow(HealthyTicks);
-        SeedRow(HealthyTicks + 10_000L);
-
-        using var logger = Logger();
-        logger.DisplayLoggingSession(new LoggingSession(SessionId, "Session"));
-
-        Assert.True(logger.IsSessionOpen);
-        Assert.True(logger.HasSessionData);
-        Assert.NotEmpty(logger.PlotModel.Series);
-    }
-
-    #endregion
-
     #region Helpers
 
     private SessionDataRepository Repository() => new(TestDatabase.Contexts(DatabasePath), _logger);
-
-    /// <summary>
-    /// A real <see cref="DatabaseLogger"/> over the throwaway database. It reaches shared state through
-    /// <c>Dispatcher.UIThread.Invoke</c>, which runs inline outside a running Avalonia app, so no
-    /// headless harness is needed — but it also starts the sample-writer thread and two dispatcher
-    /// timers, hence the <c>using</c> at every call site.
-    /// </summary>
-    private DatabaseLogger Logger() => new(TestDatabase.Contexts(DatabasePath));
 
     private void SeedSession()
     {
