@@ -15,6 +15,7 @@ using Daqifi.Desktop.Logger;
 using Daqifi.Desktop.ViewModels;
 using Optris.Icons.Avalonia;
 using Optris.Icons.Avalonia.MaterialDesign;
+using ChannelDirection = Daqifi.Core.Channel.ChannelDirection;
 
 // HeadlessBench — the avalonia-full-test skill's T2/T3 rig. See
 // ~/.claude/skills/avalonia-full-test/references/harness.md for the why; the short version:
@@ -23,6 +24,9 @@ using Optris.Icons.Avalonia.MaterialDesign;
 //   * Connects through ConnectionDialogViewModel.ConnectManualSerialCommand — the user's path —
 //     not by constructing a SerialStreamingDevice, so registration, duplicate check, status
 //     string and hot-plug hand-off all run.
+//   * Builds the Devices and Channels pane view models the way their views build them
+//     (DevicesPanePrototype.axaml.cs / ChannelsPanePrototype.axaml.cs both just `new` one), so the
+//     tile rows and the channel-drawer rows drive real commands and read real tiles.
 //   * Every Step: drive → assert what Core/the device says → pump → assert what the UI shows →
 //     capture a PNG → emit a results.jsonl line. Both assertions, always: a device that streams
 //     while the graph stays flat is the lie this rig exists to catch.
@@ -35,8 +39,9 @@ using Optris.Icons.Avalonia.MaterialDesign;
 //   HeadlessBench --port /dev/cu.usbmodemNNNN --out <run-dir> [--rate 100] [--seconds 5]
 //   HeadlessBench --scripted <state> --out <run-dir>          (T1; states not yet implemented)
 //
-// Exit code 1 on any [FAIL]. Rows covered by this stub: CONN-USB, DEV-INFO, DEV-RATE, CH-AI,
-// STREAM-AI, LOG-SESSION, GRAPH-LIVE, CONN-DISC. Add a Step per matrix row; keep the shape.
+// Exit code 1 on any [FAIL]. Rows covered: CONN-USB, DEV-INFO, DEV-TILE, CH-TILE, DEV-RATE, CH-AI,
+// STREAM-AI, LOG-SESSION, GRAPH-LIVE, CH-DIO, CH-PWM, SD-LIST, CONN-DISC. Add a Step per matrix
+// row; keep the shape.
 
 internal static class HeadlessBench
 {
@@ -201,6 +206,52 @@ internal static class HeadlessBench
              $"serial='{serial}' fw='{fw}' name='{device.DeviceDisplayName}' channels={device.DataChannels.Count}",
              Capture(main, "t2-02-devices"));
 
+        // The two panes, built exactly as their views build them: DevicesPanePrototype.axaml.cs does
+        // `new DevicesPaneViewModel(shell)` and ChannelsPanePrototype.axaml.cs does
+        // `new ChannelsPaneViewModel()`, each in OnDataContextChanged. #260 assumed reaching these
+        // needed a helper layer because the shell does not expose them; it does not — constructing
+        // one IS the user's path, and both populate themselves from ConnectionManager. They stay
+        // alive for the rest of the run, as they do in the app, so the tiles below are live.
+        using var devicesPane = new DevicesPaneViewModel(shell);
+        using var channelsPane = new ChannelsPaneViewModel();
+        Pump();
+
+        // DEV-TILE — one tile per connected device, and the drawer that opens on a tile click reads
+        // the device's own rate back. FrequencyHz is a device read, so a tile bound to a stale or
+        // duplicated device object shows the wrong board's rate.
+        devicesPane.OpenSettingsCommand.Execute(devicesPane.Devices.FirstOrDefault());
+        Pump();
+        Step(2, "DEV-TILE", "works",
+             devicesPane.Devices.Count == shell.ConnectedDevices.Count
+                 && devicesPane.HasConnectedDevice
+                 && devicesPane.Devices.Any(t => ReferenceEquals(t.Device, device))
+                 && ReferenceEquals(devicesPane.SelectedDevice, device),
+             $"{devicesPane.Devices.Count} tile(s) for {shell.ConnectedDevices.Count} connected device(s); " +
+             $"HasConnectedDevice={devicesPane.HasConnectedDevice}; drawer open on '{devicesPane.SelectedDevice?.DeviceSerialNo}' " +
+             $"showing FrequencyHz={devicesPane.FrequencyHz}",
+             Capture(main, "t2-03-device-tile"));
+        devicesPane.CloseSettingsCommand.Execute(null);
+        Pump();
+
+        // CH-TILE — every channel the device reports gets exactly one tile, shelved by kind. The
+        // count is the check: a channel with no tile is unreachable in the UI, and the pane drops
+        // analog OUTPUTS on the floor by design (an Nq1 reports none), so they are excluded here
+        // rather than counted as missing.
+        var expectedAnalogIn = device.DataChannels.Count(c => c.IsAnalog && c.Direction == ChannelDirection.Input);
+        var expectedDigitalOut = device.DataChannels.Count(c => c.IsDigital && (c.Direction == ChannelDirection.Output || c.IsPwmEnabled));
+        var expectedDigitalIn = device.DataChannels.Count(c => c.IsDigital) - expectedDigitalOut;
+        Step(2, "CH-TILE", "works",
+             channelsPane.AnalogInputs.Count == expectedAnalogIn
+                 && channelsPane.DigitalInputs.Count == expectedDigitalIn
+                 && channelsPane.DigitalOutputs.Count == expectedDigitalOut
+                 && channelsPane.HasConnectedDevice,
+             $"tiles AI={channelsPane.AnalogInputs.Count}/{expectedAnalogIn} " +
+             $"DI={channelsPane.DigitalInputs.Count}/{expectedDigitalIn} " +
+             $"DO={channelsPane.DigitalOutputs.Count}/{expectedDigitalOut} " +
+             $"against {device.DataChannels.Count} channels on '{device.DeviceDisplayName}' " +
+             $"({device.DataChannels.Count(c => c.IsAnalog && c.IsOutput)} analog outputs, which the pane does not tile)",
+             Capture(main, "t2-04-channel-tiles"));
+
         // DEV-RATE — the drawer's FREQUENCY control binds DevicesPaneViewModel.FrequencyHz, which
         // writes DaqifiViewModel.SelectedStreamingFrequency; that setter is guarded (it refuses a
         // change mid-session) and it writes back the value the device settled on. Assigning
@@ -213,7 +264,7 @@ internal static class HeadlessBench
         Pump();
         Step(2, "DEV-RATE", "works", device.StreamingFrequency == _rate && shell.SelectedStreamingFrequency == _rate,
              $"asked for {_rate} Hz through SelectedStreamingFrequency; device.StreamingFrequency={device.StreamingFrequency}, shell.SelectedStreamingFrequency={shell.SelectedStreamingFrequency}",
-             Capture(main, "t2-03-rate"));
+             Capture(main, "t2-05-rate"));
 
         var ai = device.DataChannels.FirstOrDefault(c => !c.IsDigital && !c.IsOutput);
         if (ai is null)
@@ -225,17 +276,21 @@ internal static class HeadlessBench
         }
         else
         {
-            // CH-AI — mirrors ChannelsPaneViewModel.ToggleChannel (private): the device gets the
-            // channel AND the logging manager subscribes it. Only the second half feeds the live plot;
-            // calling AddChannel alone streams into nothing, which is how the first run of this rig
-            // produced a "No channels streaming" graph while samples arrived.
-            device.AddChannel(ai);
-            LoggingManager.Instance.Subscribe(ai);
+            // CH-AI — clicking the channel's tile runs ChannelsPaneViewModel.ToggleChannelCommand,
+            // which gives the device the channel AND subscribes it in the logging manager. Only the
+            // second half feeds the live plot; AddChannel alone streams into nothing, which is how
+            // the first run of this rig produced a "No channels streaming" graph while samples
+            // arrived. This rig used to make both calls itself, hand-mirroring a private method —
+            // now the pane exists, the command is reachable and the copy is gone.
+            var aiTile = channelsPane.AnalogInputs.FirstOrDefault(t => ReferenceEquals(t.Channel, ai));
+            channelsPane.ToggleChannelCommand.Execute(aiTile);
             Pump();
             var subscribed = LoggingManager.Instance.SubscribedChannels.Any(c => ReferenceEquals(c, ai));
-            Step(2, "CH-AI", "works", ai.IsActive && subscribed,
-                 $"'{ai.Name}' IsActive={ai.IsActive} subscribed={subscribed}; CanToggleLogging={shell.CanToggleLogging}",
-                 Capture(main, "t2-04-channel-on"));
+            Step(2, "CH-AI", "works", ai.IsActive && subscribed && aiTile is { IsActive: true },
+                 $"'{ai.Name}' IsActive={ai.IsActive} subscribed={subscribed}; tile IsActive={aiTile?.IsActive.ToString() ?? "no tile"}; " +
+                 $"pane ActiveAnalogCount={channelsPane.ActiveAnalogCount}/{channelsPane.TotalAnalogCount}; " +
+                 $"CanToggleLogging={shell.CanToggleLogging}",
+                 Capture(main, "t2-06-channel-on"));
 
             // STREAM-AI + LOG-SESSION + GRAPH-LIVE — the user path is the LOGGING toggle: it checks
             // disk space, opens a session, and LoggingFleet.Start streams every connected device.
@@ -305,7 +360,7 @@ internal static class HeadlessBench
             var persisted = started && PumpUntil(() => session?.SampleCount >= counted, TimeSpan.FromSeconds(30));
             Pump();
 
-            var shot = Capture(main, "t2-05-streamed");
+            var shot = Capture(main, "t2-07-streamed");
             var effective = window > 0 ? counted / window : 0;
             var within = started && Math.Abs(effective - _rate) <= _rate * 0.1;
             Step(2, "STREAM-AI", "works", within,
@@ -356,6 +411,132 @@ internal static class HeadlessBench
                  $"-> {deviceRate:F1} Hz by device timestamps, {(window > 0 ? counted / window : 0):F1} Hz by wall clock");
         }
 
+        // CH-DIO — the drawer's DIRECTION and OUTPUT STATE radios bind SelectedChannel.IsOutput and
+        // SelectedChannel.IsDigitalOn (ChannelsPanePrototype.axaml), and the drawer opens on the
+        // tile's gear — ChannelsPaneViewModel.OpenSettingsCommand. Calling device.SetChannelDirection
+        // / device.SetChannelOutputValue instead sends the SCPI write WITHOUT moving the bound
+        // property, so the tile keeps showing the old state: the second trap in this rig's README,
+        // and the one that produced two false failures the last time these rows were written.
+        // A PWM-capable line is preferred so CH-PWM below can use the same channel. The run puts
+        // the line back the way it found it — a board keeps its DIO state across a disconnect.
+        var dio = device.DataChannels.FirstOrDefault(c => c.IsDigital && c.IsPwmCapable)
+                  ?? device.DataChannels.FirstOrDefault(c => c.IsDigital);
+        if (dio is null)
+        {
+            Emit(2, "CH-DIO", "works", "not-run", $"device reports no digital channels ({device.DataChannels.Count} channels total)");
+            Emit(2, "CH-PWM", "works", "not-run", "no digital channel to drive");
+        }
+        else
+        {
+            var dioWasOutput = dio.IsOutput;
+            var dioWasOn = dio.IsDigitalOn;
+            channelsPane.OpenSettingsCommand.Execute(FindTile(channelsPane, dio));
+            Pump();
+            var opened = channelsPane.IsSettingsOpen && ReferenceEquals(channelsPane.SelectedChannel, dio);
+            dio.IsOutput = true;
+            // Flipping direction re-shelves the tile, and the pane posts that rebuild at Background
+            // priority — so the tile object is disposed and replaced on a later pump, and every read
+            // below re-fetches rather than holding the one from before the flip.
+            PumpUntil(() => channelsPane.DigitalOutputs.Any(t => ReferenceEquals(t.Channel, dio)), TimeSpan.FromSeconds(5));
+            dio.IsDigitalOn = true;
+            Pump();
+            var dioTile = FindTile(channelsPane, dio);
+            Step(2, "CH-DIO", "works",
+                 opened && dio.IsOutput && dio.Direction == ChannelDirection.Output && dio.IsDigitalOn
+                     && dioTile is { Value: "HIGH", TypeLabel: "DIGITAL OUT", ShowDriveToggle: true }
+                     && channelsPane.DigitalOutputs.Contains(dioTile),
+                 $"'{dio.Name}': drawer open on it={opened}; IsOutput={dio.IsOutput} Direction={dio.Direction} " +
+                 $"IsDigitalOn={dio.IsDigitalOn}; tile label='{dioTile?.TypeLabel}' value='{dioTile?.Value}', " +
+                 $"shelved in {(dioTile is not null && channelsPane.DigitalOutputs.Contains(dioTile) ? "DigitalOutputs" : "the wrong section")}",
+                 Capture(main, "t2-08-digital-out"));
+
+            if (!dio.IsPwmCapable)
+            {
+                Emit(2, "CH-PWM", "works", "not-run",
+                     $"no PWM-capable digital channel on this board ('{dio.Name}' is not one; " +
+                     $"{device.DataChannels.Count(c => c.IsDigital)} digital channels)");
+            }
+            else
+            {
+                // CH-PWM — the drawer's PWM toggle and DUTY CYCLE slider bind
+                // SelectedChannel.IsPwmEnabled and .PwmDutyCyclePercent. IsPwmEnabled reads Core's
+                // mirror of the last state it actually commanded, so a command the device refuses
+                // leaves it false: that is the assertion doing the work here, not the write.
+                dio.PwmDutyCyclePercent = 25;   // PWM off — bookkeeping only, applied on enable
+                dio.IsPwmEnabled = true;
+                Pump();
+                var pwmOn = dio.IsPwmEnabled;
+                dio.PwmDutyCyclePercent = 60;   // PWM on — commanded live
+                PumpUntil(() => channelsPane.DigitalOutputs.Any(t => ReferenceEquals(t.Channel, dio)), TimeSpan.FromSeconds(5));
+                var pwmTile = FindTile(channelsPane, dio);
+                Step(2, "CH-PWM", "works",
+                     pwmOn && dio.PwmDutyCyclePercent == 60
+                         && pwmTile is { IsPwmActive: true, ShowDriveToggle: false, Value: "PWM 60%" },
+                     $"'{dio.Name}' IsPwmEnabled={pwmOn} duty={dio.PwmDutyCyclePercent}% at the device-wide " +
+                     $"{device.PwmFrequencyHz} Hz; tile value='{pwmTile?.Value}' IsPwmActive={pwmTile?.IsPwmActive} " +
+                     $"ShowDriveToggle={pwmTile?.ShowDriveToggle} (the drive toggle is hidden while PWM runs — " +
+                     "the hardware ignores digital state writes on a PWM-active channel)",
+                     Capture(main, "t2-09-pwm"));
+
+                // Limits. The slider is 1-100, but the property is what a binding writes, and Core
+                // rejects a duty of 0 outright (the firmware stores it and never applies it, so the
+                // old duty keeps toggling). Both ends must coerce rather than command.
+                dio.PwmDutyCyclePercent = 0;
+                var coercedLow = dio.PwmDutyCyclePercent;
+                dio.PwmDutyCyclePercent = 101;
+                var coercedHigh = dio.PwmDutyCyclePercent;
+                Step(2, "CH-PWM", "limits", coercedLow == 1 && coercedHigh == 100,
+                     $"duty 0 -> {coercedLow}%, duty 101 -> {coercedHigh}% (commandable range is 1-100)", null);
+
+                dio.IsPwmEnabled = false;
+                Pump();
+                // Disabling PWM leaves the pin transiently high-impedance and Core zeroes the
+                // channel's stored output value; the app hydrates IsDigitalOn from that, so the tile
+                // cannot go on claiming HIGH for a pin nothing is driving.
+                var settledTile = FindTile(channelsPane, dio);
+                Emit(2, "CH-PWM", "unexpected", !dio.IsPwmEnabled && !dio.IsDigitalOn ? "pass" : "finding",
+                     $"after disabling PWM: IsPwmEnabled={dio.IsPwmEnabled} IsDigitalOn={dio.IsDigitalOn}, " +
+                     $"tile value='{settledTile?.Value}'");
+            }
+
+            dio.IsDigitalOn = dioWasOn;
+            dio.IsOutput = dioWasOutput;
+            channelsPane.CloseSettingsCommand.Execute(null);
+            Pump();
+        }
+
+        // SD-LIST — the Logged Data pane's device-file list. shell.DeviceLogsViewModel is the
+        // instance that pane binds (LoggedDataPanePrototype.axaml) and RefreshFilesCommand is its
+        // REFRESH button. It runs here, after the stream has stopped, because the app refuses SD
+        // file access while the device is streaming or logging to its card
+        // (SdOperationBlockedException -> SdCardState.Busy). Selecting a device fires a refresh of
+        // its own, so wait for the command to come free rather than racing it: a second
+        // ExecuteAsync while the first is in flight is dropped, and this row would then be
+        // asserting on the earlier listing without saying so.
+        var logs = shell.DeviceLogsViewModel;
+        logs.SelectedDevice = device;
+        PumpUntil(() => !logs.IsBusy && logs.RefreshFilesCommand.CanExecute(null), TimeSpan.FromSeconds(60));
+        sw.Restart();
+        var listing = logs.RefreshFilesCommand.ExecuteAsync(null);
+        PumpUntil(() => listing.IsCompleted, TimeSpan.FromSeconds(60));
+        Pump();
+        var sdShot = Capture(main, "t2-10-sd-files");
+        if (logs.SdCardState == SdCardState.NotPresent)
+        {
+            Emit(2, "SD-LIST", "works", "not-run",
+                 $"device reports no SD card installed; status line '{logs.SdCardStatusLine}'", sdShot);
+        }
+        else
+        {
+            Step(2, "SD-LIST", "works",
+                 logs.SdCardState == SdCardState.Ok && logs.DeviceFiles.Count == device.SdCardFiles.Count,
+                 $"listed {logs.DeviceFiles.Count} file(s) in {sw.Elapsed.TotalSeconds:F1} s against the " +
+                 $"{device.SdCardFiles.Count} the device layer holds; SdCardState={logs.SdCardState}; " +
+                 $"HasFiles={logs.HasFiles} HasNoFiles={logs.HasNoFiles}; status line '{logs.SdCardStatusLine}'" +
+                 (logs.SdCardState == SdCardState.Ok ? "" : $"; error='{logs.SdCardErrorMessage}'"),
+                 sdShot, sw.Elapsed.TotalSeconds);
+        }
+
         // CONN-DISC — through DaqifiViewModel.DisconnectDeviceCommand, the command the Devices pane
         // binds (DevicesPanePrototype.axaml, DevicesMobileView.axaml, and DevicesPaneViewModel.
         // DisconnectSelected). ConnectionManager.Instance.Disconnect is only ONE of the four things
@@ -380,7 +561,7 @@ internal static class HeadlessBench
              $"shell.ConnectedDevices={shell.ConnectedDevices.Count}; manager.ConnectedDevices={ConnectionManager.Instance.ConnectedDevices.Count}; " +
              $"SubscribedChannels left={leftSubscribed}; SelectedDevice cleared={selectionCleared}; " +
              $"status='{ConnectionManager.Instance.ConnectionStatusString}' (a per-connect status, not per-device — see #212)",
-             Capture(main, "t2-06-disconnected"), sw.Elapsed.TotalSeconds);
+             Capture(main, "t2-11-disconnected"), sw.Elapsed.TotalSeconds);
         Emit(2, "CONN-DISC", "unexpected", threadsAfter > threadsBefore + 2 ? "finding" : "pass",
              $"threads before connect={threadsBefore}, after disconnect={threadsAfter}");
         Emit(2, "CONN-DISC", "unexpected", "not-run",
@@ -388,6 +569,12 @@ internal static class HeadlessBench
     }
 
     // ---------------------------------------------------------------- plumbing
+
+    /// <summary>The pane's live tile for a channel, from whichever section it is shelved in. Always
+    /// re-fetch after a change that can re-shelve it: the pane disposes and rebuilds every tile.</summary>
+    private static ChannelTileViewModel? FindTile(ChannelsPaneViewModel pane, IChannel channel) =>
+        pane.AnalogInputs.Concat(pane.DigitalInputs).Concat(pane.DigitalOutputs)
+            .FirstOrDefault(t => ReferenceEquals(t.Channel, channel));
 
     private static void Step(int tier, string row, string check, bool pass, string evidence, string? artifact, double? seconds = null)
     {
