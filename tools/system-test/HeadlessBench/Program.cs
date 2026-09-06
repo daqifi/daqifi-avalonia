@@ -35,8 +35,8 @@ using Optris.Icons.Avalonia.MaterialDesign;
 //   HeadlessBench --port /dev/cu.usbmodemNNNN --out <run-dir> [--rate 100] [--seconds 5]
 //   HeadlessBench --scripted <state> --out <run-dir>          (T1; states not yet implemented)
 //
-// Exit code 1 on any [FAIL]. Rows covered by this stub: CONN-USB, DEV-INFO, CH-AI, STREAM-AI,
-// LOG-SESSION, GRAPH-LIVE, CONN-DISC. Add a Step per matrix row; keep the shape.
+// Exit code 1 on any [FAIL]. Rows covered by this stub: CONN-USB, DEV-INFO, DEV-RATE, CH-AI,
+// STREAM-AI, LOG-SESSION, GRAPH-LIVE, CONN-DISC. Add a Step per matrix row; keep the shape.
 
 internal static class HeadlessBench
 {
@@ -54,11 +54,26 @@ internal static class HeadlessBench
     {
         if (!ParseArgs(args)) { return 2; }
 
-        Directory.CreateDirectory(Path.Combine(_out, "shots"));
-        Directory.CreateDirectory(Path.Combine(_out, "appdata"));
-        Environment.SetEnvironmentVariable("DAQIFI_TEST_MODE", "1");
-        Environment.SetEnvironmentVariable("DAQIFI_DATA_DIR", Path.Combine(_out, "appdata"));
-        IconProvider.Current.Register<MaterialDesignIconProvider>();
+        // Setup is inside the guard: an unwritable --out or a failed icon registration is an
+        // argument problem, and exit 2 is what the usage block documents for one. Outside the
+        // guard it was a stack trace instead, from a process that had not yet touched the board.
+        try
+        {
+            Directory.CreateDirectory(Path.Combine(_out, "shots"));
+            Directory.CreateDirectory(Path.Combine(_out, "appdata"));
+            // Truncate rather than append. Two runs sharing an --out used to interleave their
+            // verdicts in one file with nothing marking the boundary, so a reader could not tell
+            // which run a [FAIL] came from; losing the older run is the lesser harm.
+            File.WriteAllText(Path.Combine(_out, "results.jsonl"), "");
+            Environment.SetEnvironmentVariable("DAQIFI_TEST_MODE", "1");
+            Environment.SetEnvironmentVariable("DAQIFI_DATA_DIR", Path.Combine(_out, "appdata"));
+            IconProvider.Current.Register<MaterialDesignIconProvider>();
+        }
+        catch (Exception ex)
+        {
+            Console.WriteLine($"could not prepare --out '{_out}': {ex.Message}");
+            return 2;
+        }
 
         var lifetime = new ClassicDesktopStyleApplicationLifetime
         {
@@ -119,6 +134,50 @@ internal static class HeadlessBench
 
     private static void RunHardwareSequence(Window main, DaqifiViewModel shell)
     {
+        try
+        {
+            RunHardwareSteps(main, shell);
+        }
+        finally
+        {
+            // The normal path stops logging and disconnects itself, so this is only for the paths
+            // that never reach it. Without it, an exception after IsLogging=true leaves the board
+            // streaming into a process that has already exited, and the NEXT run connects to a
+            // device that is still pushing samples — on a shared bench board, somebody else's
+            // mystery failure.
+            StopAndDisconnect(shell);
+        }
+    }
+
+    /// <summary>Best-effort undo of anything the sequence left running. Idempotent: on the normal
+    /// path both halves are already done and this does nothing.</summary>
+    private static void StopAndDisconnect(DaqifiViewModel shell)
+    {
+        try
+        {
+            if (shell.IsLogging)
+            {
+                Console.WriteLine("[WARN] cleanup: logging still on, stopping it");
+                shell.IsLogging = false;
+                PumpUntil(() => !LoggingManager.Instance.Active, TimeSpan.FromSeconds(5));
+            }
+        }
+        catch (Exception ex) { Console.WriteLine($"[WARN] cleanup stop logging: {ex.Message}"); }
+
+        foreach (var stranded in shell.ConnectedDevices.ToList())
+        {
+            try
+            {
+                Console.WriteLine($"[WARN] cleanup: disconnecting '{stranded.DeviceSerialNo}' left connected by an aborted run");
+                shell.DisconnectDeviceCommand.Execute(stranded);
+                PumpUntil(() => !shell.ConnectedDevices.Contains(stranded), TimeSpan.FromSeconds(10));
+            }
+            catch (Exception ex) { Console.WriteLine($"[WARN] cleanup disconnect: {ex.Message}"); }
+        }
+    }
+
+    private static void RunHardwareSteps(Window main, DaqifiViewModel shell)
+    {
         var threadsBefore = Process.GetCurrentProcess().Threads.Count;
 
         // CONN-USB — through the dialog's manual-port path, the same code a user's click runs.
@@ -142,6 +201,20 @@ internal static class HeadlessBench
              $"serial='{serial}' fw='{fw}' name='{device.DeviceDisplayName}' channels={device.DataChannels.Count}",
              Capture(main, "t2-02-devices"));
 
+        // DEV-RATE — the drawer's FREQUENCY control binds DevicesPaneViewModel.FrequencyHz, which
+        // writes DaqifiViewModel.SelectedStreamingFrequency; that setter is guarded (it refuses a
+        // change mid-session) and it writes back the value the device settled on. Assigning
+        // device.StreamingFrequency directly, as this rig used to before streaming, skips the guard
+        // and leaves the shell's own value stale — the STREAM-AI rate below now comes from here.
+        // Selecting the device first is what clicking its tile does.
+        shell.SelectedDevice = device;
+        Pump();
+        shell.SelectedStreamingFrequency = _rate;
+        Pump();
+        Step(2, "DEV-RATE", "works", device.StreamingFrequency == _rate && shell.SelectedStreamingFrequency == _rate,
+             $"asked for {_rate} Hz through SelectedStreamingFrequency; device.StreamingFrequency={device.StreamingFrequency}, shell.SelectedStreamingFrequency={shell.SelectedStreamingFrequency}",
+             Capture(main, "t2-03-rate"));
+
         var ai = device.DataChannels.FirstOrDefault(c => !c.IsDigital && !c.IsOutput);
         if (ai is null)
         {
@@ -162,7 +235,7 @@ internal static class HeadlessBench
             var subscribed = LoggingManager.Instance.SubscribedChannels.Any(c => ReferenceEquals(c, ai));
             Step(2, "CH-AI", "works", ai.IsActive && subscribed,
                  $"'{ai.Name}' IsActive={ai.IsActive} subscribed={subscribed}; CanToggleLogging={shell.CanToggleLogging}",
-                 Capture(main, "t2-03-channel-on"));
+                 Capture(main, "t2-04-channel-on"));
 
             // STREAM-AI + LOG-SESSION + GRAPH-LIVE — the user path is the LOGGING toggle: it checks
             // disk space, opens a session, and LoggingFleet.Start streams every connected device.
@@ -188,7 +261,6 @@ internal static class HeadlessBench
                 }
             };
             ai.OnChannelUpdated += counter;
-            device.StreamingFrequency = _rate;
             sw.Restart();
             shell.IsLogging = true;
             var started = PumpUntil(() => first is not null, TimeSpan.FromSeconds(10));
@@ -201,12 +273,20 @@ internal static class HeadlessBench
             // so their own Points lists stay empty while the plot is visibly drawing.
             var plotted = shell.Plotter?.LoggedPoints?.Values.Sum(l => l.Count) ?? -1;
             var plotSeries = shell.Plotter?.LoggedChannels?.Count ?? 0;
+            // Hold the session BEFORE stopping — LoggingManager.Session is this run's row, and
+            // LOG-SESSION below waits for its persisted sample count.
+            var session = LoggingManager.Instance.Session;
             shell.IsLogging = false;
             PumpUntil(() => !LoggingManager.Instance.Active, TimeSpan.FromSeconds(5));
             ai.OnChannelUpdated -= counter;
+            // Session finalization is a fire-and-forget Task.Run that counts the session's rows in
+            // the database and marshals the result back onto the UI thread, so it needs the pump to
+            // land. SampleCount stays null until that COUNT returns: it is the one signal in the app
+            // that the samples actually reached disk, which is what LOG-SESSION claims to check.
+            var persisted = PumpUntil(() => session?.SampleCount > 0, TimeSpan.FromSeconds(30));
             Pump();
 
-            var shot = Capture(main, "t2-04-streamed");
+            var shot = Capture(main, "t2-05-streamed");
             var effective = window > 0 ? counted / window : 0;
             var within = started && Math.Abs(effective - _rate) <= _rate * 0.1;
             Step(2, "STREAM-AI", "works", within,
@@ -214,8 +294,14 @@ internal static class HeadlessBench
                      ? $"{counted} samples in {window:F1} s after a {latency:F1} s start latency -> {effective:F1} Hz effective (set {_rate} Hz) on '{ai.Name}'; IsStreaming after stop={(device as AbstractStreamingDevice)?.IsStreaming}"
                      : $"no sample within 10 s of IsLogging=true at {_rate} Hz; LoggingManager.Active={LoggingManager.Instance.Active}",
                  shot, window);
-            Step(2, "LOG-SESSION", "works", started && !LoggingManager.Instance.Active && !shell.IsLogging,
-                 $"IsLogging toggled on/off; LoggingManager.Active={LoggingManager.Instance.Active}; IsLogging={shell.IsLogging} (DB row count is a follow-up Step)",
+            var listed = session is not null && LoggingManager.Instance.LoggingSessions.Any(s => s.ID == session.ID);
+            Step(2, "LOG-SESSION", "works",
+                 started && !LoggingManager.Instance.Active && !shell.IsLogging && persisted && listed,
+                 session is null
+                     ? $"no LoggingSession was created; SessionStartFailure='{LoggingManager.Instance.SessionStartFailure}'"
+                     : $"IsLogging toggled on/off; LoggingManager.Active={LoggingManager.Instance.Active}; IsLogging={shell.IsLogging}; " +
+                       $"session {session.ID} '{session.Name}' persisted SampleCount={session.SampleCount?.ToString(CultureInfo.InvariantCulture) ?? "null"} " +
+                       $"(counted in the database) against {counted} samples seen; listed in LoggingSessions={listed}",
                  shot);
             Step(2, "GRAPH-LIVE", "works", plotted > 0,
                  plotted >= 0
@@ -248,17 +334,28 @@ internal static class HeadlessBench
                  $"-> {deviceRate:F1} Hz by device timestamps, {(window > 0 ? counted / window : 0):F1} Hz by wall clock");
         }
 
-        // CONN-DISC — through the connection manager, which is what the Devices pane calls. Calling
-        // device.Disconnect() directly closes the port but leaves the device registered in the UI,
-        // which is exactly the stale-"Connected" state this row exists to catch — so do not.
+        // CONN-DISC — through DaqifiViewModel.DisconnectDeviceCommand, the command the Devices pane
+        // binds (DevicesPanePrototype.axaml, DevicesMobileView.axaml, and DevicesPaneViewModel.
+        // DisconnectSelected). ConnectionManager.Instance.Disconnect is only ONE of the four things
+        // that command does — it also unsubscribes every active channel from LoggingManager, removes
+        // the firmware notification and clears SelectedDevice — so calling the manager directly, as
+        // this rig used to, passes while the other three are broken. Calling device.Disconnect() is
+        // worse still: it closes the port but leaves the device registered in the UI, exactly the
+        // stale-"Connected" state this row exists to catch.
         sw.Restart();
-        ConnectionManager.Instance.Disconnect(device);
+        shell.DisconnectDeviceCommand.Execute(device);
         PumpUntil(() => shell.ConnectedDevices.Count == 0 && ConnectionManager.Instance.ConnectedDevices.Count == 0, TimeSpan.FromSeconds(10));
         Pump();
         var threadsAfter = Process.GetCurrentProcess().Threads.Count;
-        Step(2, "CONN-DISC", "works", shell.ConnectedDevices.Count == 0 && ConnectionManager.Instance.ConnectedDevices.Count == 0,
-             $"shell.ConnectedDevices={shell.ConnectedDevices.Count}; manager.ConnectedDevices={ConnectionManager.Instance.ConnectedDevices.Count}; status='{ConnectionManager.Instance.ConnectionStatusString}'",
-             Capture(main, "t2-05-disconnected"), sw.Elapsed.TotalSeconds);
+        var leftSubscribed = LoggingManager.Instance.SubscribedChannels.Count;
+        var selectionCleared = shell.SelectedDevice is null;
+        Step(2, "CONN-DISC", "works",
+             shell.ConnectedDevices.Count == 0 && ConnectionManager.Instance.ConnectedDevices.Count == 0
+                 && leftSubscribed == 0 && selectionCleared,
+             $"shell.ConnectedDevices={shell.ConnectedDevices.Count}; manager.ConnectedDevices={ConnectionManager.Instance.ConnectedDevices.Count}; " +
+             $"SubscribedChannels left={leftSubscribed}; SelectedDevice cleared={selectionCleared}; " +
+             $"status='{ConnectionManager.Instance.ConnectionStatusString}' (a per-connect status, not per-device — see #212)",
+             Capture(main, "t2-06-disconnected"), sw.Elapsed.TotalSeconds);
         Emit(2, "CONN-DISC", "unexpected", threadsAfter > threadsBefore + 2 ? "finding" : "pass",
              $"threads before connect={threadsBefore}, after disconnect={threadsAfter}");
         Emit(2, "CONN-DISC", "unexpected", "not-run",
