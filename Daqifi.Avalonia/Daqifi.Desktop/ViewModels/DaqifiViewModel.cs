@@ -559,6 +559,18 @@ public partial class DaqifiViewModel : ObservableObject, IFirmwareUpdateHost, IL
     /// about which. Selecting a different device moves the chip to that device's rate; the chip is
     /// a readout of one device, not of the fleet.
     /// <para>
+    /// The selection is only honoured while the device is still connected, and that check is not
+    /// belt-and-braces. Only <see cref="DisconnectDeviceCommand"/> clears
+    /// <see cref="SelectedDevice"/>; every automatic removal — physical unplug, WiFi timeout, a
+    /// device the watcher drops — rebuilds <see cref="ConnectedDevices"/> without touching it, and
+    /// <c>DevicesPaneViewModel.Rebuild</c> closes the drawer by clearing its own tile only. Without
+    /// the membership test the chip would go on reading, and this property's setter go on writing,
+    /// a wrapper that is no longer attached to anything, while the device that is still connected
+    /// went unreported. Reference identity, not <c>Contains</c>: a device's value equality moves as
+    /// its own fields do, so equality is not an identity test here (see
+    /// <see cref="ForgetSdState"/>).
+    /// </para>
+    /// <para>
     /// Deliberately not an aggregate. Nothing in this app runs one session per device at different
     /// rates and then needs a summary of them: the rate is per device, the chip has room for one
     /// number, and a "fleet rate" abstraction with one caller would be more machinery than the
@@ -566,7 +578,10 @@ public partial class DaqifiViewModel : ObservableObject, IFirmwareUpdateHost, IL
     /// </para>
     /// </remarks>
     // Downstream-only: no upstream counterpart.
-    private IStreamingDevice? RateChipDevice => SelectedDevice ?? ConnectedDevices.FirstOrDefault();
+    private IStreamingDevice? RateChipDevice =>
+        ConnectedDevices.Any(connected => ReferenceEquals(connected, SelectedDevice))
+            ? SelectedDevice
+            : ConnectedDevices.FirstOrDefault();
 
     /// <summary>
     /// Gets or sets the streaming rate shown on the Live Graph header's RATE chip, read straight
@@ -1890,9 +1905,11 @@ public partial class DaqifiViewModel : ObservableObject, IFirmwareUpdateHost, IL
 
         RaiseLoggingStateChanged();
 
-        // The RATE chip reads whichever device RateChipDevice names, and this collection is half of
+        // The RATE chip reads whichever device RateChipDevice names, and this collection is most of
         // that answer: the first device to arrive is what the chip shows until a drawer is opened,
-        // and a device leaving hands the chip to the next one (or to nothing).
+        // and a device leaving hands the chip to the next one (or to nothing) — including when it
+        // leaves without being disconnected, which is why RateChipDevice tests membership rather
+        // than trusting SelectedDevice, whose only clearer is DisconnectDeviceCommand.
         OnPropertyChanged(nameof(SelectedStreamingFrequency));
 
         // NOTE: the WiFi version probe is not fired from this subscription handler. It is

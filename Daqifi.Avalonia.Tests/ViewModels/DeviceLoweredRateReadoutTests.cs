@@ -208,6 +208,44 @@ public class DeviceLoweredRateReadoutTests
     }
 
     /// <summary>
+    /// A device that goes away without being disconnected takes the chip with it — to the device
+    /// that is still there, not with it into the dark.
+    /// </summary>
+    /// <remarks>
+    /// Only <c>DisconnectDeviceCommand</c> clears <c>SelectedDevice</c>. Every automatic removal
+    /// (unplug, WiFi timeout, watcher drop) reaches <c>UpdateUi</c>'s "ConnectedDevices" case, which
+    /// clears and rebuilds the collection and leaves the selection pointing at the wrapper that
+    /// left — so a chip that trusted the selection alone would read, and be written to, a device
+    /// attached to nothing while the surviving device went unreported.
+    /// </remarks>
+    [Fact]
+    public void The_rate_chip_leaves_a_device_that_went_away_without_being_disconnected()
+    {
+        var shell = new DaqifiViewModel(new NullDialogService());
+        var unplugged = DeviceAdvertising(22000, "COM-282-A");
+        var survivor = DeviceAdvertising(22000, "COM-282-B");
+        survivor.StreamingFrequency = 500;
+        shell.ConnectedDevices.Add(unplugged);
+        shell.ConnectedDevices.Add(survivor);
+        shell.SelectedDevice = unplugged;
+        shell.SelectedStreamingFrequency = 1000;
+
+        // UpdateUi's "ConnectedDevices" case: clear, repopulate from the registry, never touch the
+        // selection.
+        shell.ConnectedDevices.Clear();
+        shell.ConnectedDevices.Add(survivor);
+
+        Assert.Same(unplugged, shell.SelectedDevice);
+        Assert.Equal(500, shell.SelectedStreamingFrequency);
+
+        // And the write follows the read, so an edit cannot land on the device that left.
+        shell.SelectedStreamingFrequency = 250;
+
+        Assert.Equal(250, survivor.StreamingFrequency);
+        Assert.Equal(1000, unplugged.StreamingFrequency);
+    }
+
+    /// <summary>
     /// With nothing connected there is no device to read, and the setter has nowhere to write. It
     /// must not throw: the chip's setter is reached from a two-way binding, and a throw out of a
     /// property setter travels into the dispatcher and ends the process (the #183/#214 shape).
