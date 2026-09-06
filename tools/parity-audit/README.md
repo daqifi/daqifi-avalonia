@@ -84,6 +84,17 @@ DETERMINISM_RUNS=10 ./run.sh --determinism /some/out/dir    # more, if you are c
 ./run.sh --check-captured /some/out/dir/determinism/r1
 ```
 
+**Go through `run.sh`, not a bare `dotnet run`.** It builds `-c Release`, and that is
+load-bearing: a **Debug** capture cannot reproduce the committed baseline on any host at
+any commit, because `MobileShellView` appends `AppVersion.ShortBuildMetadata` to the
+version line under `#if DEBUG` and that metadata is the git commit SourceLink stamps into
+`InformationalVersion`. The mobile stream screens then carry the short SHA of whatever
+commit built them. It presents as a regression rather than as a mistake — a couple of
+screens differ by a tenth of a percent of their pixels while every other screen is
+byte-identical, and a Debug capture is self-consistent, so repeating it confirms the
+difference instead of exposing it. The tell is that the differing pixels are a short hex
+string beside the version number (found from the wrong end in #262).
+
 Every mode fails non-zero on anything it cannot vouch for, including an **incomplete**
 capture. `AvaloniaCapture` declares the screens it is contracted to produce
 (`ExpectedScreens`) and fails the run if any is absent or if it wrote one that is not on
