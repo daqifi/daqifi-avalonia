@@ -110,7 +110,8 @@ every PNG to be byte-identical to the first run's, failing non-zero if any diffe
 is missing, or if there is nothing to compare at all.
 
 Since #191 this is also a **CI gate**: the `Desktop head on macOS` job runs it on every
-pull request, additionally asserts that the capture produced all 25 screens, and uploads
+pull request, additionally asserts the size of the capture set independently of the
+harness's own `ExpectedScreens` list (the workflow states the number itself), and uploads
 `<out>/determinism/` as an artifact when it fails, so the differing PNGs are in hand.
 
 Since #188 the **baseline is gated there too, over the same captures**: the job runs
@@ -313,10 +314,70 @@ starts a network fetch (`LoadFirmwareOptionsAsync`) that populates a bound `Comb
 asynchronously, so its rendered state is a race against github.com. Capturing it needs an
 injected stub `IFirmwareDownloadService`, which makes the picture a picture of a stub.
 
+## Window size, and the theme the whole manifest assumes
+
+Two things every hash here silently depended on until #253, both of which the harness now
+states out loud.
+
+### The minimum window size (`desktop-min-*`)
+
+The desktop sweep runs **twice**: once at 1440x900, and once at the window's own declared
+minimum. `CaptureDesktop` reads that minimum off `MainWindow` (`MainWindow.axaml`:
+`MinWidth="720" MinHeight="480"`) rather than restating it, so changing the AXAML
+re-renders these screens and the baseline check reports it, instead of the two quietly
+disagreeing. A window that declares no minimum arrives as `0x0` and fails the run — a
+capture at a size the app does not name would gate nothing but the harness's own opinion,
+which is also why there is no third, invented size.
+
+The minimum is where clipping and overlap happen, and it had never been rendered: a green
+visual gate meant "1440x900 did not change". It is a desktop-only sweep, because it is the
+desktop `Window` that carries the constraint — the mobile shell is already captured at the
+Galaxy A16's true logical size, and each dialog at the size its own AXAML declares.
+
+Worth knowing before reading a `desktop-min-*` diff: the flyouts are one `SplitView` with a
+fixed `OpenPaneLength="380"`, so at 720 wide the pane covers 380 of the window and the
+pane's own content does **not** reflow with width. Measured when these were recorded, the
+pane region of `desktop-min-6` and `desktop-min-8` was pixel-identical to the 1440-wide
+capture's; `-7` and `-9` differed, because their empty states are vertically centred and
+the window is 480 tall rather than 900. All nine are captured anyway — "the desktop set, at
+both sizes" is a rule that needs no per-screen re-derivation and stays right when a flyout
+later grows content that does reflow, which a curated subset would not.
+
+### The theme pin (no light-theme screens, and why)
+
+Every screen in this manifest is a **Dark** rendering. That is a property of the app, not of
+the harness: `App.axaml` pins `RequestedThemeVariant="Dark"`, `DesignTokens.axaml` ships
+`Dark` and `Default` carrying identical dark values and **no `Light` dictionary**, and no
+view-model, view or setting exposes a theme switch. There is no light theme to gate.
+
+The harness can nonetheless *render* one — it is one property assignment, and #253 measured
+what comes back. With the pin removed the app follows the host, and this headless platform
+reports **Light**: the resulting capture is byte-identical to one with `ThemeVariant.Light`
+forced, and **10 of the 25 screens then in the manifest changed** — `desktop-8`,
+`desktop-9`, `dialog-connect-wifi-scanning`, `dialog-export-configure`,
+`dialog-firmware-uploading`, and all five mobile Stream/Storage/Settings screens. Those are
+the surfaces built from Fluent's stock control chrome rather than from `DesignTokens.axaml`
+brushes, and Fluent's chrome is the half of the app that *has* a light variant. The app's
+own tokens do not, so what comes out is a hybrid — light controls on dark panels — that no
+user can reach while the pin holds.
+
+So there are no light baselines, and adding them would be worse than adding nothing:
+it would freeze an unreachable hybrid as "correct" and double the gate's flake surface for
+it. What the harness does instead is `RequireThemePinnedDark()`, which fails the run if
+`RequestedThemeVariant` or `ActualThemeVariant` is anything but `Dark` and prints the host's
+own variant beside them for context. That catches the one edit that makes the hybrid
+reachable — deleting an attribute from `App.axaml`, which breaks no build and fails no other
+test — for zero screens and zero run time. If the app ever grows a real light variant, that
+assert is what to replace with light captures, and the ten screens above are the ones that
+will move.
+
 ## Baselines
 
-`baselines/<os>-<arch>.sha256` records the SHA-256 of all 25 Avalonia screens for one
-host — a dated reference point for "has anything moved". `./run.sh --check-baseline`
+`baselines/<os>-<arch>.sha256` records the SHA-256 of every Avalonia screen the harness
+produces, for one host — a dated reference point for "has anything moved". The count is
+deliberately not restated here: it is `ExpectedScreens` in `AvaloniaCapture/Program.cs`,
+and the workflow's own `expected=` in `.github/workflows/build.yml`, which are the two
+places that are checked against reality on every run. `./run.sh --check-baseline`
 captures once and verifies against the one for the current host, failing on a changed
 screen, a missing one, and one the baseline does not list (`shasum -c` only checks the
 names it was given, so the extra-file direction is checked separately).

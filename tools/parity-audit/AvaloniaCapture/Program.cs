@@ -9,6 +9,7 @@ using Avalonia.Headless;
 using Avalonia.Interactivity;
 using Avalonia.Media.Imaging;
 using Avalonia.Platform;
+using Avalonia.Styling;
 using Avalonia.Threading;
 using Avalonia.VisualTree;
 using Daqifi.Avalonia.Views;
@@ -58,6 +59,19 @@ internal static class AvaloniaCapture
         "desktop-7-notifications-flyout",
         "desktop-8-livegraph-settings-flyout",
         "desktop-9-summary-flyout",
+        // The same nine desktop screens at the window's own declared minimum size
+        // (MainWindow.axaml: MinWidth=720 MinHeight=480), which is the size a user can
+        // actually drag the window down to and the size at which clipping and overlap
+        // happen. Read off the window rather than restated here — see MinimumWindowSize.
+        "desktop-min-1-livegraph",
+        "desktop-min-2-loggeddata",
+        "desktop-min-3-channels",
+        "desktop-min-4-devices",
+        "desktop-min-5-profiles",
+        "desktop-min-6-settings-drawer",
+        "desktop-min-7-notifications-flyout",
+        "desktop-min-8-livegraph-settings-flyout",
+        "desktop-min-9-summary-flyout",
         "mobile-portrait-1-stream",
         "mobile-portrait-2-channels",
         "mobile-portrait-3-storage",
@@ -166,6 +180,7 @@ internal static class AvaloniaCapture
 
         try
         {
+            RequireThemePinnedDark();
             CaptureDesktop(desktop.MainWindow);
             CaptureMobile();
             // LAST, and deliberately so. Every dialog here builds a real view-model, and those
@@ -202,6 +217,86 @@ internal static class AvaloniaCapture
             .UseHeadless(new AvaloniaHeadlessPlatformOptions { UseHeadlessDrawing = false })
             .WithInterFont();
 
+    /// <summary>
+    /// Fails the run unless the app is still pinned to the Dark theme variant.
+    /// </summary>
+    /// <remarks>
+    /// <para>
+    /// Every hash in the committed manifest is a DARK rendering, and nothing else in this repo
+    /// says so. The pin is one attribute — <c>RequestedThemeVariant="Dark"</c> on
+    /// <c>App.axaml</c>'s <c>Application</c> — and deleting it does not break the build, does not
+    /// fail a test, and does not change how the app looks on a dark-mode desktop. It changes how
+    /// the app looks on a LIGHT-mode one, because the variant then follows the platform.
+    /// </para>
+    /// <para>
+    /// Measured on this harness (#253), which runs on a headless platform that reports
+    /// <c>Light</c>: with the pin removed the capture is byte-identical to one taken with
+    /// <c>ThemeVariant.Light</c> forced, and <b>10 of the 25 screens the manifest then listed
+    /// changed</b> — the two flyouts with stock inputs in them, three dialogs, and five mobile
+    /// screens. Those are the surfaces built from Fluent's own control chrome rather than from
+    /// the app's <c>DesignTokens.axaml</c> brushes, and Fluent's chrome is the half of the app
+    /// that has a light variant. The app's own tokens have none: <c>DesignTokens.axaml</c> ships
+    /// <c>Dark</c> and <c>Default</c> carrying identical dark values and no <c>Light</c>
+    /// dictionary at all, so the result is a hybrid — light controls on dark panels — that no
+    /// user can reach while the pin is in place, and that every user on a light-mode desktop
+    /// would get the moment it is not.
+    /// </para>
+    /// <para>
+    /// So this is the whole of what a light-theme check can honestly assert here, and it is
+    /// worth more than ten more PNGs would be: baselining that hybrid would freeze an
+    /// unreachable rendering as "correct", while this catches the one edit that makes it
+    /// reachable, for no screens and no run time. If the app ever grows a real light variant —
+    /// a <c>Light</c> dictionary and a way for a user to select it — this is the assert to
+    /// replace with light captures, and the ten screens above are the ones that will move.
+    /// </para>
+    /// </remarks>
+    private static void RequireThemePinnedDark()
+    {
+        var app = Application.Current;
+        if (app is null)
+        {
+            _failed = true;
+            Console.WriteLine("[FAIL] theme: Application.Current is null, so the variant every " +
+                              "screen below is captured in cannot be established");
+            return;
+        }
+
+        var requested = app.RequestedThemeVariant;
+        var actual = app.ActualThemeVariant;
+        // Reported for context rather than asserted: it is a property of the HOST, and the whole
+        // point of the pin is that the app ignores it. Headless answers Light, which is why a
+        // dropped pin shows up here at all.
+        var platform = app.PlatformSettings?.GetColorValues().ThemeVariant.ToString() ?? "(unknown)";
+        Console.WriteLine($"[INFO] theme: RequestedThemeVariant={Describe(requested)}, " +
+                          $"ActualThemeVariant={Describe(actual)}, platform reports {platform}");
+
+        if (Equals(requested, ThemeVariant.Dark) && Equals(actual, ThemeVariant.Dark))
+        {
+            Console.WriteLine("[OK]   theme pinned to Dark; every screen below is a Dark rendering");
+            return;
+        }
+
+        _failed = true;
+        Console.WriteLine(
+            $"[FAIL] theme: the app is not pinned to Dark (requested {Describe(requested)}, " +
+            $"actual {Describe(actual)}). App.axaml sets RequestedThemeVariant=\"Dark\" and the " +
+            "committed baselines are all Dark renderings, so either that pin was removed - in " +
+            "which case the app now follows the host, and on a light-mode host 10 of these " +
+            "screens render Fluent's light control chrome over the app's dark panels - or the " +
+            "app grew a real light variant, in which case this check and the baselines both " +
+            "need rethinking. Neither is a harness problem.");
+    }
+
+    // ThemeVariant.Default renders as an empty string, which reads as a missing value in a log
+    // line rather than as the answer it is.
+    private static string Describe(ThemeVariant? variant) =>
+        variant?.ToString() is { Length: > 0 } text ? text : "Default";
+
+    // The size every desktop screen has been captured at since this harness existed. Not the
+    // app's own default (the view-model's Width/Height binding supplies that) - a fixed capture
+    // size is what makes the bytes reproducible.
+    private static readonly (int Width, int Height) DesktopSize = (1440, 900);
+
     // ---- Desktop: the one MainWindow, swept across tabs + drawers via VM props ----
     private static void CaptureDesktop(Window? main)
     {
@@ -210,9 +305,73 @@ internal static class AvaloniaCapture
         if (vm is null) { _failed = true; Console.WriteLine("[FAIL] MainWindow.DataContext null"); return; }
 
         main.SizeToContent = SizeToContent.Manual;
-        main.Width = 1440;
-        main.Height = 900;
+        SweepDesktop(main, vm, "desktop", DesktopSize);
+
+        // The same sweep again at the window's own declared minimum (#253). Until this existed a
+        // green visual gate said "the dark theme at 1440x900 did not change", which is a much
+        // narrower claim than the gate looks like it is making: clipping and overlap happen at
+        // the SMALL end, and nothing here had ever rendered the app there. The minimum is the
+        // one other size the app itself names, so it is the one other size worth pinning - any
+        // other number would be the harness inventing a viewport and gating its own choice.
+        var minimum = MinimumWindowSize(main);
+        if (minimum is null) { return; }
+        SweepDesktop(main, vm, "desktop-min", minimum.Value);
+
+        // Leave the window as the later phases have always found it. Nothing after this captures
+        // MainWindow, but the mobile and dialog phases run against a process this one has been
+        // mutating, and "put it back" is cheaper than establishing that they do not care.
+        Resize(main, DesktopSize.Width, DesktopSize.Height);
+    }
+
+    /// <summary>
+    /// The minimum window size, read off the window rather than restated here.
+    /// </summary>
+    /// <remarks>
+    /// <c>MainWindow.axaml</c> declares <c>MinWidth="720" MinHeight="480"</c>, and that
+    /// declaration is the definition of "minimum window size" for this app - a real platform
+    /// window will not go below it, and every layout in the app has to hold there. Reading it
+    /// back off the window keeps the capture and the constraint from drifting apart: change the
+    /// AXAML and these screens re-render at the new size, which the baseline check then reports
+    /// as a change, which is exactly right. Restating 720x480 in this file would let the two
+    /// disagree silently, and a capture at a size the app does not name would gate nothing but
+    /// the harness's own opinion.
+    /// <para>
+    /// Avalonia's default for both is 0, not NaN, so an app that declares no minimum arrives
+    /// here as 0x0 and fails loudly instead of being captured at a fabricated size.
+    /// </para>
+    /// </remarks>
+    private static (int Width, int Height)? MinimumWindowSize(Window main)
+    {
+        var width = main.MinWidth;
+        var height = main.MinHeight;
+        if (!double.IsFinite(width) || !double.IsFinite(height) || width < 1 || height < 1)
+        {
+            _failed = true;
+            Console.WriteLine(
+                $"[FAIL] MainWindow declares no usable minimum size (MinWidth={width}, " +
+                $"MinHeight={height}), so there is no minimum-size screen to capture. Either " +
+                "MinWidth/MinHeight were removed from MainWindow.axaml - in which case the app " +
+                "no longer has a minimum and these baselines should go with it - or they moved " +
+                "somewhere this cannot see.");
+            return null;
+        }
+        Console.WriteLine($"[INFO] minimum window size, read from MainWindow: " +
+                          $"{(int)width}x{(int)height}");
+        return ((int)width, (int)height);
+    }
+
+    /// <summary>
+    /// Captures the five panes and the four drawers at one window size, named
+    /// <c><paramref name="prefix"/>-1-livegraph</c> … <c><paramref name="prefix"/>-9-summary-flyout</c>.
+    /// </summary>
+    private static void SweepDesktop(Window main, object vm, string prefix, (int Width, int Height) size)
+    {
+        main.Width = size.Width;
+        main.Height = size.Height;
         if (!main.IsVisible) { main.Show(); }
+        // A resize relayouts the whole tree, so the first capture of a sweep starts from motion
+        // unless something waits for it - the same reason SweepDrawer quiesces after a close.
+        Quiesce(main);
 
         // Never capture after a navigation that did not happen. Set() returning false means the
         // property is gone or read-only, and the window is therefore still showing the PREVIOUS
@@ -223,7 +382,7 @@ internal static class AvaloniaCapture
         var tabs = new[] { "livegraph", "loggeddata", "channels", "devices", "profiles" };
         for (var i = 0; i < tabs.Length; i++)
         {
-            var name = $"desktop-{i + 1}-{tabs[i]}";
+            var name = $"{prefix}-{i + 1}-{tabs[i]}";
             if (!Set(vm, "SelectedIndex", i))
             {
                 _failed = true;
@@ -242,10 +401,10 @@ internal static class AvaloniaCapture
             return;
         }
         Quiesce(main);
-        SweepDrawer(main, vm, "IsAppSettingsOpen", "desktop-6-settings-drawer");
-        SweepDrawer(main, vm, "IsNotificationsOpen", "desktop-7-notifications-flyout");
-        SweepDrawer(main, vm, "IsLiveGraphSettingsOpen", "desktop-8-livegraph-settings-flyout");
-        SweepDrawer(main, vm, "IsLogSummaryOpen", "desktop-9-summary-flyout");
+        SweepDrawer(main, vm, "IsAppSettingsOpen", $"{prefix}-6-settings-drawer");
+        SweepDrawer(main, vm, "IsNotificationsOpen", $"{prefix}-7-notifications-flyout");
+        SweepDrawer(main, vm, "IsLiveGraphSettingsOpen", $"{prefix}-8-livegraph-settings-flyout");
+        SweepDrawer(main, vm, "IsLogSummaryOpen", $"{prefix}-9-summary-flyout");
     }
 
     private static void SweepDrawer(Window main, object vm, string prop, string name)

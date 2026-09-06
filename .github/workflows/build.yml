@@ -555,9 +555,11 @@ jobs:
       # another machine's bytes, and it is only meaningful once the capture here is
       # known to be stable. See the job header, and #188.
       #
-      # `bash tools/parity-audit/run.sh`, not `./run.sh`: the script is committed mode
-      # 644, so invoking it through its exec bit would fail on a fresh checkout. It
-      # needs bash specifically (arrays, `shopt`), not sh.
+      # `bash tools/parity-audit/run.sh`, not `./run.sh`. The script was committed mode
+      # 644 until #253 gave it its exec bit, so `./run.sh` used to fail on a fresh
+      # checkout; it no longer does. This stays spelled with an explicit interpreter
+      # anyway, because the script needs bash specifically (arrays, `shopt`) and naming
+      # it here does not depend on a mode bit surviving whatever copies the tree.
       #
       # No RID anywhere in here, and none needed: run.sh restores implicitly through
       # `dotnet run`, a RID-less restore cannot prune a lock file the way #85's `-r`
@@ -595,8 +597,10 @@ jobs:
           # harness's ExpectedScreens, and this number.
           #
           # 18 desktop/mobile screens + 7 dialog screens (#213, plus the firmware
-          # upload scrim added for #241).
-          expected=25
+          # upload scrim added for #241) + the 9 minimum-size desktop screens (#253:
+          # the same nine panes and drawers again at MainWindow's declared
+          # MinWidth=720 MinHeight=480).
+          expected=34
           actual=$(find "${PARITY_OUT}/determinism/r1" -maxdepth 1 -type f -name '*.png' \
                      | wc -l | tr -d '[:space:]')
           if [ "${actual}" != "${expected}" ]; then
