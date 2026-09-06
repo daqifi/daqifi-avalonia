@@ -346,62 +346,168 @@ public sealed class SessionSampleWriterDurabilityTests : IDisposable
     }
 
     /// <summary>
-    /// CHARACTERIZATION, NOT APPROVAL. This pins behavior the writer has today that a user would
-    /// call a bug, so that a fix has something to change and cannot land by accident.
+    /// The replacement for PR #247's <c>CHARACTERIZATION, NOT APPROVAL</c> test, which pinned the
+    /// opposite outcome: there, one <see cref="double.NaN"/> reading meant the five ordinary samples
+    /// offered after it never reached disk, and the whole session sat in memory behind a single
+    /// Error line. Its doc comment said its replacement should assert that the five good samples
+    /// land. This is that assertion.
     ///
-    /// <para>"Never abandon the batch" is the right answer for the failures the class was written
-    /// against — a full disk, a file another process has open, an unwritable folder — because those
-    /// end and the rows are still wanted when they do. It is the wrong answer for a row the database
-    /// will reject every time it is offered, and the consumer cannot tell the two apart: it retains
-    /// the batch, backs off to one attempt every ~5s, and drains each new sample onto the same
-    /// doomed list. So ONE bad row means nothing from that session ever reaches disk, the retained
-    /// batch grows without bound for as long as the session runs, and the log carries a single line
-    /// about it — the log-once streak rule, correct in itself, ensures the silence afterwards.</para>
+    /// <para>What changed is not the consumer's retry rule — "never abandon the batch" is still
+    /// right for the failures it was written against, a full disk or a file another process has
+    /// open, because those end and the rows are still wanted when they do. What changed is that the
+    /// writer no longer accepts a row that would make the rule a trap. A batch retained for retry
+    /// can now only contain rows the database could commit, so retrying it can eventually
+    /// succeed.</para>
     ///
-    /// <para>The row used here is a sample whose <see cref="DataSample.Value"/> is
-    /// <see cref="double.NaN"/>, which Microsoft.Data.Sqlite refuses outright ("Cannot store 'NaN'
-    /// values."). Measured alongside it: infinities and <see cref="double.MaxValue"/> store without
-    /// complaint, so NaN is specifically the value that does this. The app already holds a policy
-    /// that non-finite values must not propagate —
-    /// <c>AbstractChannel.ActiveSample</c> checks <c>double.IsFinite</c> and disables scaling rather
-    /// than pass one on, "so Infinity/NaN never reaches the live plot or exported data" — but that
-    /// check sits on the user-scaling-expression path only. The unscaled device path
-    /// (<c>AnalogChannel.GetScaledValue</c> → Core's calibration formula) has no equivalent, and
-    /// neither does the writer.</para>
-    ///
-    /// <para>Whichever way it is fixed — refusing non-finite values at the producer, isolating the
-    /// offending row after repeated failure, or bounding the retained batch — this test should
-    /// change, and its replacement should assert that the five good samples land. It is here so
-    /// that the change is deliberate.</para>
+    /// <para>The failing row costs exactly itself: one reading, not the session. And nothing is
+    /// logged as an <c>Error</c>, because nothing failed — the database was healthy throughout and
+    /// every storable row landed.</para>
     /// </summary>
     [Fact]
-    public void A_row_the_database_will_never_accept_wedges_every_later_sample_in_the_session()
+    public void A_row_the_database_will_never_accept_costs_only_that_row()
     {
         // The database is healthy throughout: the failure is the row, not the storage.
         using var writer = NewWriter();
 
         writer.Add(Sample(double.NaN));
-        Assert.True(
-            WaitUntil(() => _appLogger.Errors.Count == 1, TimeSpan.FromSeconds(15)),
-            "the rejected row was never reported");
-        Assert.Contains("retaining the batch", _appLogger.Errors[0], StringComparison.OrdinalIgnoreCase);
 
-        // Five perfectly ordinary samples, offered after the batch is already doomed.
+        // Five perfectly ordinary samples, offered after the bad one.
         for (var value = 1; value <= 5; value++)
         {
             writer.Add(Sample(value));
         }
 
-        Assert.True(
-            WaitUntil(() => writer.PendingRetryCount == 6, TimeSpan.FromSeconds(15)),
-            $"the good samples were not drained onto the doomed batch (PendingRetryCount={writer.PendingRetryCount})");
+        writer.WaitForIdle(TimeSpan.FromSeconds(15));
 
-        writer.WaitForIdle(TimeSpan.FromSeconds(2));
+        using var context = Verification();
+        Assert.Equal(
+            [1d, 2d, 3d, 4d, 5d],
+            context.Samples.OrderBy(sample => sample.TimestampTicks).Select(sample => sample.Value).ToList());
 
-        // The whole session's data, held in memory and never written, with no further diagnostics.
+        // Nothing stranded, so WaitForIdle above returned on a genuinely empty writer rather than
+        // on its timeout, and LoggingManager's SampleCount COUNT sees the real total.
+        Assert.Equal(0, writer.PendingRetryCount);
+        Assert.Empty(_appLogger.Errors);
+    }
+
+    /// <summary>
+    /// The other half of the fix: the user has to be able to find out. Dropping the reading silently
+    /// would trade one loud failure for a quiet one — a channel that is producing nothing usable
+    /// would show up only as a gap in exported data, which is indistinguishable from a channel that
+    /// was not recording.
+    ///
+    /// <para>So the report names the reading it dropped — which device, which channel, what value —
+    /// rather than saying only that something was refused.</para>
+    /// </summary>
+    [Fact]
+    public void The_first_dropped_row_is_reported_with_the_channel_it_came_from()
+    {
+        using var writer = NewWriter();
+
+        writer.Add(Sample(double.NaN));
+        writer.WaitForIdle(TimeSpan.FromSeconds(5));
+
+        var warning = Assert.Single(_appLogger.Warnings);
+        Assert.Contains("Test Device", warning, StringComparison.Ordinal);
+        Assert.Contains("AI0", warning, StringComparison.Ordinal);
+        Assert.Contains("NaN", warning, StringComparison.Ordinal);
+
+        // A dropped reading is not a failure of the write path, and reporting it as one would put a
+        // healthy session into Sentry.
+        Assert.Empty(_appLogger.Errors);
+    }
+
+    /// <summary>
+    /// A broken channel does not produce one bad reading, it produces every reading — so a
+    /// report-the-first-and-fall-silent rule (the one the consumer's failure streak uses, and the
+    /// one that left #247's session with a single line) would hide the size of the loss, while
+    /// reporting every drop would flood NLog and Sentry at the sample rate.
+    ///
+    /// <para>The rate chosen is a new power of ten: a hundred lost readings are three lines, a
+    /// million are seven, and each one carries the running total. This pins the rate as well as the
+    /// fact of reporting, because a rule that degenerates to either extreme is the defect.</para>
+    /// </summary>
+    [Fact]
+    public void Every_reading_of_a_broken_channel_being_dropped_keeps_being_reported()
+    {
+        using var writer = NewWriter();
+
+        for (var i = 0; i < 100; i++)
+        {
+            writer.Add(Sample(double.NaN));
+        }
+
+        writer.WaitForIdle(TimeSpan.FromSeconds(5));
+
+        Assert.Equal(3, _appLogger.Warnings.Count);
+        Assert.Contains("100", _appLogger.Warnings[2], StringComparison.Ordinal);
         Assert.Equal(0, CountSamples());
-        Assert.Equal(6, writer.PendingRetryCount);
-        Assert.Single(_appLogger.Errors);
+        Assert.Empty(_appLogger.Errors);
+    }
+
+    /// <summary>
+    /// The guard has to stay as narrow as the constraint that motivates it. SQLite's REAL has no
+    /// representation for <see cref="double.NaN"/> and Microsoft.Data.Sqlite refuses it outright
+    /// ("Cannot store 'NaN' values."), but the infinities, <see cref="double.MaxValue"/> and
+    /// <see cref="double.Epsilon"/> are all stored without complaint — so refusing them would be the
+    /// writer discarding readings the database would have kept, on its own opinion about what a
+    /// meaningful reading is.
+    ///
+    /// <para>That is why the check is <c>IsNaN</c> and not <c>IsFinite</c>, even though
+    /// <c>AbstractChannel.ActiveSample</c> uses <c>IsFinite</c> for its own, different purpose
+    /// (deciding whether a user's scaling expression produced a usable result). Whether an infinite
+    /// reading should reach the plot and the exported data is a question for whatever produced it;
+    /// it is not a storage question, and this class only answers storage questions.</para>
+    ///
+    /// <para>This test also documents the measurement the guard rests on: it fails if a future
+    /// Microsoft.Data.Sqlite starts refusing one of these too, which would mean the guard has to
+    /// grow.</para>
+    /// </summary>
+    [Fact]
+    public void The_extreme_values_the_database_does_accept_are_still_stored()
+    {
+        using var writer = NewWriter();
+
+        writer.Add(Sample(double.PositiveInfinity));
+        writer.Add(Sample(double.NegativeInfinity));
+        writer.Add(Sample(double.MaxValue));
+        writer.Add(Sample(double.Epsilon));
+
+        writer.WaitForIdle(TimeSpan.FromSeconds(15));
+
+        using var context = Verification();
+        Assert.Equal(
+            [double.PositiveInfinity, double.NegativeInfinity, double.MaxValue, double.Epsilon],
+            context.Samples.OrderBy(sample => sample.TimestampTicks).Select(sample => sample.Value).ToList());
+
+        Assert.Equal(0, writer.PendingRetryCount);
+        Assert.Empty(_appLogger.Warnings);
+        Assert.Empty(_appLogger.Errors);
+    }
+
+    /// <summary>
+    /// The same shape as the NaN row, reached a different way: a null in the batch faults the bulk
+    /// insert before any SQL is generated, every time it is retried, so it wedges the writer exactly
+    /// as a NaN did. <c>DatabaseLogger.Log</c> is a public <c>ILogger</c> member and only one of its
+    /// call sites null-checks, so this is the second way an unstorable row can arrive.
+    ///
+    /// <para>It is pinned here because the invariant the fix installs is about the batch, not about
+    /// doubles: a batch retained for retry contains only rows the database could commit.</para>
+    /// </summary>
+    [Fact]
+    public void A_null_sample_is_refused_at_the_door_rather_than_faulting_every_later_batch()
+    {
+        using var writer = NewWriter();
+
+        writer.Add(null!);
+        writer.Add(Sample(1));
+
+        writer.WaitForIdle(TimeSpan.FromSeconds(15));
+
+        Assert.Equal(1, CountSamples());
+        Assert.Equal(0, writer.PendingRetryCount);
+        Assert.Single(_appLogger.Warnings);
+        Assert.Empty(_appLogger.Errors);
     }
 
     #region Fixture
@@ -488,6 +594,7 @@ public sealed class SessionSampleWriterDurabilityTests : IDisposable
         private readonly Lock _gate = new();
         private readonly List<string> _errors = [];
         private readonly List<string> _informations = [];
+        private readonly List<string> _warnings = [];
 
         internal IReadOnlyList<string> Errors
         {
@@ -499,14 +606,29 @@ public sealed class SessionSampleWriterDurabilityTests : IDisposable
             get { lock (_gate) { return [.. _informations]; } }
         }
 
+        /// <summary>
+        /// How the writer reports a row it refused. Recorded because the tests around dropped rows
+        /// assert on what a support log would show, not on a counter.
+        /// </summary>
+        internal IReadOnlyList<string> Warnings
+        {
+            get { lock (_gate) { return [.. _warnings]; } }
+        }
+
         public void Information(string message)
         {
             lock (_gate) { _informations.Add(message); }
         }
 
-        public void Warning(string message) { }
+        public void Warning(string message)
+        {
+            lock (_gate) { _warnings.Add(message); }
+        }
 
-        public void Warning(Exception ex, string message) { }
+        public void Warning(Exception ex, string message)
+        {
+            lock (_gate) { _warnings.Add(message); }
+        }
 
         public void Error(string message)
         {

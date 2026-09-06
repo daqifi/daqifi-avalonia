@@ -8,6 +8,7 @@ using Daqifi.Desktop.Common.Loggers;
 using EFCore.BulkExtensions;
 using Microsoft.EntityFrameworkCore;
 using System.Collections.Concurrent;
+using System.Globalization;
 
 namespace Daqifi.Desktop.Logger;
 
@@ -83,6 +84,14 @@ public sealed class SessionSampleWriter : IDisposable
     /// only reader/clearer.
     /// </summary>
     private volatile bool _discardRequested;
+
+    /// <summary>
+    /// Running total of samples refused by <see cref="Add"/> because the database could never
+    /// accept them. Not <c>volatile</c> on purpose: it is only ever touched through
+    /// <see cref="Interlocked"/>, which a volatile qualifier would fight (CS0420), and several
+    /// device threads can be producing at once.
+    /// </summary>
+    private int _rejectedSampleCount;
     #endregion
 
     #region Constructor
@@ -105,7 +114,8 @@ public sealed class SessionSampleWriter : IDisposable
     #region Enqueue
     /// <summary>
     /// Producer. Enqueues a sample for the background consumer to persist. A no-op once the writer
-    /// has been disposed.
+    /// has been disposed, and for a sample the database can never accept (see
+    /// <see cref="IsStorable"/>).
     /// </summary>
     /// <param name="dataSample">The sample to buffer for insertion.</param>
     // @port: Daqifi.Desktop.Logger.SessionSampleWriter.Add
@@ -113,12 +123,93 @@ public sealed class SessionSampleWriter : IDisposable
     {
         if (_disposed) { return; }
 
+        // The front door is where a row the store can never accept has to die. Everything below
+        // this line is built on "never abandon the batch", which is the right answer for a full
+        // disk or a locked file — the failure ends and the rows are still wanted — and a trap for
+        // a row that will be refused every time it is offered: the batch is retained, every later
+        // sample drains onto it, and the whole session stays in memory and never lands. Refusing
+        // the row here is what makes that rule safe, because it makes the invariant local: a
+        // retained batch cannot contain a row the database is certain to reject, so a retry can
+        // always eventually succeed.
+        if (!IsStorable(dataSample))
+        {
+            ReportRejected(dataSample);
+            return;
+        }
+
         try
         {
             _buffer.Add(dataSample);
         }
         catch (ObjectDisposedException) { }
         catch (InvalidOperationException) { }
+    }
+
+    /// <summary>
+    /// Whether the bulk insert could ever commit a batch containing this row.
+    /// <para>
+    /// Deliberately narrow: it refuses only what the store itself refuses, not what a reader might
+    /// find meaningless. Microsoft.Data.Sqlite rejects <see cref="double.NaN"/> outright ("Cannot
+    /// store 'NaN' values.") because SQLite's REAL has no representation for it, and a null row
+    /// faults the bulk insert before any SQL is generated. Both are permanent properties of the
+    /// row, so no amount of retrying changes the outcome. The infinities and
+    /// <see cref="double.MaxValue"/> are stored without complaint and are therefore NOT refused
+    /// here — dropping a reading the database would have kept is data loss, and deciding whether an
+    /// infinite reading is meaningful belongs to whatever produced it, not to the component that
+    /// writes it down.
+    /// </para>
+    /// </summary>
+    private static bool IsStorable(DataSample dataSample) =>
+        dataSample is not null && !double.IsNaN(dataSample.Value);
+
+    /// <summary>
+    /// Reports a refused row, at a rate that stays readable whether it happens once or on every
+    /// sample of a broken channel: the first is reported, and thereafter only when the running
+    /// total reaches a new power of ten. The alternative rates are both failures — reporting every
+    /// one floods NLog and Sentry at the sample rate, and reporting only the first (the rule the
+    /// consumer's failure streak uses) is what left a whole silent session behind a single line.
+    /// A channel whose every reading is unstorable therefore keeps announcing itself, ~10 lines per
+    /// decade of samples, so the loss is visible in a support log instead of being inferred from a
+    /// gap in the data.
+    /// <para>
+    /// The count is per writer, which is per application run rather than per session: the writer
+    /// outlives individual logging sessions.
+    /// </para>
+    /// </summary>
+    private void ReportRejected(DataSample dataSample)
+    {
+        var total = Interlocked.Increment(ref _rejectedSampleCount);
+
+        // Each total is produced exactly once, so testing the value itself needs no lock and cannot
+        // double-report when several device threads reject samples concurrently.
+        if (!IsPowerOfTen(total)) { return; }
+
+        // Invariant, so the value in a support log reads the same whatever machine produced it and
+        // a reader is never left deciding whether an unfamiliar symbol is the value or the locale.
+        var describedSample = dataSample is null
+            ? "a null sample"
+            : $"a sample of {dataSample.DeviceName ?? "?"}/{dataSample.ChannelName ?? "?"} " +
+              $"with value {dataSample.Value.ToString(CultureInfo.InvariantCulture)}";
+
+        _appLogger.Warning(
+            $"The database cannot store {describedSample}; it was dropped and logging continued. " +
+            $"{total} sample(s) dropped for this reason so far. The next report is at " +
+            $"{(long)total * 10} dropped.");
+    }
+
+    /// <summary>
+    /// True for 1, 10, 100, ... — the totals at which <see cref="ReportRejected"/> speaks up.
+    /// Runs only when a sample has already been refused, so it is off the sample path entirely.
+    /// </summary>
+    private static bool IsPowerOfTen(int value)
+    {
+        for (var power = 1; power <= value; power *= 10)
+        {
+            if (power == value) { return true; }
+            if (power > int.MaxValue / 10) { break; }
+        }
+
+        return false;
     }
     #endregion
 
