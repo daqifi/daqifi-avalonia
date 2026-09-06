@@ -407,7 +407,7 @@ public partial class PlotLogger : ObservableObject, ILogger
     private bool _firstRenderTickLogged;
 
     // @port: Daqifi.Desktop.Logger.PlotLogger.CompositionTargetRendering
-    private void CompositionTargetRendering(object sender, EventArgs e)
+    private void CompositionTargetRendering(object? sender, EventArgs e)
     {
         if (!_firstRenderTickLogged)
         {
