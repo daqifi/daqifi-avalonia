@@ -1430,7 +1430,6 @@ internal static class AvaloniaCapture
         // SettleStableSamples frames in a row are identical, i.e. after the agreement has
         // survived more than one sample interval — see the note on SettleStableSamples.
         var agreed = 1;
-        string? violation = null;
         for (var round = 1; round <= SettleMaxRounds; round++)
         {
             Thread.Sleep(SettleSampleInterval);
@@ -1444,8 +1443,7 @@ internal static class AvaloniaCapture
                     // end state is read here rather than one statement later, because nothing
                     // pumps between Encode and this line, so what it reports is a property of
                     // the very frame in `current` and not of some later state of the tree.
-                    violation = endState?.Violation();
-                    if (violation is null) { return (current, true, round, null); }
+                    if (endState?.Violation() is null) { return (current, true, round, null); }
 
                     // Still enough, wrong state: keep going on the SAME budget. This is the
                     // whole change — the loop now has something to wait FOR, so a stalled

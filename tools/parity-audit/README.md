@@ -186,9 +186,53 @@ and `344, 0, 376, 447` on others — settled, saved, and four pixels short of op
 re-lays out every glyph inside the pane and moves **7,063** of its pixels. It flipped about
 one run in three, on the minimum-size drawer screens that first ran into it; the full-size
 ones have the same shape and have simply been landing past the end of the ease. Requiring the
-agreement to hold across two intervals instead of one fixed it, and moved **no** bytes: all
-34 screens are identical to the pre-fix capture, so the rule removed a chance of saving the
-wrong frame rather than changing which frame is right.
+agreement to hold across two intervals instead of one made it much rarer — and moved **no**
+bytes: all 34 screens are identical to the pre-fix capture, so the rule removed a chance of
+saving the wrong frame rather than changing which frame is right. It did not make it go away;
+see the fifth.
+
+**The fifth is the fourth again, and it is why `SettledFrame` now waits for a *fact*
+rather than for stillness** (#278). Measured over **51 `--determinism` runs** on trees
+carrying the three-sample rule, the pane still saved short in **five of them, 9.8%** —
+`desktop-min-8` three times, `desktop-min-7` once, `desktop-min-9` once, every full-size twin
+zero. 720 − `OpenPaneLength=380` = **340** is the open pane's left edge in every good frame;
+the bad ones sat at **341–342**, one to two pixels short, moving 1.1–2.0% of the image with a
+worst channel delta of 222. Not noise, either: `desktop-min-8`'s wrong hash came back three
+separate times across two trees.
+
+The rate went **up** under host load — 2 of 39 idle, **3 of 12 (25%)** with two CPU spinners
+running — and that is the argument against a fourth sample, and against the fifth after it. A
+longer stillness window is meant to buy confidence that nothing moved; under CPU pressure what
+gets delayed is the animation's own tick, so consecutive encodes match *because nothing was
+scheduled between them*. Stillness gets cheaper to fake exactly when the host is busiest, and
+no finite number of 50 ms samples bounds a scheduler stall. (Nor would it have been free — one
+more required sample is 34 × 50 ms = **+1.7 s per run** — and separating a 10% rate from a 3%
+one takes several hundred runs, so a constant bump could not have been validated at any
+denominator worth spending.)
+
+So for this one transition the harness stops inferring. `MainWindow.axaml` *declares* the end
+state — one `SplitView`, `OpenPaneLength="380"` — which means there is a right answer to check
+against, which is exactly what stillness lacks. `DesktopPaneAtRest` resolves that `SplitView`
+and its `PART_PaneRoot` once per sweep, and `SettledFrame` accepts a frame only when it is
+**still AND the pane is at the width the app declares** for its current open/closed state.
+Strictly stronger than the rule it joins rather than a replacement for it, and it adds no
+constant: the wait is bounded by the `SettleMaxRounds` budget that was already there, so a
+stalled animation costs rounds instead of producing a baseline, and if the budget runs out the
+run fails **by name** with both widths in the message.
+
+Demonstrated on demand rather than waited for. With the render timer frozen once the pane is
+within four pixels of open — the measured failure mode written down as code — the pre-fix
+harness reports `[OK] desktop-min-7/8/9 … settled in 4 round(s)` and saves three frames that
+differ from the committed baseline by exactly the field signature (1.1%, 1.1%, 2.0% of pixels,
+worst delta 222 on each). The same lever on the fixed harness fails all three by name —
+`it is 378 wide (Bounds=342, 0, 378, 447) but the pane is OPEN, and MainWindow.axaml declares
+OpenPaneLength=380` — and exits non-zero. Zero baseline bytes moved.
+
+**What that guard does not cover.** It is a guard for the one animated end state the app
+declares. Every other screen still rests on the settle rule, which is the right tool when the
+harness cannot know what the tree is supposed to settle *to*. The generalisation is
+`EndState`: where a capture depends on a transition reaching a state the app names, read the
+number back and wait for it, rather than waiting for the pixels to go quiet.
 
 **Why five runs and not two.** Both defects above were roughly coin-flips per run, and
 two runs miss a 50/50 flip half the time; five gets that to ~6%, ten to ~0.2%, at about
