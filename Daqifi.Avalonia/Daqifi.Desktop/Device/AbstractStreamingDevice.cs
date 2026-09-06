@@ -204,10 +204,12 @@ public abstract partial class AbstractStreamingDevice : ObservableObject, IStrea
     {
         ArgumentNullException.ThrowIfNull(coreDevice);
 
-        // Whether this device publishes a document at all. A pre-3.5.0 board does not, and Core
-        // skips the read for it at its own feature gate — that is not a failed refresh and must
-        // not be reported as one.
-        var deviceDescribesItself = coreDevice.Metadata.CapabilityDocument != null;
+        // Whether this device publishes a document at all. Core's own gate — the same predicate
+        // ReadCapabilityDocumentAsync consults before it sends anything — and deliberately NOT
+        // "did we already have one": a v3.5.0+ board whose connect-time read also came back empty
+        // has nothing cached either, and reading the cache as the support signal would file it as
+        // legacy firmware and swallow the one warning that explains the refusal it is heading for.
+        var deviceDescribesItself = coreDevice.Supports(DeviceFeature.CapabilityDocument);
         var readAnswered = false;
 
         try

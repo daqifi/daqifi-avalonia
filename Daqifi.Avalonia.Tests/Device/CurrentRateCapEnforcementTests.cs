@@ -234,6 +234,49 @@ public class CurrentRateCapEnforcementTests
         Assert.Equal(OverCapRateHz, device.StreamingFrequency);
         Assert.Equal(OverCapRateHz, core.StreamingFrequency);
     }
+
+    /// <summary>
+    /// "This device owes me a document" must be Core's firmware gate, not "I have one cached".
+    /// The two disagree in exactly the case that matters: a v3.5.0+ board whose connect-time read
+    /// also came back empty has nothing cached, and a cache test would file it as pre-3.5.0
+    /// firmware — swallowing the warning that is the only explanation for the refusal it is about
+    /// to get.
+    /// </summary>
+    [Fact]
+    public void Whether_a_device_owes_a_fresh_document_is_Cores_firmware_gate_not_a_cached_copy()
+    {
+        var legacy = new DaqifiStreamingDevice("core");
+        Assert.False(legacy.Supports(DeviceFeature.CapabilityDocument));
+
+        var modern = new DaqifiStreamingDevice("core");
+        modern.Metadata.UpdateFromProtobuf(BenchStatus());
+
+        Assert.True(modern.Supports(DeviceFeature.CapabilityDocument));
+
+        // The state the two predicates disagree on, and the reason the cached copy cannot be used.
+        Assert.Null(modern.Metadata.CapabilityDocument);
+    }
+
+    /// <summary>
+    /// And the behaviour in that state: the start still goes ahead, at the rate the user chose.
+    /// Nothing is known about the cap, so nothing is invented — the rate is left where it is and
+    /// the situation is logged.
+    /// </summary>
+    [Fact]
+    public void A_supported_device_that_has_never_supplied_a_document_still_starts_at_the_chosen_rate()
+    {
+        var core = new CapabilityRefreshingCoreDevice("core") { RefreshedDocument = null };
+        core.Metadata.UpdateFromProtobuf(BenchStatus());
+        core.Metadata.Capabilities = new DeviceCapabilities { MaxSamplingRate = BoardCeilingHz };
+        Assert.True(core.Supports(DeviceFeature.CapabilityDocument));
+        Assert.Null(core.Metadata.CapabilityDocument);
+        var device = WrapperAt(OverCapRateHz, core);
+
+        device.HoldRateForHandoff(core);
+
+        Assert.Equal(1, core.RefreshCount);
+        Assert.Equal(OverCapRateHz, device.StreamingFrequency);
+    }
     #endregion
 
     #region The start path itself
@@ -286,6 +329,19 @@ public class CurrentRateCapEnforcementTests
             CurrentMaximumRateHz = currentMaximumRateHz,
             RateValidation = "error"
         }
+    };
+
+    /// <summary>
+    /// The bench Nq1's status message, reduced to what Core's firmware gate reads. The firmware
+    /// version is the whole point: <c>DeviceFeature.CapabilityDocument</c> requires v3.5.0.
+    /// </summary>
+    private static DaqifiOutMessage BenchStatus() => new()
+    {
+        DevicePn = "Nq1",
+        DeviceFwRev = "3.7.2",
+        AnalogInPortNum = 16,
+        AnalogInRes = 4095,
+        DigitalPortNum = 16
     };
 
     private static CapabilityRefreshingCoreDevice CoreDeviceRefreshingTo(int capHz)
