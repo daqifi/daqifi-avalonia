@@ -1,3 +1,4 @@
+using System.ComponentModel;
 using System.Diagnostics;
 using System.Globalization;
 using System.Text.Json;
@@ -38,10 +39,11 @@ using ChannelDirection = Daqifi.Core.Channel.ChannelDirection;
 // Usage:
 //   HeadlessBench --port /dev/cu.usbmodemNNNN --out <run-dir> [--rate 100] [--seconds 5]
 //   HeadlessBench --scripted <state> --out <run-dir>          (T1; states not yet implemented)
+//   DAQIFI_RESTORE_NAME=<name> HeadlessBench --port ... --out ...   (repair; see RunRestoreName)
 //
 // Exit code 1 on any [FAIL]. Rows covered: CONN-USB, DEV-INFO, DEV-TILE, CH-TILE, DEV-RATE, CH-AI,
-// STREAM-AI, LOG-SESSION, GRAPH-LIVE, CH-DIO, CH-PWM, SD-LIST, CONN-DISC. Add a Step per matrix
-// row; keep the shape.
+// STREAM-AI, LOG-SESSION, GRAPH-LIVE, CH-DIO, CH-PWM, SD-LIST, CONN-DISC, DEV-NAME. Add a Step per
+// matrix row; keep the shape.
 
 internal static class HeadlessBench
 {
@@ -50,6 +52,7 @@ internal static class HeadlessBench
     private static int _rate = 100;
     private static int _seconds = 5;
     private static string? _scripted;
+    private static string? _restoreName;
     private static bool _failed;
     private static readonly List<double> PumpLatenciesMs = [];
     private static readonly Vector Dpi = new(96, 96);
@@ -109,7 +112,11 @@ internal static class HeadlessBench
             var shell = main.DataContext as DaqifiViewModel
                         ?? throw new InvalidOperationException($"MainWindow.DataContext is {main.DataContext?.GetType().Name ?? "null"}, expected DaqifiViewModel");
 
-            if (_scripted is not null)
+            if (_restoreName is not null)
+            {
+                RunRestoreName(shell);
+            }
+            else if (_scripted is not null)
             {
                 Emit(1, "SCRIPTED", "works", "not-run", $"--scripted {_scripted}: state not implemented in this stub");
                 Console.WriteLine($"[INFO] scripted state '{_scripted}' not implemented yet");
@@ -186,18 +193,14 @@ internal static class HeadlessBench
         var threadsBefore = Process.GetCurrentProcess().Threads.Count;
 
         // CONN-USB — through the dialog's manual-port path, the same code a user's click runs.
-        var dialog = new ConnectionDialogViewModel();
-        dialog.ManualPortName = _port;
-        var sw = Stopwatch.StartNew();
-        var connectTask = dialog.ConnectManualSerialCommand.ExecuteAsync(null);
-        PumpUntil(() => connectTask.IsCompleted && shell.ConnectedDevices.Count > 0, TimeSpan.FromSeconds(20));
-        var device = shell.ConnectedDevices.FirstOrDefault();
+        var device = ConnectSerial(shell, out var connectSeconds);
         Step(2, "CONN-USB", "works", device is not null,
              device is not null
-                 ? $"connected {_port} in {sw.Elapsed.TotalSeconds:F1} s; ConnectedDevices={shell.ConnectedDevices.Count}; status='{ConnectionManager.Instance.ConnectionStatusString}'"
+                 ? $"connected {_port} in {connectSeconds:F1} s; ConnectedDevices={shell.ConnectedDevices.Count}; status='{ConnectionManager.Instance.ConnectionStatusString}'"
                  : $"no device in ConnectedDevices after 20 s; status='{ConnectionManager.Instance.ConnectionStatusString}'",
-             Capture(main, "t2-01-connected"), sw.Elapsed.TotalSeconds);
+             Capture(main, "t2-01-connected"), connectSeconds);
         if (device is null) { return; }
+        var sw = new Stopwatch();
 
         // DEV-INFO — what the app knows about the board. The UI half of this row is the PNG.
         var serial = device.DeviceSerialNo;
@@ -638,9 +641,367 @@ internal static class HeadlessBench
              $"threads before connect={threadsBefore}, after disconnect={threadsAfter}");
         Emit(2, "CONN-DISC", "unexpected", "not-run",
              "port-free check runs outside the process: `lsof /dev/cu.usbmodem*` after exit");
+
+        // DEV-NAME — the Devices drawer's NAME box and its SAVE NAME button (DevicesPanePrototype
+        // .axaml binds Shell.PendingFriendlyName and Shell.SetFriendlyNameCommand). It runs LAST
+        // and takes its own connections, for one reason: SetFriendlyName updates the device
+        // object's FriendlyName optimistically the moment it has written SYSTem:DEVice:NAME — the
+        // board never echoes the name back — so reading that property proves only that the rig
+        // assigned it. The board reports its name exactly once per connection, in the
+        // SYSTem:SYSInfoPB? response Core asks for during connect (OnStatusMessageReceived), so
+        // the only check that can tell a landed NVM write from a swallowed one lives on the far
+        // side of a reconnect. Running after CONN-DISC also leaves every row above measuring
+        // exactly what it measured before — including CONN-DISC's thread probe, which is still
+        // spanning one connect/disconnect cycle rather than four.
+        RunFriendlyNameRow(main, shell, devicesPane);
+    }
+
+    /// <summary>DEV-NAME. Called last from <see cref="RunHardwareSteps"/>, with nothing connected.
+    /// </summary>
+    /// <remarks>
+    /// <c>SYSTem:DEVice:NAME:SAVE</c> writes the board's NVM, so the friendly name is
+    /// board-persistent state and gets the discipline CH-DIO's four properties get: snapshot,
+    /// restore from a <c>finally</c>, and a cleanup <c>Step</c> that reddens the run when the board
+    /// was not left as found. This one can do what CH-DIO could not — read the restore back from
+    /// the <em>board</em> instead of from Core's mirror of what it last commanded — because a
+    /// reconnect makes the device re-report the name. When even that fails, the evidence line says
+    /// how to repair it out of band (<c>DAQIFI_RESTORE_NAME</c>), which is the only way back once
+    /// this process is gone.
+    /// </remarks>
+    private static void RunFriendlyNameRow(Window main, DaqifiViewModel shell, DevicesPaneViewModel devicesPane)
+    {
+        // Keep pumping while the OS lets go of the port CONN-DISC has just closed, so this connect
+        // is not racing that close. Same reason as Bounce below, which is where the rest of the
+        // row's reconnects go.
+        PumpFor(TimeSpan.FromSeconds(1));
+        var device = ConnectSerial(shell, out var reconnectSeconds);
+        if (device is null)
+        {
+            // A failing Step, not a not-run: the port was connectable a moment ago, so failing to
+            // get it back is the rig's own precondition breaking, and Emit does not touch _failed —
+            // a run that never checked the rename would otherwise exit 0. The nameless-board case
+            // below IS a not-run, because that is a board this row deliberately declines to touch.
+            Step(2, "DEV-NAME", "works", false,
+                 $"could not reconnect {_port} after {reconnectSeconds:F1} s, so none of the friendly-name " +
+                 "checks ran; ConnectedDevices=" + shell.ConnectedDevices.Count, null, reconnectSeconds);
+            return;
+        }
+
+        // Take the name from THIS connection: it has just been re-read from the board's NVM, so it
+        // is the value that has to be there when the run ends.
+        var originalName = device.FriendlyName;
+        if (string.IsNullOrWhiteSpace(originalName))
+        {
+            // Refusing rather than renaming: the app can set a name but cannot clear one —
+            // IsFriendlyNameValid rejects the empty string, so SetFriendlyNameCommand has no way to
+            // put a nameless board back to nameless, and this row would strand a shared bench board
+            // named after the rig with no undo. Reachable in practice: a factory-fresh board.
+            Emit(2, "DEV-NAME", "works", "not-run",
+                 $"board '{device.DeviceSerialNo}' reports no friendly name, and the app cannot clear one " +
+                 "(IsFriendlyNameValid rejects the empty string), so this row has no way to undo itself");
+            DisconnectQuiet(shell, device);
+            return;
+        }
+
+        var testName = "HeadlessBench-" + DateTime.Now.ToString("HHmmss", CultureInfo.InvariantCulture);
+        var wroteNvm = false;
+        try
+        {
+            OpenDeviceDrawer(devicesPane, device);
+            // Opening the drawer seeds the NAME box from the device (DevicesPaneViewModel
+            // .OpenSettings -> SeedPendingFriendlyName). A box that does not agree with the device
+            // is a field the user edits blind, so it is asserted rather than assumed.
+            var seeded = shell.PendingFriendlyName;
+
+            // The tile's FriendlyName is a passthrough getter, so reading it after the save would
+            // only be reading the device again. What the Devices pane actually needs is the
+            // NOTIFICATION — DeviceTileViewModel.OnDevicePropertyChanged re-raising FriendlyName —
+            // because without it the tile's text keeps showing the old name until something else
+            // happens to refresh it. Watch for it rather than re-reading the value.
+            var tile = devicesPane.Devices.FirstOrDefault(t => ReferenceEquals(t.Device, device));
+            var tileTold = false;
+            void OnTileChanged(object? _, PropertyChangedEventArgs e)
+            {
+                if (string.IsNullOrEmpty(e.PropertyName) || e.PropertyName == nameof(DeviceTileViewModel.FriendlyName))
+                {
+                    tileTold = true;
+                }
+            }
+
+            wroteNvm = true;
+            string? saveError;
+            if (tile is not null) { tile.PropertyChanged += OnTileChanged; }
+            try { saveError = ApplyFriendlyName(shell, testName); }
+            finally { if (tile is not null) { tile.PropertyChanged -= OnTileChanged; } }
+
+            Step(2, "DEV-NAME", "works",
+                 saveError is null && seeded == originalName && device.FriendlyName == testName
+                     && device.DeviceDisplayName == testName && shell.PendingFriendlyName == testName
+                     && shell.FriendlyNameApplied && tile?.FriendlyName == testName && tileTold,
+                 $"drawer opened seeded with NAME='{seeded}' (device said '{originalName}'); saved '{testName}' -> " +
+                 $"FriendlyName='{device.FriendlyName}' DeviceDisplayName='{device.DeviceDisplayName}'; " +
+                 $"box re-seeded to '{shell.PendingFriendlyName}' with the 'Name saved' tick showing={shell.FriendlyNameApplied}; " +
+                 $"tile FriendlyName='{tile?.FriendlyName ?? "no tile"}' and it change-notified={tileTold}" +
+                 (saveError is null ? "" : $"; the drawer reported '{saveError}'"),
+                 Capture(main, "t2-12-device-named"));
+
+            // The row's one real question: did that reach the board? Bounce the connection and read
+            // what the board itself says. This runs BEFORE the limits check below on purpose — a
+            // validator that leaks writes a bad name to the device, and a cascade into this check
+            // would report the leak twice while looking like two independent failures.
+            device = Bounce(shell, device, out var bounceSeconds);
+            Step(2, "DEV-NAME", "persists", device?.FriendlyName == testName,
+                 device is null
+                     ? $"could not reconnect {_port} after the rename, so the board's own name could not be read back"
+                     : $"reconnected in {bounceSeconds:F1} s and the board reported name='{device.FriendlyName}' " +
+                       $"(wrote '{testName}') in its SYSTem:SYSInfoPB? response — a device read-back, " +
+                       $"not the optimistic local update SetFriendlyName also does; DeviceDisplayName='{device.DeviceDisplayName}'",
+                 Capture(main, "t2-13-name-persisted"), bounceSeconds);
+
+            // DEV-NAME/limits — firmware takes 1-31 printable ASCII with no '"' or '\', and
+            // AbstractStreamingDevice.IsFriendlyNameValid mirrors daqifi_settings_FriendlyNameIsValid
+            // exactly so that a name the app accepts is one the board will. The TextBox caps length
+            // at 31, but the property is what a binding writes, and an empty box and an embedded
+            // quote are both reachable by typing. Each has to surface in the drawer's inline error
+            // AND leave the device's name alone: a validator that let one through would write it to
+            // the board's NVM, and the quote would break the SCPI string literal it is spliced into.
+            if (device is not null)
+            {
+                OpenDeviceDrawer(devicesPane, device);
+                // Measured against whatever the device is called on the way IN, not against the
+                // name the rename asked for: this check is "a rejected name does not move the
+                // device's name", and pinning it to testName would make it fail a second time for
+                // whatever already made DEV-NAME/persists fail.
+                var before = device.FriendlyName;
+                var outcomes = new List<string>();
+                var leaked = 0;
+                foreach (var (label, bad) in new[]
+                         {
+                             ("empty", ""),
+                             ("32 chars", new string('x', 32)),
+                             ("embedded quote", "bad\"name"),
+                         })
+                {
+                    var error = ApplyFriendlyName(shell, bad);
+                    var held = device.FriendlyName == before;
+                    if (error is null || !held) { leaked++; }
+                    outcomes.Add($"{label} -> {(error is null ? "ACCEPTED" : "rejected")}" +
+                                 (held ? "" : $", and the device name moved to '{device.FriendlyName}'"));
+                }
+                Step(2, "DEV-NAME", "limits", leaked == 0,
+                     $"{string.Join("; ", outcomes)}; device still named '{device.FriendlyName}' (was '{before}')", null);
+            }
+        }
+        finally
+        {
+            if (!wroteNvm)
+            {
+                if (device is not null) { DisconnectQuiet(shell, device); }
+            }
+            else
+            {
+                // The restore lives ONLY here, so the aborted path and the normal path run the same
+                // code — the normal path simply arrives with the board already renamed too.
+                var problems = new List<string>();
+                string? left = null;
+                double? seconds = null;
+                try
+                {
+                    // Whatever is connected now, or a fresh connection when the run left none —
+                    // ConnectSerial refuses to answer while anything is still connected, so the
+                    // two cases cannot be confused.
+                    var current = shell.ConnectedDevices.FirstOrDefault() ?? ConnectSerial(shell, out _);
+                    if (current is null)
+                    {
+                        problems.Add($"could not connect {_port} to put the name back");
+                    }
+                    else
+                    {
+                        if (current.FriendlyName != originalName)
+                        {
+                            OpenDeviceDrawer(devicesPane, current);
+                            var error = ApplyFriendlyName(shell, originalName);
+                            if (error is not null) { problems.Add($"the drawer rejected the restore: {error}"); }
+                        }
+                        // Read it back from the BOARD. Core's FriendlyName is whatever
+                        // SetFriendlyName last assigned, so checking it here would only confirm the
+                        // rig's own arithmetic; a reconnect is what makes the device answer.
+                        current = Bounce(shell, current, out var s);
+                        seconds = s;
+                        left = current?.FriendlyName;
+                        if (current is null) { problems.Add("could not bounce the connection to read the restored name back"); }
+                        else { DisconnectQuiet(shell, current); }
+                    }
+                }
+                catch (Exception ex) { problems.Add(ex.Message); }
+
+                var restored = left == originalName && problems.Count == 0;
+                Step(2, "DEV-NAME", "cleanup", restored,
+                     restored
+                         ? $"board left named '{left}', read back from its own SYSTem:SYSInfoPB? response after a " +
+                           "reconnect rather than from Core's optimistic copy"
+                         : $"BOARD LEFT NAMED '{left ?? "unknown"}', not '{originalName}'" +
+                           (problems.Count == 0 ? "" : $" ({string.Join("; ", problems)})") +
+                           $" — put it back with: DAQIFI_RESTORE_NAME={ShellQuote(originalName)} dotnet run --project " +
+                           $"tools/system-test/HeadlessBench/HeadlessBench.csproj --no-restore -- --port {ShellQuote(_port)} --out <dir>",
+                     null, seconds);
+            }
+        }
+    }
+
+    /// <summary>
+    /// <c>DAQIFI_RESTORE_NAME=&lt;name&gt;</c> — put a bench board's friendly name back after a run
+    /// that died before its <c>finally</c> could. DEV-NAME writes the board's NVM, and a SIGKILL, a
+    /// closed lid or a port that went away between the rename and the restore leaves a board that
+    /// several agents share named <c>HeadlessBench-nnnnnn</c>, with nothing anywhere recording what
+    /// it used to be called. This is the way back, and it is DEV-NAME's own restore path and
+    /// nothing more: connect, type the name into the drawer, save, bounce the connection, and read
+    /// the name back off the board.
+    /// </summary>
+    private static void RunRestoreName(DaqifiViewModel shell)
+    {
+        using var devicesPane = new DevicesPaneViewModel(shell);
+        Pump();
+        try
+        {
+            var wanted = _restoreName!;
+            var device = ConnectSerial(shell, out var seconds);
+            if (device is null)
+            {
+                Step(2, "DEV-NAME", "repair", false,
+                     $"could not connect {_port} after {seconds:F1} s; the board's name is unchanged", null);
+                return;
+            }
+
+            var was = device.FriendlyName;
+            OpenDeviceDrawer(devicesPane, device);
+            var error = ApplyFriendlyName(shell, wanted);
+            device = Bounce(shell, device, out _);
+            Step(2, "DEV-NAME", "repair", error is null && device?.FriendlyName == wanted,
+                 $"board was reporting '{was}'; asked it for '{wanted}' through the drawer, and after a " +
+                 $"reconnect it reports '{device?.FriendlyName ?? "nothing — the connection could not be bounced"}'" +
+                 (error is null ? "" : $"; the drawer rejected the name: {error}"),
+                 null);
+            if (device is not null) { DisconnectQuiet(shell, device); }
+        }
+        finally
+        {
+            // Same net the hardware sequence uses, and idempotent for the same reason: on the
+            // normal path the disconnect above has already happened and this does nothing.
+            StopAndDisconnect(shell);
+        }
     }
 
     // ---------------------------------------------------------------- plumbing
+
+    /// <summary>Connect the bench port the way a user does — the connection dialog's manual-serial
+    /// command — and return the device the shell registered, or null if none arrived in 20 s.
+    /// Two callers: CONN-USB, and DEV-NAME, which bounces the connection to make the board
+    /// re-report a name it never echoes.</summary>
+    private static IStreamingDevice? ConnectSerial(DaqifiViewModel shell, out double seconds)
+    {
+        seconds = 0;
+        // Every caller means "connect afresh", and the only thing this returns is
+        // ConnectedDevices' first entry — so a device that was ALREADY connected would be handed
+        // back as if it were this connection's. That is not hypothetical: ConnectionManager
+        // .Disconnect catches a teardown exception before it reaches ConnectedDevices.Remove, so a
+        // disconnect can fail silently, and the object left behind is the one whose FriendlyName
+        // SetFriendlyName has already optimistically updated. DEV-NAME/persists would then read
+        // that copy and report it as a board read-back — precisely the lie the row exists to
+        // prevent. Refuse instead.
+        if (shell.ConnectedDevices.Count > 0)
+        {
+            Console.WriteLine($"[WARN] connect: {shell.ConnectedDevices.Count} device(s) still connected; refusing to " +
+                              "report a stale device as a fresh connection");
+            return null;
+        }
+
+        var sw = Stopwatch.StartNew();
+        var dialog = new ConnectionDialogViewModel { ManualPortName = _port };
+        var connectTask = dialog.ConnectManualSerialCommand.ExecuteAsync(null);
+        PumpUntil(() => connectTask.IsCompleted && shell.ConnectedDevices.Count > 0, TimeSpan.FromSeconds(20));
+        seconds = sw.Elapsed.TotalSeconds;
+        return shell.ConnectedDevices.FirstOrDefault();
+    }
+
+    /// <summary>Disconnect through the Devices pane's own command, without asserting on it —
+    /// CONN-DISC is the row that does that, and it drives the same command itself so this helper
+    /// cannot stand in for it. Returns whether the device actually left the shell's list.</summary>
+    private static bool DisconnectQuiet(DaqifiViewModel shell, IStreamingDevice device)
+    {
+        shell.DisconnectDeviceCommand.Execute(device);
+        PumpUntil(() => !shell.ConnectedDevices.Contains(device), TimeSpan.FromSeconds(10));
+        Pump();
+        return !shell.ConnectedDevices.Contains(device);
+    }
+
+    /// <summary>Disconnect and reconnect the bench port. The only way to make the board re-report
+    /// state it does not echo: the friendly name arrives in the SYSTem:SYSInfoPB? response Core
+    /// requests during connect, and nowhere else. Null when either half did not happen, because a
+    /// bounce that did not happen must never satisfy a check that claims to have read the board.
+    /// </summary>
+    private static IStreamingDevice? Bounce(DaqifiViewModel shell, IStreamingDevice device, out double seconds)
+    {
+        seconds = 0;
+        if (!DisconnectQuiet(shell, device))
+        {
+            Console.WriteLine($"[WARN] bounce: '{device.DeviceSerialNo}' is still in ConnectedDevices 10 s after " +
+                              "DisconnectDeviceCommand, so the connection was never bounced");
+            return null;
+        }
+        // Keep pumping while the OS lets go of the CDC port, so the reconnect below is not racing
+        // the close. Pumping rather than sleeping: the disconnect's own continuations land here.
+        PumpFor(TimeSpan.FromSeconds(1));
+        return ConnectSerial(shell, out seconds);
+    }
+
+    /// <summary>POSIX single-quoting for a value going into a shell command the evidence line asks
+    /// a human to paste. Friendly names may contain an apostrophe — the validator rejects only
+    /// non-printable ASCII, <c>"</c> and <c>\</c> — and one of those inside naive single quotes
+    /// produces a command that does not run.</summary>
+    private static string ShellQuote(string value) => "'" + value.Replace("'", "'\\''") + "'";
+
+    /// <summary>Open the Devices drawer on a device, as clicking its tile does. Also what seeds the
+    /// drawer's NAME box and points SetFriendlyNameCommand at the device (it reads
+    /// DaqifiViewModel.SelectedDevice, which OpenSettings sets).</summary>
+    private static void OpenDeviceDrawer(DevicesPaneViewModel pane, IStreamingDevice device)
+    {
+        // The pane rebuilds its tiles from ConnectionManager on a posted notification, so a device
+        // that has only just connected may not have one yet. Executing the command with a null tile
+        // would close the drawer and leave the shell's SelectedDevice pointing at the previous one,
+        // which is a confusing way to fail a rename.
+        PumpUntil(() => pane.Devices.Any(t => ReferenceEquals(t.Device, device)), TimeSpan.FromSeconds(5));
+        pane.OpenSettingsCommand.Execute(pane.Devices.FirstOrDefault(t => ReferenceEquals(t.Device, device)));
+        Pump();
+    }
+
+    /// <summary>Type a name into the open drawer's NAME box and press SAVE NAME — the two things a
+    /// user does. Returns the drawer's inline error text, or null when the command reported
+    /// success. Never blocks on the command: headless, the UI thread is this thread.</summary>
+    private static string? ApplyFriendlyName(DaqifiViewModel shell, string name)
+    {
+        shell.PendingFriendlyName = name;
+        var save = shell.SetFriendlyNameCommand.ExecuteAsync(null);
+        var completed = PumpUntil(() => save.IsCompleted, TimeSpan.FromSeconds(20));
+        Pump();
+        // A wait that ran out is an error, not a success. SetFriendlyName does the SCPI write on an
+        // uncancellable Task.Run, so there is nothing to call off — but every caller bounces the
+        // connection next, and returning null here would let the run disconnect underneath a write
+        // that is still going and then report the read-back as if it had been ordered after it.
+        if (!completed)
+        {
+            return $"SAVE NAME had not returned 20 s after it was pressed, and the device write it " +
+                   "started cannot be cancelled — anything read back after this is racing it";
+        }
+        // The command itself only catches ArgumentException (the validator). Anything else — an
+        // IOException out of the serial write, say — faults the task and would otherwise be
+        // invisible here, since FriendlyNameError is only written on the validation path.
+        if (save.IsFaulted)
+        {
+            return $"SAVE NAME threw: {save.Exception?.GetBaseException().Message}";
+        }
+        return shell.FriendlyNameError;
+    }
 
     /// <summary>The pane's live tile for a channel, from whichever section it is shelved in. Always
     /// re-fetch after a change that can re-shelve it: the pane disposes and rebuilds every tile.</summary>
@@ -753,7 +1114,14 @@ internal static class HeadlessBench
             }
             catch (Exception ex) { Console.WriteLine(ex.Message); return false; }
         }
+        // An environment variable rather than a flag on purpose: the one thing that reaches for it
+        // is a human or an agent pasting the recovery line DEV-NAME/cleanup prints when it could
+        // not put the board back, and that line has to survive being copied out of a log.
+        _restoreName = Environment.GetEnvironmentVariable("DAQIFI_RESTORE_NAME");
+        if (string.IsNullOrWhiteSpace(_restoreName)) { _restoreName = null; }
+
         if (string.IsNullOrEmpty(_out)) { Console.WriteLine("--out <run-dir> is required"); return false; }
+        if (_restoreName is not null && _scripted is not null) { Console.WriteLine("DAQIFI_RESTORE_NAME repairs a real board; it cannot be combined with --scripted"); return false; }
         if (_scripted is null && string.IsNullOrEmpty(_port)) { Console.WriteLine("--port <serial port> or --scripted <state> is required"); return false; }
         if (_rate < 1 || _seconds < 1) { Console.WriteLine("--rate and --seconds must be >= 1"); return false; }
         return true;
