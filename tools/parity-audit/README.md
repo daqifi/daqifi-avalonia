@@ -545,7 +545,8 @@ lines for the same reason.
 `MainWindow`'s own declared `MinWidth=720 MinHeight=480`, see [Window
 size](#window-size-and-the-theme-the-whole-manifest-assumes). The recording is **purely
 additive**: every screen the manifest already listed is byte-for-byte unchanged against a
-capture taken from the unmodified tree at `acc5886`, which is the evidence that adding a
+capture taken from the unmodified tree (first at `acc5886`, and re-confirmed at `84ceb05`
+after the rebase described below), which is the evidence that adding a
 second sweep — and the settle-rule change it needed — moved nothing that was already gated.
 Six `--determinism` runs agreed on all of them afterwards, against a pre-fix run in which
 `desktop-min-7` and `desktop-min-9` flipped about one run in three. The nine new lines land
@@ -559,6 +560,31 @@ Mac's 26.5 — passed its own five-run determinism check **34/34** and then repr
 manifest, all nine new hashes included. So the settle-rule change reproduces across machines
 too, which matters more here than for a pure re-recording: a rule about *when* a frame is still
 enough to keep is exactly the kind of thing that could have been tuned to one machine's timing.
+
+**Four of those nine lines were then re-recorded 2026-09-06 against `84ceb05`** (macOS 26.5,
+Apple silicon, .NET SDK 10.0.302 — the same host as the entry above), and the reason
+is the rule this section opens with, arriving for real: a hash records a rendering of a **base
+commit**, not of a diff. The nine were first captured at `acc5886`; the empty-state
+consolidation (#276) landed on `main` afterwards and restyled the five desktop panes, so
+`desktop-min-2-loggeddata`, `-3-channels`, `-4-devices` and `-5-profiles` — the four
+minimum-size screens that photograph four of those panes — described a rendering that no longer
+existed. Nothing warned: `git merge` is clean (the two manifest hunks do not touch), the
+mergeability badge is computed pairwise against `main`, and the branch's own green CI run
+predates the merge. **`--check-baseline` on the merged tree is what found it**, failing on
+exactly those four and passing the other thirty.
+
+The delta is #276's change and nothing else, and the set correspondence is the proof: the four
+full-size panes #276 re-recorded (`desktop-2`, `-3`, `-4`, `-5`) map one-to-one onto the four
+minimum-size screens that moved, and the five desktop screens #276 left alone map onto the five
+`desktop-min-*` that stayed byte-identical. Measured on the two screens where both sizes were
+captured either side of the merge, the pixel delta is *the same count at both sizes* —
+`desktop-2`/`desktop-min-2` differ by 3,733 px, `desktop-3`/`desktop-min-3` by 6,280 px — which
+is what a recolour and a font-size step on centred content should do when the window shrinks
+around it. Nothing clips, overlaps or falls below the fold at 720x480; the visible change is
+Logged Data's sentence going 13 → 15px and `TextPrimary` → `TextSecondary`, with room to spare.
+Five `--determinism` runs agreed **34/34** on the merged tree before the four were re-recorded
+from that run's `r1`, and the four hashes reproduce a second host's independent capture of the
+same tree byte for byte.
 
 **A mismatch is a prompt, not a verdict** — re-read that environment line first. In CI
 the same applies with one addition: the baseline step prints the runner's macOS build and
