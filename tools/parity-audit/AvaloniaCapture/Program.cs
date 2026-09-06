@@ -369,9 +369,15 @@ internal static class AvaloniaCapture
         main.Width = size.Width;
         main.Height = size.Height;
         if (!main.IsVisible) { main.Show(); }
+
+        // The end state every screen in this sweep is taken against. Resolved once here, after
+        // the window is up so the SplitView's template exists to be read, and threaded through
+        // every Capture and Quiesce below - see DesktopPaneAtRest.
+        var paneAtRest = DesktopPaneAtRest(main);
+
         // A resize relayouts the whole tree, so the first capture of a sweep starts from motion
         // unless something waits for it - the same reason SweepDrawer quiesces after a close.
-        Quiesce(main);
+        Quiesce(main, paneAtRest);
 
         // Never capture after a navigation that did not happen. Set() returning false means the
         // property is gone or read-only, and the window is therefore still showing the PREVIOUS
@@ -390,7 +396,7 @@ internal static class AvaloniaCapture
                                   "view-model; not capturing the previous tab under this name");
                 continue;
             }
-            Capture(name, main);
+            Capture(name, main, paneAtRest);
         }
 
         if (!Set(vm, "SelectedIndex", 0))
@@ -400,14 +406,14 @@ internal static class AvaloniaCapture
                               "drawer captures would show the wrong pane behind them");
             return;
         }
-        Quiesce(main);
-        SweepDrawer(main, vm, "IsAppSettingsOpen", $"{prefix}-6-settings-drawer");
-        SweepDrawer(main, vm, "IsNotificationsOpen", $"{prefix}-7-notifications-flyout");
-        SweepDrawer(main, vm, "IsLiveGraphSettingsOpen", $"{prefix}-8-livegraph-settings-flyout");
-        SweepDrawer(main, vm, "IsLogSummaryOpen", $"{prefix}-9-summary-flyout");
+        Quiesce(main, paneAtRest);
+        SweepDrawer(main, vm, "IsAppSettingsOpen", $"{prefix}-6-settings-drawer", paneAtRest);
+        SweepDrawer(main, vm, "IsNotificationsOpen", $"{prefix}-7-notifications-flyout", paneAtRest);
+        SweepDrawer(main, vm, "IsLiveGraphSettingsOpen", $"{prefix}-8-livegraph-settings-flyout", paneAtRest);
+        SweepDrawer(main, vm, "IsLogSummaryOpen", $"{prefix}-9-summary-flyout", paneAtRest);
     }
 
-    private static void SweepDrawer(Window main, object vm, string prop, string name)
+    private static void SweepDrawer(Window main, object vm, string prop, string name, EndState? paneAtRest)
     {
         if (!Set(vm, prop, true))
         {
@@ -415,7 +421,7 @@ internal static class AvaloniaCapture
             Console.WriteLine($"[SKIP] {name}: no writable prop {prop}");
             return;
         }
-        Capture(name, main);
+        Capture(name, main, paneAtRest);
         Set(vm, prop, false);
         // Let the CLOSE finish before the next drawer opens. Set() pumps a fixed number of
         // times, which is enough to get the new content on screen but nowhere near enough to
@@ -446,26 +452,37 @@ internal static class AvaloniaCapture
         // The one-pixel flips are sub-perceptual and still exactly the class of difference a
         // visual gate must not manufacture: indistinguishable from a real one-pixel regression,
         // and enough to fail a byte-identity baseline half the time.
-        Quiesce(main);
+        Quiesce(main, paneAtRest);
     }
 
     // Drive the window to a still frame and throw the frame away. Same settle loop the capture
-    // path uses; the point is only the side effect of pumping until nothing moves.
-    private static void Quiesce(Window w)
+    // path uses; the point is only the side effect of pumping until nothing moves — and, when
+    // the caller hands over an end state, until that end state holds.
+    private static void Quiesce(Window w, EndState? endState = null)
     {
         bool settled;
+        string? violation;
         // Report rather than stack-trace. Every other capture site funnels its failures through
         // [FAIL] + a non-zero exit, and this one is on the same render path (Encode asserts the
         // window painted its whole surface); an uncaught throw from BETWEEN screens would be the
         // one failure in this tool that arrives as a raw trace.
-        try { (_, settled, _) = SettledFrame(w); }
+        try { (_, settled, _, violation) = SettledFrame(w, endState); }
         catch (Exception ex)
         {
             _failed = true;
             Console.WriteLine($"[FAIL] settling between screens: {ex.GetType().Name}: {ex.Message}");
             return;
         }
-        if (!settled)
+        if (violation != null)
+        {
+            // Not fatal HERE, deliberately: nothing was saved, and the capture that follows
+            // carries the same end state, so it will refuse to save a frame taken from this
+            // state and will fail by name. Saying it here as well is what turns "screen X
+            // failed" into "the pane had already not finished closing before screen X started".
+            Console.WriteLine($"[WARN] between screens: {endState?.What} did not reach its end " +
+                              $"state within {SettleMaxRounds} settle rounds - {violation}");
+        }
+        else if (!settled)
         {
             // Not fatal — nothing was saved. But a window that will not stop moving between
             // screens means the NEXT capture starts from a moving state, so say so rather
@@ -1156,7 +1173,145 @@ internal static class AvaloniaCapture
     // that settles first time — and it is the same argument the interval itself rests on, taken
     // one step further: two samples agreeing is not evidence unless something could have changed
     // between them, and at the tail of an ease, something could not.
+    //
+    // ...and that is where raising the constant stops working, which is why EndState below
+    // exists and why this stayed at 3. Measured over 51 --determinism runs (#278): with three
+    // samples the SplitView pane still saved 1-2 px short of OpenPaneLength in 5 runs, 9.8%,
+    // and the rate went UP under CPU load — 2 of 39 idle, 3 of 12 loaded. That is the argument
+    // against a fourth sample and against any fifth after it: under load what gets delayed is
+    // the animation's own tick, so consecutive encodes match BECAUSE NOTHING WAS SCHEDULED
+    // between them. Stillness gets cheaper to fake exactly when the host is busiest, and no
+    // finite number of 50 ms samples bounds a scheduler stall. This constant is a good rule for
+    // motion the harness cannot predict; it was never going to be one for motion it can.
     private const int SettleStableSamples = 3;
+
+    /// <summary>
+    /// A fact the app itself declares, that a capture must be able to READ BACK before its frame
+    /// is kept.
+    /// </summary>
+    /// <remarks>
+    /// <para>
+    /// Everything above this point infers "the transition finished" from "the pixels stopped
+    /// changing". That inference has no right answer to check against, so it can only ever be
+    /// made rarer, never sound — see the note on <see cref="SettleStableSamples"/>. Where a
+    /// transition's end state is DECLARED, the harness does not have to infer anything: it can
+    /// read the number the app committed to and compare.
+    /// </para>
+    /// <para>
+    /// This is deliberately not a fallback and not a tolerance. Acceptance in
+    /// <see cref="SettledFrame"/> is stillness AND this, so it is strictly stronger than the
+    /// rule it joins; the wait is bounded by the <see cref="SettleMaxRounds"/> budget that was
+    /// already there, so no new constant is introduced and there is nothing to tune. A frame
+    /// that is still but not at the end state is not saved with a warning — it costs more
+    /// rounds, and if the budget runs out the run FAILS by name with both numbers in it.
+    /// </para>
+    /// </remarks>
+    private sealed class EndState
+    {
+        /// <summary>What is being waited for. Appears in the log line and the failure.</summary>
+        public required string What { get; init; }
+
+        /// <summary>
+        /// Null once the end state holds; otherwise what the tree says instead, phrased so the
+        /// failure names the observed value and the declared one.
+        /// </summary>
+        public required Func<string?> Violation { get; init; }
+    }
+
+    // Avalonia's SplitView template part that carries the pane, and the thing that actually
+    // animates: its Width is driven by a DoubleTransition from 0 to OpenPaneLength.
+    private const string PaneRootPart = "PART_PaneRoot";
+
+    /// <summary>
+    /// MainWindow's drawer pane is at the width the app declares for its current state — open at
+    /// <c>OpenPaneLength</c>, or closed — rather than somewhere on the way there.
+    /// </summary>
+    /// <remarks>
+    /// <para>
+    /// This is the one end state in the capture set that is knowable, and it is the one that has
+    /// actually been recorded wrong. <c>MainWindow.axaml</c> hosts all three right-hand flyouts in
+    /// ONE <c>SplitView</c> with <c>OpenPaneLength="380"</c>, so at 720 wide the open pane's left
+    /// edge is 720-380 = 340 exactly. Instrumented across 51 runs (#278), the flaky captures sat
+    /// at 341-342: settled, saved, and 1-2 px short — which re-lays out every centred glyph in the
+    /// pane and moves 1.1-2.0% of the image, worst channel delta 222. #277 found the same defect at
+    /// 4 px and made it smaller by requiring a third stable sample. It did not close it, and no
+    /// count of samples can.
+    /// </para>
+    /// <para>
+    /// Resolved once per sweep and closed over, so the per-round check is two property reads
+    /// rather than a visual-tree walk. Ambiguity is a failure rather than a first-match, for the
+    /// reason <see cref="RequireRenderedText"/> gives: a guard quietly checking an arbitrary one
+    /// of two candidates is worse than no guard, because it is believed.
+    /// </para>
+    /// </remarks>
+    private static EndState? DesktopPaneAtRest(Window main)
+    {
+        var views = main.GetVisualDescendants().OfType<SplitView>().ToArray();
+        if (views.Length != 1)
+        {
+            _failed = true;
+            Console.WriteLine(
+                $"[FAIL] drawer end state: MainWindow's visual tree holds {views.Length} " +
+                "SplitView(s), and this check is written for the one MainWindow.axaml declares. " +
+                "With none, the three right-hand flyout screens are captured with nothing " +
+                "watching their open animation; with several, the check would be reading an " +
+                "arbitrary one of them.");
+            return null;
+        }
+
+        var view = views[0];
+        var panes = view.GetVisualDescendants()
+                        .OfType<Control>()
+                        .Where(c => string.Equals(c.Name, PaneRootPart, StringComparison.Ordinal))
+                        .ToArray();
+        if (panes.Length != 1)
+        {
+            _failed = true;
+            Console.WriteLine(
+                $"[FAIL] drawer end state: the SplitView template holds {panes.Length} controls " +
+                $"named '{PaneRootPart}'. That part is what animates open, so without exactly one " +
+                "of it there is nothing to check the drawer captures against.");
+            return null;
+        }
+
+        var pane = panes[0];
+        Console.WriteLine(
+            $"[INFO] drawer end state: {PaneRootPart} must be {view.OpenPaneLength} wide when the " +
+            $"pane is open and {ClosedPaneLength(view)} when it is closed " +
+            $"(OpenPaneLength={view.OpenPaneLength}, DisplayMode={view.DisplayMode}), read off " +
+            "the SplitView rather than restated here");
+
+        return new EndState
+        {
+            What = $"the SplitView drawer pane ({PaneRootPart})",
+            Violation = () =>
+            {
+                var expected = view.IsPaneOpen ? view.OpenPaneLength : ClosedPaneLength(view);
+                var actual = pane.Bounds.Width;
+                // Bounds, not Width: Bounds is what layout gave the pane and therefore what the
+                // pixels show, which is the thing a baseline records. Exact equality, with no
+                // epsilon, on purpose — a tolerance here would be the same kind of dial as a
+                // sample count, and the whole point is that this comparison has a right answer.
+                if (actual.Equals(expected)) { return null; }
+                return $"it is {actual} wide (Bounds={pane.Bounds}) but the pane is " +
+                       (view.IsPaneOpen
+                            ? $"OPEN, and MainWindow.axaml declares OpenPaneLength={expected}"
+                            : $"CLOSED, which for DisplayMode={view.DisplayMode} is {expected}");
+            },
+        };
+    }
+
+    // What "closed" means for the pane's width, taken from Avalonia's own rule rather than
+    // assumed: the two compact modes leave CompactPaneLength of the pane on screen, Inline and
+    // Overlay collapse it to nothing. MainWindow uses Overlay, so this is 0 there today - but
+    // reading it off DisplayMode is what stops this check quietly asserting the wrong number if
+    // that attribute ever changes.
+    private static double ClosedPaneLength(SplitView view) => view.DisplayMode switch
+    {
+        SplitViewDisplayMode.CompactInline or SplitViewDisplayMode.CompactOverlay
+            => view.CompactPaneLength,
+        _ => 0,
+    };
 
     // 96 DPI, matching the headless framebuffer this capture path replaced, so the PNG's pHYs
     // chunk — and therefore its bytes — are unchanged for every screen whose pixels are.
@@ -1266,7 +1421,8 @@ internal static class AvaloniaCapture
         }
     }
 
-    private static (byte[] Frame, bool Settled, int Rounds) SettledFrame(Window w)
+    private static (byte[] Frame, bool Settled, int Rounds, string? Violation) SettledFrame(
+        Window w, EndState? endState = null)
     {
         Pump();
         var previous = Encode(w);
@@ -1274,6 +1430,7 @@ internal static class AvaloniaCapture
         // SettleStableSamples frames in a row are identical, i.e. after the agreement has
         // survived more than one sample interval — see the note on SettleStableSamples.
         var agreed = 1;
+        string? violation = null;
         for (var round = 1; round <= SettleMaxRounds; round++)
         {
             Thread.Sleep(SettleSampleInterval);
@@ -1281,7 +1438,19 @@ internal static class AvaloniaCapture
             var current = Encode(w);
             if (current.Length == previous.Length && current.AsSpan().SequenceEqual(previous))
             {
-                if (++agreed >= SettleStableSamples) { return (current, true, round); }
+                if (++agreed >= SettleStableSamples)
+                {
+                    // Stillness is necessary and NOT sufficient — see the note on EndState. The
+                    // end state is read here rather than one statement later, because nothing
+                    // pumps between Encode and this line, so what it reports is a property of
+                    // the very frame in `current` and not of some later state of the tree.
+                    violation = endState?.Violation();
+                    if (violation is null) { return (current, true, round, null); }
+
+                    // Still enough, wrong state: keep going on the SAME budget. This is the
+                    // whole change — the loop now has something to wait FOR, so a stalled
+                    // animation costs rounds instead of silently producing a baseline.
+                }
             }
             else
             {
@@ -1291,15 +1460,29 @@ internal static class AvaloniaCapture
             }
             previous = current;
         }
-        return (previous, false, SettleMaxRounds);
+        // Out of rounds. Report the end state as it stands, so the caller can say which of the
+        // two failures this was: a tree that never stopped moving, or one that stopped in a
+        // state the app does not declare.
+        return (previous, false, SettleMaxRounds, endState?.Violation());
     }
 
-    private static void Capture(string name, Window w)
+    private static void Capture(string name, Window w, EndState? endState = null)
     {
         try
         {
-            var (encoded, settled, rounds) = SettledFrame(w);
+            var (encoded, settled, rounds, violation) = SettledFrame(w, endState);
             if (encoded.Length == 0) { _failed = true; Console.WriteLine($"[FAIL] {name}: null frame"); return; }
+            if (violation != null)
+            {
+                // The frame is still, and wrong. Before this check it was saved — and a saved
+                // wrong frame is a candidate baseline, which is strictly worse than a failed run.
+                _failed = true;
+                Console.WriteLine($"[FAIL] {name}: {endState?.What} never reached its end state " +
+                                  $"within {SettleMaxRounds} settle rounds - {violation}. Not " +
+                                  "saving: this frame is a picture of a transition that had not " +
+                                  "finished, and it is indistinguishable from a layout regression.");
+                return;
+            }
             if (!settled)
             {
                 // Never save a frame we know is still moving — that is the silent-corruption case.
