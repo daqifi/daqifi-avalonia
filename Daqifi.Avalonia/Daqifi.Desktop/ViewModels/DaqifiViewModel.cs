@@ -261,7 +261,7 @@ public partial class DaqifiViewModel : ObservableObject, IFirmwareUpdateHost, IL
     /// Derived from <see cref="NotificationList"/> and refreshed from its CollectionChanged, NOT from
     /// <see cref="NotificationCount"/>: that property is also assigned the *version*-notification count
     /// straight off <c>VersionNotification</c> in <c>UpdateUi</c>, so it can differ from the list's own
-    /// Count, and two sites add to the list without touching it at all. Only CollectionChanged fires on
+    /// Count, and three sites add to the list without touching it at all. Only CollectionChanged fires on
     /// every mutation by construction.
     /// </para>
     /// </summary>
@@ -1819,7 +1819,7 @@ public partial class DaqifiViewModel : ObservableObject, IFirmwareUpdateHost, IL
     private readonly HashSet<IStreamingDevice> _subscribedDevices = new(ReferenceComparer<IStreamingDevice>.Instance);
 
     // Keeps the flyout's list / empty-state swap in step with the collection it renders. Every add,
-    // remove, clear and replace raises this, including the two add sites that never touch
+    // remove, clear and replace raises this, including the three add sites that never touch
     // NotificationCount, so the empty state cannot be left showing over a non-empty list.
     private void OnNotificationListCollectionChanged(object? sender, NotifyCollectionChangedEventArgs e)
         => OnPropertyChanged(nameof(HasNotifications));
