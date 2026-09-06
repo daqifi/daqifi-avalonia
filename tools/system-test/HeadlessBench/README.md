@@ -26,6 +26,16 @@ It goes through the **user's** code path, not a convenient one:
   skips the guard and leaves the shell's own value stale.
 - Streaming is driven by toggling `shell.IsLogging`, so the disk-space check, session
   creation and `LoggingFleet.Start` all happen the way they do in the app.
+- The Devices and Channels panes are the real pane view models, built the way their own views
+  build them — `DevicesPanePrototype.axaml.cs` does `new DevicesPaneViewModel(shell)` and
+  `ChannelsPanePrototype.axaml.cs` does `new ChannelsPaneViewModel()`, each in
+  `OnDataContextChanged`, and both populate themselves from `ConnectionManager`. So the tile
+  rows read live tiles, the channel rows drive `ToggleChannelCommand` / `OpenSettingsCommand`
+  and then write the drawer's own bound properties, and `CH-AI` no longer hand-mirrors the
+  private `ToggleChannel` it used to copy. Constructing a pane view model *is* the user's
+  path; no test-only accessor on the shell was needed.
+- SD card listing is `shell.DeviceLogsViewModel.RefreshFilesCommand`, the Logged Data pane's
+  REFRESH button on the instance that pane binds, not `device.RefreshSdCardFiles()`.
 
 Every step renders the live window to a PNG and appends one JSON line to
 `<out>/results.jsonl`, so a run leaves behind evidence rather than a verdict.
@@ -79,13 +89,15 @@ connection — the hardware path is the point.
 
 ## Rows covered
 
-`CONN-USB`, `DEV-INFO`, `DEV-RATE`, `CH-AI`, `STREAM-AI`, `LOG-SESSION`, `GRAPH-LIVE`,
-`CONN-DISC`, plus three `unexpected`-check probes (sample-arrival gaps and device-clock skew,
-thread growth across connect/disconnect, and UI pump latency). Add a row by adding a `Step`;
-keep the shape — drive, assert the device, pump, assert the UI, capture, emit.
+`CONN-USB`, `DEV-INFO`, `DEV-TILE`, `CH-TILE`, `DEV-RATE`, `CH-AI`, `STREAM-AI`,
+`LOG-SESSION`, `GRAPH-LIVE`, `CH-DIO`, `CH-PWM`, `SD-LIST`, `CONN-DISC` — plus a `limits`
+check on `CH-PWM` and four `unexpected`-check probes (sample-arrival gaps and device-clock
+skew, the pin state a channel is left in after PWM is disabled, thread growth across
+connect/disconnect, and UI pump latency). Add a row by adding a `Step`; keep the shape —
+drive, assert the device, pump, assert the UI, capture, emit.
 
-The full T2/T3 matrix has more rows than this — `DEV-TILE`, `CH-TILE`, `DEV-NAME`, `CH-DIO`,
-`CH-PWM`, `SD-LIST`, `DEV-NET`, `DEV-DEBUG` are not implemented. Tracked in #260.
+The full T2/T3 matrix has more rows than this — `DEV-NAME`, `DEV-NET` and `DEV-DEBUG` are
+not implemented, for the reasons in Known gaps below. Tracked in #260.
 
 ## Known gaps — read before trusting a green run
 
@@ -102,11 +114,35 @@ These are real limits of the current rig, not of the app. Tracked in #260.
   `DaqifiViewModel.DisconnectDeviceCommand` and asserts three of that command's four effects
   (the device leaves both device lists, no channel is left subscribed, `SelectedDevice` is
   cleared). The firmware-notification removal is not asserted.
-- **Only one channel, one device, one rate.** Every hardware row runs against the first
-  analog input of the first connected device at `--rate`. Multi-device fleets, digital and
-  PWM outputs, and rate limits are untested.
+- **One device, one analog channel, one digital channel, one rate.** The streaming rows run
+  against the first analog input of the first connected device at `--rate`; `CH-DIO` and
+  `CH-PWM` run against its first PWM-capable digital channel (its first digital channel if
+  none is PWM-capable). Multi-device fleets and rate limits are untested. Everything those two
+  rows touch — direction, drive state, PWM mode, duty — is state the *board* keeps across a
+  host disconnect, so they snapshot all four, disable an inherited PWM before asserting, and
+  restore from a `finally` (each step guarded on its own, so one failure cannot skip the steps
+  that stop the pin being driven); an aborted run must not leave a shared bench board driving a
+  pin. `CH-DIO/cleanup` then reads the restore back and **fails the run** if it did not hold —
+  but only `IsPwmEnabled` and `PwmDutyCyclePercent` carry real signal there, because they read
+  Core's mirror of the last state it successfully *commanded*, while `IsOutput` and
+  `IsDigitalOn` are local properties that echo whatever was assigned. The device layer logs and
+  swallows a failed command rather than returning one, so that read-back is as far as the rig
+  can see without changing the app for the benefit of its own test harness.
+- **`DEV-NAME` is not implemented, and needs `DAQIFI_RESTORE_NAME` alongside it.**
+  `SetFriendlyName` sends `SYSTem:DEVice:NAME` *and* `…:NAME:SAVE`, so it writes the board's
+  NVM: an interrupted run leaves a shared bench board renamed with nothing to put it back.
+  The repair mode is the row's precondition, not a nicety, and it is its own piece of work.
+- **`DEV-NET` is not implemented, because there is nothing here it could assert.** The app
+  never reads network configuration back from the device; `NetworkConfiguration` is hydrated
+  from the status metadata `DEV-INFO` already covers (`HydrateDeviceMetadata`), and the only
+  Core read path, `LoadNetworkConfigurationAsync`, is not wired up. Writing configuration is
+  `DEV-NET-W`, a T4 row that needs a human.
+- **`DEV-DEBUG` is not implemented, deliberately.** Enabling debug mode fires
+  `TriggerWifiFirmwareProbe`, whose WINC chip-info query the app itself gates behind debug
+  mode because it *"can choke a device with a blank/erased WINC"*. That is not something to
+  run unattended against a shared bench board for the sake of a checkbox row.
 
-## Three traps it encodes, for whoever edits it
+## Four traps it encodes, for whoever edits it
 
 - **An assertion can be satisfied by a safety net rather than by the path you meant to test.**
   Driving `ConnectionManager.Instance.Disconnect` instead of `DisconnectDeviceCommand` still
@@ -123,6 +159,14 @@ These are real limits of the current rig, not of the app. Tracked in #260.
 - **Never block on an async command.** Headless, `Dispatcher.UIThread` *is* the calling
   thread, so `.GetAwaiter().GetResult()` on a command's `Task` deadlocks forever. Start the
   task, then `PumpUntil` it completes.
+- **A tile you are holding may already have been thrown away.** Anything that re-shelves a
+  channel — flipping its direction, enabling PWM — posts `ChannelsPaneViewModel.Rebuild` at
+  Background priority, which disposes every tile and builds new ones. Read a tile through
+  `FindTile` after each such change rather than reusing the reference from before it, or the
+  row asserts against a dead object that will never update again. The same goes for a command
+  that is already running: `DeviceLogsViewModel` fires an SD refresh of its own when a device
+  becomes selected, and a second `RefreshFilesCommand.ExecuteAsync` while the first is in
+  flight is dropped, so `SD-LIST` waits for `CanExecute` before it drives the button.
 
 ## Two build constraints it shares with `AvaloniaCapture`
 
