@@ -317,6 +317,20 @@ other check in the repo. Five `--determinism` runs agreed 25/25, and the same ca
 reproduced the previous manifest on **all 24** existing hashes, byte for byte: the recording
 is purely additive, and the change that motivated it moved nothing that was already gated.
 
+`desktop-7-notifications-flyout.png` alone was re-recorded 2026-09-05 for #250 (macOS 26.5,
+Apple silicon, .NET SDK 10.0.302), which gives the notifications flyout the named empty state
+every other pane already has instead of a blank panel. **One** hash moved: the other
+twenty-three are byte-for-byte unchanged against the pre-fix capture. The pre-fix capture
+matched the then-committed manifest on all 24 — so the blank panel is what was shipping,
+rather than an artifact of the harness — and five `--determinism` runs agreed 24/24 after the
+change.
+
+Those two recordings were made independently in separate open PRs and both counts above
+are as-of that PR: after both land the manifest lists **25** screens, `desktop-7` carries
+#250's post-fix hash, and #241's addition is the twenty-fifth line. The two changes touch
+different lines of `macos-arm64.sha256` — one appends, one rewrites — so the merged
+manifest is the union, and `--check-baseline` on the merged tree is 25/25.
+
 `desktop-9-summary-flyout.png` alone was re-recorded 2026-09-03 for #228 (same host and
 environment as the #213 line below), which unclips the Log Summary SETTINGS label and
 moves Reset off the status toggle. **One** hash moved: the other twenty-three, including

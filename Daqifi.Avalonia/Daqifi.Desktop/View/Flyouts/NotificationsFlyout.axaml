@@ -27,7 +27,32 @@
                           IsChecked="{Binding IsNotificationsOpen, Mode=TwoWay}"/>
         </Grid>
 
-        <ScrollViewer Grid.Row="1">
+        <!--
+            Empty state. Sibling of the list in the same row, swapped on HasNotifications the way
+            the Logged Data pane swaps on HasLoggingSessions. Uses the app-wide emptyTitle/emptyBody
+            classes from Resources/Components.axaml; the icon and the body sentence are the ones the
+            mobile notifications overlay (Views/MobileMainView.axaml) already shows for this state,
+            so both shells say the same thing.
+        -->
+        <StackPanel Grid.Row="1"
+                    IsVisible="{Binding !HasNotifications}"
+                    Spacing="10"
+                    Margin="20,0,20,40"
+                    HorizontalAlignment="Center"
+                    VerticalAlignment="Center">
+            <i:Icon Value="mdi-bell-check-outline"
+                    FontSize="34"
+                    HorizontalAlignment="Center"
+                    Foreground="{DynamicResource TextTertiary}"/>
+            <TextBlock Classes="emptyTitle"
+                       AutomationProperties.AutomationId="NotificationsEmptyTitle"
+                       Text="NO NOTIFICATIONS"/>
+            <TextBlock Classes="emptyBody"
+                       AutomationProperties.AutomationId="NotificationsEmptyBody"
+                       Text="Device and firmware alerts will appear here."/>
+        </StackPanel>
+
+        <ScrollViewer Grid.Row="1" IsVisible="{Binding HasNotifications}">
             <ItemsControl ItemsSource="{Binding NotificationList}">
                 <ItemsControl.ItemTemplate>
                     <DataTemplate>
