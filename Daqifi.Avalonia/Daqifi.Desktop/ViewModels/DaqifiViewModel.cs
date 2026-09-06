@@ -147,12 +147,13 @@ public partial class DaqifiViewModel : ObservableObject, IFirmwareUpdateHost, IL
     [NotifyPropertyChangedFor(nameof(FlyoutHeight))]
     private int _height = 600;
     private int _selectedIndex;
-    private int _selectedStreamingFrequency;
     private WindowState _viewWindowState;
     private readonly IDialogService _dialogService;
 
     [ObservableProperty]
     [NotifyCanExecuteChangedFor(nameof(UpdateWifiFirmwareOnlyCommand))]
+    // The RATE chip reads the selected device's rate, so selecting a different device moves it.
+    [NotifyPropertyChangedFor(nameof(SelectedStreamingFrequency))]
     private IStreamingDevice? _selectedDevice;
 
     private VersionNotification? _versionNotification;
@@ -543,10 +544,53 @@ public partial class DaqifiViewModel : ObservableObject, IFirmwareUpdateHost, IL
         }
     }
 
+    /// <summary>
+    /// The device the header RATE chip describes and the Devices drawer's FREQUENCY slider writes
+    /// to: the one the drawer was last opened on, or — before any drawer has been opened — the
+    /// first connected device.
+    /// </summary>
+    /// <remarks>
+    /// One chip, possibly several devices, so it has to name one of them. The selected device is
+    /// the only honest answer available: <see cref="SelectedDevice"/> is set by
+    /// <c>DevicesPaneViewModel.OpenSettings</c> and is already the device this property's setter
+    /// writes to, so the chip now states the rate of the device whose rate the user can change
+    /// from here. The fallback is what a fleet of one needs — the chip has to read something
+    /// before the user has opened any drawer, and with one device connected there is no ambiguity
+    /// about which. Selecting a different device moves the chip to that device's rate; the chip is
+    /// a readout of one device, not of the fleet.
+    /// <para>
+    /// Deliberately not an aggregate. Nothing in this app runs one session per device at different
+    /// rates and then needs a summary of them: the rate is per device, the chip has room for one
+    /// number, and a "fleet rate" abstraction with one caller would be more machinery than the
+    /// screen has meaning for.
+    /// </para>
+    /// </remarks>
+    // Downstream-only: no upstream counterpart.
+    private IStreamingDevice? RateChipDevice => SelectedDevice ?? ConnectedDevices.FirstOrDefault();
+
+    /// <summary>
+    /// Gets or sets the streaming rate shown on the Live Graph header's RATE chip, read straight
+    /// off <see cref="RateChipDevice"/>.
+    /// </summary>
+    /// <remarks>
+    /// A read-through, not a cached copy. The rate is the device's to change and it does change it:
+    /// <c>AbstractStreamingDevice.HoldRateToCurrentConfigurationCap</c> lowers it at the start of
+    /// every session to what the enabled channel set can sustain (7746 Hz for one analog input on
+    /// the bench Nq1, against a 22000 Hz advertised ceiling), and
+    /// <c>ClampRateToAdvertisedCeiling</c> lowers it when a re-described device moves that ceiling.
+    /// A copy written only by this setter therefore stated the rate the user last asked for while
+    /// the session recorded at another one (issue #282). <see cref="OnDeviceStateChanged"/>
+    /// announces this property when any connected device moves its rate.
+    /// <para>
+    /// The device holds what it is given to its own 1..<c>MaxStreamingFrequency</c> range, so the
+    /// value read back is not always the one written; the setter announces unconditionally so a
+    /// control that sent a rate the device would not take is told what it got instead.
+    /// </para>
+    /// </remarks>
     // @port: Daqifi.Desktop.ViewModels.DaqifiViewModel.SelectedStreamingFrequency
     public int SelectedStreamingFrequency
     {
-        get => _selectedStreamingFrequency;
+        get => RateChipDevice?.StreamingFrequency ?? 0;
         set
         {
             if (value < 1) { return; }
@@ -562,8 +606,9 @@ public partial class DaqifiViewModel : ObservableObject, IFirmwareUpdateHost, IL
                 return;
             }
 
-            SelectedDevice.StreamingFrequency = value;
-            _selectedStreamingFrequency = SelectedDevice.StreamingFrequency;
+            if (RateChipDevice is not { } device) { return; }
+
+            device.StreamingFrequency = value;
             OnPropertyChanged();
         }
     }
@@ -1790,21 +1835,12 @@ public partial class DaqifiViewModel : ObservableObject, IFirmwareUpdateHost, IL
                 streamingDevice.SetDebugMode(IsDebugModeEnabled);
             }
 
-            // Seed the RATE chip from the device's actual streaming frequency the first time a
-            // device connects. SelectedStreamingFrequency's setter is only ever driven by the
-            // Devices pane FREQUENCY slider, so without this the chip shows a stale "0 Hz" until
-            // the user touches the slider even though the device is already streaming at its
-            // default rate (issue #686; found downstream first, fixed upstream in 125b33e —
-            // reconciled to upstream's semantics at the 2026-07-14 sync). This is a read-back,
-            // not a user-initiated change, so it intentionally bypasses the setter's
-            // logging-lock guard and device write-through.
-            if (_selectedStreamingFrequency < 1)
-            {
-                // Clamp to the same >=1 floor the public setter enforces, so an out-of-range device
-                // value (e.g. an uninitialized 0) can't surface as "0 Hz" on the chip.
-                _selectedStreamingFrequency = Math.Max(1, connectedDevice.StreamingFrequency);
-                OnPropertyChanged(nameof(SelectedStreamingFrequency));
-            }
+            // The RATE chip needs no seeding here: SelectedStreamingFrequency reads the device
+            // itself, and the Add above raises the collection change that announces it. The seed
+            // this replaces (issue #686) existed only because the chip was a copy that started at
+            // zero — and, being a once-only "if still unset" seed, it was also the reason the chip
+            // then stated the first device's connect-time rate for the rest of the session
+            // (issue #282).
         }
 
         return Task.CompletedTask;
@@ -1854,6 +1890,11 @@ public partial class DaqifiViewModel : ObservableObject, IFirmwareUpdateHost, IL
 
         RaiseLoggingStateChanged();
 
+        // The RATE chip reads whichever device RateChipDevice names, and this collection is half of
+        // that answer: the first device to arrive is what the chip shows until a drawer is opened,
+        // and a device leaving hands the chip to the next one (or to nothing).
+        OnPropertyChanged(nameof(SelectedStreamingFrequency));
+
         // NOTE: the WiFi version probe is not fired from this subscription handler. It is
         // centralized in TriggerWifiFirmwareProbe, fired (debug-gated, at most once per device)
         // after a device connects and when debug mode is enabled. The WINC chip-info query it
@@ -1863,7 +1904,7 @@ public partial class DaqifiViewModel : ObservableObject, IFirmwareUpdateHost, IL
     }
 
     /// <summary>
-    /// Wires up the per-device handlers this view model owns: the logging-state change handler and,
+    /// Wires up the per-device handlers this view model owns: the device-state change handler and,
     /// for streaming devices, the debug-data handler. Paired with <see cref="UnsubscribeDeviceEvents"/>
     /// and driven from <see cref="OnConnectedDevicesCollectionChanged"/> so the two subscriptions are
     /// added and removed together (issue #592).
@@ -1871,7 +1912,7 @@ public partial class DaqifiViewModel : ObservableObject, IFirmwareUpdateHost, IL
     // @port: Daqifi.Desktop.ViewModels.DaqifiViewModel.SubscribeDeviceEvents
     private void SubscribeDeviceEvents(IStreamingDevice device)
     {
-        device.PropertyChanged += OnDeviceLoggingStateChanged;
+        device.PropertyChanged += OnDeviceStateChanged;
         if (device is AbstractStreamingDevice streamingDevice)
         {
             streamingDevice.DebugDataReceived += OnDebugDataReceived;
@@ -1887,19 +1928,47 @@ public partial class DaqifiViewModel : ObservableObject, IFirmwareUpdateHost, IL
     // @port: Daqifi.Desktop.ViewModels.DaqifiViewModel.UnsubscribeDeviceEvents
     private void UnsubscribeDeviceEvents(IStreamingDevice device)
     {
-        device.PropertyChanged -= OnDeviceLoggingStateChanged;
+        device.PropertyChanged -= OnDeviceStateChanged;
         if (device is AbstractStreamingDevice streamingDevice)
         {
             streamingDevice.DebugDataReceived -= OnDebugDataReceived;
         }
     }
 
+    /// <summary>
+    /// Mirrors the per-device state this shell displays: whether the device is logging to its SD
+    /// card, and the rate it is streaming at.
+    /// </summary>
+    /// <remarks>
+    /// Renamed from upstream's <c>OnDeviceLoggingStateChanged</c>, which is what it was until the
+    /// rate joined it — the device moves its own rate (see
+    /// <see cref="SelectedStreamingFrequency"/>) and this is the subscription that already sees it.
+    /// <para>
+    /// No dispatcher hop. <c>HydrateDeviceMetadata</c> raises <c>StreamingFrequency</c> on Core's
+    /// callback thread, but the only consumer of either notification is a binding, and Avalonia's
+    /// <c>InpcPropertyAccessorPlugin</c> subscribes through <c>WeakEvents.ThreadSafePropertyChanged</c>,
+    /// which does the <c>CheckAccess()</c>-or-<c>Post</c> itself before the target is set (measured
+    /// against the framework while investigating issue #264, which was closed as not-a-defect for
+    /// exactly this reason). Marshalling here would be a second copy of that hop. The repo's
+    /// existing marshals guard <c>ObservableCollection</c> mutations, which
+    /// <c>WeakEvents.CollectionChanged</c> does <b>not</b> hop, and are still required.
+    /// </para>
+    /// </remarks>
     // @port: Daqifi.Desktop.ViewModels.DaqifiViewModel.OnDeviceLoggingStateChanged
-    private void OnDeviceLoggingStateChanged(object? sender, PropertyChangedEventArgs e)
+    private void OnDeviceStateChanged(object? sender, PropertyChangedEventArgs e)
     {
-        if (e.PropertyName == nameof(IStreamingDevice.IsLoggingToSdCard))
+        switch (e.PropertyName)
         {
-            RaiseLoggingStateChanged();
+            case nameof(IStreamingDevice.IsLoggingToSdCard):
+                RaiseLoggingStateChanged();
+                break;
+            // Announced for any connected device rather than only the chip's: the getter reads
+            // whichever device RateChipDevice names, so a re-announcement for another one is a
+            // re-read of the same value and costs a binding refresh, while filtering here would
+            // have to duplicate that choice.
+            case nameof(IStreamingDevice.StreamingFrequency):
+                OnPropertyChanged(nameof(SelectedStreamingFrequency));
+                break;
         }
     }
 
