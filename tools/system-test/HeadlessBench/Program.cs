@@ -677,8 +677,13 @@ internal static class HeadlessBench
         var device = ConnectSerial(shell, out var reconnectSeconds);
         if (device is null)
         {
-            Emit(2, "DEV-NAME", "works", "not-run",
-                 $"could not reconnect {_port} after {reconnectSeconds:F1} s to exercise the rename");
+            // A failing Step, not a not-run: the port was connectable a moment ago, so failing to
+            // get it back is the rig's own precondition breaking, and Emit does not touch _failed —
+            // a run that never checked the rename would otherwise exit 0. The nameless-board case
+            // below IS a not-run, because that is a board this row deliberately declines to touch.
+            Step(2, "DEV-NAME", "works", false,
+                 $"could not reconnect {_port} after {reconnectSeconds:F1} s, so none of the friendly-name " +
+                 "checks ran; ConnectedDevices=" + shell.ConnectedDevices.Count, null, reconnectSeconds);
             return;
         }
 
@@ -802,10 +807,13 @@ internal static class HeadlessBench
                 double? seconds = null;
                 try
                 {
+                    // Whatever is connected now, or a fresh connection when the run left none —
+                    // ConnectSerial refuses to answer while anything is still connected, so the
+                    // two cases cannot be confused.
                     var current = shell.ConnectedDevices.FirstOrDefault() ?? ConnectSerial(shell, out _);
                     if (current is null)
                     {
-                        problems.Add($"could not reconnect {_port} to put the name back");
+                        problems.Add($"could not connect {_port} to put the name back");
                     }
                     else
                     {
@@ -821,7 +829,7 @@ internal static class HeadlessBench
                         current = Bounce(shell, current, out var s);
                         seconds = s;
                         left = current?.FriendlyName;
-                        if (current is null) { problems.Add("could not reconnect to read the restored name back"); }
+                        if (current is null) { problems.Add("could not bounce the connection to read the restored name back"); }
                         else { DisconnectQuiet(shell, current); }
                     }
                 }
@@ -834,8 +842,8 @@ internal static class HeadlessBench
                            "reconnect rather than from Core's optimistic copy"
                          : $"BOARD LEFT NAMED '{left ?? "unknown"}', not '{originalName}'" +
                            (problems.Count == 0 ? "" : $" ({string.Join("; ", problems)})") +
-                           $" — put it back with: DAQIFI_RESTORE_NAME='{originalName}' dotnet run --project " +
-                           $"tools/system-test/HeadlessBench/HeadlessBench.csproj --no-restore -- --port {_port} --out <dir>",
+                           $" — put it back with: DAQIFI_RESTORE_NAME={ShellQuote(originalName)} dotnet run --project " +
+                           $"tools/system-test/HeadlessBench/HeadlessBench.csproj --no-restore -- --port {ShellQuote(_port)} --out <dir>",
                      null, seconds);
             }
         }
@@ -871,7 +879,7 @@ internal static class HeadlessBench
             device = Bounce(shell, device, out _);
             Step(2, "DEV-NAME", "repair", error is null && device?.FriendlyName == wanted,
                  $"board was reporting '{was}'; asked it for '{wanted}' through the drawer, and after a " +
-                 $"reconnect it reports '{device?.FriendlyName ?? "nothing — the reconnect failed"}'" +
+                 $"reconnect it reports '{device?.FriendlyName ?? "nothing — the connection could not be bounced"}'" +
                  (error is null ? "" : $"; the drawer rejected the name: {error}"),
                  null);
             if (device is not null) { DisconnectQuiet(shell, device); }
@@ -892,6 +900,22 @@ internal static class HeadlessBench
     /// re-report a name it never echoes.</summary>
     private static IStreamingDevice? ConnectSerial(DaqifiViewModel shell, out double seconds)
     {
+        seconds = 0;
+        // Every caller means "connect afresh", and the only thing this returns is
+        // ConnectedDevices' first entry — so a device that was ALREADY connected would be handed
+        // back as if it were this connection's. That is not hypothetical: ConnectionManager
+        // .Disconnect catches a teardown exception before it reaches ConnectedDevices.Remove, so a
+        // disconnect can fail silently, and the object left behind is the one whose FriendlyName
+        // SetFriendlyName has already optimistically updated. DEV-NAME/persists would then read
+        // that copy and report it as a board read-back — precisely the lie the row exists to
+        // prevent. Refuse instead.
+        if (shell.ConnectedDevices.Count > 0)
+        {
+            Console.WriteLine($"[WARN] connect: {shell.ConnectedDevices.Count} device(s) still connected; refusing to " +
+                              "report a stale device as a fresh connection");
+            return null;
+        }
+
         var sw = Stopwatch.StartNew();
         var dialog = new ConnectionDialogViewModel { ManualPortName = _port };
         var connectTask = dialog.ConnectManualSerialCommand.ExecuteAsync(null);
@@ -902,25 +926,40 @@ internal static class HeadlessBench
 
     /// <summary>Disconnect through the Devices pane's own command, without asserting on it —
     /// CONN-DISC is the row that does that, and it drives the same command itself so this helper
-    /// cannot stand in for it.</summary>
-    private static void DisconnectQuiet(DaqifiViewModel shell, IStreamingDevice device)
+    /// cannot stand in for it. Returns whether the device actually left the shell's list.</summary>
+    private static bool DisconnectQuiet(DaqifiViewModel shell, IStreamingDevice device)
     {
         shell.DisconnectDeviceCommand.Execute(device);
         PumpUntil(() => !shell.ConnectedDevices.Contains(device), TimeSpan.FromSeconds(10));
         Pump();
+        return !shell.ConnectedDevices.Contains(device);
     }
 
     /// <summary>Disconnect and reconnect the bench port. The only way to make the board re-report
     /// state it does not echo: the friendly name arrives in the SYSTem:SYSInfoPB? response Core
-    /// requests during connect, and nowhere else.</summary>
+    /// requests during connect, and nowhere else. Null when either half did not happen, because a
+    /// bounce that did not happen must never satisfy a check that claims to have read the board.
+    /// </summary>
     private static IStreamingDevice? Bounce(DaqifiViewModel shell, IStreamingDevice device, out double seconds)
     {
-        DisconnectQuiet(shell, device);
+        seconds = 0;
+        if (!DisconnectQuiet(shell, device))
+        {
+            Console.WriteLine($"[WARN] bounce: '{device.DeviceSerialNo}' is still in ConnectedDevices 10 s after " +
+                              "DisconnectDeviceCommand, so the connection was never bounced");
+            return null;
+        }
         // Keep pumping while the OS lets go of the CDC port, so the reconnect below is not racing
         // the close. Pumping rather than sleeping: the disconnect's own continuations land here.
         PumpFor(TimeSpan.FromSeconds(1));
         return ConnectSerial(shell, out seconds);
     }
+
+    /// <summary>POSIX single-quoting for a value going into a shell command the evidence line asks
+    /// a human to paste. Friendly names may contain an apostrophe — the validator rejects only
+    /// non-printable ASCII, <c>"</c> and <c>\</c> — and one of those inside naive single quotes
+    /// produces a command that does not run.</summary>
+    private static string ShellQuote(string value) => "'" + value.Replace("'", "'\\''") + "'";
 
     /// <summary>Open the Devices drawer on a device, as clicking its tile does. Also what seeds the
     /// drawer's NAME box and points SetFriendlyNameCommand at the device (it reads
@@ -943,8 +982,24 @@ internal static class HeadlessBench
     {
         shell.PendingFriendlyName = name;
         var save = shell.SetFriendlyNameCommand.ExecuteAsync(null);
-        PumpUntil(() => save.IsCompleted, TimeSpan.FromSeconds(20));
+        var completed = PumpUntil(() => save.IsCompleted, TimeSpan.FromSeconds(20));
         Pump();
+        // A wait that ran out is an error, not a success. SetFriendlyName does the SCPI write on an
+        // uncancellable Task.Run, so there is nothing to call off — but every caller bounces the
+        // connection next, and returning null here would let the run disconnect underneath a write
+        // that is still going and then report the read-back as if it had been ordered after it.
+        if (!completed)
+        {
+            return $"SAVE NAME had not returned 20 s after it was pressed, and the device write it " +
+                   "started cannot be cancelled — anything read back after this is racing it";
+        }
+        // The command itself only catches ArgumentException (the validator). Anything else — an
+        // IOException out of the serial write, say — faults the task and would otherwise be
+        // invisible here, since FriendlyNameError is only written on the validation path.
+        if (save.IsFaulted)
+        {
+            return $"SAVE NAME threw: {save.Exception?.GetBaseException().Message}";
+        }
         return shell.FriendlyNameError;
     }
 
