@@ -8,7 +8,7 @@ using Daqifi.Desktop.Common.Loggers;
 using EFCore.BulkExtensions;
 using Microsoft.EntityFrameworkCore;
 using System.Collections.Concurrent;
-using System.Globalization;
+using System.Runtime.CompilerServices;
 
 namespace Daqifi.Desktop.Logger;
 
@@ -86,12 +86,12 @@ public sealed class SessionSampleWriter : IDisposable
     private volatile bool _discardRequested;
 
     /// <summary>
-    /// Running total of samples refused by <see cref="Add"/> because the database could never
-    /// accept them. Not <c>volatile</c> on purpose: it is only ever touched through
-    /// <see cref="Interlocked"/>, which a volatile qualifier would fight (CS0420), and several
-    /// device threads can be producing at once.
+    /// Per-device/channel running totals of rows <see cref="Add"/> could not store as offered,
+    /// which is what rate-limits the reports (see <see cref="Report"/>). Concurrent because several
+    /// device threads produce at once; the counters are boxed so they can be incremented through
+    /// <see cref="Interlocked"/> in place rather than by replacing a dictionary entry.
     /// </summary>
-    private int _rejectedSampleCount;
+    private readonly ConcurrentDictionary<string, StrongBox<long>> _unstorableByOrigin = new();
     #endregion
 
     #region Constructor
@@ -114,8 +114,34 @@ public sealed class SessionSampleWriter : IDisposable
     #region Enqueue
     /// <summary>
     /// Producer. Enqueues a sample for the background consumer to persist. A no-op once the writer
-    /// has been disposed, and for a sample the database can never accept (see
-    /// <see cref="IsStorable"/>).
+    /// has been disposed.
+    /// <para>
+    /// This is also where a row the schema can never accept is dealt with, so that it never reaches
+    /// the batch. Everything below this method is built on "never abandon the batch", which is the
+    /// right answer for a full disk or a locked file — the failure ends and the rows are still
+    /// wanted — and a trap for a row that will be refused every time it is offered: the batch is
+    /// retained, every later sample drains onto it, and the whole session stays in memory and never
+    /// lands. Handling such a row here is what makes that rule safe, because it makes the invariant
+    /// local: no row in the buffer can be rejected on account of its own contents, so a retry can
+    /// always eventually succeed.
+    /// </para>
+    /// <para>
+    /// Two things about a row's own contents can make it permanently unstorable, and they deserve
+    /// opposite answers. A <see cref="double.NaN"/> reading has nothing to salvage — SQLite's REAL
+    /// has no representation for it and Microsoft.Data.Sqlite refuses it outright ("Cannot store
+    /// 'NaN' values.") — so it is dropped. A missing label (the four <c>NOT NULL</c> text columns)
+    /// leaves the reading itself perfectly good, and dropping it would lose every sample of a device
+    /// whose name came through null, which is the very failure this method exists to prevent; so the
+    /// label is filled in and the reading is kept, the same answer
+    /// <c>LoggingManager.BuildSessionDeviceMetadata</c> already gives for a null device name on the
+    /// sibling table.
+    /// </para>
+    /// <para>
+    /// What is deliberately NOT checked here is anything that depends on the state of the database
+    /// rather than on the row — a <see cref="DataSample.LoggingSessionID"/> whose session row does
+    /// not exist, for instance. That would cost a query per sample, and it is not a permanent
+    /// property of the row: the session it refers to may be committed a moment later.
+    /// </para>
     /// </summary>
     /// <param name="dataSample">The sample to buffer for insertion.</param>
     // @port: Daqifi.Desktop.Logger.SessionSampleWriter.Add
@@ -123,90 +149,119 @@ public sealed class SessionSampleWriter : IDisposable
     {
         if (_disposed) { return; }
 
-        // The front door is where a row the store can never accept has to die. Everything below
-        // this line is built on "never abandon the batch", which is the right answer for a full
-        // disk or a locked file — the failure ends and the rows are still wanted — and a trap for
-        // a row that will be refused every time it is offered: the batch is retained, every later
-        // sample drains onto it, and the whole session stays in memory and never lands. Refusing
-        // the row here is what makes that rule safe, because it makes the invariant local: a
-        // retained batch cannot contain a row the database is certain to reject, so a retry can
-        // always eventually succeed.
-        if (!IsStorable(dataSample))
+        if (dataSample is null)
         {
-            ReportRejected(dataSample);
+            // Not defensive padding: a null in the batch faults the bulk insert before any SQL is
+            // generated, every time it is retried, so it wedges the writer exactly as a NaN did.
+            Report(NullSampleOrigin, "a null sample was dropped");
             return;
         }
 
+        if (double.IsNaN(dataSample.Value))
+        {
+            Report(OriginOf(dataSample), "a reading of NaN was dropped");
+            return;
+        }
+
+        // Only the infinities and the extremes reach here among the unusual values: they store and
+        // read back without complaint, so refusing them would be the writer discarding readings the
+        // database would have kept, on its own opinion about what a meaningful reading is.
+        var storable = HasEveryLabel(dataSample) ? dataSample : WithLabelsFilledIn(dataSample);
+
         try
         {
-            _buffer.Add(dataSample);
+            _buffer.Add(storable);
         }
         catch (ObjectDisposedException) { }
         catch (InvalidOperationException) { }
     }
 
     /// <summary>
-    /// Whether the bulk insert could ever commit a batch containing this row.
-    /// <para>
-    /// Deliberately narrow: it refuses only what the store itself refuses, not what a reader might
-    /// find meaningless. Microsoft.Data.Sqlite rejects <see cref="double.NaN"/> outright ("Cannot
-    /// store 'NaN' values.") because SQLite's REAL has no representation for it, and a null row
-    /// faults the bulk insert before any SQL is generated. Both are permanent properties of the
-    /// row, so no amount of retrying changes the outcome. The infinities and
-    /// <see cref="double.MaxValue"/> are stored without complaint and are therefore NOT refused
-    /// here — dropping a reading the database would have kept is data loss, and deciding whether an
-    /// infinite reading is meaningful belongs to whatever produced it, not to the component that
-    /// writes it down.
-    /// </para>
+    /// Whether the row carries all four of the text columns the schema declares <c>NOT NULL</c>
+    /// (<c>DeviceName</c>, <c>ChannelName</c>, <c>DeviceSerialNo</c>, <c>Color</c>). A null in any
+    /// of them fails the insert on the constraint, permanently and identically on every retry.
     /// </summary>
-    private static bool IsStorable(DataSample dataSample) =>
-        dataSample is not null && !double.IsNaN(dataSample.Value);
+    private static bool HasEveryLabel(DataSample dataSample) =>
+        dataSample.DeviceName is not null && dataSample.ChannelName is not null &&
+        dataSample.DeviceSerialNo is not null && dataSample.Color is not null;
 
     /// <summary>
-    /// Reports a refused row, at a rate that stays readable whether it happens once or on every
-    /// sample of a broken channel: the first is reported, and thereafter only when the running
-    /// total reaches a new power of ten. The alternative rates are both failures — reporting every
-    /// one floods NLog and Sentry at the sample rate, and reporting only the first (the rule the
-    /// consumer's failure streak uses) is what left a whole silent session behind a single line.
-    /// A channel whose every reading is unstorable therefore keeps announcing itself, ~10 lines per
-    /// decade of samples, so the loss is visible in a support log instead of being inferred from a
-    /// gap in the data.
-    /// <para>
-    /// The count is per writer, which is per application run rather than per session: the writer
-    /// outlives individual logging sessions.
-    /// </para>
+    /// A copy of the row with its missing labels filled in with the empty string, so the reading is
+    /// kept rather than discarded over a label the producer failed to supply. A copy rather than a
+    /// mutation because the properties are <c>init</c>-only, and because the caller's instance is
+    /// also the one the plot and the summary hold.
     /// </summary>
-    private void ReportRejected(DataSample dataSample)
+    private DataSample WithLabelsFilledIn(DataSample dataSample)
     {
-        var total = Interlocked.Increment(ref _rejectedSampleCount);
+        Report(OriginOf(dataSample), "a reading arrived without all of its labels and was stored with the missing ones empty");
 
-        // Each total is produced exactly once, so testing the value itself needs no lock and cannot
-        // double-report when several device threads reject samples concurrently.
-        if (!IsPowerOfTen(total)) { return; }
-
-        // Invariant, so the value in a support log reads the same whatever machine produced it and
-        // a reader is never left deciding whether an unfamiliar symbol is the value or the locale.
-        var describedSample = dataSample is null
-            ? "a null sample"
-            : $"a sample of {dataSample.DeviceName ?? "?"}/{dataSample.ChannelName ?? "?"} " +
-              $"with value {dataSample.Value.ToString(CultureInfo.InvariantCulture)}";
-
-        _appLogger.Warning(
-            $"The database cannot store {describedSample}; it was dropped and logging continued. " +
-            $"{total} sample(s) dropped for this reason so far. The next report is at " +
-            $"{(long)total * 10} dropped.");
+        return new DataSample
+        {
+            LoggingSessionID = dataSample.LoggingSessionID,
+            Value = dataSample.Value,
+            TimestampTicks = dataSample.TimestampTicks,
+            Type = dataSample.Type,
+            DeviceName = dataSample.DeviceName ?? string.Empty,
+            ChannelName = dataSample.ChannelName ?? string.Empty,
+            DeviceSerialNo = dataSample.DeviceSerialNo ?? string.Empty,
+            Color = dataSample.Color ?? string.Empty
+        };
     }
 
     /// <summary>
-    /// True for 1, 10, 100, ... — the totals at which <see cref="ReportRejected"/> speaks up.
-    /// Runs only when a sample has already been refused, so it is off the sample path entirely.
+    /// Reports a row the schema could not take as offered, at a rate that stays readable whether it
+    /// happens once or on every sample of a broken channel: the first is reported, and thereafter
+    /// only when that stream's running total reaches a new power of ten. Both alternative rates are
+    /// failures — reporting every one floods NLog and Sentry at the sample rate, and reporting only
+    /// the first (the rule the consumer's failure streak uses) is what left a whole silent session
+    /// behind a single line. A channel whose every reading is unstorable therefore keeps announcing
+    /// itself, ~10 lines per decade of samples, so the loss is visible in a support log instead of
+    /// being inferred from a gap in the data.
+    /// <para>
+    /// Counted per device/channel rather than per writer, because that is the unit that breaks: a
+    /// single application-wide total would let a newly affected channel lose readings unreported
+    /// until some unrelated global threshold happened to be crossed. Each stream gets its own first
+    /// line. The map is bounded by the number of device/channel pairs the run has seen.
+    /// </para>
     /// </summary>
-    private static bool IsPowerOfTen(int value)
+    private void Report(string origin, string outcome)
     {
-        for (var power = 1; power <= value; power *= 10)
+        var counter = _unstorableByOrigin.GetOrAdd(origin, static _ => new StrongBox<long>());
+
+        // Each total is produced exactly once, so testing the value itself needs no lock and cannot
+        // double-report when several device threads reject samples of the same channel at once.
+        var total = Interlocked.Increment(ref counter.Value);
+        if (!IsPowerOfTen(total)) { return; }
+
+        _appLogger.Warning(
+            $"{origin}: {outcome}. Logging continued. {total} unstorable row(s) from this source so " +
+            $"far; the next report is at {total * 10}.");
+    }
+
+    /// <summary>
+    /// The stream a row belongs to, used both as the rate-limiter key and as the identifying part
+    /// of the report. Invariant culture so a support log reads the same whatever machine produced
+    /// it, and a reader is never left deciding whether an unfamiliar symbol is the value or the
+    /// locale.
+    /// </summary>
+    private static string OriginOf(DataSample dataSample) =>
+        FormattableString.Invariant($"{dataSample.DeviceName ?? "?"}/{dataSample.ChannelName ?? "?"}");
+
+    /// <summary>The rate-limiter key for a sample that is itself null, so has no channel to name.</summary>
+    private const string NullSampleOrigin = "(no sample)";
+
+    /// <summary>
+    /// True for 1, 10, 100, ... — the totals at which <see cref="Report"/> speaks up. <c>long</c>
+    /// rather than <c>int</c> so a run that drops billions of readings keeps reporting instead of
+    /// wrapping negative and falling silent. Runs only when a row has already failed the checks
+    /// above, so it is off the sample path entirely.
+    /// </summary>
+    private static bool IsPowerOfTen(long value)
+    {
+        for (var power = 1L; power <= value; power *= 10)
         {
             if (power == value) { return true; }
-            if (power > int.MaxValue / 10) { break; }
+            if (power > long.MaxValue / 10) { break; }
         }
 
         return false;

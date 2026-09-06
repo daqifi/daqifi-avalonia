@@ -492,7 +492,7 @@ public sealed class SessionSampleWriterDurabilityTests : IDisposable
     /// call sites null-checks, so this is the second way an unstorable row can arrive.
     ///
     /// <para>It is pinned here because the invariant the fix installs is about the batch, not about
-    /// doubles: a batch retained for retry contains only rows the database could commit.</para>
+    /// doubles: no row in the buffer can be rejected on account of its own contents.</para>
     /// </summary>
     [Fact]
     public void A_null_sample_is_refused_at_the_door_rather_than_faulting_every_later_batch()
@@ -510,6 +510,79 @@ public sealed class SessionSampleWriterDurabilityTests : IDisposable
         Assert.Empty(_appLogger.Errors);
     }
 
+    /// <summary>
+    /// The third way a row can be permanently unstorable, and the one that must NOT be answered by
+    /// dropping it. All four text columns are <c>NOT NULL</c>, so a sample whose
+    /// <c>DeviceName</c> came through null fails the insert on the constraint every time it is
+    /// retried — but the reading itself is perfectly good, and a device whose <c>Name</c> is null is
+    /// null for every one of its samples, so dropping them would lose that device's entire session:
+    /// the exact failure this change exists to prevent, merely relocated.
+    ///
+    /// <para>The label is therefore filled in and the reading is kept, which is the same answer
+    /// <c>LoggingManager.BuildSessionDeviceMetadata</c> already gives for a null device name on the
+    /// sibling table (<c>device.Name ?? string.Empty</c>) — so this is the house policy, not a new
+    /// one invented here. The good sample offered afterwards proves the writer was never
+    /// wedged.</para>
+    /// </summary>
+    [Fact]
+    public void A_reading_missing_a_required_label_keeps_its_value_instead_of_wedging_the_writer()
+    {
+        using var writer = NewWriter();
+
+        writer.Add(new DataSample
+        {
+            LoggingSessionID = SessionId,
+            Value = 7.5,
+            TimestampTicks = Interlocked.Increment(ref _nextTick),
+            DeviceName = null!,
+            ChannelName = "AI0",
+            DeviceSerialNo = "SN0001",
+            Color = "#FF2196F3"
+        });
+        writer.Add(Sample(1));
+
+        writer.WaitForIdle(TimeSpan.FromSeconds(15));
+
+        using var context = Verification();
+        var rows = context.Samples.OrderBy(sample => sample.TimestampTicks).ToList();
+        Assert.Equal([7.5, 1d], rows.Select(row => row.Value).ToList());
+        Assert.Equal(string.Empty, rows[0].DeviceName);
+
+        Assert.Equal(0, writer.PendingRetryCount);
+        Assert.Single(_appLogger.Warnings);
+        Assert.Empty(_appLogger.Errors);
+    }
+
+    /// <summary>
+    /// The rate limiter counts per device/channel, not per writer, because that is the unit that
+    /// breaks. A single application-wide total would mean a channel that starts losing readings
+    /// after some earlier channel had already lost a few gets no report of its own until an
+    /// unrelated global threshold happens to be crossed — so a later, smaller loss could pass
+    /// entirely unmentioned, which is the silence this change exists to remove.
+    ///
+    /// <para>Five drops on the first channel are one line (only the first is a power of ten). The
+    /// second channel's very first drop is a line of its own.</para>
+    /// </summary>
+    [Fact]
+    public void A_second_channel_that_starts_dropping_gets_its_own_first_report()
+    {
+        using var writer = NewWriter();
+
+        for (var i = 0; i < 5; i++)
+        {
+            writer.Add(Sample(double.NaN, "AI0"));
+        }
+
+        writer.Add(Sample(double.NaN, "AI3"));
+
+        writer.WaitForIdle(TimeSpan.FromSeconds(5));
+
+        Assert.Equal(2, _appLogger.Warnings.Count);
+        Assert.Contains("AI0", _appLogger.Warnings[0], StringComparison.Ordinal);
+        Assert.Contains("AI3", _appLogger.Warnings[1], StringComparison.Ordinal);
+        Assert.Empty(_appLogger.Errors);
+    }
+
     #region Fixture
     private SessionSampleWriter NewWriter() => new(_contexts, _appLogger);
 
@@ -517,13 +590,16 @@ public sealed class SessionSampleWriterDurabilityTests : IDisposable
     /// A sample belonging to the fixture's session. Timestamps ascend so a test can order by them
     /// without relying on insertion order.
     /// </summary>
-    private DataSample Sample(double value) => new()
+    private DataSample Sample(double value) => Sample(value, "AI0");
+
+    /// <summary>A sample on a named channel, for the tests that need two of them.</summary>
+    private DataSample Sample(double value, string channelName) => new()
     {
         LoggingSessionID = SessionId,
         Value = value,
         TimestampTicks = Interlocked.Increment(ref _nextTick),
         DeviceName = "Test Device",
-        ChannelName = "AI0",
+        ChannelName = channelName,
         DeviceSerialNo = "SN0001",
         Color = "#FF2196F3"
     };
