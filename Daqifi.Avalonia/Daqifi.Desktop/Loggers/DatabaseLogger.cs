@@ -84,6 +84,20 @@ public partial class DatabaseLogger : ObservableObject, ILogger, IDisposable
     private LoggingSession _currentSession;
 
     /// <summary>
+    /// Whether a session is open on the plot at all — with or without anything to draw.
+    ///
+    /// <para>Downstream addition (#262). This is the half of the pane's state that
+    /// <see cref="HasSessionData"/> cannot express: that flag is false both when nothing is open
+    /// and when an open session has no plottable samples, so a view keyed on it alone answered a
+    /// click on an empty session with "No session selected" — directly under the list row it had
+    /// just highlighted. <see cref="CurrentSession"/> already told the two apart; naming the
+    /// question is what lets a reflection-resolved <c>IsVisible</c> binding ask it.</para>
+    /// </summary>
+    public bool IsSessionOpen => CurrentSession is not null;
+
+    partial void OnCurrentSessionChanged(LoggingSession value) => OnPropertyChanged(nameof(IsSessionOpen));
+
+    /// <summary>
     /// Total number of samples in the currently displayed session. Surfaced
     /// in the session info header. Zero while no session is loaded.
     /// </summary>
@@ -112,8 +126,10 @@ public partial class DatabaseLogger : ObservableObject, ILogger, IDisposable
     }
 
     /// <summary>
-    /// Indicates whether a session with data is currently loaded.
-    /// Controls visibility of the minimap, legend, and empty state placeholder.
+    /// Indicates whether the open session put anything on the plot. Controls visibility of the
+    /// minimap, the legend, and the empty-state placeholder — all three of which are about the
+    /// DATA. It is not a proxy for "a session is selected": an open session with no plottable
+    /// samples leaves this false, which is what <see cref="IsSessionOpen"/> exists to disambiguate.
     /// </summary>
     [ObservableProperty]
     private bool _hasSessionData;

@@ -17,8 +17,9 @@
         - Keyed WPF Styles on non-templated elements (SectionLabel, InfoLabel, InfoValue,
           DrawerTextField) → class styles in UserControl.Styles.
         - BoolToVis / InvertedBoolToVis / Visibility DataTriggers → IsVisible bindings
-          (with ! negation); the "no session selected" MultiDataTrigger → MultiBinding
-          with app-registered BoolAndToVis + BooleanToInverse.
+          (with ! negation). The "no session selected" MultiDataTrigger was ported as a
+          BoolAndToVis MultiBinding and is gone again since #251 — nothing in this file
+          needs a MultiBinding any more.
         - iconPacks:PackIconMaterial → projektanker i:Icon (Kind kebab-cased, Width→FontSize).
         - WPF MouseBinding (row click / scrim click) → transparent command Button
           (established MainWindow scrim dialect).
@@ -316,12 +317,16 @@
 
                     <Grid Grid.Column="0" RowDefinitions="Auto,*,Auto,Auto">
 
-                        <!-- Session header strip (hidden when no data) -->
+                        <!-- Session header strip: shown while a session is OPEN, which is not the
+                             same question as whether it had anything to plot (#262). Keyed on
+                             HasSessionData it vanished for an empty session, taking with it the
+                             only place the pane names the session the user just clicked — and the
+                             plot toolbar, which zooms and saves the frame either way. -->
                         <Border Grid.Row="0"
                                 Padding="20,10,20,8"
                                 BorderBrush="{DynamicResource BorderDim}"
                                 BorderThickness="0,0,0,1"
-                                IsVisible="{Binding DbLogger.HasSessionData}">
+                                IsVisible="{Binding DbLogger.IsSessionOpen}">
                             <Grid ColumnDefinitions="*,Auto">
                                 <StackPanel Grid.Column="0">
                                 <TextBlock Text="{Binding DbLogger.CurrentSession.Name}"
@@ -501,7 +506,14 @@
                         <!-- Empty state: shown whenever nothing is plotted (#251). Upstream's
                              MultiDataTrigger also required HasLoggingSessions, which suppressed the
                              card in the one state that needed it most — a fresh install with no
-                             sessions at all, where the region then explained itself not at all. -->
+                             sessions at all, where the region then explained itself not at all.
+
+                             Two states reach it, and #262 is what happened while only one of them
+                             had copy: HasSessionData is false BOTH when no session is open and when
+                             an open session has nothing to plot, so an empty session was told "No
+                             session selected" directly above its own highlighted row. IsSessionOpen
+                             picks the variant; each names its state the way LiveGraphPane's card
+                             does, and only the not-open one carries a call to action. -->
                         <StackPanel Grid.Row="1"
                                     IsVisible="{Binding !DbLogger.HasSessionData}"
                                     HorizontalAlignment="Center"
@@ -512,29 +524,37 @@
                                     Foreground="{DynamicResource TextTertiary}"
                                     Opacity="0.5"
                                     Margin="0,0,0,16"/>
-                            <!-- Names the state rather than instructing, so it stays true whether or
-                                 not any session exists — the same split LiveGraphPane's card uses
-                                 ("No channels streaming" / "Enable channels in the Channels tab…").
-                                 It read "Select a session to view data" until review pointed out that
-                                 a fresh install would then request an impossible action directly
-                                 above a list reporting NO SESSIONS. -->
-                            <TextBlock Text="No session selected"
+                            <!-- Open, and empty. "No data" rather than "no samples" because a
+                                 session whose every sample carries a tick value no date can hold
+                                 (#237) is dropped to the same empty load with its rows still in the
+                                 database — it HAS samples, and none of them can be drawn. No second
+                                 line: the header strip above already names the session, and there is
+                                 no action to offer. -->
+                            <TextBlock Text="This session has no data"
+                                       IsVisible="{Binding DbLogger.IsSessionOpen}"
                                        FontSize="15"
                                        FontWeight="Light"
                                        Foreground="{DynamicResource TextPrimary}"
                                        HorizontalAlignment="Center"/>
-                            <!-- The call to action, and the only part of the card that needs a
-                                 non-empty list: HasLoggingSessions gates this line alone rather than
-                                 the whole card. With no sessions the list directly below already says
-                                 NO SESSIONS / "Start logging or import an SD card log to get
-                                 started.", so showing this here would point at an empty list and
+                            <!-- Nothing open. Grouped so the call to action cannot outlive the line
+                                 it belongs to — it is the only part of the card that needs a
+                                 non-empty list, and with no sessions the list directly below already
+                                 says NO SESSIONS / "Start logging or import an SD card log to get
+                                 started.", so showing it there would point at an empty list and
                                  repeat guidance the pane already gives. -->
-                            <TextBlock Text="Choose a session from the list below"
-                                       IsVisible="{Binding HasLoggingSessions}"
-                                       FontSize="11"
-                                       Foreground="{DynamicResource TextTertiary}"
-                                       HorizontalAlignment="Center"
-                                       Margin="0,6,0,0"/>
+                            <StackPanel IsVisible="{Binding !DbLogger.IsSessionOpen}">
+                                <TextBlock Text="No session selected"
+                                           FontSize="15"
+                                           FontWeight="Light"
+                                           Foreground="{DynamicResource TextPrimary}"
+                                           HorizontalAlignment="Center"/>
+                                <TextBlock Text="Choose a session from the list below"
+                                           IsVisible="{Binding HasLoggingSessions}"
+                                           FontSize="11"
+                                           Foreground="{DynamicResource TextTertiary}"
+                                           HorizontalAlignment="Center"
+                                           Margin="0,6,0,0"/>
+                            </StackPanel>
                         </StackPanel>
 
                         <!-- Data-refining progress bar (between plot and minimap) -->

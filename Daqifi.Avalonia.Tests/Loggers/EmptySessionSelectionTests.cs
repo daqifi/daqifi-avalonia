@@ -138,7 +138,7 @@ public sealed class EmptySessionSelectionTests : IDisposable
         logger.DisplayLoggingSession(session);
 
         Assert.Same(session, logger.CurrentSession);
-        // UNFIXED-PROBE Assert.True(logger.IsSessionOpen);
+        Assert.True(logger.IsSessionOpen);
         Assert.False(logger.HasSessionData);
         Assert.Equal(0, logger.CurrentSessionSampleCount);
         Assert.Empty(logger.PlotModel.Series);
@@ -158,7 +158,7 @@ public sealed class EmptySessionSelectionTests : IDisposable
         logger.ClearPlot();
 
         Assert.Null(logger.CurrentSession);
-        // UNFIXED-PROBE Assert.False(logger.IsSessionOpen);
+        Assert.False(logger.IsSessionOpen);
         Assert.False(logger.HasSessionData);
     }
 
@@ -176,7 +176,7 @@ public sealed class EmptySessionSelectionTests : IDisposable
         using var logger = Logger();
         logger.DisplayLoggingSession(new LoggingSession(SessionId, "Session"));
 
-        // UNFIXED-PROBE Assert.True(logger.IsSessionOpen);
+        Assert.True(logger.IsSessionOpen);
         Assert.True(logger.HasSessionData);
         Assert.NotEmpty(logger.PlotModel.Series);
     }
