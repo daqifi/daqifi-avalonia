@@ -236,7 +236,7 @@
           <TextBlock Text="FREQUENCY (Hz)" Classes="fieldLabel" />
           <Grid ColumnDefinitions="*,Auto" ColumnSpacing="12">
             <Slider Grid.Column="0" x:Name="FreqSlider" VerticalAlignment="Center"
-                    Minimum="1" Maximum="1000" TickFrequency="1" IsSnapToTickEnabled="True"
+                    Minimum="1" Maximum="{Binding MaxFrequencyHz}" TickFrequency="1" IsSnapToTickEnabled="True"
                     Value="{Binding FrequencyHz, Delay=500}" />
             <TextBlock Grid.Column="1" VerticalAlignment="Center" MinWidth="52"
                        TextAlignment="Right" FontFamily="{DynamicResource MonoFontFamily}" FontSize="{DynamicResource FontSizeSubtitle}"

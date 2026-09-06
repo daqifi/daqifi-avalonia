@@ -42,6 +42,10 @@ public partial class DevicesPaneViewModel : ObservableObject, IDisposable
     [ObservableProperty]
     [NotifyPropertyChangedFor(nameof(SelectedDevice))]
     [NotifyPropertyChangedFor(nameof(SelectedDeviceSupportsFirmwareUpdate))]
+    // MaxFrequencyHz is announced before FrequencyHz on purpose — the generator raises these in
+    // declaration order, and the slider bound to both would otherwise briefly see the incoming
+    // rate against the outgoing ceiling. See MaxFrequencyHz.
+    [NotifyPropertyChangedFor(nameof(MaxFrequencyHz))]
     [NotifyPropertyChangedFor(nameof(FrequencyHz))]
     private DeviceTileViewModel? _selectedTile;
 
@@ -70,10 +74,35 @@ public partial class DevicesPaneViewModel : ObservableObject, IDisposable
         set
         {
             if (_shell == null || SelectedDevice == null) return;
+            // A Slider writes its Value back when a falling Maximum coerces it, so this setter can
+            // be reached carrying the rate the device already holds. That is not a change the user
+            // asked for, and pushing it through the shell would answer it with "Cannot change
+            // sampling frequency while logging."
+            if (value == SelectedDevice.StreamingFrequency) return;
             _shell.SelectedStreamingFrequency = value;
             OnPropertyChanged();
         }
     }
+
+    /// <summary>
+    /// Upper bound of the drawer's FREQUENCY slider: the rate the selected device advertises as
+    /// its maximum, so the control offers exactly what the hardware will accept.
+    /// </summary>
+    /// <remarks>
+    /// Read from the device rather than written down here. Core seeds
+    /// <c>MaxSamplingRate</c> from its board table and the capability document read during connect
+    /// replaces it with the device's own figure — 22000 Hz on the bench Nq1 (fw 3.7.2), against a
+    /// board-table 1000. Both the wrapper's rate guard and Core's own validator bound against the
+    /// same property, so a rate this slider can reach is one the device will take.
+    /// <para>
+    /// <see cref="SelectedTile"/> is a sufficient trigger: <c>ConnectionManager</c> only publishes a
+    /// device once <c>Connect()</c> has returned, and that call hydrates the capability document
+    /// before it returns — so no tile ever exists while the ceiling is still the bootstrap value,
+    /// and a reconnect rebuilds the tile and re-selects it.
+    /// </para>
+    /// </remarks>
+    // Downstream-only: no upstream counterpart.
+    public int MaxFrequencyHz => SelectedDevice?.MaxStreamingFrequency ?? 1;
 
     /// <summary>Opens the inline settings drawer for a device tile.</summary>
     // @port: Daqifi.Desktop.ViewModels.DevicesPaneViewModel.OpenSettingsCommand
