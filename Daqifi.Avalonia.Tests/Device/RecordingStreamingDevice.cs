@@ -145,6 +145,8 @@ internal sealed class RecordingStreamingDevice : IStreamingDevice
 
     public int StreamingFrequency { get; set; } = 1;
 
+    public int MaxStreamingFrequency { get; set; } = 1;
+
     public string DisplayIdentifier => DeviceSerialNo;
 
     public string FriendlyName => string.Empty;
