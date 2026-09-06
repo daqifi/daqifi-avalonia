@@ -373,7 +373,7 @@ internal static class AvaloniaCapture
         // The end state every screen in this sweep is taken against. Resolved once here, after
         // the window is up so the SplitView's template exists to be read, and threaded through
         // every Capture and Quiesce below - see DesktopPaneAtRest.
-        var paneAtRest = DesktopPaneAtRest(main);
+        var paneAtRest = DesktopPaneAtRest(main, prefix);
 
         // A resize relayouts the whole tree, so the first capture of a sweep starts from motion
         // unless something waits for it - the same reason SweepDrawer quiesces after a close.
@@ -1244,14 +1244,14 @@ internal static class AvaloniaCapture
     /// of two candidates is worse than no guard, because it is believed.
     /// </para>
     /// </remarks>
-    private static EndState? DesktopPaneAtRest(Window main)
+    private static EndState? DesktopPaneAtRest(Window main, string prefix)
     {
         var views = main.GetVisualDescendants().OfType<SplitView>().ToArray();
         if (views.Length != 1)
         {
             _failed = true;
             Console.WriteLine(
-                $"[FAIL] drawer end state: MainWindow's visual tree holds {views.Length} " +
+                $"[FAIL] {prefix} drawer end state: MainWindow's visual tree holds {views.Length} " +
                 "SplitView(s), and this check is written for the one MainWindow.axaml declares. " +
                 "With none, the three right-hand flyout screens are captured with nothing " +
                 "watching their open animation; with several, the check would be reading an " +
@@ -1268,7 +1268,7 @@ internal static class AvaloniaCapture
         {
             _failed = true;
             Console.WriteLine(
-                $"[FAIL] drawer end state: the SplitView template holds {panes.Length} controls " +
+                $"[FAIL] {prefix} drawer end state: the SplitView template holds {panes.Length} controls " +
                 $"named '{PaneRootPart}'. That part is what animates open, so without exactly one " +
                 "of it there is nothing to check the drawer captures against.");
             return null;
@@ -1276,7 +1276,7 @@ internal static class AvaloniaCapture
 
         var pane = panes[0];
         Console.WriteLine(
-            $"[INFO] drawer end state: {PaneRootPart} must be {view.OpenPaneLength} wide when the " +
+            $"[INFO] {prefix} drawer end state: {PaneRootPart} must be {view.OpenPaneLength} wide when the " +
             $"pane is open and {ClosedPaneLength(view)} when it is closed " +
             $"(OpenPaneLength={view.OpenPaneLength}, DisplayMode={view.DisplayMode}), read off " +
             "the SplitView rather than restated here");
@@ -1289,10 +1289,16 @@ internal static class AvaloniaCapture
                 var expected = view.IsPaneOpen ? view.OpenPaneLength : ClosedPaneLength(view);
                 var actual = pane.Bounds.Width;
                 // Bounds, not Width: Bounds is what layout gave the pane and therefore what the
-                // pixels show, which is the thing a baseline records. Exact equality, with no
-                // epsilon, on purpose — a tolerance here would be the same kind of dial as a
-                // sample count, and the whole point is that this comparison has a right answer.
-                if (actual.Equals(expected)) { return null; }
+                // pixels show, which is the thing a baseline records.
+                //
+                // Exact equality, with no epsilon, on purpose. A tolerance here would be the
+                // same kind of dial as a sample count, and the whole point of reading a
+                // DECLARED number back is that the comparison has a right answer — the pane is
+                // laid out to OpenPaneLength exactly once the transition has run, which is what
+                // every good frame in 51 measured runs shows (340 = 720 - 380, to the pixel).
+                // NaN on either side falls through to a violation, which is correct: NaN is not
+                // a width the app declares, and an unmeasured pane must not read as at rest.
+                if (actual == expected) { return null; }
                 return $"it is {actual} wide (Bounds={pane.Bounds}) but the pane is " +
                        (view.IsPaneOpen
                             ? $"OPEN, and MainWindow.axaml declares OpenPaneLength={expected}"

@@ -124,6 +124,13 @@ AVALONIA_CSPROJ="$HERE/AvaloniaCapture/AvaloniaCapture.csproj"
 # binding actually resolved, and the notice that an indeterminate progress animation was
 # frozen for a capture. All three are things a reader of a green run needs to see.
 #
+# [WARN] is in the filter for the same reason, and it was missing (#278). Every [WARN] this
+# harness prints is about a capture that is ABOUT to be taken from a state nobody vouched
+# for — the window still moving between screens, or a drawer that had not finished closing
+# before the next screen started. Those runs still exit 0 and still look green, so leaving
+# the one line that explains the next screen's failure in a log file nobody opens is the
+# quiet kind of gap this tool spends the rest of its comments arguing against.
+#
 # No -r here, ever. An explicit-RID restore rewrites AvaloniaCapture's
 # packages.lock.json to that single RID and the next CI restore fails NU1004
 # (Directory.Build.props documents this at length).
@@ -133,11 +140,11 @@ run_capture() {
   echo "== $label =="
   if ! "$DOTNET" run --project "$(to_native "$csproj")" -c Release \
         -- "$(to_native "$dir")" >"$log" 2>&1; then
-    grep -E '\[OK\]|\[FAIL\]|\[SKIP\]|\[INFO\]|done' "$log" || true
+    grep -E '\[OK\]|\[FAIL\]|\[SKIP\]|\[INFO\]|\[WARN\]|done' "$log" || true
     echo "!! $label failed (see $log)" >&2
     return 1
   fi
-  grep -E '\[OK\]|\[FAIL\]|\[SKIP\]|\[INFO\]|done' "$log" || true
+  grep -E '\[OK\]|\[FAIL\]|\[SKIP\]|\[INFO\]|\[WARN\]|done' "$log" || true
 }
 
 # Byte-compare two capture sets. Byte identity, not a pixel diff: it needs no
