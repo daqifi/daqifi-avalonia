@@ -242,19 +242,10 @@
                         HorizontalAlignment="Center"
                         Margin="0,0,0,12"/>
                 <TextBlock Text="NO FILES"
-                           FontSize="11"
-                           FontWeight="Bold"
-                           Foreground="{StaticResource TextTertiary}"
-                           HorizontalAlignment="Center"
+                           Classes="emptyTitle"
                            Margin="0,0,0,6"/>
                 <TextBlock Text="Files will appear here when the device logs data to its SD card."
-                           FontSize="13"
-                           FontWeight="Light"
-                           Foreground="{StaticResource TextPrimary}"
-                           HorizontalAlignment="Center"
-                           TextWrapping="Wrap"
-                           TextAlignment="Center"
-                           MaxWidth="320"/>
+                           Classes="emptyBody"/>
             </StackPanel>
 
             <!-- Empty state: no device connected (SD access is available over USB and WiFi) -->
@@ -268,19 +259,10 @@
                         HorizontalAlignment="Center"
                         Margin="0,0,0,12"/>
                 <TextBlock Text="NO DEVICE"
-                           FontSize="11"
-                           FontWeight="Bold"
-                           Foreground="{StaticResource TextTertiary}"
-                           HorizontalAlignment="Center"
+                           Classes="emptyTitle"
                            Margin="0,0,0,6"/>
                 <TextBlock Text="Connect a device over USB or Wi-Fi to browse its SD card."
-                           FontSize="13"
-                           FontWeight="Light"
-                           Foreground="{StaticResource TextPrimary}"
-                           HorizontalAlignment="Center"
-                           TextWrapping="Wrap"
-                           TextAlignment="Center"
-                           MaxWidth="320"/>
+                           Classes="emptyBody"/>
             </StackPanel>
 
             <!-- Empty state: SD card not installed -->
@@ -294,19 +276,10 @@
                         HorizontalAlignment="Center"
                         Margin="0,0,0,12"/>
                 <TextBlock Text="NO SD CARD"
-                           FontSize="11"
-                           FontWeight="Bold"
-                           Foreground="{StaticResource TextTertiary}"
-                           HorizontalAlignment="Center"
+                           Classes="emptyTitle"
                            Margin="0,0,0,6"/>
                 <TextBlock Text="No SD card installed. Insert a FAT32-formatted card and click Refresh."
-                           FontSize="13"
-                           FontWeight="Light"
-                           Foreground="{StaticResource TextPrimary}"
-                           HorizontalAlignment="Center"
-                           TextWrapping="Wrap"
-                           TextAlignment="Center"
-                           MaxWidth="320"
+                           Classes="emptyBody"
                            Margin="0,0,0,16"/>
                 <Button Theme="{StaticResource PillButton}"
                         Command="{Binding CopyDiagnosticInfoCommand}"

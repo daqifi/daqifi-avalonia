@@ -827,13 +827,7 @@
             <StackPanel HorizontalAlignment="Center"
                         VerticalAlignment="Center"
                         MaxWidth="420">
-                <Border Width="96" Height="96"
-                        CornerRadius="48"
-                        Background="{DynamicResource SurfaceRaised}"
-                        BorderBrush="{DynamicResource BorderDim}"
-                        BorderThickness="1"
-                        HorizontalAlignment="Center"
-                        Margin="0,0,0,28">
+                <Border Classes="emptyBadge" Margin="0,0,0,28">
                     <i:Icon Value="mdi-chip"
                             FontSize="40"
                             Foreground="{DynamicResource TextTertiary}"
@@ -841,22 +835,17 @@
                             VerticalAlignment="Center"/>
                 </Border>
                 <TextBlock Text="NO DEVICE CONNECTED"
-                           FontSize="11"
-                           FontWeight="Bold"
-                           Foreground="{DynamicResource TextTertiary}"
-                           HorizontalAlignment="Center"
+                           Classes="emptyTitle"
                            Margin="0,0,0,10"/>
                 <TextBlock Text="Connect a DAQiFi device to view and activate channels."
-                           FontSize="15"
-                           FontWeight="Light"
-                           Foreground="{DynamicResource TextPrimary}"
-                           TextAlignment="Center"
-                           TextWrapping="Wrap"
-                           HorizontalAlignment="Center"
+                           Classes="emptyBody"
                            Margin="0,0,0,20"/>
+                <!-- Hint under the sentence. TextTertiary, not TextSecondary: emptyBody is
+                     TextSecondary, so a secondary hint would sit at the body's own weight and
+                     the step down would be size alone. Matches ChannelsMobileView's hint. -->
                 <TextBlock Text="Open the Devices tab to get started"
-                           FontSize="11"
-                           Foreground="{DynamicResource TextSecondary}"
+                           FontSize="{DynamicResource FontSizeSmall}"
+                           Foreground="{DynamicResource TextTertiary}"
                            HorizontalAlignment="Center"/>
             </StackPanel>
         </Grid>

@@ -321,6 +321,46 @@ captures once and verifies against the one for the current host, failing on a ch
 screen, a missing one, and one the baseline does not list (`shasum -c` only checks the
 names it was given, so the extra-file direction is checked separately).
 
+Seven screens were re-recorded 2026-09-05 (macOS 26.5, Apple silicon, .NET SDK 10.0.302) for
+the empty-state consolidation: the five desktop panes that hand-rolled the badge/title/sentence
+pattern with literal attributes — Devices, Channels, Logged Data, Profiles and Device Logs — now
+use the app-wide `emptyBadge`/`emptyTitle`/`emptyBody` classes the mobile panes and both flyouts
+already use. It is a **visual** change, not a pure refactor, and was taken deliberately: the
+title is SemiBold at `FontSizeSmall` rather than Bold at a hardcoded 11, the body is
+`TextSecondary` at `FontSizeBody` rather than Light `TextPrimary`, the badge loses a 1px
+`BorderDim` rim, and `emptyBody`'s `MaxWidth` went 360 → 420. Four desktop screens moved
+(`desktop-2`, `-3`, `-4`, `-5`) — four and not five because Device Logs is a pivot *inside* the
+Logged Data pane and no screen in this manifest selects it, so that fifth conversion is the one
+part of the change the visual gate does not cover and was checked by rendering it by hand.
+Three mobile **landscape** screens moved too
+(`mobile-landscape-2`, `-3`, `-4`), because 820 logical px is wider than either `MaxWidth` cap
+and so the cap is what binds there; portrait is 384 and its own content width binds first, which
+is why no portrait screen moved. The other eighteen are byte-for-byte unchanged against the
+pre-change capture, and that capture reproduced the then-committed manifest on all 25 — so the
+attribute soup is what was shipping rather than an artifact of the harness. Five
+`--determinism` runs agreed 25/25 before the change and five after.
+
+The two unchanged screens worth naming are `desktop-7-notifications-flyout` and
+`desktop-9-summary-flyout`: both render their empty states through these same classes as of
+#258 and #249, and both are byte-identical across the change. That is the measurement behind
+the claim that the `MaxWidth` bump is inert at flyout width — the pane is narrower than either
+cap — rather than an assumption about it.
+
+`mobile-landscape-3-storage.png` was captured **after** #252 (PR #265) landed, and is the one
+line here that had to be. The two changes collided on it: #252 removes the pane heading and a
+48px margin from the same view whose empty-state sentence this re-flows, so the hash each had
+recorded independently described a rendering that would not exist once both were in. Measured
+rather than assumed — the pre-#252 capture of that screen does not match the post-#252 one, and
+a line-level merge of the two manifests would have been green on neither side. The whole
+recording above was therefore taken on the merged tree, against a base that already contained
+#252 and #262. `mobile-portrait-3-storage` is #252's alone: portrait is inert for this change,
+so it is byte-identical here and keeps the hash #252 gave it.
+
+The general rule this is an instance of: a hash records a rendering of a **base commit**, not of
+a diff. Two PRs that re-record the same screen cannot be merged line-wise, and neither can a PR
+whose branch has fallen behind — every gate here stays green on a stale base, because the
+manifest in the tree is stale in exactly the same way.
+
 `macos-arm64.sha256` was extended 2026-09-05 for #241 (macOS 26.5, Apple silicon, .NET SDK
 10.0.302) with `dialog-firmware-uploading.png` — the bootloader dialog's upload scrim, whose
 new Cancel button is reachable only through a reflection binding and so is invisible to every
