@@ -118,7 +118,17 @@ public interface IStreamingDevice : IDevice
     string IpAddress { get; set; }
     // @port: Daqifi.Desktop.Device.IStreamingDevice.StreamingFrequency
     int StreamingFrequency { get; set; }
-    
+
+    /// <summary>
+    /// Gets the highest rate in Hz <see cref="StreamingFrequency"/> will hold — the device's own
+    /// advertised maximum, read from its capability document once it has described itself. The
+    /// rate controls read their upper bound from here so they can never offer a rate the device
+    /// would refuse, nor withhold one it supports.
+    /// </summary>
+    // Downstream-only: no upstream counterpart.
+    int MaxStreamingFrequency { get; }
+
+
     /// <summary>
     /// Gets the appropriate display identifier for this device based on connection type.
     /// Returns COM port for USB devices, IP address for WiFi devices.

@@ -847,19 +847,10 @@
                                 VerticalAlignment="Center"
                                 IsVisible="{Binding !HasLoggingSessions}">
                         <TextBlock Text="NO SESSIONS"
-                                   FontSize="11"
-                                   FontWeight="Bold"
-                                   Foreground="{DynamicResource TextTertiary}"
-                                   HorizontalAlignment="Center"
+                                   Classes="emptyTitle"
                                    Margin="0,0,0,8"/>
                         <TextBlock Text="Start logging or import an SD card log to get started."
-                                   FontSize="13"
-                                   FontWeight="Light"
-                                   Foreground="{DynamicResource TextPrimary}"
-                                   TextAlignment="Center"
-                                   TextWrapping="Wrap"
-                                   MaxWidth="320"
-                                   HorizontalAlignment="Center"/>
+                                   Classes="emptyBody"/>
                     </StackPanel>
                 </Grid>
 

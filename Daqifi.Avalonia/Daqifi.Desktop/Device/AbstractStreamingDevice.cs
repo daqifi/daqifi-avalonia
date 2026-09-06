@@ -48,6 +48,25 @@ public abstract partial class AbstractStreamingDevice : ObservableObject, IStrea
     private int _streamingFrequency = 1;
 
     /// <summary>
+    /// Gets the highest streaming rate in Hz this device says it can run at — the upper bound of
+    /// <see cref="StreamingFrequency"/>, and the bound the rate controls offer the user.
+    /// </summary>
+    /// <remarks>
+    /// This is <see cref="DeviceCapabilities.MaxSamplingRate"/>, floored at 1 the way Core floors
+    /// it: Core's is a mutable, unvalidated property, and a zero there would otherwise describe an
+    /// impossible "1..0" range that rejects every rate.
+    /// <para>
+    /// It is emphatically not a constant. Core seeds it from its board table before the device has
+    /// described itself, and the capability document read during
+    /// <c>DaqifiDevice.InitializeAsync</c> replaces it with the device's own answer — on the bench
+    /// Nq1 (fw 3.7.2) that is 22000 Hz, against a board-table 1000. A reconnect re-describes it
+    /// again. Anything that shows a ceiling must read it from here rather than write a number down.
+    /// </para>
+    /// </remarks>
+    // Downstream-only: no upstream counterpart.
+    public int MaxStreamingFrequency => Math.Max(1, Capabilities.MaxSamplingRate);
+
+    /// <summary>
     /// Gets or sets the streaming rate in Hz, held to the range the device says it can run at:
     /// 1 to <see cref="DeviceCapabilities.MaxSamplingRate"/>. A value outside that range is
     /// brought to the nearest end of it rather than stored.
@@ -58,16 +77,14 @@ public abstract partial class AbstractStreamingDevice : ObservableObject, IStrea
     /// <see cref="StartSdCardLogging"/>), and Core's setter validates against the same range and
     /// throws <see cref="ArgumentOutOfRangeException"/> outside it. Storing a rate Core will not
     /// take therefore does not produce a wrong rate at the hardware; it makes the device refuse
-    /// to start recording, several screens away from wherever the rate was set. The UI sliders
-    /// all clamp to 1..1000 so they cannot cause that, but a profile can: an applied profile
-    /// assigns its saved <c>SamplingFrequency</c> here unfiltered, and that number comes from an
-    /// XML file on disk.
+    /// to start recording, several screens away from wherever the rate was set. The Devices pane's
+    /// FREQUENCY slider offers exactly <see cref="MaxStreamingFrequency"/> so it cannot cause that,
+    /// but a profile can: an applied profile assigns its saved <c>SamplingFrequency</c> here
+    /// unfiltered, and that number comes from an XML file on disk.
     /// <para>
-    /// The ceiling is the device's own advertised maximum, not the sliders' 1000: a board that
-    /// describes itself as faster is entitled to be driven faster, and Core validates against
-    /// the advertised figure too. It is sanitized the same way Core sanitizes it, because
-    /// <see cref="DeviceCapabilities.MaxSamplingRate"/> is a mutable unvalidated property and a
-    /// zero there would otherwise mean an impossible "1..0" range that rejects every rate.
+    /// The ceiling is <see cref="MaxStreamingFrequency"/> — the device's own advertised maximum,
+    /// never a figure written down here: a board that describes itself as faster is entitled to be
+    /// driven faster, and Core validates against the advertised figure too.
     /// </para>
     /// </remarks>
     // @port: Daqifi.Desktop.Device.AbstractStreamingDevice.StreamingFrequency
@@ -78,7 +95,7 @@ public abstract partial class AbstractStreamingDevice : ObservableObject, IStrea
         get => _streamingFrequency;
         set
         {
-            var ceiling = Math.Max(1, Capabilities.MaxSamplingRate);
+            var ceiling = MaxStreamingFrequency;
             var clamped = Math.Clamp(value, 1, ceiling);
             if (clamped != value)
             {
@@ -119,7 +136,7 @@ public abstract partial class AbstractStreamingDevice : ObservableObject, IStrea
     // Downstream-only: no upstream counterpart.
     protected void ClampRateToAdvertisedCeiling()
     {
-        var advertisedCeiling = Math.Max(1, Capabilities.MaxSamplingRate);
+        var advertisedCeiling = MaxStreamingFrequency;
         if (_streamingFrequency > advertisedCeiling)
         {
             StreamingFrequency = advertisedCeiling;
@@ -496,14 +513,19 @@ public abstract partial class AbstractStreamingDevice : ObservableObject, IStrea
 
             OnCoreDeviceInitialized();
 
-            // Re-read Core's metadata now that initialization is complete. The only other
-            // hydrate runs from ChannelsPopulated, which Core raises while waiting for the
-            // device's first status message — i.e. BEFORE it asks the device to describe
-            // itself (DaqifiDevice.InitializeAsync: WaitForChannelsPopulatedAsync, then
-            // ReadCapabilityDocumentAsync). Without this the wrapper keeps the board-table
-            // defaults for the whole session and never sees the device's own answers: on the
-            // bench Nq1 that left MaxSamplingRate at the board table's 1000 Hz while the
-            // device itself reports 22000, and no capability document at all.
+            // Re-read Core's metadata now that initialization is complete. The only other hydrate
+            // runs from ChannelsPopulated, which Core raises while waiting for the device's first
+            // status message — i.e. BEFORE it asks the device to describe itself
+            // (DaqifiDevice.InitializeAsync: WaitForChannelsPopulatedAsync, then
+            // ReadCapabilityDocumentAsync). What that later step brings back is the capability
+            // document, and it is the only thing in Core that moves Capabilities off the board
+            // table — including MaxSamplingRate, which this wrapper's rate guard clamps against.
+            // Core re-raises ChannelsPopulated after applying a document only when the document
+            // adds analog-output channels, so on a board without those this call is the wrapper's
+            // one chance to see it; drop it and the wrapper keeps the board-table defaults and a
+            // null CapabilityDocument for the whole session. The ceiling itself is the device's to
+            // state, never a figure worth writing down here — read Capabilities.MaxSamplingRate.
+            // Pinned by AbstractStreamingDeviceMetadataHydrationTests.
             HydrateDeviceMetadata(coreDevice.Metadata);
 
             // Take ownership of the enabled-channel set before anything can render it. Must run

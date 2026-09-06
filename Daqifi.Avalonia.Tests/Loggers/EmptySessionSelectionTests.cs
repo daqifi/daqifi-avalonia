@@ -18,21 +18,21 @@ namespace Daqifi.Avalonia.Tests.Loggers;
 /// selection from <c>HasSessionData</c>.</para>
 ///
 /// <para>What this file pins is the SESSION-SIDE half: that a session with nothing to draw is a real,
-/// reachable state, and by which routes. Two things put the other half out of reach here, and both are
-/// worth writing down because each looks surmountable until it is tried:</para>
+/// reachable state, and by which routes. Two things put the other half out of reach when this was
+/// written, and only one of them still does:</para>
 /// <list type="bullet">
-/// <item>The gate itself is XAML. Views in this repo carry no <c>x:DataType</c>, so <c>IsVisible</c>
-/// bindings resolve by reflection at run time and no test in this project can see them — the same
-/// limitation <c>EmptyLoggedPlotFrameTests</c> records for #251. The before/after evidence on the PR
-/// is a render, for exactly that reason.</item>
-/// <item>The view-model state behind it is out of reach too, and NOT merely by the csproj's
-/// library-code-only policy. <c>DisplayLoggingSession</c> and <c>ClearPlot</c> reach shared state
-/// through <c>Dispatcher.UIThread.Invoke</c>. Outside a running Avalonia app that dispatcher binds to
-/// whichever thread touches it FIRST and is never pumped, so the same three tests that pass in
-/// isolation deadlock the whole run when another class got there first: measured here, the suite went
-/// from 11 s to a testhost blocked indefinitely at 0.6% CPU, reproducible by pairing this class with
-/// anything under <c>Tests/Device</c>. There is no ordering a test can assert, so the tests were
-/// removed rather than left as a suite-wide hang waiting for a scheduling change.</item>
+/// <item>The gate itself is XAML, and that is unchanged. Views in this repo carry no
+/// <c>x:DataType</c>, so <c>IsVisible</c> bindings resolve by reflection at run time and no test in
+/// this project can see them — the same limitation <c>EmptyLoggedPlotFrameTests</c> records for #251.
+/// The before/after evidence on the PR is a render, for exactly that reason.</item>
+/// <item><b>Resolved by #268.</b> The view-model state behind it used to be out of reach as well:
+/// <c>DisplayLoggingSession</c> and <c>ClearPlot</c> reached shared state through a seam-less blocking
+/// <c>Dispatcher.UIThread.Invoke</c>, which outside a running Avalonia app binds to whichever thread
+/// touches it FIRST and is never pumped — so three tests written here passed in isolation and hung the
+/// whole run when another class got there first (11 s to a testhost blocked indefinitely at 0.6% CPU).
+/// They were deleted rather than left as a suite-wide hang. <c>DatabaseLogger</c> now carries a private
+/// UI-marshal seam, and those tests live in <c>DatabaseLoggerSessionOpenTests</c>, which owns
+/// <c>IsSessionOpen</c>. Do not re-add them here.</item>
 /// </list>
 ///
 /// <para>Every test below passes against the unchanged code, and that IS the finding rather than a

@@ -94,7 +94,23 @@
         <Setter Property="Foreground" Value="{DynamicResource TextPrimary}"/>
     </Style>
 
-    <!-- Empty-state: centered circular badge + CAPS label + sentence + pill. -->
+    <!--
+        Empty-state: centered circular badge + CAPS label + sentence + pill.
+
+        The single definition for BOTH heads. These began as the mobile projection of
+        the desktop panes' hand-rolled empty states; the desktop panes (Devices,
+        Channels, Logged Data, Profiles, Device Logs) now use them too, so the
+        pattern has one home instead of six copies of the same attribute soup.
+
+        Adopting them moved the desktop states slightly, deliberately: the title is
+        SemiBold at FontSizeSmall rather than Bold at a hardcoded 11, and the body is
+        TextSecondary at FontSizeBody rather than Light TextPrimary. Within the state
+        the hierarchy is what matters and it is unchanged — the body is still the
+        brightest thing in an otherwise empty pane, with the title recessive above it.
+
+        Deliberately NOT here: Margin (per-site vertical rhythm, and the mobile views
+        use StackPanel Spacing instead) and the badge icon's FontSize.
+    -->
     <Style Selector="Border.emptyBadge">
         <Setter Property="Width" Value="96"/>
         <Setter Property="Height" Value="96"/>
@@ -114,6 +130,20 @@
         <Setter Property="TextAlignment" Value="Center"/>
         <Setter Property="TextWrapping" Value="Wrap"/>
         <Setter Property="HorizontalAlignment" Value="Center"/>
-        <Setter Property="MaxWidth" Value="360"/>
+        <!--
+            420, not the 360 this started at. 420 is the column every empty state in the app
+            already lays out in — all four mobile StackPanels and three of the four desktop ones
+            cap there — and at FontSizeBody a 360 cap breaks a sentence one word early, leaving
+            "…to get / started." orphaned on its own line.
+
+            It is NOT inert on mobile, which is worth knowing before changing it again: portrait
+            (384 logical px) is narrower than either cap, so the phone's own content width binds
+            first and nothing moves. LANDSCAPE (820) is wider than both, so the cap is what binds
+            there, and raising it re-flowed all three landscape empty states — two of them lost
+            the same orphaned last line the desktop ones had, in the layout with the least
+            vertical room to spare. The third (Storage) has its centered column sized by the
+            widest child, so a wider sentence also shifts its header ~18px left.
+        -->
+        <Setter Property="MaxWidth" Value="420"/>
     </Style>
 </Styles>
