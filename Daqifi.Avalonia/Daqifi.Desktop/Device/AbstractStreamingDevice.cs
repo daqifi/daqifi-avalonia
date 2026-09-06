@@ -496,14 +496,19 @@ public abstract partial class AbstractStreamingDevice : ObservableObject, IStrea
 
             OnCoreDeviceInitialized();
 
-            // Re-read Core's metadata now that initialization is complete. The only other
-            // hydrate runs from ChannelsPopulated, which Core raises while waiting for the
-            // device's first status message — i.e. BEFORE it asks the device to describe
-            // itself (DaqifiDevice.InitializeAsync: WaitForChannelsPopulatedAsync, then
-            // ReadCapabilityDocumentAsync). Without this the wrapper keeps the board-table
-            // defaults for the whole session and never sees the device's own answers: on the
-            // bench Nq1 that left MaxSamplingRate at the board table's 1000 Hz while the
-            // device itself reports 22000, and no capability document at all.
+            // Re-read Core's metadata now that initialization is complete. The only other hydrate
+            // runs from ChannelsPopulated, which Core raises while waiting for the device's first
+            // status message — i.e. BEFORE it asks the device to describe itself
+            // (DaqifiDevice.InitializeAsync: WaitForChannelsPopulatedAsync, then
+            // ReadCapabilityDocumentAsync). What that later step brings back is the capability
+            // document, and it is the only thing in Core that moves Capabilities off the board
+            // table — including MaxSamplingRate, which this wrapper's rate guard clamps against.
+            // Core re-raises ChannelsPopulated after applying a document only when the document
+            // adds analog-output channels, so on a board without those this call is the wrapper's
+            // one chance to see it; drop it and the wrapper keeps the board-table defaults and a
+            // null CapabilityDocument for the whole session. The ceiling itself is the device's to
+            // state, never a figure worth writing down here — read Capabilities.MaxSamplingRate.
+            // Pinned by AbstractStreamingDeviceMetadataHydrationTests.
             HydrateDeviceMetadata(coreDevice.Metadata);
 
             // Take ownership of the enabled-channel set before anything can render it. Must run

@@ -87,6 +87,8 @@ public class StreamingFrequencyRangeTests
         // 1000 is the UI slider's ceiling and the board table's default, not a hardware limit:
         // a device that describes itself as faster is entitled to be driven faster. Pinning
         // this stops the wrapper's guard from being written as a hard-coded 1000.
+        // 22000 is not a hypothetical either: it is what the bench Nq1 (fw 3.7.2) states in its
+        // own capability document, which the connect template hydrates onto the wrapper (#257).
         Assert.Equal(5000, core.StreamingFrequency);
     }
 
