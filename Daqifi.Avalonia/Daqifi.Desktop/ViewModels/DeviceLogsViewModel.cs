@@ -233,7 +233,7 @@ public partial class DeviceLogsViewModel : ObservableObject
     }
 
     // @port: Daqifi.Desktop.ViewModels.DeviceLogsViewModel.OnDeviceFilesCollectionChanged
-    private void OnDeviceFilesCollectionChanged(object sender, System.Collections.Specialized.NotifyCollectionChangedEventArgs e)
+    private void OnDeviceFilesCollectionChanged(object? sender, System.Collections.Specialized.NotifyCollectionChangedEventArgs e)
     {
         OnPropertyChanged(nameof(HasNoFiles));
         OnPropertyChanged(nameof(HasFiles));

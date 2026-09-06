@@ -368,7 +368,7 @@ public static class App
     }
 
     // @port: Daqifi.Desktop.App.OnUnobservedTaskException
-    private static void OnUnobservedTaskException(object sender, UnobservedTaskExceptionEventArgs e)
+    private static void OnUnobservedTaskException(object? sender, UnobservedTaskExceptionEventArgs e)
     {
         AppLogger.Instance.Error(e.Exception, "Unobserved task exception");
         e.SetObserved();

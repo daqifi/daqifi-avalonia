@@ -1947,7 +1947,7 @@ public partial class DaqifiViewModel : ObservableObject, IFirmwareUpdateHost, IL
     }
 
     // @port: Daqifi.Desktop.ViewModels.DaqifiViewModel.UpdateUi
-    public async void UpdateUi(object sender, PropertyChangedEventArgs args)
+    public async void UpdateUi(object? sender, PropertyChangedEventArgs args)
     {
 
         switch (args.PropertyName)

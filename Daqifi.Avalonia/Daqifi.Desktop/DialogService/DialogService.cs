@@ -193,7 +193,7 @@ public class DialogService : IDialogService
     /// Callback for late View register. It wasn't possible to do a instant register since the
     /// View wasn't at that point part of the logical nor visual tree.
     /// </summary>
-    private void LateRegister(object sender, RoutedEventArgs e)
+    private void LateRegister(object? sender, RoutedEventArgs e)
     {
         var view = sender as Control;
         if (view != null)
@@ -211,7 +211,7 @@ public class DialogService : IDialogService
     /// Handles owner window closed, View service should then unregister all Views acting
     /// within the closed window.
     /// </summary>
-    private void OwnerClosed(object sender, EventArgs e)
+    private void OwnerClosed(object? sender, EventArgs e)
     {
         var owner = sender as Window;
         if (owner != null)
