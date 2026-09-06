@@ -181,6 +181,19 @@ public abstract partial class AbstractStreamingDevice : ObservableObject, IStrea
     /// the device's rate shows what the session is really running at, and both figures are logged.
     /// </para>
     /// <para>
+    /// <b>When the refresh brings nothing back.</b> Core answers <c>null</c> — it does not throw —
+    /// for an unanswered query, an unparseable reply or a schema this parser does not know, and
+    /// throws only for a device that is no longer connected or a cancelled read. Both outcomes are
+    /// treated the same here and neither stops the start. Refusing to record over a failed read
+    /// would newly block sessions that work today: the document is documented enrichment ("a device
+    /// that cannot supply one is fully usable"), and the great majority of sessions run far below
+    /// any cap. So the last figure the device stated is applied, the fact that it is not fresh is
+    /// logged with the rate about to be used, and a device that then refuses the start has an
+    /// explanation waiting in the log rather than none at all. This is exactly where the code stood
+    /// before this method existed, so nothing regresses; it is simply the one case the cap cannot
+    /// cover.
+    /// </para>
+    /// <para>
     /// Must be called after the rate has been assigned to <paramref name="coreDevice"/> (Core
     /// enforces against its own live rate) and before streaming starts: the document read is a
     /// text-mode exchange, which pauses Core's protobuf consumer for its duration.
@@ -191,20 +204,36 @@ public abstract partial class AbstractStreamingDevice : ObservableObject, IStrea
     {
         ArgumentNullException.ThrowIfNull(coreDevice);
 
+        // Whether this device publishes a document at all. A pre-3.5.0 board does not, and Core
+        // skips the read for it at its own feature gate — that is not a failed refresh and must
+        // not be reported as one.
+        var deviceDescribesItself = coreDevice.Metadata.CapabilityDocument != null;
+        var readAnswered = false;
+
         try
         {
             // Blocking here is the choice the surrounding handoff already makes — StartSdCardLogging
             // does the same with StartSdCardLoggingAsync — and Task.Run keeps Core's continuations
             // off the caller's synchronization context.
-            Task.Run(() => coreDevice.ReadCapabilityDocumentAsync()).GetAwaiter().GetResult();
+            readAnswered =
+                Task.Run(() => coreDevice.ReadCapabilityDocumentAsync()).GetAwaiter().GetResult() != null;
         }
         catch (Exception ex)
         {
-            // A refresh that failed leaves the previous document in place, which is exactly where
-            // it stood before this method existed. Never fail a start over it.
+            // The exception itself, not its Message: the type and stack are the whole reason a
+            // failed refresh is worth logging, and Warning(Exception, string) keeps them in the
+            // local log without raising a Sentry event.
             AppLogger.Warning(
-                $"Could not refresh device {DisplayIdentifier}'s capability document before " +
-                $"starting; its rate cap may be stale. {ex.Message}");
+                ex, $"Could not read device {DisplayIdentifier}'s capability document before starting.");
+        }
+
+        if (!readAnswered && deviceDescribesItself)
+        {
+            AppLogger.Warning(
+                $"Device {DisplayIdentifier} did not supply a fresh capability document, so the rate " +
+                $"its current channel set can sustain is unknown; starting at {StreamingFrequency} Hz " +
+                "against the last cap it stated. A device that refuses this start is refusing it for " +
+                "that reason.");
         }
 
         if (coreDevice.EnforceStreamingFrequencyCap() is not { } requestedRateHz)

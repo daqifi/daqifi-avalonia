@@ -183,6 +183,57 @@ public class CurrentRateCapEnforcementTests
 
         Assert.Equal(MeasuredCurrentCapHz, device.StreamingFrequency);
     }
+
+    /// <summary>
+    /// The same for a refresh that answers with nothing rather than throwing, which is the far more
+    /// likely of the two: Core returns <c>null</c> — it does not throw — for an unanswered query,
+    /// an unparseable reply, or a schema version it does not know.
+    /// </summary>
+    [Fact]
+    public void A_refresh_that_answers_with_nothing_leaves_the_last_stated_cap_in_force()
+    {
+        var core = new CapabilityRefreshingCoreDevice("core") { RefreshedDocument = null };
+        core.Metadata.Capabilities = new DeviceCapabilities { MaxSamplingRate = BoardCeilingHz };
+        core.Metadata.ApplyCapabilityDocument(DocumentCapping(MeasuredCurrentCapHz));
+        var device = WrapperAt(OverCapRateHz, core);
+
+        device.HoldRateForHandoff(core);
+
+        Assert.Equal(1, core.RefreshCount);
+        Assert.Equal(MeasuredCurrentCapHz, device.StreamingFrequency);
+    }
+
+    /// <summary>
+    /// The one case the cap genuinely cannot cover, pinned so it is a decision rather than an
+    /// oversight: the refresh fails and the only cached figure is the inert connect-time
+    /// <c>0</c>, so the rate goes to the device unvalidated and the device may refuse it.
+    /// </summary>
+    /// <remarks>
+    /// The alternative — refusing to record when the capability read fails — was rejected. The
+    /// document is enrichment, not a requirement (Core: "a device that cannot supply one is fully
+    /// usable"), and the overwhelming majority of sessions run far below any cap, so refusing would
+    /// newly block runs that work today over a read that failed. What the app does instead is say
+    /// so: the rate it is about to use is logged alongside the fact that the cap is unknown, so a
+    /// refused start has an explanation waiting rather than none. The rate itself is untouched —
+    /// silently lowering it to a figure describing a different channel set would be worse than
+    /// leaving it alone.
+    /// </remarks>
+    [Fact]
+    public void A_failed_refresh_over_an_inert_cached_cap_still_starts_and_does_not_move_the_rate()
+    {
+        var core = new CapabilityRefreshingCoreDevice("core")
+        {
+            RefreshFailure = new DeviceNotConnectedException()
+        };
+        core.Metadata.Capabilities = new DeviceCapabilities { MaxSamplingRate = BoardCeilingHz };
+        core.Metadata.ApplyCapabilityDocument(DocumentCapping(0));
+        var device = WrapperAt(OverCapRateHz, core);
+
+        device.HoldRateForHandoff(core);
+
+        Assert.Equal(OverCapRateHz, device.StreamingFrequency);
+        Assert.Equal(OverCapRateHz, core.StreamingFrequency);
+    }
     #endregion
 
     #region The start path itself
