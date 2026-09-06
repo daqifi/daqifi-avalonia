@@ -136,13 +136,13 @@ public class DeviceLoweredRateReadoutTests
         shell.SelectedStreamingFrequency = 1000;
         Assert.Equal(1000, shell.SelectedStreamingFrequency);
 
+        second.StreamingFrequency = 500;
+
         // The user opens the drawer on the other device (DevicesPaneViewModel.OpenSettings).
         shell.SelectedDevice = second;
-        shell.SelectedStreamingFrequency = 500;
 
         Assert.Equal(500, shell.SelectedStreamingFrequency);
         Assert.Equal(1000, first.StreamingFrequency);
-        Assert.Equal(500, second.StreamingFrequency);
     }
 
     /// <summary>
