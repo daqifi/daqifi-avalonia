@@ -17,15 +17,21 @@ It goes through the **user's** code path, not a convenient one:
   the command a user's click invokes — rather than constructing a `SerialStreamingDevice`
   directly. Device registration, the duplicate check, the status string and the hot-plug
   hand-off all run.
-- Disconnection is `ConnectionManager.Instance.Disconnect(device)`, which is what the
-  Devices pane calls. Calling `device.Disconnect()` closes the port but leaves the device
-  registered, which is precisely the stale-"Connected" state the `CONN-DISC` row exists to
-  catch.
+- Disconnection is `shell.DisconnectDeviceCommand.Execute(device)` — the command the Devices
+  pane binds. `ConnectionManager.Instance.Disconnect(device)` is only one of the four things
+  that command does, and `device.Disconnect()` is worse still: it closes the port but leaves
+  the device registered, precisely the stale-"Connected" state `CONN-DISC` exists to catch.
+- The sampling rate is set through `shell.SelectedStreamingFrequency`, the guarded setter the
+  drawer's FREQUENCY control writes, rather than assigning `device.StreamingFrequency`, which
+  skips the guard and leaves the shell's own value stale.
 - Streaming is driven by toggling `shell.IsLogging`, so the disk-space check, session
   creation and `LoggingFleet.Start` all happen the way they do in the app.
 
 Every step renders the live window to a PNG and appends one JSON line to
 `<out>/results.jsonl`, so a run leaves behind evidence rather than a verdict.
+
+A run that throws part-way through still stops logging and disconnects on the way out, so an
+aborted run cannot leave the bench board streaming into a process that has already exited.
 
 ## Running it
 
@@ -37,10 +43,10 @@ dotnet run   --project tools/system-test/HeadlessBench/HeadlessBench.csproj --no
   --rate 100 --seconds 5
 ```
 
-**Give every run a fresh `--out`.** `results.jsonl` is **appended**, never truncated, and
-the rig does not refuse a directory that already has one. Reuse the same path twice and
-the file holds two runs' verdicts with nothing marking the boundary — which is why the
-example above stamps the directory with the time.
+**Give every run a fresh `--out`** — the example above stamps the directory with the time.
+`results.jsonl` is truncated at startup, so reusing a path silently discards the previous
+run's verdicts rather than interleaving them; `shots/` and `appdata/` are *not* cleared, so a
+reused directory also mixes two runs' PNGs and two runs' databases.
 
 | flag | meaning | default |
 | --- | --- | --- |
@@ -51,7 +57,7 @@ example above stamps the directory with the time.
 | `--scripted <state>` | test-double mode — **an unimplemented stub today** | — |
 
 Exit codes: `0` all checks passed · `1` at least one `[FAIL]`, or the run threw ·
-`2` bad arguments.
+`2` bad arguments, or an `--out` the rig could not prepare.
 
 ### Output
 
@@ -73,36 +79,42 @@ connection — the hardware path is the point.
 
 ## Rows covered
 
-`CONN-USB`, `DEV-INFO`, `CH-AI`, `STREAM-AI`, `LOG-SESSION`, `GRAPH-LIVE`, `CONN-DISC`, plus
-three `unexpected`-check probes (sample-arrival gaps and device-clock skew, thread growth
-across connect/disconnect, and UI pump latency). Add a row by adding a `Step`; keep the
-shape — drive, assert the device, pump, assert the UI, capture, emit.
+`CONN-USB`, `DEV-INFO`, `DEV-RATE`, `CH-AI`, `STREAM-AI`, `LOG-SESSION`, `GRAPH-LIVE`,
+`CONN-DISC`, plus three `unexpected`-check probes (sample-arrival gaps and device-clock skew,
+thread growth across connect/disconnect, and UI pump latency). Add a row by adding a `Step`;
+keep the shape — drive, assert the device, pump, assert the UI, capture, emit.
+
+The full T2/T3 matrix has more rows than this — `DEV-TILE`, `CH-TILE`, `DEV-NAME`, `CH-DIO`,
+`CH-PWM`, `SD-LIST`, `DEV-NET`, `DEV-DEBUG` are not implemented. Tracked in #260.
 
 ## Known gaps — read before trusting a green run
 
 These are real limits of the current rig, not of the app. Tracked in #260.
 
-- **`CONN-DISC` is one layer below the user's click.** It calls
-  `ConnectionManager.Instance.Disconnect(device)`, but a user's disconnect runs
-  `DaqifiViewModel.DisconnectDeviceCommand`, which *also* unsubscribes every active channel
-  from `LoggingManager`, calls `RemoveFirmwareNotification`, and clears `SelectedDevice`.
-  So `CONN-DISC` can pass while that cleanup is broken, and the channel this rig subscribed
-  in `CH-AI` is still subscribed when the run ends. (The connect side does not have this
-  problem — it goes through the dialog's own command.)
-- **`LOG-SESSION` does not check the database.** It asserts only that a sample arrived and
-  that the logging toggles returned to false. Session finalization is a fire-and-forget
-  task the rig neither awaits nor validates, so a persistence failure still reports a pass.
-  The emitted evidence string says so too.
-- **No cleanup on the exception path.** `RunHardwareSequence` stops logging and disconnects
-  only on the normal path; an exception partway through leaves the board streaming until
-  the process exits.
-- **Setup is unguarded.** Creating `--out`, setting the environment and registering icons
-  all run before the try block, so a bad path or a permission error crashes with a stack
-  trace rather than the documented exit codes.
-- **`--scripted` is a stub**, so every test-double state is unreachable.
+- **`--scripted` is a stub**, so every test-double state — empty SD card, dropped device, 500
+  sessions, a read-only export destination, a 10-hour session — is unreachable. These are the
+  T1 rows that need no hardware, so they are also the ones CI could actually run.
+- **`STREAM-AI` fails against fw-3.7.2 and that is not a regression.** The board reports
+  ~99.8 Hz by its own timestamps and ~79.7 Hz by wall clock at a set rate of 100. The row's
+  companion `unexpected` probe prints both spans precisely so the two layers can be told
+  apart; the discrepancy is a long-known firmware timebase issue.
+- **`CONN-DISC` does not check `RemoveFirmwareNotification`.** It now drives
+  `DaqifiViewModel.DisconnectDeviceCommand` and asserts three of that command's four effects
+  (the device leaves both device lists, no channel is left subscribed, `SelectedDevice` is
+  cleared). The firmware-notification removal is not asserted.
+- **Only one channel, one device, one rate.** Every hardware row runs against the first
+  analog input of the first connected device at `--rate`. Multi-device fleets, digital and
+  PWM outputs, and rate limits are untested.
 
-## Two traps it encodes, for whoever edits it
+## Three traps it encodes, for whoever edits it
 
+- **An assertion can be satisfied by a safety net rather than by the path you meant to test.**
+  Driving `ConnectionManager.Instance.Disconnect` instead of `DisconnectDeviceCommand` still
+  ends the run with zero subscribed channels — `DaqifiViewModel`'s `ConnectedDevices` handler
+  sweeps orphaned subscriptions for the auto-removal paths (unplug, WiFi timeout) and catches
+  this one on the way past. Measured on the bench, not assumed: of the command's four effects,
+  only the `SelectedDevice` clearing actually distinguishes the two call sites. Assert the
+  effect that is *unique* to the path, or the row passes either way.
 - **Call the property the view binds, not the device method.** `Channel.IsDigitalOn` and
   `SelectedChannel.PwmDutyCyclePercent` are what the tiles bind;
   `device.SetChannelOutputValue` / `device.SetChannelPwmDutyCycle` send the SCPI write

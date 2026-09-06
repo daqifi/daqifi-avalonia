@@ -338,10 +338,13 @@ internal static class HeadlessBench
         // binds (DevicesPanePrototype.axaml, DevicesMobileView.axaml, and DevicesPaneViewModel.
         // DisconnectSelected). ConnectionManager.Instance.Disconnect is only ONE of the four things
         // that command does — it also unsubscribes every active channel from LoggingManager, removes
-        // the firmware notification and clears SelectedDevice — so calling the manager directly, as
-        // this rig used to, passes while the other three are broken. Calling device.Disconnect() is
-        // worse still: it closes the port but leaves the device registered in the UI, exactly the
-        // stale-"Connected" state this row exists to catch.
+        // the firmware notification and clears SelectedDevice — and this rig used to call the
+        // manager directly, so those three went untested. Note which assertion below actually
+        // discriminates: SelectedDevice. The unsubscribe reads clean either way, because
+        // DaqifiViewModel's ConnectedDevices handler sweeps orphaned subscriptions for the
+        // auto-removal paths and catches this one in passing (measured on the bench, #260).
+        // Calling device.Disconnect() is worse than either: it closes the port but leaves the
+        // device registered in the UI, exactly the stale-"Connected" state this row exists to catch.
         sw.Restart();
         shell.DisconnectDeviceCommand.Execute(device);
         PumpUntil(() => shell.ConnectedDevices.Count == 0 && ConnectionManager.Instance.ConnectedDevices.Count == 0, TimeSpan.FromSeconds(10));
