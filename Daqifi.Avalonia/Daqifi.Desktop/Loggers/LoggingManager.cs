@@ -326,9 +326,6 @@ public partial class LoggingManager : ObservableObject
 
     [ObservableProperty]
     private Profile _selectedProfile;
-
-    [ObservableProperty]
-    private ObservableCollection<ProfileChannel> _selectedProfileChannels = [];
     #endregion
 
     // @port: Daqifi.Desktop.Logger.LoggingManager.SubscribeProfile
@@ -361,12 +358,6 @@ public partial class LoggingManager : ObservableObject
             AppLogger.Error(ex, "Error Subscribe Profile");
             return false;
         }
-    }
-
-    // @port: Daqifi.Desktop.Logger.LoggingManager.callPropertyChange
-    public void callPropertyChange()
-    {
-        OnPropertyChanged("SelectedProfileChannels");
     }
 
     /// <summary>

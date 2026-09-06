@@ -42,9 +42,6 @@ public partial class DebugDataModel : ObservableObject
     [ObservableProperty]
     private List<int> _activeChannelIndices = new();
 
-    [ObservableProperty]
-    private List<string> _dataFlowMapping = new();
-
     /// <summary>
     /// Creates a formatted string showing the data flow visualization
     /// </summary>

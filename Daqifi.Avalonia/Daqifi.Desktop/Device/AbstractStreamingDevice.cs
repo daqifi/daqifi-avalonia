@@ -2602,16 +2602,6 @@ public abstract partial class AbstractStreamingDevice : ObservableObject, IStrea
                 debugData.ScaledAnalogValues.Add(scaledValue);
             }
 
-            // Create data flow mapping
-            debugData.DataFlowMapping = new List<string>();
-            for (var i = 0; i < Math.Min(message.AnalogInData.Count, activeChannels.Count); i++)
-            {
-                var channel = activeChannels[i];
-                var rawValue = message.AnalogInData[i];
-                var scaledValue = debugData.ScaledAnalogValues[i];
-                debugData.DataFlowMapping.Add($"data[{i}]={rawValue} → {channel.Name}(idx:{channel.Index})={scaledValue:F3}V");
-            }
-
             // Log the debug information
             AppLogger.Information(debugData.LogSummary);
 
