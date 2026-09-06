@@ -1,3 +1,4 @@
+using System.ComponentModel;
 using System.Diagnostics;
 using System.Globalization;
 using System.Text.Json;
@@ -669,6 +670,10 @@ internal static class HeadlessBench
     /// </remarks>
     private static void RunFriendlyNameRow(Window main, DaqifiViewModel shell, DevicesPaneViewModel devicesPane)
     {
+        // Keep pumping while the OS lets go of the port CONN-DISC has just closed, so this connect
+        // is not racing that close. Same reason as Bounce below, which is where the rest of the
+        // row's reconnects go.
+        PumpFor(TimeSpan.FromSeconds(1));
         var device = ConnectSerial(shell, out var reconnectSeconds);
         if (device is null)
         {
@@ -702,47 +707,43 @@ internal static class HeadlessBench
             // .OpenSettings -> SeedPendingFriendlyName). A box that does not agree with the device
             // is a field the user edits blind, so it is asserted rather than assumed.
             var seeded = shell.PendingFriendlyName;
-            wroteNvm = true;
-            var saveError = ApplyFriendlyName(shell, testName);
+
+            // The tile's FriendlyName is a passthrough getter, so reading it after the save would
+            // only be reading the device again. What the Devices pane actually needs is the
+            // NOTIFICATION — DeviceTileViewModel.OnDevicePropertyChanged re-raising FriendlyName —
+            // because without it the tile's text keeps showing the old name until something else
+            // happens to refresh it. Watch for it rather than re-reading the value.
             var tile = devicesPane.Devices.FirstOrDefault(t => ReferenceEquals(t.Device, device));
+            var tileTold = false;
+            void OnTileChanged(object? _, PropertyChangedEventArgs e)
+            {
+                if (string.IsNullOrEmpty(e.PropertyName) || e.PropertyName == nameof(DeviceTileViewModel.FriendlyName))
+                {
+                    tileTold = true;
+                }
+            }
+
+            wroteNvm = true;
+            string? saveError;
+            if (tile is not null) { tile.PropertyChanged += OnTileChanged; }
+            try { saveError = ApplyFriendlyName(shell, testName); }
+            finally { if (tile is not null) { tile.PropertyChanged -= OnTileChanged; } }
+
             Step(2, "DEV-NAME", "works",
                  saveError is null && seeded == originalName && device.FriendlyName == testName
                      && device.DeviceDisplayName == testName && shell.PendingFriendlyName == testName
-                     && shell.FriendlyNameApplied && tile?.FriendlyName == testName,
+                     && shell.FriendlyNameApplied && tile?.FriendlyName == testName && tileTold,
                  $"drawer opened seeded with NAME='{seeded}' (device said '{originalName}'); saved '{testName}' -> " +
                  $"FriendlyName='{device.FriendlyName}' DeviceDisplayName='{device.DeviceDisplayName}'; " +
                  $"box re-seeded to '{shell.PendingFriendlyName}' with the 'Name saved' tick showing={shell.FriendlyNameApplied}; " +
-                 $"tile FriendlyName='{tile?.FriendlyName ?? "no tile"}'" +
+                 $"tile FriendlyName='{tile?.FriendlyName ?? "no tile"}' and it change-notified={tileTold}" +
                  (saveError is null ? "" : $"; the drawer reported '{saveError}'"),
                  Capture(main, "t2-12-device-named"));
 
-            // DEV-NAME/limits — firmware takes 1-31 printable ASCII with no '"' or '\', and
-            // AbstractStreamingDevice.IsFriendlyNameValid mirrors daqifi_settings_FriendlyNameIsValid
-            // exactly so that a name the app accepts is one the board will. The TextBox caps length
-            // at 31, but the property is what a binding writes, and an empty box and an embedded
-            // quote are both reachable by typing. Each has to surface in the drawer's inline error
-            // AND leave the device's name alone: a validator that let one through would write it to
-            // the board's NVM, and the quote would break the SCPI string literal it is spliced into.
-            var outcomes = new List<string>();
-            var leaked = 0;
-            foreach (var (label, bad) in new[]
-                     {
-                         ("empty", ""),
-                         ("32 chars", new string('x', 32)),
-                         ("embedded quote", "bad\"name"),
-                     })
-            {
-                var error = ApplyFriendlyName(shell, bad);
-                var held = device.FriendlyName == testName;
-                if (error is null || !held) { leaked++; }
-                outcomes.Add($"{label} -> {(error is null ? "ACCEPTED" : "rejected")}" +
-                             (held ? "" : $", and the device name moved to '{device.FriendlyName}'"));
-            }
-            Step(2, "DEV-NAME", "limits", leaked == 0,
-                 $"{string.Join("; ", outcomes)}; device still named '{device.FriendlyName}'", null);
-
-            // The row's one real question: did any of that reach the board? Bounce the connection
-            // and read what the board itself reports.
+            // The row's one real question: did that reach the board? Bounce the connection and read
+            // what the board itself says. This runs BEFORE the limits check below on purpose — a
+            // validator that leaks writes a bad name to the device, and a cascade into this check
+            // would report the leak twice while looking like two independent failures.
             device = Bounce(shell, device, out var bounceSeconds);
             Step(2, "DEV-NAME", "persists", device?.FriendlyName == testName,
                  device is null
@@ -751,6 +752,40 @@ internal static class HeadlessBench
                        $"(wrote '{testName}') in its SYSTem:SYSInfoPB? response — a device read-back, " +
                        $"not the optimistic local update SetFriendlyName also does; DeviceDisplayName='{device.DeviceDisplayName}'",
                  Capture(main, "t2-13-name-persisted"), bounceSeconds);
+
+            // DEV-NAME/limits — firmware takes 1-31 printable ASCII with no '"' or '\', and
+            // AbstractStreamingDevice.IsFriendlyNameValid mirrors daqifi_settings_FriendlyNameIsValid
+            // exactly so that a name the app accepts is one the board will. The TextBox caps length
+            // at 31, but the property is what a binding writes, and an empty box and an embedded
+            // quote are both reachable by typing. Each has to surface in the drawer's inline error
+            // AND leave the device's name alone: a validator that let one through would write it to
+            // the board's NVM, and the quote would break the SCPI string literal it is spliced into.
+            if (device is not null)
+            {
+                OpenDeviceDrawer(devicesPane, device);
+                // Measured against whatever the device is called on the way IN, not against the
+                // name the rename asked for: this check is "a rejected name does not move the
+                // device's name", and pinning it to testName would make it fail a second time for
+                // whatever already made DEV-NAME/persists fail.
+                var before = device.FriendlyName;
+                var outcomes = new List<string>();
+                var leaked = 0;
+                foreach (var (label, bad) in new[]
+                         {
+                             ("empty", ""),
+                             ("32 chars", new string('x', 32)),
+                             ("embedded quote", "bad\"name"),
+                         })
+                {
+                    var error = ApplyFriendlyName(shell, bad);
+                    var held = device.FriendlyName == before;
+                    if (error is null || !held) { leaked++; }
+                    outcomes.Add($"{label} -> {(error is null ? "ACCEPTED" : "rejected")}" +
+                                 (held ? "" : $", and the device name moved to '{device.FriendlyName}'"));
+                }
+                Step(2, "DEV-NAME", "limits", leaked == 0,
+                     $"{string.Join("; ", outcomes)}; device still named '{device.FriendlyName}' (was '{before}')", null);
+            }
         }
         finally
         {
