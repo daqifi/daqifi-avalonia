@@ -1,4 +1,3 @@
-using System.Reflection;
 using Daqifi.Core.Device;
 using Daqifi.Desktop.Device.SerialDevice;
 using Daqifi.Desktop.ViewModels;
@@ -20,21 +19,20 @@ namespace Daqifi.Avalonia.Tests.ViewModels;
 /// </para>
 ///
 /// <para>
-/// The view half of these facts is deliberately textual. Neither device view declares an
-/// <c>x:DataType</c>, so their bindings are resolved by reflection at runtime and a missing or
-/// misspelled member fails silently while both heads build green — the same reason
-/// <see cref="Daqifi.Avalonia.Tests.Device.Firmware.FirmwareUploadAffordanceTests"/> states its
-/// XAML facts this way. Each one therefore asserts the pair a reflection binding needs: the binding
-/// exists in the view, and the member it names exists and is readable on the view model.
+/// The view half of these facts is deliberately textual, through <see cref="BindingFacts"/> —
+/// neither device view declares an <c>x:DataType</c>, so their bindings are resolved by reflection
+/// at runtime and a missing or misspelled member fails silently while both heads build green.
 /// </para>
 ///
 /// <para>
-/// Scope: only the two views whose slider drives a connected device's live rate. The four Profiles
-/// sliders still carry a literal ceiling, because a <c>ProfileDevice</c> is a record loaded from
-/// XML with no device behind it — it can name a board that is not connected, and one profile can
-/// name several boards with different ceilings, so there is no device to read a bound from. A
-/// profile's rate is clamped to the real ceiling when it is applied (PR #255), so nothing unsafe
-/// reaches the hardware from there.
+/// Scope: only the two views whose slider drives a connected device's live rate. The Profiles
+/// pane's sliders edit a <c>ProfileDevice</c> — an <c>ObservableObject</c> loaded from XML with no
+/// device behind it, which can name a board that is not connected and can appear several times in
+/// one profile with different ceilings — so there is no device there to read a bound from. Their
+/// separate problem, that the editor could not express a rate the profile already held, is
+/// <see cref="Daqifi.Avalonia.Tests.Models.ProfileRateCeilingTests"/> (issue #274). A profile's
+/// rate is clamped to the real ceiling when it is applied (PR #255), so nothing unsafe reaches the
+/// hardware from either.
 /// </para>
 /// </summary>
 public class RateSliderCeilingTests
@@ -57,9 +55,9 @@ public class RateSliderCeilingTests
     [InlineData(MobileDevicesView)]
     public void The_devices_pane_takes_its_rate_ceiling_from_the_device(string viewPath)
     {
-        AssertViewBinds(viewPath, "Maximum=\"{Binding MaxFrequencyHz}\"");
+        BindingFacts.AssertBinds(viewPath, "Maximum=\"{Binding MaxFrequencyHz}\"");
 
-        AssertViewModelExposes(typeof(DevicesPaneViewModel), "MaxFrequencyHz");
+        BindingFacts.AssertExposes(typeof(DevicesPaneViewModel), "MaxFrequencyHz");
     }
 
     /// <summary>
@@ -72,9 +70,7 @@ public class RateSliderCeilingTests
     [InlineData(MobileDevicesView)]
     public void Neither_devices_view_writes_a_rate_ceiling_of_its_own(string viewPath)
     {
-        var markup = File.ReadAllText(FullPath(viewPath));
-
-        Assert.DoesNotContain("Maximum=\"1000\"", markup, StringComparison.Ordinal);
+        Assert.DoesNotContain("Maximum=\"1000\"", BindingFacts.Source(viewPath), StringComparison.Ordinal);
     }
     #endregion
 
@@ -153,41 +149,6 @@ public class RateSliderCeilingTests
         var device = new SerialStreamingDevice("COM-TEST-270");
         device.Metadata.Capabilities = new DeviceCapabilities { MaxSamplingRate = maxSamplingRate };
         return device;
-    }
-
-    private static void AssertViewBinds(string repoRelativeViewPath, string expectedBinding)
-    {
-        var markup = File.ReadAllText(FullPath(repoRelativeViewPath));
-
-        Assert.Contains(expectedBinding, markup, StringComparison.Ordinal);
-    }
-
-    /// <summary>
-    /// A reflection binding resolves against the runtime type, so the member must be public and
-    /// readable there — the half of the binding the compiler never checks.
-    /// </summary>
-    private static void AssertViewModelExposes(Type viewModel, string memberName)
-    {
-        var property = viewModel.GetProperty(memberName, BindingFlags.Public | BindingFlags.Instance);
-
-        Assert.NotNull(property);
-        Assert.True(property.CanRead, $"{viewModel.Name}.{memberName} cannot be read by a binding.");
-    }
-
-    private static string FullPath(string repoRelativeViewPath) =>
-        Path.Combine(RepoRoot(), repoRelativeViewPath.Replace('/', Path.DirectorySeparatorChar));
-
-    /// <summary>Walks up from the test binary to the checkout, identified by the solution file.</summary>
-    private static string RepoRoot()
-    {
-        var directory = new DirectoryInfo(AppContext.BaseDirectory);
-        while (directory != null && !File.Exists(Path.Combine(directory.FullName, "Daqifi.Avalonia.slnx")))
-        {
-            directory = directory.Parent;
-        }
-
-        Assert.NotNull(directory);
-        return directory.FullName;
     }
     #endregion
 }

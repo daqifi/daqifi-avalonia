@@ -26,6 +26,18 @@ public partial class Profile : ObservableObject
 // @port: Daqifi.Desktop.Models.ProfileDevice
 public partial class ProfileDevice : ObservableObject
 {
+    /// <summary>
+    /// The rate ceiling a profile entry offers before anything raises it: Core's board-table
+    /// bootstrap figure, the conservative answer for a DAQiFi board that has not described itself.
+    /// </summary>
+    /// <remarks>
+    /// A profile is XML, not a device — it can name a board that is not connected, and one profile
+    /// can name several boards with different ceilings — so this is the only number available
+    /// until the entry itself says otherwise.
+    /// </remarks>
+    // Downstream-only: no upstream counterpart.
+    public const int DefaultMaxSamplingFrequency = 1000;
+
     [ObservableProperty]
     private string deviceName;
     [ObservableProperty]
@@ -38,6 +50,55 @@ public partial class ProfileDevice : ObservableObject
     private int samplingFrequency;
     [ObservableProperty]
     private List<ProfileChannel> channels;
+
+    private int _maxSamplingFrequency = DefaultMaxSamplingFrequency;
+
+    /// <summary>
+    /// Upper bound of this entry's FREQ slider in the profile editor. Never below
+    /// <see cref="SamplingFrequency"/>, so every rate the profile has held stays expressible —
+    /// and stays editable — on the control that edits it.
+    /// </summary>
+    /// <remarks>
+    /// The editor's slider used to state <c>Maximum="1000"</c> itself. Since a profile can be
+    /// captured from a connected device at that device's own rate
+    /// (<c>ProfilesPaneViewModel.SaveCurrentSettings</c> copies
+    /// <see cref="Daqifi.Desktop.Device.IStreamingDevice.StreamingFrequency"/> unfiltered, and the
+    /// Devices pane can now reach the board's advertised ceiling — 22000 Hz on the bench Nq1), a
+    /// saved profile can carry a rate that slider could not represent: the thumb sat pinned at the
+    /// right-hand end while the readout beside it said 5000 Hz, and the first drag collapsed the
+    /// profile to at most 1000. Closing the drawer is the save, so that loss was durable.
+    /// <para>
+    /// It only ever rises. Recomputing it from <see cref="SamplingFrequency"/> on every change
+    /// would ratchet: each drag downwards would pull the ceiling down with it and the rate could
+    /// never be brought back up. Rising-only means a 5000 Hz profile dragged to 200 can be dragged
+    /// back to 5000 within the same edit, and a reload from XML starts the ceiling over at
+    /// whatever that file now holds.
+    /// </para>
+    /// <para>
+    /// This does not consult hardware. Raising a profile <em>above</em> what it already holds
+    /// still needs a device to read a ceiling from, which the profile editor has not got; a rate
+    /// higher than a matched device supports is clamped when the profile is applied, by
+    /// <c>AbstractStreamingDevice.StreamingFrequency</c>.
+    /// </para>
+    /// </remarks>
+    // Downstream-only: no upstream counterpart.
+    public int MaxSamplingFrequency
+    {
+        get => _maxSamplingFrequency;
+        private set => SetProperty(ref _maxSamplingFrequency, value);
+    }
+
+    /// <summary>
+    /// Lifts <see cref="MaxSamplingFrequency"/> to cover a rate the profile has taken on — from
+    /// the XML on load, from a capture, or from the editor itself.
+    /// </summary>
+    partial void OnSamplingFrequencyChanged(int value)
+    {
+        if (value > MaxSamplingFrequency)
+        {
+            MaxSamplingFrequency = value;
+        }
+    }
 }
 
 // @port: Daqifi.Desktop.Models.ProfileChannel

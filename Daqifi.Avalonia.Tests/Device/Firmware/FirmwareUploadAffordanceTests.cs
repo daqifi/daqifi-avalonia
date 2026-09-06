@@ -1,5 +1,4 @@
 using System.Collections.ObjectModel;
-using System.Reflection;
 using Daqifi.Core.Firmware;
 using Daqifi.Desktop.Common.Loggers;
 using Daqifi.Desktop.Device.Firmware;
@@ -171,8 +170,7 @@ public class FirmwareUploadAffordanceTests : IDisposable
     [Fact]
     public void The_shell_view_model_no_longer_writes_the_status_line_itself()
     {
-        var source = File.ReadAllText(
-            Path.Combine(RepoRoot(), "Daqifi.Avalonia", "Daqifi.Desktop", "ViewModels", "DaqifiViewModel.cs"));
+        var source = BindingFacts.Source("Daqifi.Avalonia/Daqifi.Desktop/ViewModels/DaqifiViewModel.cs");
 
         Assert.DoesNotContain("FirmwareUpdateStatusText =", source, StringComparison.Ordinal);
     }
@@ -187,11 +185,11 @@ public class FirmwareUploadAffordanceTests : IDisposable
     [Fact]
     public void The_bootloader_dialog_binds_its_cancel_command()
     {
-        AssertViewBinds(
-            Path.Combine("Daqifi.Avalonia", "Daqifi.Desktop", "View", "FirmwareDialog.axaml"),
+        BindingFacts.AssertBinds(
+            "Daqifi.Avalonia/Daqifi.Desktop/View/FirmwareDialog.axaml",
             "{Binding CancelUploadFirmwareCommand}");
 
-        AssertViewModelExposes(typeof(FirmwareDialogViewModel), "CancelUploadFirmwareCommand");
+        BindingFacts.AssertExposes(typeof(FirmwareDialogViewModel), "CancelUploadFirmwareCommand");
     }
 
     /// <summary>
@@ -204,16 +202,16 @@ public class FirmwareUploadAffordanceTests : IDisposable
     [InlineData("Daqifi.Avalonia/Views/Mobile/DevicesMobileView.axaml")]
     public void The_device_pane_binds_cancel_and_the_status_line(string viewPath)
     {
-        AssertViewBinds(viewPath, "{Binding Shell.CancelFirmwareUploadCommand}");
-        AssertViewBinds(viewPath, "{Binding Shell.FirmwareUpdateStatusText}");
+        BindingFacts.AssertBinds(viewPath, "{Binding Shell.CancelFirmwareUploadCommand}");
+        BindingFacts.AssertBinds(viewPath, "{Binding Shell.FirmwareUpdateStatusText}");
 
         // Both are gated on the uploading flag, which is what keeps a finished run's last message off
         // the screen and the cancel button out of an idle pane.
-        AssertViewBinds(viewPath, "IsVisible=\"{Binding Shell.IsFirmwareUploading}\"");
+        BindingFacts.AssertBinds(viewPath, "IsVisible=\"{Binding Shell.IsFirmwareUploading}\"");
 
-        AssertViewModelExposes(typeof(DaqifiViewModel), "CancelFirmwareUploadCommand");
-        AssertViewModelExposes(typeof(DaqifiViewModel), "FirmwareUpdateStatusText");
-        AssertViewModelExposes(typeof(DaqifiViewModel), "IsFirmwareUploading");
+        BindingFacts.AssertExposes(typeof(DaqifiViewModel), "CancelFirmwareUploadCommand");
+        BindingFacts.AssertExposes(typeof(DaqifiViewModel), "FirmwareUpdateStatusText");
+        BindingFacts.AssertExposes(typeof(DaqifiViewModel), "IsFirmwareUploading");
     }
     #endregion
 
@@ -229,38 +227,6 @@ public class FirmwareUploadAffordanceTests : IDisposable
         return device;
     }
 
-    private static void AssertViewBinds(string repoRelativeViewPath, string expectedBinding)
-    {
-        var fullPath = Path.Combine(RepoRoot(), repoRelativeViewPath.Replace('/', Path.DirectorySeparatorChar));
-        var markup = File.ReadAllText(fullPath);
-
-        Assert.Contains(expectedBinding, markup, StringComparison.Ordinal);
-    }
-
-    /// <summary>
-    /// A reflection binding resolves against the runtime type, so the member must be public and
-    /// readable there — the half of the binding the compiler never checks.
-    /// </summary>
-    private static void AssertViewModelExposes(Type viewModel, string memberName)
-    {
-        var property = viewModel.GetProperty(memberName, BindingFlags.Public | BindingFlags.Instance);
-
-        Assert.NotNull(property);
-        Assert.True(property.CanRead, $"{viewModel.Name}.{memberName} cannot be read by a binding.");
-    }
-
-    /// <summary>Walks up from the test binary to the checkout, identified by the solution file.</summary>
-    private static string RepoRoot()
-    {
-        var directory = new DirectoryInfo(AppContext.BaseDirectory);
-        while (directory != null && !File.Exists(Path.Combine(directory.FullName, "Daqifi.Avalonia.slnx")))
-        {
-            directory = directory.Parent;
-        }
-
-        Assert.NotNull(directory);
-        return directory.FullName;
-    }
     #endregion
 
     #region Fakes
