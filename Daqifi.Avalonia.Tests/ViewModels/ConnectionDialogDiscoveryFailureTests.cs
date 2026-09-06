@@ -1,6 +1,7 @@
 using System.Net.Sockets;
 using System.Reflection;
 using Daqifi.Core.Device.Discovery;
+using Daqifi.Desktop.Device.SerialDevice;
 using Daqifi.Desktop.ViewModels;
 using Xunit;
 
@@ -93,6 +94,38 @@ public class ConnectionDialogDiscoveryFailureTests
         Assert.False(
             viewModel.Value.IsSerialDiscoveryScanning,
             "The animated 'Scanning for USB devices…' overlay binds to this, so it must stop making that claim.");
+    }
+
+    /// <summary>
+    /// The sharper version of the same case, and the one the overlay cannot carry: a sweep found a
+    /// board, so the list is no longer empty and the "Scanning…" overlay is already gone, and only
+    /// then does discovery give up. The user is left with a stale tile that will never be joined by
+    /// anything else, so this is exactly when they most need to be told — which means the message
+    /// cannot live inside the empty-list overlay.
+    /// </summary>
+    [Fact]
+    public async Task A_discovery_that_found_a_device_first_still_says_it_gave_up()
+    {
+        var script = new SweepScript(sweep => sweep == 1
+            ? NoDevices()
+            : Task.FromException<IEnumerable<IDeviceInfo>>(
+                new IOException("enumerating serial ports failed")));
+
+        using var viewModel = StartSerialDiscovery(script, out var loop);
+
+        // What HandleCoreSerialDeviceDiscovered does when a sweep finds a board. Seeded directly
+        // rather than raised through the finder because the device identity is irrelevant here —
+        // all that matters is that the list is no longer empty.
+        viewModel.Value.AvailableSerialDevices.Add(new SerialStreamingDevice("COM7"));
+        viewModel.Value.HasNoSerialDevices = false;
+
+        await loop.WaitAsync(Patience);
+
+        Assert.NotNull(viewModel.Value.SerialDiscoveryError);
+        Assert.False(
+            viewModel.Value.HasNoSerialDevices,
+            "The device found by the first sweep is still listed, which is the whole point of this case.");
+        Assert.False(viewModel.Value.IsSerialDiscoveryScanning);
     }
 
     /// <summary>

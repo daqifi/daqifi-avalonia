@@ -198,7 +198,7 @@
             <!-- ──────────────────────────────────────────────────── WiFi -->
             <TabItem Header="WiFi" Theme="{StaticResource SegmentTab}"
                      AutomationProperties.AutomationId="ConnTab_Wifi">
-                <Grid Margin="16" RowDefinitions="*,Auto">
+                <Grid Margin="16" RowDefinitions="*,Auto,Auto">
 
                     <!-- Tile list + scanning overlay -->
                     <Grid Grid.Row="0">
@@ -242,29 +242,32 @@
                             </ListBox.ItemTemplate>
                         </ListBox>
 
-                        <!-- Scanning overlay (MahApps ProgressRing → indeterminate ProgressBar), and
-                             the place discovery says it has stopped instead of animating for ever (#290) -->
+                        <!-- Scanning overlay (MahApps ProgressRing → indeterminate ProgressBar).
+                             Bound to IsWiFiDiscoveryScanning rather than HasNoWiFiDevices, so it
+                             stops claiming to scan the moment discovery gives up (#290). -->
                         <StackPanel VerticalAlignment="Center" HorizontalAlignment="Center"
-                                    IsVisible="{Binding HasNoWiFiDevices}">
-                            <StackPanel IsVisible="{Binding IsWiFiDiscoveryScanning}">
-                                <ProgressBar IsIndeterminate="True" Width="120" Height="4"
-                                             Foreground="{StaticResource Accent}"/>
-                                <TextBlock Text="Scanning for WiFi devices…"
-                                           Foreground="{StaticResource TextSecondary}"
-                                           FontSize="11" Margin="0,10,0,0"
-                                           HorizontalAlignment="Center"/>
-                            </StackPanel>
-                            <TextBlock Text="{Binding WiFiDiscoveryError}"
-                                       AutomationProperties.AutomationId="WiFiDiscoveryError"
-                                       Foreground="{StaticResource StatusRed}"
-                                       FontSize="11" MaxWidth="320"
-                                       TextWrapping="Wrap" TextAlignment="Center"
-                                       IsVisible="{Binding WiFiDiscoveryError, Converter={StaticResource NotNullToVis}}"/>
+                                    IsVisible="{Binding IsWiFiDiscoveryScanning}">
+                            <ProgressBar IsIndeterminate="True" Width="120" Height="4"
+                                         Foreground="{StaticResource Accent}"/>
+                            <TextBlock Text="Scanning for WiFi devices…"
+                                       Foreground="{StaticResource TextSecondary}"
+                                       FontSize="11" Margin="0,10,0,0"
+                                       HorizontalAlignment="Center"/>
                         </StackPanel>
                     </Grid>
 
+                    <!-- Why discovery stopped. Above the action bar rather than inside the overlay
+                         above, so it is still shown when a device was found before discovery gave
+                         up — the case where the stale list is the only thing left (#290). -->
+                    <TextBlock Grid.Row="1"
+                               Text="{Binding WiFiDiscoveryError}"
+                               AutomationProperties.AutomationId="WiFiDiscoveryError"
+                               FontSize="11" Foreground="{StaticResource StatusRed}"
+                               Margin="0,8,0,0" TextWrapping="Wrap"
+                               IsVisible="{Binding WiFiDiscoveryError, Converter={StaticResource NotNullToVis}}"/>
+
                     <!-- Action bar -->
-                    <Border Grid.Row="1"
+                    <Border Grid.Row="2"
                             BorderBrush="{StaticResource BorderDim}" BorderThickness="0,1,0,0"
                             Padding="0,12,0,0" Margin="0,12,0,0">
                         <Button HorizontalAlignment="Right"
@@ -357,33 +360,36 @@
                             </ListBox.ItemTemplate>
                         </ListBox>
 
-                        <!-- Scanning overlay, and the place discovery says it has stopped instead of
-                             animating for ever (#290) -->
+                        <!-- Scanning overlay. Bound to IsSerialDiscoveryScanning rather than
+                             HasNoSerialDevices, so it stops claiming to scan the moment discovery
+                             gives up (#290). -->
                         <StackPanel VerticalAlignment="Center" HorizontalAlignment="Center"
-                                    IsVisible="{Binding HasNoSerialDevices}">
-                            <StackPanel IsVisible="{Binding IsSerialDiscoveryScanning}">
-                                <ProgressBar IsIndeterminate="True" Width="120" Height="4"
-                                             Foreground="{StaticResource Accent}"/>
-                                <TextBlock Text="Scanning for USB devices…"
-                                           Foreground="{StaticResource TextSecondary}"
-                                           FontSize="11" Margin="0,10,0,0"
-                                           HorizontalAlignment="Center"/>
-                            </StackPanel>
-                            <TextBlock Text="{Binding SerialDiscoveryError}"
-                                       AutomationProperties.AutomationId="SerialDiscoveryError"
-                                       Foreground="{StaticResource StatusRed}"
-                                       FontSize="11" MaxWidth="320"
-                                       TextWrapping="Wrap" TextAlignment="Center"
-                                       IsVisible="{Binding SerialDiscoveryError, Converter={StaticResource NotNullToVis}}"/>
+                                    IsVisible="{Binding IsSerialDiscoveryScanning}">
+                            <ProgressBar IsIndeterminate="True" Width="120" Height="4"
+                                         Foreground="{StaticResource Accent}"/>
+                            <TextBlock Text="Scanning for USB devices…"
+                                       Foreground="{StaticResource TextSecondary}"
+                                       FontSize="11" Margin="0,10,0,0"
+                                       HorizontalAlignment="Center"/>
                         </StackPanel>
                     </Grid>
 
-                    <TextBlock Grid.Row="1"
-                               Text="{Binding SerialConnectError}"
-                               AutomationProperties.AutomationId="SerialConnectError"
-                               FontSize="11" Foreground="{StaticResource StatusRed}"
-                               Margin="0,8,0,0" TextWrapping="Wrap"
-                               IsVisible="{Binding SerialConnectError, Converter={StaticResource NotNullToVis}}"/>
+                    <!-- The connect failure and, below it, why discovery stopped. The discovery
+                         message lives here rather than inside the overlay above so it is still
+                         shown when a device was found before discovery gave up — the case where
+                         the stale list is the only thing left (#290). -->
+                    <StackPanel Grid.Row="1">
+                        <TextBlock Text="{Binding SerialConnectError}"
+                                   AutomationProperties.AutomationId="SerialConnectError"
+                                   FontSize="11" Foreground="{StaticResource StatusRed}"
+                                   Margin="0,8,0,0" TextWrapping="Wrap"
+                                   IsVisible="{Binding SerialConnectError, Converter={StaticResource NotNullToVis}}"/>
+                        <TextBlock Text="{Binding SerialDiscoveryError}"
+                                   AutomationProperties.AutomationId="SerialDiscoveryError"
+                                   FontSize="11" Foreground="{StaticResource StatusRed}"
+                                   Margin="0,8,0,0" TextWrapping="Wrap"
+                                   IsVisible="{Binding SerialDiscoveryError, Converter={StaticResource NotNullToVis}}"/>
+                    </StackPanel>
 
                     <Border Grid.Row="2"
                             BorderBrush="{StaticResource BorderDim}" BorderThickness="0,1,0,0"
