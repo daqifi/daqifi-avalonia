@@ -60,6 +60,39 @@ public partial class DatabaseLogger : ObservableObject, ILogger, IDisposable
     private int? _currentSessionId;
     private CancellationTokenSource _fetchCts;
 
+    /// <summary>
+    /// How this logger marshals onto the UI thread. Nothing in the app ever reassigns it — it is an
+    /// instance field rather than a direct call to <see cref="InvokeOnUiThread"/> only so a test can
+    /// replace it by reflection (not <c>readonly</c>, because reflection may refuse an init-only
+    /// field). The same seam, in the same shape, as <c>ConnectionDialogViewModel._marshalToUiThread</c>
+    /// and <c>ConnectionManager._postToUiThread</c>; deliberately private and per-class rather than a
+    /// shared type, so it cannot collide with another one (#268).
+    ///
+    /// <para>The seam is not cosmetic. Outside a running Avalonia application <c>Dispatcher.UIThread</c>
+    /// binds itself to whichever thread touches it FIRST and nothing ever pumps it, so a blocking
+    /// <c>Invoke</c> reached from any other thread never returns. That is not a hypothetical: #266 had
+    /// to DELETE its three <see cref="DisplayLoggingSession"/>/<see cref="ClearPlot"/> tests because
+    /// they passed alone and hung the whole run in parallel — the testhost went from 11 s to blocked
+    /// indefinitely at 0.6% CPU whenever another class reached the dispatcher first. The tests are back
+    /// in <c>DatabaseLoggerSessionOpenTests</c>, which substitutes a synchronous invoker here.</para>
+    ///
+    /// <para><b>Do not "simplify" the marshal itself away.</b> It is load-bearing in production, and
+    /// not only for the plain property sets: this class mutates <see cref="LegendItems"/> and
+    /// <see cref="DeviceLegendGroups"/> from the background load, and Avalonia's
+    /// <c>WeakEvents.CollectionChanged</c> — unlike its INPC counterpart — does NOT marshal for you.
+    /// Only the indirection is new; every call below still reaches the same
+    /// <c>Dispatcher.UIThread.Invoke</c> at run time.</para>
+    /// </summary>
+    private Action<Action> _marshalToUiThread = InvokeOnUiThread;
+
+    /// <summary>
+    /// The default behind <see cref="_marshalToUiThread"/>: the exact call all seven sites made
+    /// before the seam, so the shipping path is unchanged. Deliberately WITHOUT the
+    /// <c>CheckAccess()</c> fast path <c>ConnectionDialogViewModel</c>'s namesake carries — adding one
+    /// would be the only behavioural difference in this change, and this change is meant to have none.
+    /// </summary>
+    private static void InvokeOnUiThread(Action action) => Dispatcher.UIThread.Invoke(action);
+
     [ObservableProperty]
     private PlotModel _plotModel;
 
@@ -247,7 +280,7 @@ public partial class DatabaseLogger : ObservableObject, ILogger, IDisposable
     // @port: Daqifi.Desktop.Logger.DatabaseLogger.ClearPlot
     public void ClearPlot()
     {
-        Dispatcher.UIThread.Invoke(() =>
+        _marshalToUiThread(() =>
         {
             _firstTime = null;
             _currentSessionId = null;
@@ -329,7 +362,7 @@ public partial class DatabaseLogger : ObservableObject, ILogger, IDisposable
             if (initial.IsEmpty)
             {
                 // Empty session
-                Dispatcher.UIThread.Invoke(() =>
+                _marshalToUiThread(() =>
                 {
                     _sessionDeviceFrequencyHz = localDeviceFrequency;
                     // Title is rendered in the WPF header strip, not by OxyPlot
@@ -357,7 +390,7 @@ public partial class DatabaseLogger : ObservableObject, ILogger, IDisposable
 
             // Show the initial data immediately — swap local data to shared state on UI thread
             var initialMinimapData = PrepareMinimapData(tempSeriesList, localPoints);
-            Dispatcher.UIThread.Invoke(() =>
+            _marshalToUiThread(() =>
             {
                 _allSessionPoints = localPoints;
                 _firstTime = localFirstTime;
@@ -408,7 +441,7 @@ public partial class DatabaseLogger : ObservableObject, ILogger, IDisposable
                 {
                     var spreadPoints = SessionDataRepository.LoadSingleTickValueSpread(_loggingContext, session.ID, channelKeys);
                     var spreadMinimapData = PrepareMinimapData(tempSeriesList, spreadPoints);
-                    Dispatcher.UIThread.Invoke(() =>
+                    _marshalToUiThread(() =>
                     {
                         _allSessionPoints = spreadPoints;
                         PlotModel.Subtitle = string.Empty;
@@ -430,7 +463,7 @@ public partial class DatabaseLogger : ObservableObject, ILogger, IDisposable
 
                 // Refresh UI with sampled full-range data — swap on UI thread
                 var fullMinimapData = PrepareMinimapData(tempSeriesList, phase2Points);
-                Dispatcher.UIThread.Invoke(() =>
+                _marshalToUiThread(() =>
                 {
                     _allSessionPoints = phase2Points;
                     _firstTime = phase2FirstTime;
@@ -968,7 +1001,7 @@ public partial class DatabaseLogger : ObservableObject, ILogger, IDisposable
             catch (Exception ex)
             {
                 _appLogger.Error(ex, "Failed to fetch viewport data from DB");
-                Dispatcher.UIThread.Invoke(() =>
+                _marshalToUiThread(() =>
                 {
                     IsRefiningData = false;
                     UpdateSeriesFromMemory(visibleMin, visibleMax);
@@ -978,7 +1011,7 @@ public partial class DatabaseLogger : ObservableObject, ILogger, IDisposable
             }
 
             // Marshal results back to UI thread
-            Dispatcher.UIThread.Invoke(() =>
+            _marshalToUiThread(() =>
             {
                 if (ct.IsCancellationRequested)
                 {
