@@ -29,7 +29,7 @@ It goes through the **user's** code path, not a convenient one:
 - The Devices and Channels panes are the real pane view models, built the way their own views
   build them — `DevicesPanePrototype.axaml.cs` does `new DevicesPaneViewModel(shell)` and
   `ChannelsPanePrototype.axaml.cs` does `new ChannelsPaneViewModel()`, each in
-  `OnDataContextChanged`, and both populate themselves from `ConnectionManager`. So the tile
+  `OnLoaded`, and both populate themselves from `ConnectionManager`. So the tile
   rows read live tiles, the channel rows drive `ToggleChannelCommand` / `OpenSettingsCommand`
   and then write the drawer's own bound properties, and `CH-AI` no longer hand-mirrors the
   private `ToggleChannel` it used to copy. Constructing a pane view model *is* the user's

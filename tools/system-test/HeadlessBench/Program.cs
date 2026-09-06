@@ -208,7 +208,7 @@ internal static class HeadlessBench
 
         // The two panes, built exactly as their views build them: DevicesPanePrototype.axaml.cs does
         // `new DevicesPaneViewModel(shell)` and ChannelsPanePrototype.axaml.cs does
-        // `new ChannelsPaneViewModel()`, each in OnDataContextChanged. #260 assumed reaching these
+        // `new ChannelsPaneViewModel()`, each in OnLoaded. #260 assumed reaching these
         // needed a helper layer because the shell does not expose them; it does not — constructing
         // one IS the user's path, and both populate themselves from ConnectionManager. They stay
         // alive for the rest of the run, as they do in the app, so the tiles below are live.
