@@ -117,7 +117,10 @@ These are real limits of the current rig, not of the app. Tracked in #260.
 - **One device, one analog channel, one digital channel, one rate.** The streaming rows run
   against the first analog input of the first connected device at `--rate`; `CH-DIO` and
   `CH-PWM` run against its first PWM-capable digital channel (its first digital channel if
-  none is PWM-capable). Multi-device fleets and rate limits are untested.
+  none is PWM-capable). Multi-device fleets and rate limits are untested. Everything those two
+  rows touch — direction, drive state, PWM mode, duty — is state the *board* keeps across a
+  host disconnect, so they snapshot all four, disable an inherited PWM before asserting, and
+  restore from a `finally`; an aborted run must not leave a shared bench board driving a pin.
 - **`DEV-NAME` is not implemented, and needs `DAQIFI_RESTORE_NAME` alongside it.**
   `SetFriendlyName` sends `SYSTem:DEVice:NAME` *and* `…:NAME:SAVE`, so it writes the board's
   NVM: an interrupted run leaves a shared bench board renamed with nothing to put it back.

@@ -417,8 +417,7 @@ internal static class HeadlessBench
         // / device.SetChannelOutputValue instead sends the SCPI write WITHOUT moving the bound
         // property, so the tile keeps showing the old state: the second trap in this rig's README,
         // and the one that produced two false failures the last time these rows were written.
-        // A PWM-capable line is preferred so CH-PWM below can use the same channel. The run puts
-        // the line back the way it found it — a board keeps its DIO state across a disconnect.
+        // A PWM-capable line is preferred so CH-PWM below can use the same channel.
         var dio = device.DataChannels.FirstOrDefault(c => c.IsDigital && c.IsPwmCapable)
                   ?? device.DataChannels.FirstOrDefault(c => c.IsDigital);
         if (dio is null)
@@ -428,81 +427,126 @@ internal static class HeadlessBench
         }
         else
         {
+            // Everything this pair touches — direction, drive state, PWM mode, duty — is state the
+            // BOARD keeps across a host disconnect. So snapshot all four, not just the two these
+            // rows write directly, and restore from a `finally`: an exception between the PWM
+            // enable and disable below would otherwise leave a shared bench board driving a pin
+            // nobody asked it to drive, which is the same harm the run-level StopAndDisconnect
+            // exists to prevent for streaming.
             var dioWasOutput = dio.IsOutput;
             var dioWasOn = dio.IsDigitalOn;
-            channelsPane.OpenSettingsCommand.Execute(FindTile(channelsPane, dio));
-            Pump();
-            var opened = channelsPane.IsSettingsOpen && ReferenceEquals(channelsPane.SelectedChannel, dio);
-            dio.IsOutput = true;
-            // Flipping direction re-shelves the tile, and the pane posts that rebuild at Background
-            // priority — so the tile object is disposed and replaced on a later pump, and every read
-            // below re-fetches rather than holding the one from before the flip.
-            PumpUntil(() => channelsPane.DigitalOutputs.Any(t => ReferenceEquals(t.Channel, dio)), TimeSpan.FromSeconds(5));
-            dio.IsDigitalOn = true;
-            Pump();
-            var dioTile = FindTile(channelsPane, dio);
-            Step(2, "CH-DIO", "works",
-                 opened && dio.IsOutput && dio.Direction == ChannelDirection.Output && dio.IsDigitalOn
-                     && dioTile is { Value: "HIGH", TypeLabel: "DIGITAL OUT", ShowDriveToggle: true }
-                     && channelsPane.DigitalOutputs.Contains(dioTile),
-                 $"'{dio.Name}': drawer open on it={opened}; IsOutput={dio.IsOutput} Direction={dio.Direction} " +
-                 $"IsDigitalOn={dio.IsDigitalOn}; tile label='{dioTile?.TypeLabel}' value='{dioTile?.Value}', " +
-                 $"shelved in {(dioTile is not null && channelsPane.DigitalOutputs.Contains(dioTile) ? "DigitalOutputs" : "the wrong section")}",
-                 Capture(main, "t2-08-digital-out"));
+            var dioWasPwm = dio.IsPwmEnabled;
+            var dioWasDuty = dio.PwmDutyCyclePercent;
+            try
+            {
+                if (dio.IsPwmEnabled)
+                {
+                    // Same persistence, read the other way: this row can be HANDED a pin already in
+                    // PWM by a previous run or another user of the bench. While PWM is on the tile
+                    // renders "PWM n%" and hides the drive toggle, so CH-DIO's assertions below
+                    // would fail on inherited state rather than on anything this run did. Establish
+                    // the state the row is about; the finally puts PWM back.
+                    Console.WriteLine($"[WARN] '{dio.Name}' arrived with PWM enabled; disabling it for CH-DIO");
+                    dio.IsPwmEnabled = false;
+                    Pump();
+                }
 
-            if (!dio.IsPwmCapable)
-            {
-                Emit(2, "CH-PWM", "works", "not-run",
-                     $"no PWM-capable digital channel on this board ('{dio.Name}' is not one; " +
-                     $"{device.DataChannels.Count(c => c.IsDigital)} digital channels)");
-            }
-            else
-            {
-                // CH-PWM — the drawer's PWM toggle and DUTY CYCLE slider bind
-                // SelectedChannel.IsPwmEnabled and .PwmDutyCyclePercent. IsPwmEnabled reads Core's
-                // mirror of the last state it actually commanded, so a command the device refuses
-                // leaves it false: that is the assertion doing the work here, not the write.
-                dio.PwmDutyCyclePercent = 25;   // PWM off — bookkeeping only, applied on enable
-                dio.IsPwmEnabled = true;
+                channelsPane.OpenSettingsCommand.Execute(FindTile(channelsPane, dio));
                 Pump();
-                var pwmOn = dio.IsPwmEnabled;
-                dio.PwmDutyCyclePercent = 60;   // PWM on — commanded live
+                var opened = channelsPane.IsSettingsOpen && ReferenceEquals(channelsPane.SelectedChannel, dio);
+                dio.IsOutput = true;
+                // Flipping direction re-shelves the tile, and the pane posts that rebuild at
+                // Background priority — so the tile object is disposed and replaced on a later pump,
+                // and every read below re-fetches rather than holding the one from before the flip.
                 PumpUntil(() => channelsPane.DigitalOutputs.Any(t => ReferenceEquals(t.Channel, dio)), TimeSpan.FromSeconds(5));
-                var pwmTile = FindTile(channelsPane, dio);
-                Step(2, "CH-PWM", "works",
-                     pwmOn && dio.PwmDutyCyclePercent == 60
-                         && pwmTile is { IsPwmActive: true, ShowDriveToggle: false, Value: "PWM 60%" },
-                     $"'{dio.Name}' IsPwmEnabled={pwmOn} duty={dio.PwmDutyCyclePercent}% at the device-wide " +
-                     $"{device.PwmFrequencyHz} Hz; tile value='{pwmTile?.Value}' IsPwmActive={pwmTile?.IsPwmActive} " +
-                     $"ShowDriveToggle={pwmTile?.ShowDriveToggle} (the drive toggle is hidden while PWM runs — " +
-                     "the hardware ignores digital state writes on a PWM-active channel)",
-                     Capture(main, "t2-09-pwm"));
-
-                // Limits. The slider is 1-100, but the property is what a binding writes, and Core
-                // rejects a duty of 0 outright (the firmware stores it and never applies it, so the
-                // old duty keeps toggling). Both ends must coerce rather than command.
-                dio.PwmDutyCyclePercent = 0;
-                var coercedLow = dio.PwmDutyCyclePercent;
-                dio.PwmDutyCyclePercent = 101;
-                var coercedHigh = dio.PwmDutyCyclePercent;
-                Step(2, "CH-PWM", "limits", coercedLow == 1 && coercedHigh == 100,
-                     $"duty 0 -> {coercedLow}%, duty 101 -> {coercedHigh}% (commandable range is 1-100)", null);
-
-                dio.IsPwmEnabled = false;
+                dio.IsDigitalOn = true;
                 Pump();
-                // Disabling PWM leaves the pin transiently high-impedance and Core zeroes the
-                // channel's stored output value; the app hydrates IsDigitalOn from that, so the tile
-                // cannot go on claiming HIGH for a pin nothing is driving.
-                var settledTile = FindTile(channelsPane, dio);
-                Emit(2, "CH-PWM", "unexpected", !dio.IsPwmEnabled && !dio.IsDigitalOn ? "pass" : "finding",
-                     $"after disabling PWM: IsPwmEnabled={dio.IsPwmEnabled} IsDigitalOn={dio.IsDigitalOn}, " +
-                     $"tile value='{settledTile?.Value}'");
-            }
+                var dioTile = FindTile(channelsPane, dio);
+                Step(2, "CH-DIO", "works",
+                     opened && dio.IsOutput && dio.Direction == ChannelDirection.Output && dio.IsDigitalOn
+                         && dioTile is { Value: "HIGH", TypeLabel: "DIGITAL OUT", ShowDriveToggle: true }
+                         && channelsPane.DigitalOutputs.Contains(dioTile),
+                     $"'{dio.Name}': drawer open on it={opened}; IsOutput={dio.IsOutput} Direction={dio.Direction} " +
+                     $"IsDigitalOn={dio.IsDigitalOn}; tile label='{dioTile?.TypeLabel}' value='{dioTile?.Value}', " +
+                     $"shelved in {(dioTile is not null && channelsPane.DigitalOutputs.Contains(dioTile) ? "DigitalOutputs" : "the wrong section")}",
+                     Capture(main, "t2-08-digital-out"));
 
-            dio.IsDigitalOn = dioWasOn;
-            dio.IsOutput = dioWasOutput;
-            channelsPane.CloseSettingsCommand.Execute(null);
-            Pump();
+                if (!dio.IsPwmCapable)
+                {
+                    Emit(2, "CH-PWM", "works", "not-run",
+                         $"no PWM-capable digital channel on this board ('{dio.Name}' is not one; " +
+                         $"{device.DataChannels.Count(c => c.IsDigital)} digital channels)");
+                }
+                else
+                {
+                    // CH-PWM — the drawer's PWM toggle and DUTY CYCLE slider bind
+                    // SelectedChannel.IsPwmEnabled and .PwmDutyCyclePercent. IsPwmEnabled reads
+                    // Core's mirror of the last state it actually commanded, so a command the device
+                    // refuses leaves it false: that is the assertion doing the work here, not the
+                    // write. Two different write paths, so both are checked: with PWM off the setter
+                    // only updates Core's bookkeeping and the value is applied by the next enable;
+                    // with PWM on it is commanded live.
+                    dio.PwmDutyCyclePercent = 25;
+                    var seeded = dio.PwmDutyCyclePercent;
+                    dio.IsPwmEnabled = true;
+                    Pump();
+                    var pwmOn = dio.IsPwmEnabled;
+                    dio.PwmDutyCyclePercent = 60;
+                    PumpUntil(() => channelsPane.DigitalOutputs.Any(t => ReferenceEquals(t.Channel, dio)), TimeSpan.FromSeconds(5));
+                    var pwmTile = FindTile(channelsPane, dio);
+                    Step(2, "CH-PWM", "works",
+                         pwmOn && seeded == 25 && dio.PwmDutyCyclePercent == 60
+                             && pwmTile is { IsPwmActive: true, ShowDriveToggle: false, Value: "PWM 60%" },
+                         $"'{dio.Name}' seeded {seeded}% before enabling, IsPwmEnabled={pwmOn}, then " +
+                         $"duty={dio.PwmDutyCyclePercent}% commanded live at the device-wide " +
+                         $"{device.PwmFrequencyHz} Hz; tile value='{pwmTile?.Value}' IsPwmActive={pwmTile?.IsPwmActive} " +
+                         $"ShowDriveToggle={pwmTile?.ShowDriveToggle} (the drive toggle is hidden while PWM runs — " +
+                         "the hardware ignores digital state writes on a PWM-active channel)",
+                         Capture(main, "t2-09-pwm"));
+
+                    // Limits. The slider is 1-100, but the property is what a binding writes, and
+                    // Core rejects a duty of 0 outright (the firmware stores it and never applies
+                    // it, so the old duty keeps toggling). Both ends must coerce rather than command.
+                    dio.PwmDutyCyclePercent = 0;
+                    var coercedLow = dio.PwmDutyCyclePercent;
+                    dio.PwmDutyCyclePercent = 101;
+                    var coercedHigh = dio.PwmDutyCyclePercent;
+                    Step(2, "CH-PWM", "limits", coercedLow == 1 && coercedHigh == 100,
+                         $"duty 0 -> {coercedLow}%, duty 101 -> {coercedHigh}% (commandable range is 1-100)", null);
+
+                    dio.IsPwmEnabled = false;
+                    Pump();
+                    // Disabling PWM leaves the pin transiently high-impedance and Core zeroes the
+                    // channel's stored output value; the app hydrates IsDigitalOn from that, so the
+                    // tile cannot go on claiming HIGH for a pin nothing is driving.
+                    var settledTile = FindTile(channelsPane, dio);
+                    Emit(2, "CH-PWM", "unexpected", !dio.IsPwmEnabled && !dio.IsDigitalOn ? "pass" : "finding",
+                         $"after disabling PWM: IsPwmEnabled={dio.IsPwmEnabled} IsDigitalOn={dio.IsDigitalOn}, " +
+                         $"tile value='{settledTile?.Value}'");
+                }
+            }
+            finally
+            {
+                // Restore in an order the hardware accepts: PWM off first, because the firmware
+                // ignores direction and state writes while it drives the pin; then the duty, which
+                // with PWM off is bookkeeping only; then the drive state and the direction, so the
+                // pin is taken low before it is released back to an input; and PWM last, since
+                // re-enabling it re-commands the duty just restored in Core's documented
+                // duty → frequency → enable order. Best-effort, and it must not mask a real
+                // failure above — hence its own guard, like StopAndDisconnect's.
+                try
+                {
+                    dio.IsPwmEnabled = false;
+                    dio.PwmDutyCyclePercent = dioWasDuty;
+                    dio.IsDigitalOn = dioWasOn;
+                    dio.IsOutput = dioWasOutput;
+                    dio.IsPwmEnabled = dioWasPwm;
+                    Pump();
+                }
+                catch (Exception ex) { Console.WriteLine($"[WARN] cleanup restore '{dio.Name}': {ex.Message}"); }
+                channelsPane.CloseSettingsCommand.Execute(null);
+                Pump();
+            }
         }
 
         // SD-LIST — the Logged Data pane's device-file list. shell.DeviceLogsViewModel is the
