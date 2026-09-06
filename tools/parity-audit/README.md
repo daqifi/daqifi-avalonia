@@ -99,7 +99,7 @@ every PNG to be byte-identical to the first run's, failing non-zero if any diffe
 is missing, or if there is nothing to compare at all.
 
 Since #191 this is also a **CI gate**: the `Desktop head on macOS` job runs it on every
-pull request, additionally asserts that the capture produced all 24 screens, and uploads
+pull request, additionally asserts that the capture produced all 25 screens, and uploads
 `<out>/determinism/` as an artifact when it fails, so the differing PNGs are in hand.
 
 Since #188 the **baseline is gated there too, over the same captures**: the job runs
@@ -235,6 +235,7 @@ desktop and mobile phases, and captures one PNG per seeded state:
 | `dialog-connect-manual-usb-error` | Manual USB tab with `ManualPortError` |
 | `dialog-export-configure` | the export dialog's configuration form |
 | `dialog-export-failed` | its result state with `ExportSucceeded` false |
+| `dialog-firmware-uploading` | the bootloader dialog's upload scrim and its Cancel button (#241) |
 
 ### Adding one
 
@@ -303,11 +304,18 @@ injected stub `IFirmwareDownloadService`, which makes the picture a picture of a
 
 ## Baselines
 
-`baselines/<os>-<arch>.sha256` records the SHA-256 of all 24 Avalonia screens for one
+`baselines/<os>-<arch>.sha256` records the SHA-256 of all 25 Avalonia screens for one
 host — a dated reference point for "has anything moved". `./run.sh --check-baseline`
 captures once and verifies against the one for the current host, failing on a changed
 screen, a missing one, and one the baseline does not list (`shasum -c` only checks the
 names it was given, so the extra-file direction is checked separately).
+
+`macos-arm64.sha256` was extended 2026-09-05 for #241 (macOS 26.5, Apple silicon, .NET SDK
+10.0.302) with `dialog-firmware-uploading.png` — the bootloader dialog's upload scrim, whose
+new Cancel button is reachable only through a reflection binding and so is invisible to every
+other check in the repo. Five `--determinism` runs agreed 25/25, and the same capture
+reproduced the previous manifest on **all 24** existing hashes, byte for byte: the recording
+is purely additive, and the change that motivated it moved nothing that was already gated.
 
 `desktop-9-summary-flyout.png` alone was re-recorded 2026-09-03 for #228 (same host and
 environment as the #213 line below), which unclips the Log Summary SETTINGS label and
@@ -370,7 +378,7 @@ from a host that races its own animations bakes one arbitrary frame in as the tr
 `macos-latest` runner — a different Apple-silicon machine on a different macOS build
 (26.5.2 / 25F84, image `macos26`, against 26.5 / 25F71 on the recording Mac) —
 reproduced all eighteen hashes byte for byte, and does so on every pull request as part
-of the macOS job — which is what will settle the same question for the six dialog screens
+of the macOS job — which is what will settle the same question for the seven dialog screens
 added in #213. So the manifest's OS+arch name is earned rather than assumed, and it
 stays earned: the day two Apple-silicon hosts stop agreeing, a red tick says so.
 

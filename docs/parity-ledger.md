@@ -59,14 +59,17 @@ offers, which is why they rank above the merely dead code below them.
 
 | # | What | Where | Filed |
 |---|---|---|---|
-| 1 | **A firmware upload cannot be cancelled.** `CancelUploadFirmwareCommand` and `CancelFirmwareUploadCommand` both exist, both work, and no view binds either. The upload scrim is modal and can run for minutes. | `FirmwareDialogViewModel.cs:337`, `DaqifiViewModel.cs:983` | #241 |
-| 2 | **The WiFi-firmware update reports progress to nobody.** `FirmwareUpdateStatusText` is assigned 18 times (15 in `FirmwareUpdateCoordinator`, 3 in the view-model) and read nowhere; `DaqifiViewModel.IsFirmwareUploading` gates `CanExecute` but drives no visual. | `DaqifiViewModel.cs:188` | #241 |
+| 1 | ~~**A firmware upload cannot be cancelled.** `CancelUploadFirmwareCommand` and `CancelFirmwareUploadCommand` both exist, both work, and no view binds either. The upload scrim is modal and can run for minutes.~~ **Fixed 2026-09-05**: both commands are now bound — in the scrim itself, and in the desktop and mobile device panes. | `FirmwareDialogViewModel.cs:337`, `DaqifiViewModel.cs:983` | #241 |
+| 2 | ~~**The WiFi-firmware update reports progress to nobody.** `FirmwareUpdateStatusText` is assigned 18 times (15 in `FirmwareUpdateCoordinator`, 3 in the view-model) and read nowhere; `DaqifiViewModel.IsFirmwareUploading` gates `CanExecute` but drives no visual.~~ **Fixed 2026-09-05**: rendered in both device panes, gated on `IsFirmwareUploading`; the writes that could never satisfy that gate were deleted (18 → 16, all now in the coordinator). | `DaqifiViewModel.cs:188` | #241 |
 | 3 | **Dead commands with a live duplicate.** `RemoveChannelCommand` re-implements what `ChannelsPaneViewModel` and `MobileShellViewModel` already do; `ToggleDebugModeCommand` duplicates the bound `IsDebugModeEnabled` toggle; `ShutdownCommand` wraps a method nothing calls in either app. | `DaqifiViewModel.cs` 1031 / 2862 / 1069 | #242 |
 | 4 | **Observable state nothing reads.** 8 `[ObservableProperty]` fields are assigned and never read back, in C# or XAML — `ExportProgressText`, `LoggedSessionName`, `IsDeviceSettingsOpen`, `Flag`, `DeviceResponse`, `HasDigitalData`, `MessageType`, `SelectedProfileDevices`. Each one costs a generated property, a change notification and a reader's attention. | various | #243 |
 
-**#241 is deliberately not fixed here.** PR #239 is open against
-`DaqifiViewModel`'s cancellation ownership; a Cancel button written against `main`
-would bind a surface that is about to move.
+**#241 was deliberately not fixed in that pass**, because PR #239 was still open
+against `DaqifiViewModel`'s cancellation ownership and a Cancel button written
+against `main` would have bound a surface that was about to move. #239 merged
+2026-09-05 and #241 was fixed the same day, on the ownership it established. The
+counts in the table above are the 2026-09-04 measurement and are left as recorded;
+re-run `coverage.py --bindings` for the current figures.
 
 Two corrections of record that came out of the same pass:
 

@@ -360,6 +360,20 @@
                       Content="FLASH WIFI"
                       Command="{Binding Shell.UpdateWifiFirmwareOnlyCommand}" />
             </StackPanel>
+
+            <!-- Live status + cancel for BOTH firmware paths above; see the matching block in
+                 DevicesPanePrototype.axaml for why both are gated on IsFirmwareUploading
+                 (issue #241). -->
+            <TextBlock Text="{Binding Shell.FirmwareUpdateStatusText}"
+                       IsVisible="{Binding Shell.IsFirmwareUploading}"
+                       FontSize="{DynamicResource FontSizeCaption}"
+                       TextWrapping="Wrap"
+                       Foreground="{DynamicResource TextSecondary}" />
+
+            <Button Theme="{StaticResource PillButton}" HorizontalAlignment="Stretch" MinHeight="44"
+                    Content="CANCEL UPDATE"
+                    IsVisible="{Binding Shell.IsFirmwareUploading}"
+                    Command="{Binding Shell.CancelFirmwareUploadCommand}" />
           </StackPanel>
 
           <!-- WiFi connection: firmware update requires USB -->

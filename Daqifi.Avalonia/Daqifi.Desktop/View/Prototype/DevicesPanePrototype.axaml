@@ -828,6 +828,39 @@
                                                 Command="{Binding Shell.UpdateWifiFirmwareOnlyCommand}"/>
                                     </Grid>
                                 </StackPanel>
+
+                                <!--
+                                    Live status + cancel for BOTH firmware paths above (UPDATE and
+                                    FLASH WIFI): they write the same FirmwareUpdateStatusText and set
+                                    the same IsFirmwareUploading flag, so one of each serves both.
+
+                                    FirmwareUpdateStatusText is where the coordinator explains what a
+                                    multi-minute flash is doing ("Downloading latest firmware
+                                    package...", "Waiting for WiFi module to enter update mode...",
+                                    "Failed to enter WiFi update mode. Reconnect the device and try
+                                    again."). Nothing rendered it, so a bare percentage was the user's
+                                    only signal that the app had not hung (issue #241).
+
+                                    Both are gated on IsFirmwareUploading, which makes the status line
+                                    unambiguously "what the running flash is doing" — it can never be
+                                    left showing a finished run's last message. Outcomes are already
+                                    owned by the success/failure dialogs and by HasErrorOccured /
+                                    IsUploadComplete. CanCancelFirmwareUpload reads the same flag, so
+                                    the button is enabled for exactly as long as it is visible.
+                                -->
+                                <TextBlock Text="{Binding Shell.FirmwareUpdateStatusText}"
+                                           IsVisible="{Binding Shell.IsFirmwareUploading}"
+                                           FontSize="11"
+                                           TextWrapping="Wrap"
+                                           Margin="0,12,0,0"
+                                           Foreground="{DynamicResource TextSecondary}"/>
+
+                                <Button Theme="{StaticResource PillButton}"
+                                        Content="CANCEL UPDATE"
+                                        HorizontalAlignment="Left"
+                                        Margin="0,8,0,0"
+                                        IsVisible="{Binding Shell.IsFirmwareUploading}"
+                                        Command="{Binding Shell.CancelFirmwareUploadCommand}"/>
                             </StackPanel>
 
                             <!-- WiFi: informational message -->

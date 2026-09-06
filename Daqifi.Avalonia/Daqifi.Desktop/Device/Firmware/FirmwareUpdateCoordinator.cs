@@ -161,17 +161,25 @@ public class FirmwareUpdateCoordinator
         _host.IsUploadComplete = false;
         _host.UploadFirmwareProgress = 0;
         _host.UploadWiFiProgress = 0;
-        _host.FirmwareUpdateStatusText = "Preparing firmware update...";
 
-        _host.DeviceBeingUpdated = _host.SelectedDevice;
-
-        var isManualUpload = !string.IsNullOrWhiteSpace(_host.FirmwareFilePath);
-
+        // Open the run BEFORE the first status write. The status line is rendered only while
+        // IsFirmwareUploading is true (issue #241), so a message written ahead of this call can
+        // never reach the user — which is what made "Preparing firmware update..." invisible.
+        //
+        // Nothing may sit between this call and the try: BeginUpload raises the uploading flag, and
+        // a throw before the try would leave it raised with no finally to lower it — the pane stuck
+        // "uploading" behind a Cancel button with nothing left to cancel. Every statement the
+        // preamble used to run before opening the run therefore moved inside.
         var cancellationToken = BeginUpload();
-        _appLogger.AddBreadcrumb("firmware", $"Firmware update started for {serialStreamingDevice.Name}");
-
         try
         {
+            _host.FirmwareUpdateStatusText = "Preparing firmware update...";
+            _host.DeviceBeingUpdated = _host.SelectedDevice;
+
+            var isManualUpload = !string.IsNullOrWhiteSpace(_host.FirmwareFilePath);
+
+            _appLogger.AddBreadcrumb("firmware", $"Firmware update started for {serialStreamingDevice.Name}");
+
             // Quiesce inside the try so a fault here still runs the finally (which clears
             // IsFirmwareUploading and DeviceBeingUpdated); otherwise the UI could stay stuck "uploading".
             // Pass the upload token so a CancelUpload() interrupts the wait rather than blocking on it.
@@ -304,6 +312,12 @@ public class FirmwareUpdateCoordinator
         var cancellationToken = BeginUpload();
         try
         {
+            // Written here rather than by the caller for the same reason as UploadFirmwareAsync's
+            // "Preparing firmware update...": only text written while IsFirmwareUploading is true is
+            // rendered (issue #241), and the caller sets neither the flag nor the token. Inside the
+            // try, so a throw from the bound setter still reaches the finally that lowers the flag.
+            _host.FirmwareUpdateStatusText = "Preparing WiFi firmware update...";
+
             await UpdateWifiModuleAsync(serialStreamingDevice, cancellationToken, force: true);
         }
         finally
@@ -327,7 +341,20 @@ public class FirmwareUpdateCoordinator
             return;
         }
 
-        _host.FirmwareUpdateStatusText = "Canceling firmware update...";
+        // Announce only while the status line is on screen, which is what IsFirmwareUploading gates
+        // (issue #241). The two conditions coincide on the UI thread, where this field is documented
+        // to be written — but they part in the one window that is not atomic: a Cancel that has
+        // already read a live source, arriving after the run's completion has lowered the flag, would
+        // otherwise write "Canceling..." to a hidden control, where the NEXT run would reveal it.
+        //
+        // The cancel itself is deliberately NOT gated on the flag. A run whose flag has come down
+        // must still be stopped; suppressing the announcement costs a message nobody could read,
+        // while suppressing the Cancel would be issue #234 all over again.
+        if (_host.IsFirmwareUploading)
+        {
+            _host.FirmwareUpdateStatusText = "Canceling firmware update...";
+        }
+
         cts.Cancel();
     }
 
