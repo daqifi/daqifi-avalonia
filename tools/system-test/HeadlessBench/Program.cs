@@ -283,7 +283,16 @@ internal static class HeadlessBench
             // the database and marshals the result back onto the UI thread, so it needs the pump to
             // land. SampleCount stays null until that COUNT returns: it is the one signal in the app
             // that the samples actually reached disk, which is what LOG-SESSION claims to check.
-            var persisted = PumpUntil(() => session?.SampleCount > 0, TimeSpan.FromSeconds(30));
+            //
+            // Require it to account for every sample seen before the stop, not merely to be
+            // positive: PersistSessionSampleCount waits a bounded 10 s for the database writer to
+            // drain and then stores whatever COUNT returns, so a half-written session persists a
+            // positive undercount and would satisfy a > 0 test. The comparison is >= and not ==
+            // deliberately — `counted` is snapshotted before IsLogging goes false, so every sample
+            // in it was delivered while the session was active and must be on disk, while samples
+            // arriving during the stop itself may also land. The boundary can only add rows, so
+            // equality would be flaky in the direction that does not indicate a bug.
+            var persisted = started && PumpUntil(() => session?.SampleCount >= counted, TimeSpan.FromSeconds(30));
             Pump();
 
             var shot = Capture(main, "t2-05-streamed");
@@ -300,8 +309,11 @@ internal static class HeadlessBench
                  session is null
                      ? $"no LoggingSession was created; SessionStartFailure='{LoggingManager.Instance.SessionStartFailure}'"
                      : $"IsLogging toggled on/off; LoggingManager.Active={LoggingManager.Instance.Active}; IsLogging={shell.IsLogging}; " +
-                       $"session {session.ID} '{session.Name}' persisted SampleCount={session.SampleCount?.ToString(CultureInfo.InvariantCulture) ?? "null"} " +
-                       $"(counted in the database) against {counted} samples seen; listed in LoggingSessions={listed}",
+                       $"session {session.ID} '{session.Name}' persisted SampleCount=" +
+                       $"{session.SampleCount?.ToString(CultureInfo.InvariantCulture) ?? "null (finalization did not report within 30 s)"} " +
+                       $"counted in the database, against {counted} samples seen before the stop — " +
+                       $"{(session.SampleCount is { } n ? (n >= counted ? $"all accounted for (+{n - counted} across the stop boundary)" : $"SHORT BY {counted - n}") : "not comparable")}; " +
+                       $"listed in LoggingSessions={listed}",
                  shot);
             Step(2, "GRAPH-LIVE", "works", plotted > 0,
                  plotted >= 0
