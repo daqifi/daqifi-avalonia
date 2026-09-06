@@ -138,11 +138,15 @@ public class DeviceLoweredRateReadoutTests
 
         second.StreamingFrequency = 500;
 
+        var announced = new List<string?>();
+        shell.PropertyChanged += (_, e) => announced.Add(e.PropertyName);
+
         // The user opens the drawer on the other device (DevicesPaneViewModel.OpenSettings).
         shell.SelectedDevice = second;
 
         Assert.Equal(500, shell.SelectedStreamingFrequency);
         Assert.Equal(1000, first.StreamingFrequency);
+        Assert.Contains(nameof(DaqifiViewModel.SelectedStreamingFrequency), announced);
     }
 
     /// <summary>
@@ -181,6 +185,26 @@ public class DeviceLoweredRateReadoutTests
 
         Assert.Null(shell.SelectedDevice);
         Assert.Equal(7746, shell.SelectedStreamingFrequency);
+    }
+
+    /// <summary>
+    /// And the arrival is announced. A device connecting changes which device the chip reads —
+    /// from none to that one — which is a change the chip has to be told about, exactly as the
+    /// connect-time seed this replaces had to raise its own notification.
+    /// </summary>
+    [Fact]
+    public void The_rate_chip_is_told_when_the_connected_fleet_changes()
+    {
+        var shell = new DaqifiViewModel(new NullDialogService());
+        var device = DeviceAdvertising(22000);
+        device.StreamingFrequency = 7746;
+
+        var announced = new List<string?>();
+        shell.PropertyChanged += (_, e) => announced.Add(e.PropertyName);
+
+        shell.ConnectedDevices.Add(device);
+
+        Assert.Contains(nameof(DaqifiViewModel.SelectedStreamingFrequency), announced);
     }
 
     /// <summary>
