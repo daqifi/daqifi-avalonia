@@ -340,6 +340,12 @@ pre-change capture, and that capture reproduced the then-committed manifest on a
 attribute soup is what was shipping rather than an artifact of the harness. Five
 `--determinism` runs agreed 25/25 before the change and five after.
 
+The recording is **not** single-host. On the PR that made it the `macos-latest` runner — macOS
+**26.6.2** (25G83), arm64, image `macos26/20260831.0337.3`, a different machine on a different
+macOS build from the 26.5 Mac that recorded it — passed its own five-run determinism check
+25/25 and then reproduced this manifest, all seven new hashes included. So the shift these
+seven screens record is a property of the change rather than of the host that captured it.
+
 The two unchanged screens worth naming are `desktop-7-notifications-flyout` and
 `desktop-9-summary-flyout`: both render their empty states through these same classes as of
 #258 and #249, and both are byte-identical across the change. That is the measurement behind
