@@ -10,29 +10,32 @@
        language so it matches the desktop pane. -->
   <Grid Background="{DynamicResource Surface}">
     <ScrollViewer>
-      <StackPanel Classes="paneContent" Spacing="14" Margin="16,20">
+      <StackPanel Classes="paneContent" Spacing="14" Margin="16">
 
-        <!-- Header + Refresh / Export all / Delete all. A WrapPanel flows the actions to a second
-             line on a narrow phone instead of overrunning (title sits on its own line above). -->
-        <StackPanel Spacing="10">
-          <TextBlock Text="Logged Data"
-                     FontSize="{DynamicResource FontSizeTitle}" FontWeight="Bold"
-                     Foreground="{DynamicResource TextPrimary}" />
-          <WrapPanel>
-            <Button Content="Refresh" Theme="{StaticResource PillButton}"
-                    Command="{Binding ReloadCommand}" MinHeight="36" Margin="0,0,8,8" />
-            <Button Content="Export all" Theme="{StaticResource AccentPillButton}"
-                    Command="{Binding ExportAllCommand}"
-                    IsEnabled="{Binding HasSessions}" MinHeight="36" Margin="0,0,8,8" />
-            <Button Content="Delete all" Theme="{StaticResource DangerPillButton}"
-                    Command="{Binding DeleteAllCommand}"
-                    IsEnabled="{Binding HasSessions}" MinHeight="36" Margin="0,0,0,8" />
-          </WrapPanel>
-        </StackPanel>
+        <!-- Refresh / Export all / Delete all. A WrapPanel flows the actions to a second
+             line on a narrow phone instead of overrunning.
+             No "Logged Data" heading: the nav already names this pane in both orientations
+             (bottom bar in portrait, left rail in landscape) and the pivot strip above names
+             this half of it, so a third copy was chrome the 360px-tall landscape viewport
+             could not afford (#252). Neither of the other two mobile panes with an empty
+             state renders a pane title in landscape — Channels has none at all, and
+             Profiles hides its header there — which is why theirs already fit. -->
+        <WrapPanel>
+          <Button Content="Refresh" Theme="{StaticResource PillButton}"
+                  Command="{Binding ReloadCommand}" MinHeight="36" Margin="0,0,8,8" />
+          <Button Content="Export all" Theme="{StaticResource AccentPillButton}"
+                  Command="{Binding ExportAllCommand}"
+                  IsEnabled="{Binding HasSessions}" MinHeight="36" Margin="0,0,8,8" />
+          <Button Content="Delete all" Theme="{StaticResource DangerPillButton}"
+                  Command="{Binding DeleteAllCommand}"
+                  IsEnabled="{Binding HasSessions}" MinHeight="36" Margin="0,0,0,8" />
+        </WrapPanel>
 
-        <!-- Empty state (matches the desktop "select a session" empty pane) -->
+        <!-- Empty state (matches the desktop "select a session" empty pane). No top margin:
+             the column's own Spacing already separates it from the actions, and a hard-coded
+             one pushed the whole block past the bottom of a landscape phone (#252). -->
         <StackPanel IsVisible="{Binding HasNoSessions}" Spacing="10"
-                    HorizontalAlignment="Center" Margin="0,48,0,0">
+                    HorizontalAlignment="Center">
           <Border Classes="emptyBadge">
             <i:Icon Value="mdi-database-outline" FontSize="34"
                     HorizontalAlignment="Center" VerticalAlignment="Center" />
