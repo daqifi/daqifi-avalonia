@@ -130,6 +130,7 @@ jobs:
           dotnet restore Daqifi.Avalonia.Desktop/Daqifi.Avalonia.Desktop.csproj
           dotnet restore Daqifi.Avalonia.Tests/Daqifi.Avalonia.Tests.csproj
           dotnet restore tools/parity-audit/AvaloniaCapture/AvaloniaCapture.csproj
+          dotnet restore tools/system-test/HeadlessBench/HeadlessBench.csproj
 
       # Locked mode fails a restore whose lock file has DRIFTED, but a lock file can also be
       # committed already-wrong in a way that only surfaces as a confusing error later. The
@@ -157,12 +158,22 @@ jobs:
       # runner's own platform and it WOULD run.
       #
       # Deliberately still only COMPILED, not run — HERE. Running it would be a
-      # stronger gate — it boots the real app and renders 24 screens, which a compile
+      # stronger gate — it boots the real app and renders 25 screens, which a compile
       # cannot check — and since #191 the macos job does exactly that. This one still
       # does not, because the harness has never been executed on a LINUX runner
       # (headless Skia, font availability), and adding a CI step nobody has watched
       # succeed is how a gate arrives broken. That is its own change, with its own
       # evidence.
+      #
+      # tools/system-test/HeadlessBench is compiled here for the same reason and with the
+      # same limit — COMPILED, never run. It cannot run here at all: it drives a real
+      # DAQiFi board over serial, and no runner has one. What a compile buys is the thing
+      # the rig was missing while it sat untracked (#254): it reaches deep into the app's
+      # internals — DaqifiViewModel, ConnectionDialogViewModel.ConnectManualSerialCommand,
+      # LoggingManager.Subscribe, shell.Plotter.LoggedPoints — none of which are public
+      # API, and all of which move. #245 and #246 both DELETED view-model members after
+      # searching the repo for readers; a rig outside the repo is invisible to that search
+      # and would have been broken by it silently. Now it breaks the build instead.
       - name: Build
         run: |
           dotnet build Daqifi.Avalonia/Daqifi.Avalonia.csproj \
@@ -170,6 +181,8 @@ jobs:
           dotnet build Daqifi.Avalonia.Desktop/Daqifi.Avalonia.Desktop.csproj \
             -c Release --no-restore
           dotnet build tools/parity-audit/AvaloniaCapture/AvaloniaCapture.csproj \
+            -c Release --no-restore
+          dotnet build tools/system-test/HeadlessBench/HeadlessBench.csproj \
             -c Release --no-restore
 
       # Runs BEFORE the suite, because it is the one #210 invariant the suite cannot
@@ -266,6 +279,8 @@ jobs:
           dotnet restore Daqifi.Avalonia.Tests/Daqifi.Avalonia.Tests.csproj --force-evaluate
           dotnet restore tools/parity-audit/AvaloniaCapture/AvaloniaCapture.csproj \
             --force-evaluate
+          dotnet restore tools/system-test/HeadlessBench/HeadlessBench.csproj \
+            --force-evaluate
           if ! git diff --quiet -- '**/packages.lock.json'; then
             echo "::error::a from-scratch restore derives lock files different from the" \
                  "committed ones. They are stale rather than drifted, which is why every" \
@@ -295,7 +310,7 @@ jobs:
     #     package's runtimes/osx-arm64/ assets.
     #   * It asserts those macOS native assets actually landed (see the arm64-natives
     #     step). That is the part a green compile genuinely does not prove.
-    #   * It RUNS the visual capture harness, five times, and requires all 24 screens
+    #   * It RUNS the visual capture harness, five times, and requires all 25 screens
     #     to be byte-identical across the five (#191, the determinism step at the end
     #     of this job). That is the first thing in this workflow that executes any of
     #     this repo's UI code rather than compiling it.
@@ -579,8 +594,9 @@ jobs:
           # Adding a screen therefore means editing two places on purpose: the
           # harness's ExpectedScreens, and this number.
           #
-          # 18 desktop/mobile screens + 6 dialog screens (#213).
-          expected=24
+          # 18 desktop/mobile screens + 7 dialog screens (#213, plus the firmware
+          # upload scrim added for #241).
+          expected=25
           actual=$(find "${PARITY_OUT}/determinism/r1" -maxdepth 1 -type f -name '*.png' \
                      | wc -l | tr -d '[:space:]')
           if [ "${actual}" != "${expected}" ]; then

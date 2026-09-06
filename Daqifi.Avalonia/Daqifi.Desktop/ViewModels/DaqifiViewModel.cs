@@ -2405,9 +2405,13 @@ public partial class DaqifiViewModel : ObservableObject, IFirmwareUpdateHost, IL
                 break;
             }
 
+            // No FirmwareUpdateStatusText here: this is the connect-time probe, which runs only when
+            // IsFirmwareUploading is false (CheckWifiFirmwareCoreAsync hard-returns otherwise) — and
+            // the status line is rendered only while that flag is true (issue #241). The identical
+            // message in FirmwareUpdateCoordinator.TryGetLanChipInfoAsync covers the during-a-flash
+            // case, which is the one a user can actually see.
             _appLogger.Information(
                 $"WiFi chip info unavailable on attempt {attempt}/{WifiChipInfoMaxAttempts}; retrying after startup delay.");
-            FirmwareUpdateStatusText = "Waiting for device to finish starting up before checking WiFi firmware version...";
             await Task.Delay(WifiChipInfoRetryDelay, cancellationToken);
         }
 
@@ -2461,7 +2465,6 @@ public partial class DaqifiViewModel : ObservableObject, IFirmwareUpdateHost, IL
         HasErrorOccured = false;
         IsUploadComplete = false;
         UploadWiFiProgress = 0;
-        FirmwareUpdateStatusText = "Preparing WiFi firmware update...";
 
         ConnectionManager.Instance.DeviceBeingUpdated = SelectedDevice;
 
@@ -2504,7 +2507,12 @@ public partial class DaqifiViewModel : ObservableObject, IFirmwareUpdateHost, IL
         }
         catch (OperationCanceledException)
         {
-            FirmwareUpdateStatusText = "WiFi firmware update canceled.";
+            // No FirmwareUpdateStatusText here: the coordinator's finally has already cleared
+            // IsFirmwareUploading by the time this catch runs, and the status line is rendered only
+            // while that flag is true (issue #241). The user's feedback for a cancel is the pane
+            // returning to its idle state; "Canceling firmware update..." — written by
+            // FirmwareUpdateCoordinator.CancelUpload while the run is still unwinding — is the
+            // message they actually see.
             _appLogger.Warning("WiFi firmware update canceled by user.");
             _appLogger.AddBreadcrumb("firmware", "WiFi firmware update cancelled", Common.Loggers.BreadcrumbLevel.Warning);
         }

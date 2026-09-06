@@ -49,7 +49,15 @@
                 <Button DockPanel.Dock="Bottom" Content="Upload" Width="100" Height="30" HorizontalAlignment="Right" Classes="accent" Command="{Binding UploadFirmwareCommand}"/>
             </DockPanel>
 
-            <Grid Grid.Row="0" Grid.RowSpan="4" Background="{StaticResource Scrim}" IsVisible="{Binding IsFirmwareUploading}" RowDefinitions="*,Auto,Auto,*">
+            <!--
+                The upload scrim covers every control below it, including the dialog's own Cancel
+                button (row 3 above), so while this is up the only exits were a completed flash or
+                killing the app. The Cancel below is that missing exit: it is the ONLY binding of
+                CancelUploadFirmwareCommand, whose CanExecute is already IsFirmwareUploading — the
+                same flag that raises this scrim — so it is enabled for exactly as long as the scrim
+                is visible (issue #241).
+            -->
+            <Grid Grid.Row="0" Grid.RowSpan="4" Background="{StaticResource Scrim}" IsVisible="{Binding IsFirmwareUploading}" RowDefinitions="*,Auto,Auto,Auto,*">
                 <ProgressBar Grid.Row="1" Height="25" Minimum="0" Maximum="100" Value="{Binding UploadFirmwareProgress}" Margin="20,0"/>
                 <TextBlock Grid.Row="2"
                            Text="Loading Firmware... (this may take several minutes)."
@@ -57,8 +65,15 @@
                            Foreground="{StaticResource TextPrimary}"/>
                 <TextBlock Grid.Row="3"
                            Text="{Binding UploadFirmwareProgressText}"
-                           HorizontalAlignment="Center" VerticalAlignment="Top" Margin="0,4,0,0"
+                           HorizontalAlignment="Center" Margin="0,4,0,0"
                            Foreground="{StaticResource TextPrimary}"/>
+                <Button Grid.Row="4"
+                        AutomationProperties.AutomationId="FirmwareCancelUpload"
+                        Content="Cancel Upload"
+                        Width="130" Height="30"
+                        HorizontalAlignment="Center" VerticalAlignment="Top" Margin="0,16,0,0"
+                        Theme="{StaticResource DarkSecondaryButton}"
+                        Command="{Binding CancelUploadFirmwareCommand}"/>
             </Grid>
         </Grid>
 

@@ -12,6 +12,7 @@ using Avalonia.Platform;
 using Avalonia.Threading;
 using Avalonia.VisualTree;
 using Daqifi.Avalonia.Views;
+using Daqifi.Core.Firmware;
 using Daqifi.Desktop.Device.SerialDevice;
 using Daqifi.Desktop.View;
 using Daqifi.Desktop.ViewModels;
@@ -74,6 +75,7 @@ internal static class AvaloniaCapture
         "dialog-connect-manual-usb-error",
         "dialog-export-configure",
         "dialog-export-failed",
+        "dialog-firmware-uploading",
     ];
 
     // Names actually written, recorded by Capture only after the file is confirmed non-empty.
@@ -621,6 +623,80 @@ internal static class AvaloniaCapture
                 return new ExportDialog { DataContext = vm };
             },
         };
+
+        // The bootloader dialog mid-flash. This is the one state in the app that a user could get
+        // stuck in: the scrim covers every control the dialog has, including its own Cancel button,
+        // and until issue #241 nothing under it offered a way out — a stalled flash meant killing
+        // the app. The screen exists to gate the control that fixes that, which no other check in
+        // the repo can see: the button's only reference is a reflection binding in AXAML, so a
+        // rename would leave the build green and the scrim inescapable again.
+        yield return new DialogScreen
+        {
+            Name = "dialog-firmware-uploading",
+            Size = FirmwareDialogSize,
+            Build = () =>
+            {
+                // The download service is stubbed because the real one is the only collaborator a
+                // bare construction reaches: the constructor kicks off LoadFirmwareOptionsAsync,
+                // which queries the firmware release feed. A capture must not depend on the
+                // network, and a version string fetched at capture time would land in the baseline.
+                // The update service comes from the container and is never called — no scenario
+                // starts a flash, and starting one is on the destructive denylist besides.
+                var vm = new FirmwareDialogViewModel(
+                    hidDeviceName: "DAQiFi Bootloader",
+                    firmwareDownloadService: new OfflineFirmwareDownloadService())
+                {
+                    UploadFirmwareProgress = 42,
+                    IsFirmwareUploading = true,
+                };
+                return new FirmwareDialog { DataContext = vm };
+            },
+            Inspect = w => RequireRenderedText(
+                w, "dialog-firmware-uploading", "FirmwareCancelUpload", "Cancel Upload"),
+        };
+    }
+
+    // The firmware dialog's own declared size (FirmwareDialog.axaml: Width 500, Height 380).
+    private static readonly (int Width, int Height) FirmwareDialogSize = (500, 380);
+
+    /// <summary>
+    /// A firmware download service that reports nothing to download. Every member returns the
+    /// "no release" answer rather than throwing, so the dialog's best-effort option load finishes
+    /// quietly and the harness never opens a socket.
+    /// </summary>
+    private sealed class OfflineFirmwareDownloadService : IFirmwareDownloadService
+    {
+        public Task<(string ExtractedPath, string Version)?> DownloadWifiFirmwareAsync(
+            string destinationDirectory,
+            IProgress<int>? progress = null,
+            CancellationToken cancellationToken = default)
+            => Task.FromResult<(string, string)?>(null);
+
+        public Task<string?> DownloadLatestFirmwareAsync(
+            string destinationDirectory,
+            bool includePreRelease = false,
+            IProgress<int>? progress = null,
+            CancellationToken cancellationToken = default) => Task.FromResult<string?>(null);
+
+        public Task<string?> DownloadFirmwareByTagAsync(
+            string tagName,
+            string destinationDirectory,
+            IProgress<int>? progress = null,
+            CancellationToken cancellationToken = default) => Task.FromResult<string?>(null);
+
+        public Task<FirmwareReleaseInfo?> GetLatestReleaseAsync(
+            bool includePreRelease = false,
+            CancellationToken cancellationToken = default) => Task.FromResult<FirmwareReleaseInfo?>(null);
+
+        public Task<FirmwareReleaseInfo?> GetLatestWifiReleaseAsync(CancellationToken cancellationToken = default)
+            => Task.FromResult<FirmwareReleaseInfo?>(null);
+
+        public Task<FirmwareUpdateCheckResult> CheckForUpdateAsync(
+            string deviceVersionString,
+            bool includePreRelease = false,
+            CancellationToken cancellationToken = default) => throw new NotSupportedException();
+
+        public void InvalidateCache() { }
     }
 
     // The export dialog's own declared size (ExportDialog.axaml: Width 560, Height 390).

@@ -45,9 +45,86 @@ public abstract partial class AbstractStreamingDevice : ObservableObject, IStrea
     // @port: Daqifi.Desktop.Device.AbstractStreamingDevice.ConnectionType
     public abstract ConnectionType ConnectionType { get; }
 
-    // Converted StreamingFrequency property to [ObservableProperty] field
-    [ObservableProperty]
     private int _streamingFrequency = 1;
+
+    /// <summary>
+    /// Gets or sets the streaming rate in Hz, held to the range the device says it can run at:
+    /// 1 to <see cref="DeviceCapabilities.MaxSamplingRate"/>. A value outside that range is
+    /// brought to the nearest end of it rather than stored.
+    /// </summary>
+    /// <remarks>
+    /// This value is not private state — every path that starts acquisition assigns it straight
+    /// onto the Core device (see <see cref="InitializeStreaming"/> and
+    /// <see cref="StartSdCardLogging"/>), and Core's setter validates against the same range and
+    /// throws <see cref="ArgumentOutOfRangeException"/> outside it. Storing a rate Core will not
+    /// take therefore does not produce a wrong rate at the hardware; it makes the device refuse
+    /// to start recording, several screens away from wherever the rate was set. The UI sliders
+    /// all clamp to 1..1000 so they cannot cause that, but a profile can: an applied profile
+    /// assigns its saved <c>SamplingFrequency</c> here unfiltered, and that number comes from an
+    /// XML file on disk.
+    /// <para>
+    /// The ceiling is the device's own advertised maximum, not the sliders' 1000: a board that
+    /// describes itself as faster is entitled to be driven faster, and Core validates against
+    /// the advertised figure too. It is sanitized the same way Core sanitizes it, because
+    /// <see cref="DeviceCapabilities.MaxSamplingRate"/> is a mutable unvalidated property and a
+    /// zero there would otherwise mean an impossible "1..0" range that rejects every rate.
+    /// </para>
+    /// </remarks>
+    // @port: Daqifi.Desktop.Device.AbstractStreamingDevice.StreamingFrequency
+    // The member exists upstream; the guard does not — upstream is the same unguarded
+    // [ObservableProperty] field this replaces, so it stores 0, -1 and 1001 too.
+    public int StreamingFrequency
+    {
+        get => _streamingFrequency;
+        set
+        {
+            var ceiling = Math.Max(1, Capabilities.MaxSamplingRate);
+            var clamped = Math.Clamp(value, 1, ceiling);
+            if (clamped != value)
+            {
+                AppLogger.Warning(
+                    $"Streaming frequency {value} Hz is outside device {DisplayIdentifier}'s " +
+                    $"1-{ceiling} Hz range; using {clamped} Hz.");
+            }
+
+            SetProperty(ref _streamingFrequency, clamped);
+        }
+    }
+
+    /// <summary>
+    /// Brings the stored streaming rate back under the ceiling the device advertises right now.
+    /// </summary>
+    /// <remarks>
+    /// The ceiling moves. Core re-hydrates capabilities on every <c>ChannelsPopulated</c>, and a
+    /// reconnect re-describes the device onto this same wrapper while keeping the rate the user
+    /// already chose, so a rate that fitted when it was chosen can stop fitting later. This runs in
+    /// two places for two different reasons: from <see cref="HydrateDeviceMetadata"/>, so the
+    /// stored rate follows a ceiling that has just moved; and immediately before each handoff to
+    /// Core, which is the only moment where being out of range costs the user anything — and which
+    /// closes the window between capabilities being replaced and the rate being corrected.
+    /// <para>
+    /// It assigns the ceiling itself, never a value re-read from the field: hydration runs on
+    /// Core's callback thread while the UI and profile apply write this property from theirs, and a
+    /// read-then-write would let a rate chosen in between be overwritten by the stale one. Losing
+    /// that race to the ceiling costs a rate the hardware could not have run at anyway. A rate that
+    /// still fits writes nothing at all.
+    /// </para>
+    /// <para>
+    /// A residual interleaving is not closable at this layer: Core reads its own copy of the
+    /// ceiling inside its own setter, so capabilities changing between this call and that read
+    /// would still be rejected there. This removes the systematic case — a stored rate that is
+    /// permanently out of range — not every possible ordering of an unsynchronized wrapper.
+    /// </para>
+    /// </remarks>
+    // Downstream-only: no upstream counterpart.
+    protected void ClampRateToAdvertisedCeiling()
+    {
+        var advertisedCeiling = Math.Max(1, Capabilities.MaxSamplingRate);
+        if (_streamingFrequency > advertisedCeiling)
+        {
+            StreamingFrequency = advertisedCeiling;
+        }
+    }
 
     // DeviceType property with default value of Unknown.
     // HasWincWifiModule now reads Core's capability flag rather than DeviceType, but the two are
@@ -299,8 +376,6 @@ public abstract partial class AbstractStreamingDevice : ObservableObject, IStrea
     {
         return "USB";
     }
-
-    // Removed original StreamingFrequency property definition
 
     // @port: Daqifi.Desktop.Device.AbstractStreamingDevice.NetworkConfiguration
     public NetworkConfiguration NetworkConfiguration { get; set; } = new();
@@ -1305,6 +1380,8 @@ public abstract partial class AbstractStreamingDevice : ObservableObject, IStrea
                 : ScpiMessageProducer.DisableDioPorts());
 
             var coreDevice = GetConnectedCoreDevice(CoreDeviceForSd);
+            // Against the ceiling in force now, not the one in force when the rate was chosen.
+            ClampRateToAdvertisedCeiling();
             coreDevice.StreamingFrequency = StreamingFrequency;
 
             // The Core package resumes StartSdCardLoggingAsync continuations on the caller's
@@ -1550,6 +1627,8 @@ public abstract partial class AbstractStreamingDevice : ObservableObject, IStrea
         }
 
         var coreStreamingDevice = GetConnectedCoreDevice(CoreDeviceForStreaming);
+        // Against the ceiling in force now, not the one in force when the rate was chosen.
+        ClampRateToAdvertisedCeiling();
         coreStreamingDevice.StreamingFrequency = StreamingFrequency;
 
         // A session must never anchor its time axis on prior-session data (issue #573).
@@ -2205,6 +2284,10 @@ public abstract partial class AbstractStreamingDevice : ObservableObject, IStrea
         // generated setter also notifies it, but only when the board's *value* changes — a
         // re-derived capability set on an unchanged board would otherwise go unannounced.
         OnPropertyChanged(nameof(HasWincWifiModule));
+
+        // Capabilities was replaced above, so the ceiling the stored rate was clamped against may
+        // just have moved.
+        ClampRateToAdvertisedCeiling();
 
         if (!string.IsNullOrWhiteSpace(Metadata.Ssid))
         {
