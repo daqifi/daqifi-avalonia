@@ -507,6 +507,13 @@ in one contiguous block between `desktop-9-*` and `dialog-*`, touching no existi
 Deliberately placed at the foot of this list: three other open PRs were writing near the head
 of the manifest at the time.
 
+The recording is **not** single-host: on the PR that made it the `macos-latest` runner — macOS
+**26.6.2** (25G83), arm64, image `macos26/20260831.0337.3`, a newer OS build than the recording
+Mac's 26.5 — passed its own five-run determinism check **34/34** and then reproduced this
+manifest, all nine new hashes included. So the settle-rule change reproduces across machines
+too, which matters more here than for a pure re-recording: a rule about *when* a frame is still
+enough to keep is exactly the kind of thing that could have been tuned to one machine's timing.
+
 **A mismatch is a prompt, not a verdict** — re-read that environment line first. In CI
 the same applies with one addition: the baseline step prints the runner's macOS build and
 image version on **every** run, green ones included, so a red one can be read against the
