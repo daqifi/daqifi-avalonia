@@ -532,20 +532,48 @@ internal static class HeadlessBench
                 // with PWM off is bookkeeping only; then the drive state and the direction, so the
                 // pin is taken low before it is released back to an input; and PWM last, since
                 // re-enabling it re-commands the duty just restored in Core's documented
-                // duty → frequency → enable order. Best-effort, and it must not mask a real
-                // failure above — hence its own guard, like StopAndDisconnect's.
-                try
+                // duty → frequency → enable order.
+                //
+                // Each step is guarded on its OWN, not the five together: a single guard means the
+                // first setter that throws skips the four after it, and the ones after it are the
+                // steps that stop the pin being driven. Nothing here rethrows, so cleanup can never
+                // mask the failure that brought us into this finally.
+                var restoreErrors = new List<string>();
+                void Restore(string what, Action set)
                 {
-                    dio.IsPwmEnabled = false;
-                    dio.PwmDutyCyclePercent = dioWasDuty;
-                    dio.IsDigitalOn = dioWasOn;
-                    dio.IsOutput = dioWasOutput;
-                    dio.IsPwmEnabled = dioWasPwm;
-                    Pump();
+                    try { set(); }
+                    catch (Exception ex) { restoreErrors.Add($"{what} ({ex.Message})"); }
                 }
-                catch (Exception ex) { Console.WriteLine($"[WARN] cleanup restore '{dio.Name}': {ex.Message}"); }
-                channelsPane.CloseSettingsCommand.Execute(null);
+
+                Restore("PWM off", () => dio.IsPwmEnabled = false);
+                Restore("duty", () => dio.PwmDutyCyclePercent = dioWasDuty);
+                Restore("drive state", () => dio.IsDigitalOn = dioWasOn);
+                Restore("direction", () => dio.IsOutput = dioWasOutput);
+                Restore("PWM mode", () => dio.IsPwmEnabled = dioWasPwm);
+                Restore("close drawer", () => channelsPane.CloseSettingsCommand.Execute(null));
                 Pump();
+
+                // Then check the restore rather than assuming it. Only partly observable from here,
+                // and the row says which half is which: IsPwmEnabled and PwmDutyCyclePercent read
+                // Core's mirror of the last state it successfully COMMANDED, so they carry real
+                // signal; IsOutput and IsDigitalOn are local properties holding whatever was last
+                // assigned, so they cannot. The device layer logs and swallows a failed command
+                // rather than returning one (AbstractStreamingDevice.ExecuteDeviceCommand), so this
+                // read-back is the strongest evidence available without changing the app for the
+                // benefit of its own test rig.
+                //
+                // This is a Step, not an unexpected-probe: leaving a shared bench board driving a
+                // pin is worth a red run, and the next agent finding out from the exit code beats
+                // finding out from their own mystery failure.
+                var restored = dio.IsPwmEnabled == dioWasPwm && dio.PwmDutyCyclePercent == dioWasDuty;
+                Step(2, "CH-DIO", "cleanup", restored && restoreErrors.Count == 0,
+                     $"'{dio.Name}' left at IsPwmEnabled={dio.IsPwmEnabled} (was {dioWasPwm}) and " +
+                     $"duty={dio.PwmDutyCyclePercent}% (was {dioWasDuty}) — both read back from Core's " +
+                     $"commanded-state mirror; IsOutput={dio.IsOutput} (was {dioWasOutput}) and " +
+                     $"IsDigitalOn={dio.IsDigitalOn} (was {dioWasOn}) are local properties, so they " +
+                     "echo the assignment rather than confirm the device took it" +
+                     (restoreErrors.Count == 0 ? "" : $"; restore threw on {string.Join(", ", restoreErrors)}"),
+                     null);
             }
         }
 

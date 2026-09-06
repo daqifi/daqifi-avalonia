@@ -120,7 +120,14 @@ These are real limits of the current rig, not of the app. Tracked in #260.
   none is PWM-capable). Multi-device fleets and rate limits are untested. Everything those two
   rows touch — direction, drive state, PWM mode, duty — is state the *board* keeps across a
   host disconnect, so they snapshot all four, disable an inherited PWM before asserting, and
-  restore from a `finally`; an aborted run must not leave a shared bench board driving a pin.
+  restore from a `finally` (each step guarded on its own, so one failure cannot skip the steps
+  that stop the pin being driven); an aborted run must not leave a shared bench board driving a
+  pin. `CH-DIO/cleanup` then reads the restore back and **fails the run** if it did not hold —
+  but only `IsPwmEnabled` and `PwmDutyCyclePercent` carry real signal there, because they read
+  Core's mirror of the last state it successfully *commanded*, while `IsOutput` and
+  `IsDigitalOn` are local properties that echo whatever was assigned. The device layer logs and
+  swallows a failed command rather than returning one, so that read-back is as far as the rig
+  can see without changing the app for the benefit of its own test harness.
 - **`DEV-NAME` is not implemented, and needs `DAQIFI_RESTORE_NAME` alongside it.**
   `SetFriendlyName` sends `SYSTem:DEVice:NAME` *and* `…:NAME:SAVE`, so it writes the board's
   NVM: an interrupted run leaves a shared bench board renamed with nothing to put it back.
