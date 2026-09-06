@@ -84,7 +84,9 @@ public partial class DatabaseLogger : ObservableObject, ILogger, IDisposable
     private LoggingSession _currentSession;
 
     /// <summary>
-    /// Whether a session is open on the plot at all — with or without anything to draw.
+    /// Whether a session is open on the plot at all — a load that FINISHED, with or without
+    /// anything to draw. False while nothing is open, and false for a load that threw, because
+    /// <see cref="CurrentSession"/> is assigned only on the two paths that complete one.
     ///
     /// <para>Downstream addition (#262). This is the half of the pane's state that
     /// <see cref="HasSessionData"/> cannot express: that flag is false both when nothing is open
@@ -297,10 +299,14 @@ public partial class DatabaseLogger : ObservableObject, ILogger, IDisposable
     {
         try
         {
-            // ClearPlot is already dispatcher-wrapped
+            // ClearPlot is already dispatcher-wrapped, and it leaves CurrentSession null. It stays
+            // null through the reads below and is set only on the two paths that finish one, so
+            // "a session is open" cannot be true for a load that threw: the catch at the bottom
+            // only logs, so an assignment made here would survive a failed read and the pane would
+            // report a database error as a session that opened and turned out to be empty (#262
+            // review). Both success paths set it inside a Dispatcher.Invoke they already make.
             ClearPlot();
             _currentSessionId = session.ID;
-            Dispatcher.UIThread.Invoke(() => CurrentSession = session);
 
             var tempSeriesList = new List<LineSeries>();
             var tempLegendItemsList = new List<LoggedSeriesLegendItem>();
@@ -328,6 +334,8 @@ public partial class DatabaseLogger : ObservableObject, ILogger, IDisposable
                     _sessionDeviceFrequencyHz = localDeviceFrequency;
                     // Title is rendered in the WPF header strip, not by OxyPlot
                     PlotModel.Title = string.Empty;
+                    // The load finished; the session IS open, it just has nothing to draw.
+                    CurrentSession = session;
                     CurrentSessionSampleCount = 0;
                     HasSessionData = false;
                     PlotModel.InvalidatePlot(true);
@@ -358,6 +366,8 @@ public partial class DatabaseLogger : ObservableObject, ILogger, IDisposable
                 // Session name is rendered in the WPF header strip; keep the
                 // OxyPlot title clear so we don't double up on it.
                 PlotModel.Title = string.Empty;
+                // The load finished, so the header strip has a session to name.
+                CurrentSession = session;
                 PlotModel.Subtitle = totalSamplesCount > SessionDataRepository.INITIAL_LOAD_POINTS
                     ? "\nLoading full dataset..."
                     : string.Empty;

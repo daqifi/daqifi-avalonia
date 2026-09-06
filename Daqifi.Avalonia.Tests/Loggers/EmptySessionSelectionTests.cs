@@ -132,6 +132,30 @@ public sealed class EmptySessionSelectionTests : IDisposable
         Assert.Equal(1, load.TotalSampleCount);
     }
 
+    /// <summary>
+    /// The premise behind WHERE <c>DisplayLoggingSession</c> assigns <c>CurrentSession</c>, raised
+    /// in review: a load does not only succeed-with-data or succeed-empty, it can also THROW, and
+    /// the caller's catch only logs. So an assignment made before the reads would survive a failed
+    /// one, and the pane — which now believes a set <c>CurrentSession</c> means a finished load —
+    /// would report a database error as a session that opened and turned out to be empty. The
+    /// assignment therefore happens on the two paths that complete a load, never before them.
+    ///
+    /// <para>This pins the half that is reachable from here: that the throw is real rather than
+    /// hypothetical, and that it is NOT quietly folded into the empty result. The handler itself
+    /// is inside <c>DisplayLoggingSession</c> and shares the dispatcher problem described on this
+    /// class, so it is covered by the ordering and its comment rather than by a test.</para>
+    /// </summary>
+    [Fact]
+    public void An_unreadable_database_makes_the_load_throw_rather_than_report_an_empty_session()
+    {
+        // A file where the database should be, which SQLite will open and then reject. Deliberately
+        // not a missing file: SQLite CREATES those, and the load would legitimately be empty.
+        Directory.CreateDirectory(_directory);
+        File.WriteAllText(DatabasePath, "this is not a database");
+
+        Assert.Throws<SqliteException>(() => Repository().LoadInitialSession(SessionId));
+    }
+
     #region Helpers
 
     private SessionDataRepository Repository() => new(TestDatabase.Contexts(DatabasePath), _logger);
