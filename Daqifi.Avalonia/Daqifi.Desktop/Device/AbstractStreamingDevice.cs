@@ -143,6 +143,113 @@ public abstract partial class AbstractStreamingDevice : ObservableObject, IStrea
         }
     }
 
+    /// <summary>
+    /// Holds the rate about to be handed to <paramref name="coreDevice"/> under the cap the device
+    /// will accept for the channel set enabled <i>right now</i>, re-reading its capability document
+    /// first so that cap describes this configuration and not the one that existed at connect.
+    /// </summary>
+    /// <remarks>
+    /// <para>
+    /// <see cref="ClampRateToAdvertisedCeiling"/> is not enough on its own, and the bench says so.
+    /// <see cref="DeviceCapabilities.MaxSamplingRate"/> is the sampling ISR's absolute ceiling —
+    /// 22000 Hz on the bench Nq1 (fw 3.7.2) — reachable only with almost nothing enabled. What the
+    /// device will actually start is <c>streaming.current_max_rate_hz</c>, which moves with the
+    /// enabled set: 3518 Hz on that board with all sixteen analog inputs on. Since firmware v3.5.0
+    /// a start above it is refused outright with SCPI <c>-222</c> and nothing streams. Measured
+    /// there: four seconds at 7036 Hz produced <b>zero</b> analog frames; the same run at 3518 Hz
+    /// produced 11160. What a user sees is a session that records nothing — the failure #248/#255
+    /// existed to remove.
+    /// </para>
+    /// <para>
+    /// The re-read is the fix, not a refinement of it. Core reads the document once, inside
+    /// <see cref="Connect"/>, and at that moment nothing is enabled — the bench board answers
+    /// <c>current_max_rate_hz: 0</c> there. Zero is a real answer ("nothing to stream") which
+    /// <c>SampleRateCap.Enforce</c> deliberately reads as "leave the rate alone", so the
+    /// connect-time figure is not merely stale, it is inert. One text exchange here is also
+    /// strictly fresher than re-reading on every channel toggle would be: this is the last moment
+    /// before the rate leaves the app, so no toggle can get behind it.
+    /// </para>
+    /// <para>
+    /// A device that publishes no document — every firmware below v3.5.0 — has said nothing about
+    /// how its channel set affects the rate, so Core reports the board ceiling for it and this is a
+    /// no-op. Nothing that starts today starts less often afterwards.
+    /// </para>
+    /// <para>
+    /// The lowering is silent in the sense #255 settled on for the absolute ceiling: the rate is
+    /// brought to one the hardware will run at rather than the session being refused. It is not
+    /// invisible — <see cref="StreamingFrequency"/> is assigned the new value, so anything bound to
+    /// the device's rate shows what the session is really running at, and both figures are logged.
+    /// </para>
+    /// <para>
+    /// <b>When the refresh brings nothing back.</b> Core answers <c>null</c> — it does not throw —
+    /// for an unanswered query, an unparseable reply or a schema this parser does not know, and
+    /// throws only for a device that is no longer connected or a cancelled read. Both outcomes are
+    /// treated the same here and neither stops the start. Refusing to record over a failed read
+    /// would newly block sessions that work today: the document is documented enrichment ("a device
+    /// that cannot supply one is fully usable"), and the great majority of sessions run far below
+    /// any cap. So the last figure the device stated is applied, the fact that it is not fresh is
+    /// logged with the rate about to be used, and a device that then refuses the start has an
+    /// explanation waiting in the log rather than none at all. This is exactly where the code stood
+    /// before this method existed, so nothing regresses; it is simply the one case the cap cannot
+    /// cover.
+    /// </para>
+    /// <para>
+    /// Must be called after the rate has been assigned to <paramref name="coreDevice"/> (Core
+    /// enforces against its own live rate) and before streaming starts: the document read is a
+    /// text-mode exchange, which pauses Core's protobuf consumer for its duration.
+    /// </para>
+    /// </remarks>
+    // Downstream-only: no upstream counterpart.
+    protected void HoldRateToCurrentConfigurationCap(CoreStreamingDevice coreDevice)
+    {
+        ArgumentNullException.ThrowIfNull(coreDevice);
+
+        // Whether this device publishes a document at all. Core's own gate — the same predicate
+        // ReadCapabilityDocumentAsync consults before it sends anything — and deliberately NOT
+        // "did we already have one": a v3.5.0+ board whose connect-time read also came back empty
+        // has nothing cached either, and reading the cache as the support signal would file it as
+        // legacy firmware and swallow the one warning that explains the refusal it is heading for.
+        var deviceDescribesItself = coreDevice.Supports(DeviceFeature.CapabilityDocument);
+        var readAnswered = false;
+
+        try
+        {
+            // Blocking here is the choice the surrounding handoff already makes — StartSdCardLogging
+            // does the same with StartSdCardLoggingAsync — and Task.Run keeps Core's continuations
+            // off the caller's synchronization context.
+            readAnswered =
+                Task.Run(() => coreDevice.ReadCapabilityDocumentAsync()).GetAwaiter().GetResult() != null;
+        }
+        catch (Exception ex)
+        {
+            // The exception itself, not its Message: the type and stack are the whole reason a
+            // failed refresh is worth logging, and Warning(Exception, string) keeps them in the
+            // local log without raising a Sentry event.
+            AppLogger.Warning(
+                ex, $"Could not read device {DisplayIdentifier}'s capability document before starting.");
+        }
+
+        if (!readAnswered && deviceDescribesItself)
+        {
+            AppLogger.Warning(
+                $"Device {DisplayIdentifier} did not supply a fresh capability document, so the rate " +
+                $"its current channel set can sustain is unknown; starting at {StreamingFrequency} Hz " +
+                "against the last cap it stated. A device that refuses this start is refusing it for " +
+                "that reason.");
+        }
+
+        if (coreDevice.EnforceStreamingFrequencyCap() is not { } requestedRateHz)
+        {
+            return;
+        }
+
+        var cappedRateHz = coreDevice.StreamingFrequency;
+        StreamingFrequency = cappedRateHz;
+        AppLogger.Warning(
+            $"Device {DisplayIdentifier} cannot stream at {requestedRateHz} Hz with the channels " +
+            $"it has enabled; recording at {cappedRateHz} Hz instead.");
+    }
+
     // DeviceType property with default value of Unknown.
     // HasWincWifiModule now reads Core's capability flag rather than DeviceType, but the two are
     // refreshed by the same HydrateDeviceMetadata call, so this notification is still the one that
@@ -1405,6 +1512,9 @@ public abstract partial class AbstractStreamingDevice : ObservableObject, IStrea
             // Against the ceiling in force now, not the one in force when the rate was chosen.
             ClampRateToAdvertisedCeiling();
             coreDevice.StreamingFrequency = StreamingFrequency;
+            // ...and then under what this channel set can actually sustain, which the ceiling
+            // above says nothing about. A start over that cap is refused, not clamped (#272).
+            HoldRateToCurrentConfigurationCap(coreDevice);
 
             // The Core package resumes StartSdCardLoggingAsync continuations on the caller's
             // synchronization context. Running it on the thread pool prevents UI deadlocks.
@@ -1652,6 +1762,11 @@ public abstract partial class AbstractStreamingDevice : ObservableObject, IStrea
         // Against the ceiling in force now, not the one in force when the rate was chosen.
         ClampRateToAdvertisedCeiling();
         coreStreamingDevice.StreamingFrequency = StreamingFrequency;
+        // ...and then under what this channel set can actually sustain, which the ceiling above
+        // says nothing about. A start over that cap is refused, not clamped, and the session
+        // produces no samples at all (#272). Runs before StartStreaming below: the document read
+        // is a text exchange and must not overlap the stream.
+        HoldRateToCurrentConfigurationCap(coreStreamingDevice);
 
         // A session must never anchor its time axis on prior-session data (issue #573).
         // Reset the timestamp baseline here — StopStreaming's reset is skipped on unplug and
