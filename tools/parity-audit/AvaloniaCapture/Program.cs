@@ -13,7 +13,9 @@ using Avalonia.Styling;
 using Avalonia.Threading;
 using Avalonia.VisualTree;
 using Daqifi.Avalonia.Views;
+using Daqifi.Core.Device.SdCard;
 using Daqifi.Core.Firmware;
+using Daqifi.Desktop.Device;
 using Daqifi.Desktop.Device.SerialDevice;
 using Daqifi.Desktop.View;
 using Daqifi.Desktop.ViewModels;
@@ -81,6 +83,16 @@ internal static class AvaloniaCapture
         "mobile-landscape-2-channels",
         "mobile-landscape-3-storage",
         "mobile-landscape-4-profiles",
+        // The Logged Data pane's DEVICE LOGS tab, in each of the five empty states
+        // DeviceLogsView.axaml carries. The desktop sweep above never reaches any of them: the
+        // pane opens on APP LOGS and nothing switched the tab, so that whole view was outside the
+        // gate while #276 restyled three of its five states (#280). Captured once at DesktopSize
+        // rather than twice — see CaptureDeviceLogs.
+        "devicelogs-1-no-device",
+        "devicelogs-2-no-files",
+        "devicelogs-3-no-sd-card",
+        "devicelogs-4-device-busy",
+        "devicelogs-5-sd-card-error",
         // Dialogs. One name per seeded state, defined in DialogScreens() — keep the two lists
         // in step, which VerifyExpectedScreens enforces in both directions.
         "dialog-connect-wifi-scanning",
@@ -183,6 +195,14 @@ internal static class AvaloniaCapture
             RequireThemePinnedDark();
             CaptureDesktop(desktop.MainWindow);
             CaptureMobile();
+            // After both sweeps, and that ordering is the conservative one rather than a
+            // preference. This phase drives the same MainWindow CaptureDesktop does and it POSES
+            // the Logged Data pane's view-model — a selected device, an SD card state — so running
+            // it earlier would put the desktop and mobile screens downstream of state their
+            // baselines were never recorded with. Nothing after it reads that view-model: the
+            // mobile Storage pane constructs its own DeviceLogsViewModel
+            // (StorageMobileView.axaml.cs), and every dialog below builds its own out of DI.
+            CaptureDeviceLogs(desktop.MainWindow);
             // LAST, and deliberately so. Every dialog here builds a real view-model, and those
             // constructors touch process-global state the other two phases read (the connection
             // manager's duplicate-device handler, its firmware-in-progress event). Running the
@@ -572,6 +592,228 @@ internal static class AvaloniaCapture
         if (NavClick(mobile, "RailStorage"))  { Capture("mobile-landscape-3-storage", host); }
         if (NavClick(mobile, "RailProfiles")) { Capture("mobile-landscape-4-profiles", host); }
         NavClick(mobile, "RailStream");
+    }
+
+    // ---- Device Logs: the LOGGED DATA pane's second tab, in each of its five empty states ----
+    //
+    // WHY THIS PHASE EXISTS (#280). DeviceLogsView.axaml carries FIVE empty states — NO FILES, NO
+    // DEVICE, NO SD CARD, DEVICE BUSY, SD CARD ERROR — and until this ran, not one of them was in
+    // the manifest. The desktop sweep photographs the Logged Data pane on its default tab (APP
+    // LOGS) and nothing ever switched to DEVICE LOGS, so `grep DeviceLogs` over this file returned
+    // nothing. The mobile Storage screens are not cover for it either: those render
+    // Views/Mobile/DeviceLogsMobileView.axaml, a different file with its own markup.
+    //
+    // That was not theoretical. #276 moved three of the five onto the shared emptyTitle/emptyBody
+    // classes — for these three the sentence went 13px/MaxWidth=320 to 15px/MaxWidth=420, a reflow
+    // rather than a recolour — and its own body discloses that this is the one conversion the gate
+    // did not cover. It was verified by hand through a throwaway capture site that was then
+    // reverted, so nothing in the repo retained the evidence and the next change here would have
+    // got no gate either.
+    //
+    // WHY ONE SIZE AND NOT TWO. The desktop sweep runs at 1440x900 and again at MainWindow's own
+    // declared minimum, so putting these five INTO it would have added ten screens, a 29% larger
+    // manifest for one pane. This is a separate phase at DesktopSize, the way the dialogs are a
+    // separate phase at each dialog's own declared size. What that does not cover is these five
+    // states at 720x480; the pane is the same centred-content layout the desktop-min sweep already
+    // exercises on four sibling panes, and adding the second size later is five more names here.
+    //
+    // WHAT IT MUST NOT DO. The same rule the dialog phase runs under: nothing may start device
+    // discovery or talk to hardware. Four of the five states need CanAccessSdCard true, which
+    // needs a device reporting IsConnected — see PosedSerialDevice for how that is reached without
+    // a transport, and note that selecting the device while it still reads disconnected is what
+    // keeps DeviceLogsViewModel.OnSelectedDeviceChanged from firing a real SD refresh at it.
+    private static void CaptureDeviceLogs(Window? main)
+    {
+        if (main is null)
+        {
+            _failed = true;
+            Console.WriteLine("[FAIL] device logs: MainWindow null");
+            return;
+        }
+        if (main.DataContext is not DaqifiViewModel vm)
+        {
+            _failed = true;
+            Console.WriteLine($"[FAIL] device logs: MainWindow.DataContext is " +
+                              $"{main.DataContext?.GetType().Name ?? "null"}, not DaqifiViewModel, " +
+                              "so the Logged Data pane's DeviceLogsViewModel cannot be reached");
+            return;
+        }
+
+        // Tab index 1 is Logged Data, the same index the sweep captures as <prefix>-2-loggeddata.
+        // Gated for the reason every navigation here is gated: without it the five screens below
+        // would be five pictures of whatever pane was showing instead.
+        if (!Set(vm, "SelectedIndex", 1))
+        {
+            _failed = true;
+            Console.WriteLine("[SKIP] device logs: SelectedIndex is not writable on the " +
+                              "view-model, so the Logged Data pane cannot be selected");
+            return;
+        }
+
+        // The pivot inside the pane. By AutomationId rather than by position among the two
+        // RadioButtons, for the reason SelectTab matches dialog tabs on their header: an index or
+        // an ordinal is silently wrong the moment a tab is inserted before it, and the wrong tab
+        // saved under the right filename passes every check this tool has.
+        var tabs = main.GetVisualDescendants()
+                       .OfType<RadioButton>()
+                       .Where(r => AutomationProperties.GetAutomationId(r) == DeviceLogsTabId)
+                       .ToArray();
+        if (tabs.Length != 1)
+        {
+            _failed = true;
+            Console.WriteLine(
+                $"[SKIP] device logs: the Logged Data pane holds {tabs.Length} controls with " +
+                $"AutomationId '{DeviceLogsTabId}' (LoggedDataPanePrototype.axaml declares one). " +
+                "With none the DEVICE LOGS tab is unreachable; with several this would be " +
+                "checking an arbitrary one of them. Not capturing the APP LOGS tab under these " +
+                "five names.");
+            return;
+        }
+        tabs[0].IsChecked = true;
+        Pump();
+
+        var logs = vm.DeviceLogsViewModel;
+        // Same end state the desktop sweep waits on: all three flyouts are one SplitView and this
+        // phase captures with the pane CLOSED, so "closed means 0 wide" is the fact to wait for
+        // rather than inferring rest from stillness (#278).
+        var paneAtRest = DesktopPaneAtRest(main, "devicelogs");
+
+        // 1. No device. The state a capture run is already in — nothing is connected, and nothing
+        //    here connects anything — so this one needs no posing at all.
+        CaptureDeviceLogsState(main, "devicelogs-1-no-device", "DeviceLogsNoDeviceTitle",
+                               "NO DEVICE", paneAtRest);
+
+        // The remaining four all need CanAccessSdCard true, i.e. a selected device that reports
+        // itself connected over USB or WiFi. Add it to the bound collection BEFORE selecting it:
+        // the ComboBox's SelectedItem is two-way, and a SelectedItem that is not among its items
+        // is written straight back as null.
+        var device = new PosedSerialDevice();
+        logs.ConnectedDevices.Add(device);
+        logs.SelectedDevice = device;
+        // Only now does the device report connected. Selecting an already-connected device runs
+        // OnSelectedDeviceChanged's CanAccessSdCard branch, which fires a real SD refresh at it;
+        // flipping IsConnected afterwards instead reaches the same gate through the view-model's
+        // own connectivity subscription (RaiseSdGateChanged) and starts nothing.
+        device.SetConnected(true);
+        Pump();
+
+        // 2. Connected, card OK, nothing on it. DeviceFiles is empty, so HasNoFiles falls out of
+        //    SdCardState alone.
+        logs.SdCardState = SdCardState.Ok;
+        Pump();
+        CaptureDeviceLogsState(main, "devicelogs-2-no-files", "DeviceLogsNoFilesTitle",
+                               "NO FILES", paneAtRest);
+
+        // 3/4/5 are posed through the app's OWN classifier rather than by assigning three strings
+        // here. SdCardFailureClassifier.Classify is what decides the state, the terse message and
+        // the guidance sentence in production, so routing through it means these screens photograph
+        // the app's copy and not the harness's opinion of it — and a change to that copy moves the
+        // baseline, which is the point of photographing them at all.
+        PoseSdCardFailure(logs, new SdCardNotPresentException(rawDeviceResponse: []));
+        CaptureDeviceLogsState(main, "devicelogs-3-no-sd-card", "DeviceLogsNoSdCardTitle",
+                               "NO SD CARD", paneAtRest);
+
+        // Streaming rather than SD logging: the two differ only in which guidance sentence the
+        // classifier picks, and one of them has to be the one in the picture.
+        PoseSdCardFailure(logs, new SdOperationBlockedException(SdOperationBlockedReason.Streaming));
+        CaptureDeviceLogsState(main, "devicelogs-4-device-busy", "DeviceLogsBusyTitle",
+                               "DEVICE BUSY", paneAtRest);
+
+        // The classifier's default arm — an unattributed failure — is the one that produces the red
+        // panel. Its StatusMessage is the exception's own text, so this literal is what the second
+        // line of that panel renders; fixed and invented, like every other seeded string here,
+        // because anything a real device produced would vary per host.
+        PoseSdCardFailure(logs, new IOException(SdCardErrorText));
+        CaptureDeviceLogsState(main, "devicelogs-5-sd-card-error", "DeviceLogsErrorTitle",
+                               "SD CARD ERROR", paneAtRest);
+
+        // Put the window back the way the desktop sweep left it, for the reason CaptureDesktop
+        // gives: nothing after this reads the posed view-model, and "put it back" is cheaper than
+        // establishing that.
+        logs.SelectedDevice = null!;
+        logs.ConnectedDevices.Remove(device);
+        tabs[0].IsChecked = false;
+        Set(vm, "SelectedIndex", 0);
+    }
+
+    // LoggedDataPanePrototype.axaml's DEVICE LOGS pivot.
+    private const string DeviceLogsTabId = "DeviceLogsTab";
+
+    // The device-reported detail line on the SD CARD ERROR panel. Fixed literal, for the reason
+    // SeedPortName and friends are: it is rendered into a PNG whose bytes are the gate.
+    private const string SdCardErrorText = "SD card read failed (0x0B)";
+
+    /// <summary>
+    /// Applies a classified SD card failure the way the view-model's own <c>ApplyFailureState</c>
+    /// does — state, terse message, guidance — from the app's classifier rather than from three
+    /// literals here.
+    /// </summary>
+    private static void PoseSdCardFailure(DeviceLogsViewModel logs, Exception cause)
+    {
+        var failure = SdCardFailureClassifier.Classify(cause);
+        logs.SdCardState = failure.State;
+        logs.SdCardErrorMessage = failure.StatusMessage;
+        logs.SdCardErrorGuidance = failure.Guidance;
+        Pump();
+    }
+
+    /// <summary>
+    /// Reads the posed empty state back out of the visual tree by its title, then captures.
+    /// </summary>
+    /// <remarks>
+    /// The assert is not decoration, and it matters more on a FIRST recording than anywhere else in
+    /// this harness. These five panels sit in one Grid cell and differ only in which of them is
+    /// visible, so a state that failed to pose renders as an empty pane — and with no
+    /// <c>x:DataType</c> in this view, a renamed view-model member produces exactly that silently.
+    /// A picture of an empty pane recorded as the baseline would then be the gate's idea of
+    /// correct. <see cref="RequireRenderedText"/> reads the title element by
+    /// <c>AutomationProperties.AutomationId</c> and fails by name if it is absent, invisible, or
+    /// reads something else.
+    /// </remarks>
+    private static void CaptureDeviceLogsState(
+        Window main, string name, string titleAutomationId, string title, EndState? paneAtRest)
+    {
+        RequireRenderedText(main, name, titleAutomationId, title);
+        Capture(name, main, paneAtRest);
+    }
+
+    /// <summary>
+    /// A real <see cref="SerialStreamingDevice"/> that answers <c>IsConnected</c> from a field.
+    /// </summary>
+    /// <remarks>
+    /// <para>
+    /// Four of the five Device Logs states are behind <c>DeviceLogsViewModel.CanAccessSdCard</c>,
+    /// which wants a selected device that <em>is connected</em> over USB or WiFi. In production
+    /// <c>AbstractStreamingDevice.IsConnected</c> reads through to a live Core device, and there is
+    /// no way to produce one of those without a transport — which this harness may never open. That
+    /// property is <c>virtual</c>, so overriding it is the whole of the divergence: everything else
+    /// the view and the view-model touch — <c>ConnectionType</c>, <c>DeviceDisplayName</c>,
+    /// <c>DisplayIdentifier</c>, the notification plumbing — is the app's own type behaving
+    /// normally, which is what keeps these screens a picture of the app rather than of a stub.
+    /// </para>
+    /// <para>
+    /// Constructed with the same fixed literals the dialog scenarios seed, so the device name and
+    /// port that land in the PNG cannot vary by host or by run.
+    /// </para>
+    /// </remarks>
+    private sealed class PosedSerialDevice()
+        : SerialStreamingDevice(SeedPortName, SeedDeviceName, SeedSerialNumber, SeedFirmwareVersion)
+    {
+        private bool _connected;
+
+        public override bool IsConnected => _connected;
+
+        /// <summary>
+        /// Sets the connected state and notifies, which is what the view-model's own connectivity
+        /// subscription listens for — the same signal a real device raises off Core's
+        /// <c>StatusChanged</c>.
+        /// </summary>
+        public void SetConnected(bool connected)
+        {
+            if (_connected == connected) { return; }
+            _connected = connected;
+            OnPropertyChanged(nameof(IsConnected));
+        }
     }
 
     // ---- Dialogs: the Windows IDialogService shows, built by hand and seeded ----

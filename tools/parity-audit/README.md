@@ -11,7 +11,7 @@ Used for the 2026-07-22 parity audit → issues **#5–#14**.
 
 | Harness | App | How | Output |
 |---|---|---|---|
-| `AvaloniaCapture/` | the Avalonia port | boots the **real** app headless (Skia, no display) and drives the view-models | `<out>/avalonia/desktop-*.png`, `mobile-{portrait,landscape}-*.png`, `dialog-*.png` |
+| `AvaloniaCapture/` | the Avalonia port | boots the **real** app headless (Skia, no display) and drives the view-models | `<out>/avalonia/desktop-*.png`, `mobile-{portrait,landscape}-*.png`, `devicelogs-*.png`, `dialog-*.png` |
 | `WpfCapture/` | the original WPF app | runs the **real** app off-screen, captures via `RenderTargetBitmap` | `<out>/wpf/wpf-*.png` |
 | `montage.py` | — | pairs them left/right with labels | `<out>/montage/*.png` |
 
@@ -26,9 +26,11 @@ VM booleans (`IsAppSettingsOpen`, `IsNotificationsOpen`,
 `IsLiveGraphSettingsOpen`, `IsLogSummaryOpen`); the mobile shell is hosted in a
 headless window at the Galaxy A16's true logical content size — portrait
 (384×800) and landscape (820×360) — and navigated by raising `Click` on the named
-nav buttons (`NavChannels`/`RailChannels`…); and since #213 the **dialogs** are
+nav buttons (`NavChannels`/`RailChannels`…); since #213 the **dialogs** are
 constructed directly with their real view-models and seeded per state, see
-[Dialogs](#dialogs).
+[Dialogs](#dialogs); and since #280 the **Device Logs** pivot inside the Logged
+Data pane is captured in each of its five states, four of which need a device —
+still not a real one, see [Device Logs](#device-logs).
 `DAQIFI_TEST_MODE=1` is set so no modal dialogs / firewall prompts appear and the
 per-user data dir is used.
 
@@ -380,6 +382,67 @@ starts a network fetch (`LoadFirmwareOptionsAsync`) that populates a bound `Comb
 asynchronously, so its rendered state is a race against github.com. Capturing it needs an
 injected stub `IFirmwareDownloadService`, which makes the picture a picture of a stub.
 
+## Device Logs
+
+The Logged Data pane has two tabs, and until #280 the manifest only ever saw the first one.
+`desktop-2-loggeddata` photographs the pane as it opens — on **APP LOGS** — and nothing
+switched away, so `DeviceLogsView.axaml` and the **five** empty states it carries were
+outside the gate entirely: `NO FILES`, `NO DEVICE`, `NO SD CARD`, `DEVICE BUSY`,
+`SD CARD ERROR`. `mobile-{portrait,landscape}-3-storage` are not cover for it either — those
+render `Views/Mobile/DeviceLogsMobileView.axaml`, a different file with its own markup.
+
+That gap had already been used. #276 moved three of the five onto the shared
+`emptyTitle`/`emptyBody` classes, and for **these three** the move was larger than for the
+five desktop panes it re-recorded alongside them: those panes' sentences were already 15px
+capped at 420, while Device Logs' were 13px capped at **320**, so the conversion reflowed
+them rather than only recolouring them. #276's body says so and says it verified them by
+hand through a capture site that was then reverted — so the check happened once and the repo
+kept none of it.
+
+`CaptureDeviceLogs()` in `AvaloniaCapture/Program.cs` closes that. It runs after the desktop
+and mobile phases and before the dialogs, selects the pane, checks the `DeviceLogsTab` pivot
+by `AutomationProperties.AutomationId`, and captures one PNG per state:
+
+| screen | what it pins |
+|---|---|
+| `devicelogs-1-no-device` | the state a capture run is already in — nothing connected |
+| `devicelogs-2-no-files` | connected, card OK, nothing logged to it |
+| `devicelogs-3-no-sd-card` | `SdCardNotPresentException` through the app's classifier |
+| `devicelogs-4-device-busy` | `SdOperationBlockedException` — the neutral panel from #146 |
+| `devicelogs-5-sd-card-error` | the classifier's default arm, i.e. the red panel |
+
+Four rules, of the same kind the dialog phase runs under:
+
+- **One size, not two.** These are captured at `DesktopSize` only. Folding them into
+  `SweepDesktop` would have run them at the minimum size too and added **ten** screens for
+  one pane; this is a separate phase, the way the dialogs are. What that does not cover is
+  these five at 720x480 — the pane is the same vertically-centred empty-state layout the
+  `desktop-min-*` sweep already exercises on four sibling panes, and adding the second size
+  later is five more names in `ExpectedScreens`.
+- **Never connect anything.** Four of the five are behind
+  `DeviceLogsViewModel.CanAccessSdCard`, which wants a selected device reporting
+  `IsConnected`. `AbstractStreamingDevice.IsConnected` reads through to a live Core device
+  and that property is `virtual`, so `PosedSerialDevice` overrides **only** it and is
+  otherwise the app's own `SerialStreamingDevice` — seeded with the same fixed literals the
+  dialog scenarios use, so nothing in the PNG can vary by host. Order matters: the device is
+  selected while it still reads *disconnected* and only then flipped, because selecting an
+  already-connected device runs `OnSelectedDeviceChanged`'s refresh branch and fires a real
+  SD listing at it.
+- **Pose through the app's own classifier, not through three string literals.**
+  `SdCardFailureClassifier.Classify` is what picks the state, the terse status message and
+  the guidance sentence in production, so routing the last three screens through it means
+  they photograph the app's copy — and a change to that copy moves a hash. The one literal
+  is the device-reported detail line on the error panel, which by definition is not the
+  app's to own.
+- **Assert the element, not just the picture** — and here that matters most at the
+  *recording*, not at later runs. The five panels occupy one `Grid` cell and differ only in
+  which is visible, so a state that failed to pose renders as an empty pane; with no
+  `x:DataType` in this view, a renamed view-model member produces exactly that, silently. A
+  picture of an empty pane recorded as a baseline is then the gate's idea of correct.
+  `RequireRenderedText` reads each title back by `AutomationId` — the five
+  `DeviceLogs*Title` ids exist for this — and fails by name if it is absent, invisible or
+  reads something else.
+
 ## Window size, and the theme the whole manifest assumes
 
 Two things every hash here silently depended on until #253, both of which the harness now
@@ -636,6 +699,28 @@ Logged Data's sentence going 13 → 15px and `TextPrimary` → `TextSecondary`, 
 Five `--determinism` runs agreed **34/34** on the merged tree before the four were re-recorded
 from that run's `r1`, and the four hashes reproduce a second host's independent capture of the
 same tree byte for byte.
+
+`macos-arm64.sha256` was extended 2026-09-07 for #280 (macOS 26.5 build 25F71, Apple silicon,
+.NET SDK 10.0.302) with the five `devicelogs-*` screens — the Logged Data pane's DEVICE LOGS
+tab in each of its empty states, see [Device Logs](#device-logs). The recording is **purely
+additive**: every screen the manifest already listed is byte-for-byte unchanged against the
+capture that produced these five, all thirty-four of them, which is the evidence that adding
+a phase that poses a connected device onto the shared `MainWindow` moved nothing that was
+already gated. Five `--determinism` runs agreed **39/39** on the changed tree, and the five
+hashes were recorded from that run's own `r1`. The five new lines land in one contiguous
+block between `desktop-min-9-*` and `dialog-*`, touching no existing line — `devicelogs`
+sorts there because `s` &lt; `v` and `e` &lt; `i`.
+
+The recording is **not** single-host: on the PR that made it the `macos-latest` runner — macOS
+**26.6.2** (25G83), arm64, image `macos26/20260831.0337.3`, a different machine on a newer macOS
+build than the 26.5 (25F71) Mac that recorded it — passed its own five-run determinism check
+**39/39** and then reproduced this manifest, all five new hashes included. That matters a little
+more here than for a pure re-recording: four of these five screens are rendered from a *posed*
+view-model, and "the pose is reproducible on the machine that wrote it" would be a much weaker
+claim than the one every other line in this file makes.
+
+What it does not establish is anything about these five states at the minimum window size, which
+are not captured — see the one-size note in [Device Logs](#device-logs).
 
 **A mismatch is a prompt, not a verdict** — re-read that environment line first. In CI
 the same applies with one addition: the baseline step prints the runner's macOS build and
