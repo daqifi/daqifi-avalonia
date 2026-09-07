@@ -24,7 +24,6 @@ using Daqifi.Core.Firmware;
 using Daqifi.Desktop.Device.Firmware;
 using Daqifi.Desktop.Device.SerialDevice;
 using ILanChipInfoProvider = Daqifi.Core.Firmware.ILanChipInfoProvider;
-using LanChipInfo = Daqifi.Core.Firmware.LanChipInfo;
 using System.Collections.ObjectModel;
 using System.Collections.Specialized;
 using System.ComponentModel;
@@ -45,6 +44,14 @@ namespace Daqifi.Desktop.ViewModels;
 public partial class DaqifiViewModel : ObservableObject, IFirmwareUpdateHost, ILoggingSessionListHost, IDiskSpaceMonitorHost, IDisposable
 {
     private readonly AppLogger _appLogger = AppLogger.Instance;
+
+    /// <summary>
+    /// The same <see cref="Microsoft.Extensions.Logging"/> logger handed to the firmware
+    /// coordinator, kept so the connect-time WiFi chip-info probe reports through the same channel
+    /// the during-a-flash probe does rather than discarding Core's per-attempt diagnostics.
+    /// Production routes it back into <c>DAQifiAppLog.log</c> via <see cref="AppLoggerLoggerProvider"/>.
+    /// </summary>
+    private readonly ILogger<FirmwareUpdateService> _firmwareLogger;
 
     #region Private Variables
     private const int SidePanelWidth = 85;
@@ -833,6 +840,7 @@ public partial class DaqifiViewModel : ObservableObject, IFirmwareUpdateHost, IL
         // feeds the coordinator through the IFirmwareUpdateHost seam (which it implements below).
         var firmwareDownload = firmwareDownloadService ?? CreateDefaultFirmwareDownloadService();
         var resolvedFirmwareLogger = firmwareLogger ?? NullLogger<FirmwareUpdateService>.Instance;
+        _firmwareLogger = resolvedFirmwareLogger;
         var firmwareUpdate = firmwareUpdateService
             ?? CreateDefaultFirmwareUpdateService(firmwareDownload, resolvedFirmwareLogger);
         _firmwareCoordinator = new FirmwareUpdateCoordinator(
@@ -2405,7 +2413,8 @@ public partial class DaqifiViewModel : ObservableObject, IFirmwareUpdateHost, IL
                 // hard to try — the same reason WifiFirmwareNeedsFlash is shared below.
                 var chipInfo = (await lanChipProvider.GetLanChipInfoWithRetryAsync(
                     FirmwareUpdateCoordinator.WifiChipInfoRetryOptions,
-                    cancellationToken: wifiCheckToken)).ChipInfo;
+                    _firmwareLogger,
+                    wifiCheckToken)).ChipInfo;
                 var needsFlash = FirmwareUpdateCoordinator.WifiFirmwareNeedsFlash(chipInfo, out var reportedVersion);
 
                 // These mutate UI-bound state (device properties + the NotificationList collection),
