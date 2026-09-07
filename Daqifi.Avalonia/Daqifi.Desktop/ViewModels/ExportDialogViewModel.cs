@@ -355,12 +355,18 @@ public partial class ExportDialogViewModel : ObservableObject, IDisposable
                 AppLogger.Instance.AddBreadcrumb("export", "Data export blocked by destination file",
                     Common.Loggers.BreadcrumbLevel.Warning);
             }
-            else if (exported < targets.Count)
+            else if (exported == 0 || exported < targets.Count)
             {
                 // The run finished without throwing and still did not produce every file it set out
                 // to: a session whose rows are gone, or one that was deleted between the dialog
                 // opening and Export being pressed. Not an exception anywhere — which is precisely
                 // why "did not throw" was the wrong question to answer "Export complete" with.
+                //
+                // `exported == 0` is not redundant with the comparison beside it: it is what catches
+                // ZERO targets, where `0 < 0` is false and the success branch would otherwise run
+                // over an export that was never even attempted. Only LoggingSessionListViewModel's
+                // own count check keeps the dialog from opening on an empty selection today, and a
+                // guard in another class is not what should decide whether this one tells the truth.
                 failed = true;
                 failureReason = DescribeShortfall(exported, targets.Count);
                 AppLogger.Instance.Warning($"Export finished short: {failureReason}");
@@ -539,10 +545,12 @@ public partial class ExportDialogViewModel : ObservableObject, IDisposable
     /// only actionable if the user can see how many landed — and because the destination shown
     /// underneath it may well contain files from an earlier, complete export.
     /// </summary>
-    private static string DescribeShortfall(int exported, int requested) =>
-        exported == 0
-            ? "Nothing was exported: no logged data was found."
-            : $"Exported {exported} of {requested} sessions. The rest had no logged data.";
+    private static string DescribeShortfall(int exported, int requested) => requested switch
+    {
+        0 => "Nothing was exported: no sessions were selected.",
+        _ when exported == 0 => "Nothing was exported: no logged data was found.",
+        _ => $"Exported {exported} of {requested} sessions. The rest had no logged data.",
+    };
 
     /// <summary>
     /// One session mapped to the file it will be written to.

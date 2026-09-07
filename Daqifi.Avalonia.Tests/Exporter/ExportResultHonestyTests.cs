@@ -151,6 +151,33 @@ public sealed class ExportResultHonestyTests : IDisposable
     }
 
     /// <summary>
+    /// Zero sessions is the degenerate end of the same count, and the one a naive
+    /// <c>exported &lt; requested</c> misses: <c>0 &lt; 0</c> is false, so an export that was never even
+    /// attempted lands on the success branch. Only <c>LoggingSessionListViewModel</c>'s own count
+    /// check keeps the dialog from opening this way today — a guard in another class, which is not
+    /// what should decide whether this one tells the truth.
+    /// </summary>
+    [Fact]
+    public async Task An_export_with_no_sessions_selected_is_not_reported_as_complete()
+    {
+        var destination = Path.Combine(_root, "export");
+        Directory.CreateDirectory(destination);
+
+        var viewModel = new ExportDialogViewModel(_contexts, Array.Empty<LoggingSession>())
+        {
+            ExportFilePath = destination,
+        };
+
+        await viewModel.ExportLoggingSessionsCommand.ExecuteAsync(null);
+
+        Assert.False(viewModel.ExportSucceeded,
+            $"an export of nothing at all reported: '{viewModel.ExportResultMessage}'");
+        Assert.Contains("no sessions were selected", viewModel.ExportResultMessage ?? string.Empty,
+            StringComparison.Ordinal);
+        Assert.Empty(Directory.GetFiles(destination));
+    }
+
+    /// <summary>
     /// The ordinary case, so the fix cannot be "always report a failure": a real averaged export
     /// writes its file and reports the success it actually had.
     /// </summary>
