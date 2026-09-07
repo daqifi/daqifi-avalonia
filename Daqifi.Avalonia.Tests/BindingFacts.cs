@@ -14,10 +14,18 @@ namespace Daqifi.Avalonia.Tests;
 /// </para>
 ///
 /// <para>
-/// A textual assertion is only worth anything in pairs, so <see cref="AssertBinds"/> and
-/// <see cref="AssertExposes"/> are meant to be used together: the binding exists in the markup,
-/// and the member it names exists and is readable on the type the markup will meet at runtime.
-/// Either one alone passes happily while the screen is broken.
+/// <see cref="AssertBinds"/> and <see cref="AssertExposes"/> are meant to be used together: the
+/// binding exists in the markup, and the member it names is readable on the type the markup will
+/// meet at runtime. <see cref="AssertBinds"/> carries most of that weight — it is the half nothing
+/// else in the build can see, and it passes happily while the screen is broken.
+/// </para>
+///
+/// <para>
+/// <see cref="AssertExposes"/> is the narrower of the two, because call sites pass the member name as
+/// <c>nameof</c>: deleting or renaming the member then breaks the build, and the runtime assertion
+/// never gets to run. What it still catches is the shape the compiler is content with and a binding
+/// is not — a member that becomes a public field or a method, or a property that loses its getter,
+/// all of which leave <c>GetProperty</c> returning null or a write-only property behind.
 /// </para>
 /// </summary>
 internal static class BindingFacts
