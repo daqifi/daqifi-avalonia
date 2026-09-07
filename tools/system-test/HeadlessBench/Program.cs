@@ -55,6 +55,7 @@ internal static class HeadlessBench
     private static string? _restoreName;
     private static bool _failed;
     private static readonly List<double> PumpLatenciesMs = [];
+    private static readonly List<string> SetupReconnectRetries = [];
     private static readonly Vector Dpi = new(96, 96);
     private static readonly JsonSerializerOptions Json = new() { WriteIndented = false };
 
@@ -679,6 +680,27 @@ internal static class HeadlessBench
         // exactly what it measured before — including CONN-DISC's thread probe, which is still
         // spanning one connect/disconnect cycle rather than four.
         RunFriendlyNameRow(main, shell, devicesPane);
+        EmitSetupReconnectSummary();
+    }
+
+    /// <summary>One <c>DEV-NAME</c>/<c>unexpected</c> line saying whether any setup reconnect in
+    /// this run needed its retry.</summary>
+    /// <remarks>
+    /// A retry that worked leaves no trace otherwise, and a rig that quietly needed two goes at the
+    /// port is one whose next red is harder to read. Not a failure — the mechanism doing its job is
+    /// exactly what this records (#287). Called by BOTH modes that can retry: the hardware sequence
+    /// and <see cref="RunRestoreName"/>, which reaches <see cref="ReconnectForSetup"/> through its
+    /// own connect and through <see cref="Bounce"/>. A repair run is the one an agent is least able
+    /// to re-run — the board is already misnamed — so its retries are the last ones that should go
+    /// unrecorded.
+    /// </remarks>
+    private static void EmitSetupReconnectSummary()
+    {
+        Emit(2, "DEV-NAME", "unexpected", SetupReconnectRetries.Count > 0 ? "finding" : "pass",
+             SetupReconnectRetries.Count == 0
+                 ? "every setup reconnect in this run connected on the first attempt"
+                 : $"{SetupReconnectRetries.Count} setup reconnect(s) needed a retry — " +
+                   string.Join("; ", SetupReconnectRetries));
     }
 
     /// <summary>DEV-NAME. Called last from <see cref="RunHardwareSteps"/>, with nothing connected.
@@ -699,7 +721,7 @@ internal static class HeadlessBench
         // is not racing that close. Same reason as Bounce below, which is where the rest of the
         // row's reconnects go.
         PumpFor(TimeSpan.FromSeconds(1));
-        var device = ConnectSerial(shell, out var reconnectSeconds);
+        var device = ReconnectForSetup(shell, "DEV-NAME setup", out var reconnectSeconds);
         if (device is null)
         {
             // A failing Step, not a not-run: the port was connectable a moment ago, so failing to
@@ -707,8 +729,8 @@ internal static class HeadlessBench
             // a run that never checked the rename would otherwise exit 0. The nameless-board case
             // below IS a not-run, because that is a board this row deliberately declines to touch.
             Step(2, "DEV-NAME", "works", false,
-                 $"could not reconnect {_port} after {reconnectSeconds:F1} s, so none of the friendly-name " +
-                 "checks ran; ConnectedDevices=" + shell.ConnectedDevices.Count, null, reconnectSeconds);
+                 $"could not reconnect {_port} in two attempts totalling {reconnectSeconds:F1} s, so none of the " +
+                 "friendly-name checks ran; ConnectedDevices=" + shell.ConnectedDevices.Count, null, reconnectSeconds);
             return;
         }
 
@@ -835,7 +857,8 @@ internal static class HeadlessBench
                     // Whatever is connected now, or a fresh connection when the run left none —
                     // ConnectSerial refuses to answer while anything is still connected, so the
                     // two cases cannot be confused.
-                    var current = shell.ConnectedDevices.FirstOrDefault() ?? ConnectSerial(shell, out _);
+                    var current = shell.ConnectedDevices.FirstOrDefault()
+                                  ?? ReconnectForSetup(shell, "DEV-NAME restore", out _);
                     if (current is null)
                     {
                         problems.Add($"could not connect {_port} to put the name back");
@@ -890,11 +913,13 @@ internal static class HeadlessBench
         try
         {
             var wanted = _restoreName!;
-            var device = ConnectSerial(shell, out var seconds);
+            // Setup, not the check — and the connect this whole repair mode depends on: a board
+            // whose name could not be put back is the state this tool exists to leave behind.
+            var device = ReconnectForSetup(shell, "DEV-NAME repair", out var seconds);
             if (device is null)
             {
                 Step(2, "DEV-NAME", "repair", false,
-                     $"could not connect {_port} after {seconds:F1} s; the board's name is unchanged", null);
+                     $"could not connect {_port} in two attempts totalling {seconds:F1} s; the board's name is unchanged", null);
                 return;
             }
 
@@ -914,6 +939,9 @@ internal static class HeadlessBench
             // Same net the hardware sequence uses, and idempotent for the same reason: on the
             // normal path the disconnect above has already happened and this does nothing.
             StopAndDisconnect(shell);
+            // In the finally, not after the try: the early return above — the repair connect that
+            // never came back — is exactly the run whose retries are worth recording.
+            EmitSetupReconnectSummary();
         }
     }
 
@@ -949,6 +977,54 @@ internal static class HeadlessBench
         return shell.ConnectedDevices.FirstOrDefault();
     }
 
+    /// <summary>Connect the bench port for a step's SETUP, retrying once when the port does not
+    /// come back. Never for the connect a row is itself checking: CONN-USB calls
+    /// <see cref="ConnectSerial"/> directly, because retrying the thing under test is how a rig
+    /// comes to report a broken connect as a working one.</summary>
+    /// <remarks>
+    /// One retry, deliberately, rather than a longer deadline. Every reconnect here follows a port
+    /// this same process has just closed, and one run in five failed to get the board back inside
+    /// the 20 s deadline while the other four took 5.3-5.6 s (#287). At ~4x the typical connect the
+    /// deadline was not what failed — the port did not come back at all — so widening it would buy
+    /// nothing and would slow every genuine failure. A retry tells a transient port-release race
+    /// apart from a port that is really gone, and the run says which.
+    /// <para>
+    /// The cleanup between attempts is load-bearing. The first attempt's connect can land AFTER its
+    /// deadline, and <see cref="ConnectSerial"/> deliberately refuses to hand back a device it did
+    /// not just connect — it cannot tell that device from one a silently-failed disconnect
+    /// stranded. Without the disconnect below, the retry would meet that refusal and fail a run
+    /// that had a perfectly good device in hand.
+    /// </para>
+    /// </remarks>
+    private static IStreamingDevice? ReconnectForSetup(DaqifiViewModel shell, string purpose, out double seconds)
+    {
+        var device = ConnectSerial(shell, out seconds);
+        if (device is not null) { return device; }
+
+        Console.WriteLine($"[WARN] {purpose}: {_port} did not come back after {seconds:F1} s; retrying the connect once (#287)");
+        // Let the abandoned attempt finish arriving BEFORE clearing up after it, and look twice.
+        // A connect that missed its deadline is not cancelled, and can still register a device
+        // seconds later; disconnecting first and retrying straight away would leave a window for
+        // that late device to land in between, and ConnectSerial — which cannot tell it from one a
+        // silently-failed disconnect stranded — would then refuse the retry as stale. Pumping first
+        // moves the window past the cleanup, and the second pass catches an arrival during the
+        // first. It cannot be closed completely here: ConnectSerial does not hand back the task it
+        // abandoned, so there is nothing at this layer to await. Also longer overall than the 1 s
+        // the callers settle for before their first attempt, which is the state the flake was seen
+        // in. StopAndDisconnect is idempotent and silent when there is nothing to clear.
+        for (var settle = 0; settle < 2; settle++)
+        {
+            PumpFor(TimeSpan.FromSeconds(2));
+            StopAndDisconnect(shell);
+        }
+        device = ConnectSerial(shell, out var retrySeconds);
+        SetupReconnectRetries.Add(
+            $"{purpose}: first attempt gave up after {seconds:F1} s, retry " +
+            $"{(device is null ? "also failed after" : "connected in")} {retrySeconds:F1} s");
+        seconds += retrySeconds;
+        return device;
+    }
+
     /// <summary>Disconnect through the Devices pane's own command, without asserting on it —
     /// CONN-DISC is the row that does that, and it drives the same command itself so this helper
     /// cannot stand in for it. Returns whether the device actually left the shell's list.</summary>
@@ -977,7 +1053,9 @@ internal static class HeadlessBench
         // Keep pumping while the OS lets go of the CDC port, so the reconnect below is not racing
         // the close. Pumping rather than sleeping: the disconnect's own continuations land here.
         PumpFor(TimeSpan.FromSeconds(1));
-        return ConnectSerial(shell, out seconds);
+        // Setup, not the check: every caller bounces in order to make the board re-report something,
+        // and none of them is testing whether connecting works.
+        return ReconnectForSetup(shell, "DEV-NAME bounce", out seconds);
     }
 
     /// <summary>POSIX single-quoting for a value going into a shell command the evidence line asks
