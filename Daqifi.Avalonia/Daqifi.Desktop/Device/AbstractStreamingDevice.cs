@@ -10,6 +10,7 @@ using Daqifi.Core.Device.Network;
 using ChannelDirection = Daqifi.Core.Channel.ChannelDirection;
 using ChannelType = Daqifi.Core.Channel.ChannelType;
 using Daqifi.Desktop.Models;
+using System.Collections.Concurrent;
 using System.Globalization;
 using System.IO;
 using ScpiMessageProducer = Daqifi.Core.Communication.Producers.ScpiMessageProducer;
@@ -335,6 +336,17 @@ public abstract partial class AbstractStreamingDevice : ObservableObject, IStrea
     private long _analogProcessingFailureCount;
     private long _digitalProcessingFailureCount;
     private long _debugDataFailureCount;
+
+    /// <summary>
+    /// How many non-finite readings have been discarded on each analog channel index in the
+    /// current streaming session — see <see cref="ReportNonFiniteReading"/> for why the tally is
+    /// per channel. Cleared with the failure counters above when streaming starts.
+    /// </summary>
+    /// <remarks>
+    /// Concurrent because the per-message path is reached from the transport's callback thread and
+    /// the counters above are already <see cref="Interlocked"/>-updated for the same reason.
+    /// </remarks>
+    private readonly ConcurrentDictionary<int, long> _nonFiniteReadingCounts = new();
 
     // Whether the device-reported clock frequency has been applied to _timestampProcessor for the
     // current streaming session. Cleared alongside every ResetAll(), which per Core's contract also
@@ -1279,6 +1291,31 @@ public abstract partial class AbstractStreamingDevice : ObservableObject, IStrea
                         scaledValue = channel.GetScaledValue((int)message.AnalogInData[dataIndex]);
                     }
 
+                    // A reading that is not a finite number is not a measurement, and it costs far
+                    // more than the one sample it arrived on. Core's per-channel statistics keep a
+                    // running ValueSum, so a single NaN makes the Summary flyout's Average read NaN
+                    // for the rest of the session while Min and Max keep working — one column of a
+                    // row going wrong, which reads as a display bug rather than a bad reading
+                    // (issue #295). The plot takes it as a series point and the exporter writes it
+                    // out. Refusing it here, at the one place a streamed analog value enters the
+                    // app, is what stops it being every consumer's problem to solve separately.
+                    //
+                    // IsFinite, not IsNaN: an infinity poisons a running sum exactly as thoroughly
+                    // and is no more a voltage. That is a different question from the one
+                    // SessionSampleWriter answers at the database door, where the constraint is
+                    // what SQLite can store — and SQLite stores infinities fine.
+                    //
+                    // Only the USB float branch above can actually produce one today: Core
+                    // sanitizes the calibration coefficients the WiFi branch scales with, so
+                    // GetScaledValue cannot return a non-finite value. The guard sits after the
+                    // branch anyway because the invariant worth holding is about the value being
+                    // published, not about which transport supplied it.
+                    if (!double.IsFinite(scaledValue))
+                    {
+                        ReportNonFiniteReading(channel, scaledValue);
+                        continue;
+                    }
+
                     var sample = new DataSample(this, channel, messageTimestamp, scaledValue, firmwareDeltaMs);
                     channel.ActiveSample = sample;
                 }
@@ -1820,6 +1857,7 @@ public abstract partial class AbstractStreamingDevice : ObservableObject, IStrea
         Interlocked.Exchange(ref _analogProcessingFailureCount, 0);
         Interlocked.Exchange(ref _digitalProcessingFailureCount, 0);
         Interlocked.Exchange(ref _debugDataFailureCount, 0);
+        _nonFiniteReadingCounts.Clear();
         _checkForLeftoverFrames = _hasSeenDeviceTimestamp;
         _pendingFirstFrameValidation = !_hasSeenDeviceTimestamp;
         _heldFirstFrame = null;
@@ -1906,6 +1944,68 @@ public abstract partial class AbstractStreamingDevice : ObservableObject, IStrea
     /// end while staying a small fraction of the bounded breadcrumb ring.
     /// </summary>
     private const int FullyLoggedFailureCount = 10;
+
+    /// <summary>
+    /// Reports a reading refused by <see cref="ProcessStreamMessage"/> for not being a finite
+    /// number, throttled the way every other per-message report in this class is.
+    /// </summary>
+    /// <remarks>
+    /// <para>
+    /// Counted <b>per channel</b>, not once for the device, and that is the difference between a
+    /// diagnosis and a misleading silence: a board that starts emitting NaN on a second channel an
+    /// hour into a run would say nothing at all if the first channel had already pushed a shared
+    /// count past the next power of ten. Every channel gets its own occurrence 1.
+    /// </para>
+    /// <para>
+    /// Only powers of ten are logged. A channel whose every reading is bad produces one per
+    /// decade of samples — enough that it keeps announcing itself, few enough that it cannot flush
+    /// the bounded Sentry breadcrumb ring or turn the log into a write storm, which is the same
+    /// arithmetic <see cref="ReportStreamProcessingFailure"/> documents at length.
+    /// </para>
+    /// <para>
+    /// <b>There is no UI surface for this</b>, and that is a deliberate limit rather than an
+    /// oversight: it is a warning in the log plus a Sentry breadcrumb, the same answer
+    /// <c>SessionSampleWriter</c> gives for the rows it refuses. Raising it to the notification
+    /// bell means crossing <c>LoggingManager</c> and <c>DaqifiViewModel</c> and is a separate
+    /// decision. What the user sees without reading a log is the absence of the symptom — the
+    /// Average stays a number, and a channel whose readings are unusable stops updating rather
+    /// than showing NaN.
+    /// </para>
+    /// </remarks>
+    private void ReportNonFiniteReading(AnalogChannel channel, double value)
+    {
+        var occurrence = _nonFiniteReadingCounts.AddOrUpdate(
+            channel.Index, 1L, static (_, previous) => previous + 1);
+
+        if (!IsPowerOfTen(occurrence))
+        {
+            // Silent: the next power-of-ten report carries the count.
+            return;
+        }
+
+        // Invariant formatting for the value, so a NaN or an infinity is written the way it is
+        // searched for regardless of the machine's locale.
+        AppLogger.Warning(
+            $"Discarded a non-finite reading ({value.ToString("R", CultureInfo.InvariantCulture)}) from " +
+            $"channel {channel.Name} on {Name}: it is not a measurement and would corrupt this " +
+            $"channel's statistics for the rest of the session. " +
+            $"{occurrence.ToString(CultureInfo.InvariantCulture)} discarded on this channel so far " +
+            $"this session.");
+    }
+
+    /// <summary>
+    /// How many non-finite readings this device has discarded on the analog channel with
+    /// <paramref name="channelIndex"/> since streaming last started.
+    /// </summary>
+    /// <remarks>
+    /// Visible to <c>Daqifi.Avalonia.Tests</c> only, via InternalsVisibleTo in
+    /// Daqifi.Avalonia.csproj. It is the tally <see cref="ReportNonFiniteReading"/> draws its
+    /// occurrence number from, and the only way to pin that the tally is kept per channel rather
+    /// than per device — <see cref="AppLogger"/> is a singleton that discards its NLog logger in
+    /// test mode, so the warning line itself cannot be asserted on.
+    /// </remarks>
+    internal long DiscardedNonFiniteReadings(int channelIndex) =>
+        _nonFiniteReadingCounts.TryGetValue(channelIndex, out var count) ? count : 0;
 
     /// <summary>Whether <paramref name="value"/> is 1, 10, 100, 1000, …</summary>
     private static bool IsPowerOfTen(long value)
