@@ -162,6 +162,134 @@ public class WifiChipInfoProbeTests
         await Assert.ThrowsAnyAsync<OperationCanceledException>(() => probe.WaitAsync(UnwindTimeout));
     }
 
+    /// <summary>
+    /// The distinction a field log has to preserve. Both of these end the same way — nothing was
+    /// read, so <c>WifiFirmwareNeedsFlash</c> maps the null to <c>Unknown</c> and the user is sent
+    /// into a multi-minute reflash — but they mean opposite things to whoever reads the log
+    /// afterwards: a WINC still booting (SCPI <c>-200</c>) says the retry budget was too small,
+    /// while a module that never answered may be genuinely dead. Core tells the two apart in
+    /// <c>WasLanNotInitialized</c>; before this the app discarded it and logged one sentence for
+    /// both, and Core's own per-attempt lines are <c>LogDebug</c>, which never reach the file.
+    /// </summary>
+    [Fact]
+    public async Task A_module_stuck_uninitialized_reads_differently_from_one_that_never_answered()
+    {
+        var stuckUninitialized = await ScriptedProvider
+            .ThatAlwaysThrows(new LanNotInitializedException("SCPI -200"))
+            .GetLanChipInfoWithRetryAsync(FastPolicy());
+        var neverAnswered = await ScriptedProvider
+            .ThatAlwaysThrows(new TimeoutException("serial read timed out"))
+            .GetLanChipInfoWithRetryAsync(FastPolicy());
+
+        // Same outcome — which is exactly why the outcome alone was not enough.
+        Assert.Null(stuckUninitialized.ChipInfo);
+        Assert.Null(neverAnswered.ChipInfo);
+
+        var stuckReason = FirmwareUpdateCoordinator.DescribeUnreadableModule(stuckUninitialized);
+        var silentReason = FirmwareUpdateCoordinator.DescribeUnreadableModule(neverAnswered);
+
+        Assert.NotEqual(stuckReason, silentReason);
+        Assert.Contains("uninitialized WINC state machine", stuckReason, StringComparison.OrdinalIgnoreCase);
+        Assert.Contains("-200", stuckReason, StringComparison.Ordinal);
+        Assert.Contains("failed some other way", silentReason, StringComparison.OrdinalIgnoreCase);
+    }
+
+    /// <summary>
+    /// Neither clause may claim more than the flag establishes. <c>WasLanNotInitialized</c>
+    /// classifies the <em>terminal</em> attempt only, so a field log must not assert what earlier
+    /// attempts did, nor name the specific error that ended the probe — Core resets the flag after
+    /// any other failure, and that failure can be a timeout, an unparseable response, or any other
+    /// provider exception. Inventing either would mislead support about the startup sequence.
+    /// </summary>
+    [Fact]
+    public async Task Neither_clause_claims_a_probe_history_or_a_specific_terminal_error()
+    {
+        var stuck = FirmwareUpdateCoordinator.DescribeUnreadableModule(
+            await ScriptedProvider.ThatAlwaysThrows(new LanNotInitializedException("SCPI -200"))
+                .GetLanChipInfoWithRetryAsync(FastPolicy()));
+        var other = FirmwareUpdateCoordinator.DescribeUnreadableModule(
+            await ScriptedProvider.ThatAlwaysThrows(new InvalidOperationException("something else"))
+                .GetLanChipInfoWithRetryAsync(FastPolicy()));
+
+        // Scoped to the attempt the flag actually describes.
+        Assert.Contains("final attempt", stuck, StringComparison.OrdinalIgnoreCase);
+        Assert.Contains("final attempt", other, StringComparison.OrdinalIgnoreCase);
+
+        // No claim about what earlier attempts did...
+        Assert.DoesNotContain("never", other, StringComparison.OrdinalIgnoreCase);
+        // ...and no guess at which error ended it. This probe threw neither of these.
+        Assert.DoesNotContain("timed out", other, StringComparison.OrdinalIgnoreCase);
+        Assert.DoesNotContain("unparseable", other, StringComparison.OrdinalIgnoreCase);
+    }
+
+    /// <summary>
+    /// The reason is a clause appended to an outcome line that is already written, so it has to
+    /// compose into that sentence rather than stand alone — no new log line, and no log line that
+    /// begins mid-thought.
+    /// </summary>
+    [Fact]
+    public async Task The_reason_composes_onto_the_existing_outcome_line()
+    {
+        var probe = await ScriptedProvider
+            .ThatAlwaysThrows(new LanNotInitializedException("SCPI -200"))
+            .GetLanChipInfoWithRetryAsync(FastPolicy());
+
+        var reason = FirmwareUpdateCoordinator.DescribeUnreadableModule(probe);
+
+        Assert.StartsWith(" — ", reason, StringComparison.Ordinal);
+        // A semicolon would collide with the coordinator's own "…; continuing with WiFi update."
+        Assert.DoesNotContain(';', reason);
+    }
+
+    /// <summary>
+    /// The regression this change could itself introduce: a module that answered is not
+    /// unreadable, so the lines that report a real version — "is up to date (19.7.7)" and a
+    /// genuine "needs a flash (reported: 19.5.4…)" — must not gain a failure clause. Core
+    /// documents <c>WasLanNotInitialized</c> as meaningless when <c>ChipInfo</c> is non-null, so
+    /// reading it there would print a reason for a probe that never failed.
+    /// </summary>
+    [Fact]
+    public async Task A_module_that_answered_carries_no_failure_reason()
+    {
+        // An answer that arrives only after a not-initialized attempt — so the flag's underlying
+        // condition genuinely occurred during this probe, and must still not be reported.
+        var probe = await ScriptedProvider.That(
+                Outcome.Throws(new LanNotInitializedException("SCPI -200")),
+                Outcome.Returns(ChipInfo("19.5.4")))
+            .GetLanChipInfoWithRetryAsync(FastPolicy());
+
+        Assert.NotNull(probe.ChipInfo);
+        Assert.Equal(string.Empty, FirmwareUpdateCoordinator.DescribeUnreadableModule(probe));
+    }
+
+    /// <summary>
+    /// <c>WasLanNotInitialized</c> describes the <em>terminal</em> failure — Core resets it on any
+    /// other kind — so a module that reported <c>-200</c> twice and then timed out must not read as
+    /// the self-clearing case. Getting that backwards would tell support to wait out a module that
+    /// is actually dead. Equally, it must not read as "never reported an uninitialized state",
+    /// which this probe would make a lie: it reported one twice.
+    /// </summary>
+    [Fact]
+    public async Task An_early_uninitialized_report_neither_survives_nor_is_denied()
+    {
+        var probe = await ScriptedProvider.That(
+                Outcome.Throws(new LanNotInitializedException("SCPI -200")),
+                Outcome.Throws(new LanNotInitializedException("SCPI -200")),
+                Outcome.Throws(new TimeoutException("serial read timed out")))
+            .GetLanChipInfoWithRetryAsync(FastPolicy());
+
+        Assert.Null(probe.ChipInfo);
+        Assert.False(probe.WasLanNotInitialized);
+
+        var reason = FirmwareUpdateCoordinator.DescribeUnreadableModule(probe);
+
+        // Not the self-clearing verdict...
+        Assert.DoesNotContain("normally clears on its own", reason, StringComparison.OrdinalIgnoreCase);
+        // ...and not a denial that -200 was ever seen, because it was — twice.
+        Assert.DoesNotContain("never", reason, StringComparison.OrdinalIgnoreCase);
+        Assert.Contains("final attempt failed some other way", reason, StringComparison.OrdinalIgnoreCase);
+    }
+
     #region Helpers
     private static LanChipInfo ChipInfo(string version) =>
         new() { ChipId = 0x1503A0, FwVersion = version, BuildDate = "2020-01-01" };
@@ -197,7 +325,11 @@ public class WifiChipInfoProbeTests
             new(script, Outcome.Throws(new InvalidOperationException("script exhausted")));
 
         public static ScriptedProvider ThatAlwaysThrows() =>
-            new([], Outcome.Throws(new InvalidOperationException("WINC not answering")));
+            ThatAlwaysThrows(new InvalidOperationException("WINC not answering"));
+
+        /// <summary>A module that fails the same way on every attempt, for a named reason.</summary>
+        public static ScriptedProvider ThatAlwaysThrows(Exception error) =>
+            new([], Outcome.Throws(error));
 
         public Task WaitForFirstCallAsync() => _firstCall.Task.WaitAsync(UnwindTimeout);
 

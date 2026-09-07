@@ -2411,10 +2411,14 @@ public partial class DaqifiViewModel : ObservableObject, IFirmwareUpdateHost, IL
                 // Core owns the retry loop; the budget is the coordinator's, shared so the
                 // connect-time probe and the during-a-flash probe can never disagree about how
                 // hard to try — the same reason WifiFirmwareNeedsFlash is shared below.
-                var chipInfo = (await lanChipProvider.GetLanChipInfoWithRetryAsync(
+                // Keep the whole probe result, not just .ChipInfo: when nothing was read, the
+                // result is the only record of WHY, and the outcome line below is the only one
+                // that survives the app's Information+ log floor (see DescribeUnreadableModule).
+                var probe = await lanChipProvider.GetLanChipInfoWithRetryAsync(
                     FirmwareUpdateCoordinator.WifiChipInfoRetryOptions,
                     _firmwareLogger,
-                    wifiCheckToken)).ChipInfo;
+                    wifiCheckToken);
+                var chipInfo = probe.ChipInfo;
                 var needsFlash = FirmwareUpdateCoordinator.WifiFirmwareNeedsFlash(chipInfo, out var reportedVersion);
 
                 // These mutate UI-bound state (device properties + the NotificationList collection),
@@ -2450,7 +2454,7 @@ public partial class DaqifiViewModel : ObservableObject, IFirmwareUpdateHost, IL
                 }
 
                 _appLogger.Information(needsFlash
-                    ? $"WiFi firmware for {key} needs a flash (reported: {reportedVersion}, minimum: {FirmwareUpdateCoordinator.MinimumWifiFirmwareVersion})."
+                    ? $"WiFi firmware for {key} needs a flash (reported: {reportedVersion}, minimum: {FirmwareUpdateCoordinator.MinimumWifiFirmwareVersion}){FirmwareUpdateCoordinator.DescribeUnreadableModule(probe)}."
                     : $"WiFi firmware for {key} is up to date ({reportedVersion}).");
             }
             catch (OperationCanceledException)
