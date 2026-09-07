@@ -9,6 +9,10 @@ fakes; `tools/parity-audit/AvaloniaCapture` renders screens but never connects t
 hardware. HeadlessBench is the only thing that exercises the device → Core → view-model →
 rendered-window path end to end.
 
+`--scripted` is the same boot with no board: the double is a database seeded before startup
+rather than a device, which is what the three rows about *logged* data — the session list, the
+session plot, and a failed export — actually need. See [below](#--scripted-state--the-rows-that-need-no-board).
+
 ## What makes it different from a unit test
 
 It goes through the **user's** code path, not a convenient one:
@@ -52,6 +56,14 @@ It goes through the **user's** code path, not a convenient one:
 - Renaming a board is `shell.PendingFriendlyName` + `shell.SetFriendlyNameCommand` — the drawer's
   NAME box and its SAVE NAME button — not `device.SetFriendlyName(name)`, which skips the
   validation, the inline error and the re-seed the user actually sees.
+- The `--scripted` rows keep the same rule with no device in sight. Plotting a session is
+  `shell.SelectedIndex` (the nav tab) then `shell.DisplayLoggingSessionCommand`, the command each
+  session row's PLOT button binds. Exporting is the export dialog's own `ExportDialogViewModel`,
+  built the way `DaqifiViewModel.ShowExportDialogForSessionAsync` builds it, with `ExportFilePath`
+  set the way the Browse picker sets it and `ExportLoggingSessionsCommand` standing in for the
+  EXPORT button — going through the shell's `ExportLoggingSessionCommand` instead runs the same
+  code but drops the view model on the floor, and the failure message `EXPORT-FAIL` is about
+  lives on it.
 
 Every step renders the live window to a PNG and appends one JSON line to
 `<out>/results.jsonl`, so a run leaves behind evidence rather than a verdict.
@@ -84,10 +96,38 @@ reused directory also mixes two runs' PNGs and two runs' databases.
 | `--out` | run directory for `results.jsonl`, `shots/` and `appdata/` (required) | — |
 | `--rate` | streaming frequency in Hz | `100` |
 | `--seconds` | how long to stream once the first sample arrives | `5` |
-| `--scripted <state>` | test-double mode — **an unimplemented stub today** | — |
+| `--scripted <state>` | T1 mode — runs one row against a seeded database, no board (see below) | — |
 
 Exit codes: `0` all checks passed · `1` at least one `[FAIL]`, or the run threw ·
-`2` bad arguments, or an `--out` the rig could not prepare.
+`2` bad arguments (including an unknown `--scripted` state), or an `--out` the rig could not
+prepare.
+
+### `--scripted <state>` — the rows that need no board
+
+```bash
+dotnet run --project tools/system-test/HeadlessBench/HeadlessBench.csproj --no-restore -- \
+  --scripted sessions-500 --out "/tmp/headlessbench-t1-$(date +%Y%m%d-%H%M%S)"
+```
+
+Three states, one matrix row each. `--port` is not used and no serial port is opened, so these
+are the only rows that can run on a machine with no hardware attached:
+
+| state | row | what it fabricates | what it checks |
+| --- | --- | --- | --- |
+| `sessions-500` | `LOGGED-LIST` | 500 persisted sessions, one sample each, `SampleCount` NULL | all 500 reach the pane's bound list, keep their names and metadata, and get their counts backfilled |
+| `session-10h` | `LOGGED-PLOT` | one session, 108 000 samples at 3 Hz across ten hours | the Logged Data pane plots it and the drawn range covers all ten hours |
+| `export-readonly` | `EXPORT-FAIL` | one 600-sample session, plus a `chmod 555` destination | the export fails with the *classified* message and leaves the destination empty — measured against a control export to a writable folder in the same run |
+
+Each state seeds `<out>/appdata/DAQiFiDatabase.db` **before** the app boots, because the one
+caller of `LoggingManager.ReloadPersistedLoggingSessions` is `DaqifiViewModel`'s one-time init:
+seeding afterwards would be the rig adding rows to a list the app had finished loading, which is
+the opposite of the state being scripted. The schema comes from the app's own
+`DatabaseMigrator`, and the samples go in through `BulkInsert` — the call `SessionSampleWriter`
+makes in production.
+
+The two states the matrix also asks for — `sd-empty` and `drop-mid-stream` — are **not**
+implemented: their double is a fake `IStreamingDevice`, not a database, which is a separate
+piece of work (#304).
 
 ### `DAQIFI_RESTORE_NAME` — putting a board's name back
 
@@ -112,7 +152,11 @@ when it cannot, the `[FAIL]` line prints the exact command above with the right 
 <out>/results.jsonl     one JSON object per check: tier, row, check, status, evidence,
                         and optionally artifact + seconds
 <out>/shots/*.png       the live window rendered at each step
-<out>/appdata/          the app's data directory for this run (see below)
+<out>/appdata/          the app's data directory for this run (see below), and where
+                        --scripted writes the database it seeds before boot
+<out>/export-ok/        --scripted export-readonly only: the control export's destination
+<out>/export-readonly/  --scripted export-readonly only: the chmod 555 destination, put
+                        back to writable before the run ends
 ```
 
 ### It never touches your real app data
@@ -126,16 +170,23 @@ connection — the hardware path is the point.
 
 ## Rows covered
 
-`CONN-USB`, `DEV-INFO`, `DEV-TILE`, `CH-TILE`, `DEV-RATE`, `CH-AI`, `STREAM-AI`,
-`LOG-SESSION`, `GRAPH-LIVE`, `CH-DIO`, `CH-PWM`, `SD-LIST`, `CONN-DISC`, `DEV-NAME` — plus
-`limits` checks on `CH-PWM` and `DEV-NAME`, a `persists` check on `DEV-NAME`, `cleanup` checks on
-`CH-DIO` and `DEV-NAME`, and four `unexpected`-check probes (sample-arrival gaps and device-clock
-skew, the pin state a channel is left in after PWM is disabled, thread growth across
-connect/disconnect, and UI pump latency). Add a row by adding a `Step`; keep the shape —
-drive, assert the device, pump, assert the UI, capture, emit.
+**With a board** (`--port`): `CONN-USB`, `DEV-INFO`, `DEV-TILE`, `CH-TILE`, `DEV-RATE`, `CH-AI`,
+`STREAM-AI`, `LOG-SESSION`, `GRAPH-LIVE`, `CH-DIO`, `CH-PWM`, `SD-LIST`, `CONN-DISC`, `DEV-NAME`
+— plus `limits` checks on `CH-PWM` and `DEV-NAME`, a `persists` check on `DEV-NAME`, `cleanup`
+checks on `CH-DIO` and `DEV-NAME`, and four `unexpected`-check probes (sample-arrival gaps and
+device-clock skew, the pin state a channel is left in after PWM is disabled, thread growth across
+connect/disconnect, and UI pump latency).
 
-The full T2/T3 matrix has more rows than this — `DEV-NET` and `DEV-DEBUG` are not implemented,
-for the reasons in Known gaps below. Tracked in #260.
+**With no board** (`--scripted`): `LOGGED-LIST`, `LOGGED-PLOT`, `EXPORT-FAIL` — one per state,
+plus `EXPORT-FAIL`'s atomicity probe and its `cleanup` check.
+
+Add a row by adding a `Step`; keep the shape — drive, assert the device (or the service layer),
+pump, assert the UI, capture, emit.
+
+The full matrix has more rows than this — `DEV-NET` and `DEV-DEBUG` are not implemented, and each
+was inspected and rejected for a reason rather than left undone; `sd-empty` and `drop-mid-stream`
+are the two `--scripted` states still missing. Reasons in Known gaps below; the two `--scripted`
+states are tracked in #304.
 
 `DEV-NAME` runs **last and on its own connections**, which is why the sequence ends with three
 connect/disconnect cycles rather than one. `SetFriendlyName` updates the device object's
@@ -149,11 +200,31 @@ a reconnect, and so does the check that the restore landed (`DEV-NAME/cleanup`).
 
 ## Known gaps — read before trusting a green run
 
-These are real limits of the current rig, not of the app. Tracked in #260.
+These are real limits of the current rig, not of the app. The two that are open work rather than
+deliberate choices — the missing `--scripted` device states, and CI running the ones that
+exist — are tracked in #304.
 
-- **`--scripted` is a stub**, so every test-double state — empty SD card, dropped device, 500
-  sessions, a read-only export destination, a 10-hour session — is unreachable. These are the
-  T1 rows that need no hardware, so they are also the ones CI could actually run.
+- **`--scripted` covers the three database-backed states only.** `sessions-500`, `session-10h`
+  and `export-readonly` run; `sd-empty` and `drop-mid-stream` do not, because their double is a
+  fake `IStreamingDevice` rather than disk contents. The test project has one
+  (`Daqifi.Avalonia.Tests/Device/RecordingStreamingDevice.cs`) but it is `internal` to an
+  assembly this rig cannot see, so reaching it means either a shared test-doubles library or a
+  copy that drifts — a design call, not a missing `case`.
+- **CI compiles the `--scripted` states but still does not run them.** These are the rows that
+  could run there, and wiring them up is its own change to `.github/workflows/build.yml`.
+- **`EXPORT-FAIL`'s atomicity probe proves less than its name.** The exporter stages each CSV
+  beside its destination and renames it into place, so the case worth catching is a staged file
+  orphaned by a failed rename — and a read-only *directory* cannot produce one, because the same
+  permission that refuses the destination refuses the staging file. The probe therefore confirms
+  that nothing was written, not that a partial write was rolled back, and it is an
+  `unexpected`-check rather than a `Step` for exactly that reason.
+- **`EXPORT-FAIL` exercises the export's catch, not its pre-flight.**
+  `DescribeUnwritableDestination` returns early on a destination that does not exist yet
+  (`if (!File.Exists(filepath)) { return null; }`), so a read-only folder with no file in it
+  passes the pre-flight and is caught by the write instead. Both paths classify through
+  `DestinationFailureClassifier`, so the message is the same either way — but a change aimed at
+  the pre-flight will not be measured by this row. Verified by mutation: nulling the pre-flight's
+  `failureReason` left the row green; nulling the catch's turned the message generic and failed it.
 - **`STREAM-AI` fails against fw-3.7.2 and that is not a regression.** The board reports
   ~99.8 Hz by its own timestamps and ~79.7 Hz by wall clock at a set rate of 100. The row's
   companion `unexpected` probe prints both spans precisely so the two layers can be told
@@ -195,7 +266,7 @@ These are real limits of the current rig, not of the app. Tracked in #260.
   mode because it *"can choke a device with a blank/erased WINC"*. That is not something to
   run unattended against a shared bench board for the sake of a checkbox row.
 
-## Five traps it encodes, for whoever edits it
+## Six traps it encodes, for whoever edits it
 
 - **An optimistic local update is not a device read-back.** `SetFriendlyName` assigns
   `FriendlyName = name` itself, right after sending the SCPI write and without waiting for anything
@@ -229,6 +300,15 @@ These are real limits of the current rig, not of the app. Tracked in #260.
   that is already running: `DeviceLogsViewModel` fires an SD refresh of its own when a device
   becomes selected, and a second `RefreshFilesCommand.ExecuteAsync` while the first is in
   flight is dropped, so `SD-LIST` waits for `CanExecute` before it drives the button.
+
+- **An unrealised pane reads as a broken one.** Avalonia's `TabControl` only builds the selected
+  tab's content, and an OxyPlot `PlotModel` with no `PlotView` attached never gets an actual axis
+  range — so every viewport-driven redraw computes against a degenerate window. `LOGGED-PLOT`
+  measured **one** drawn point over **0.00 h** of a ten-hour session until it set
+  `shell.SelectedIndex` to the Logged Data tab first; with the tab selected the same session
+  draws 4000 downsampled points over 10.00 h. Read the plot's `ItemsSource` too, not `Points`:
+  `DatabaseLogger.SetupUiCollections` hands each series a downsampled list and leaves `Points`
+  empty, so a check on `Points` reads zero against a plot that is drawing correctly.
 
 ## Two build constraints it shares with `AvaloniaCapture`
 
