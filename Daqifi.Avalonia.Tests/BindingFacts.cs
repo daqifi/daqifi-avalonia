@@ -16,8 +16,9 @@ namespace Daqifi.Avalonia.Tests;
 /// <para>
 /// <see cref="AssertBinds"/> and <see cref="AssertExposes"/> are meant to be used together: the
 /// binding exists in the markup, and the member it names is readable on the type the markup will
-/// meet at runtime. <see cref="AssertBinds"/> carries most of that weight — it is the half nothing
-/// else in the build can see, and it passes happily while the screen is broken.
+/// meet at runtime. <see cref="AssertBinds"/> carries most of that weight, because it is the half
+/// nothing else in the build can see: without it the markup can go on naming a member that no longer
+/// exists while every compiler check, both heads and every other test still pass.
 /// </para>
 ///
 /// <para>

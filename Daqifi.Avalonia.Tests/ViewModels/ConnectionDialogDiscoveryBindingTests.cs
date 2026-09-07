@@ -24,9 +24,19 @@ namespace Daqifi.Avalonia.Tests.ViewModels;
 /// <para>
 /// Every expected binding is written with the attribute it feeds. <see cref="BindingFacts.AssertBinds"/>
 /// is a substring match over the raw markup, so a bare <c>"{Binding AvailableWiFiDevices}"</c> keeps
-/// passing after the binding is moved to a different attribute or a different control — including into
-/// a <c>DataTemplate</c>, where it would rebind to the item rather than to the view model. Naming the
-/// attribute costs nothing and closes that gap (issue #318).
+/// passing after the binding is repurposed onto a different attribute — bound to <c>Tag</c>, say, or
+/// swapped between <c>Text</c> and <c>IsVisible</c>, which is how the two error messages differ from
+/// each other. Naming the attribute costs nothing and closes that gap (issue #318).
+/// </para>
+///
+/// <para>
+/// What it does <b>not</b> establish is which element the binding sits on. The search is file-wide, so
+/// moving a list's <c>ItemsSource</c> onto one of the other two <c>ListBox</c>es — or into a
+/// <c>DataTemplate</c>, where it would resolve against the item rather than the view model — leaves the
+/// asserted text intact and these tests green. Closing that would mean parsing the markup structurally
+/// and teaching the helper about element scope; the value does not carry the cost for one view, and it
+/// is a worse trade than declaring <c>x:DataType</c> on the dialog and letting the compiler do it. The
+/// pin here is on the names, which is the failure #317's rewrite could actually have caused.
 /// </para>
 /// </summary>
 public class ConnectionDialogDiscoveryBindingTests
@@ -125,7 +135,12 @@ public class ConnectionDialogScanningOverlayRefreshTests
             Assert.NotNull(source);
             source.SetValue(viewModel, newValue);
 
-            Assert.Contains(gate, raised);
+            // A null or empty PropertyName is INotifyPropertyChanged's "all properties changed"
+            // convention, and refreshes the gate's binding just as well as naming it. The app reads it
+            // that way too (DeviceTileViewModel, ProfilesMobileView, DeviceLogsViewModel), so accepting
+            // it here is what keeps this an assertion about the contract rather than about
+            // [NotifyPropertyChangedFor] being the implementation of it.
+            Assert.Contains(raised, name => name == gate || string.IsNullOrEmpty(name));
         }
         finally
         {
