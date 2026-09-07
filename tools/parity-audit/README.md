@@ -220,14 +220,20 @@ constant: the wait is bounded by the `SettleMaxRounds` budget that was already t
 stalled animation costs rounds instead of producing a baseline, and if the budget runs out the
 run fails **by name** with both widths in the message.
 
-Demonstrated on demand rather than waited for. With the render timer frozen once the pane is
-within four pixels of open — the measured failure mode written down as code — the pre-fix
-harness reports `[OK] desktop-min-7/8/9 … settled in 4 round(s)` and saves three frames that
-differ from the committed baseline by exactly the field signature (1.301%, 1.101% and 2.044%
-of pixels, worst delta 222 on each). The same lever on the fixed harness fails all three by
-name —
-`it is 378 wide (Bounds=342, 0, 378, 447) but the pane is OPEN, and MainWindow.axaml declares
-OpenPaneLength=380` — and exits non-zero. Zero baseline bytes moved.
+Demonstrated on demand rather than waited for. With the render timer frozen once the pane
+comes within four pixels of open — the measured failure mode written down as code — the
+pre-fix harness reports `[OK] … settled in 4 round(s)` for whichever of `desktop-min-7/8/9`
+the freeze caught and **saves** those frames: across two demo runs, three screens and then
+two, differing from the committed baseline by **1.1–4.1%** of pixels with a worst channel
+delta of **222** — the field signature. The same lever on the fixed harness fails every caught
+screen by name — `it is 376 wide (Bounds=344, 0, 376, 447) but the pane is OPEN, and
+MainWindow.axaml declares OpenPaneLength=380` — saves nothing, and exits non-zero.
+
+Under two CPU spinners the natural flake reproduces too, and the before/after is the same
+shape: `origin/main` `0bb55ec` lost a screen in **4 of 16** runs (all `desktop-min-7`; three of
+the four wrong frames share one hash, so it is a repeatable attractor rather than noise),
+against **0 of 16** on the fixed harness under the same lever. Idle, 30 runs on the fixed
+harness were clean. Zero baseline bytes moved throughout.
 
 **What that guard does not cover.** It is a guard for the one animated end state the app
 declares. Every other screen still rests on the settle rule, which is the right tool when the
