@@ -10,6 +10,7 @@ using Daqifi.Core.Device.Network;
 using ChannelDirection = Daqifi.Core.Channel.ChannelDirection;
 using ChannelType = Daqifi.Core.Channel.ChannelType;
 using Daqifi.Desktop.Models;
+using System.Collections.Concurrent;
 using System.Globalization;
 using System.IO;
 using ScpiMessageProducer = Daqifi.Core.Communication.Producers.ScpiMessageProducer;
@@ -335,6 +336,17 @@ public abstract partial class AbstractStreamingDevice : ObservableObject, IStrea
     private long _analogProcessingFailureCount;
     private long _digitalProcessingFailureCount;
     private long _debugDataFailureCount;
+
+    /// <summary>
+    /// How many non-finite readings have been discarded on each analog channel index in the
+    /// current streaming session — see <see cref="ReportNonFiniteReading"/> for why the tally is
+    /// per channel. Cleared with the failure counters above when streaming starts.
+    /// </summary>
+    /// <remarks>
+    /// Concurrent because the per-message path is reached from the transport's callback thread and
+    /// the counters above are already <see cref="Interlocked"/>-updated for the same reason.
+    /// </remarks>
+    private readonly ConcurrentDictionary<int, long> _nonFiniteReadingCounts = new();
 
     // Whether the device-reported clock frequency has been applied to _timestampProcessor for the
     // current streaming session. Cleared alongside every ResetAll(), which per Core's contract also
@@ -1246,7 +1258,12 @@ public abstract partial class AbstractStreamingDevice : ObservableObject, IStrea
         }
 
         var hasDigitalData = message.DigitalData.Length > 0;
-        // USB firmware sends pre-scaled floats (AnalogInDataFloat); WiFi sends raw ADC counts (AnalogInData).
+        // The protocol defines two analog payloads and firmware picks one: AnalogInData (raw
+        // integer ADC counts, scaled here through the channel's calibration) or AnalogInDataFloat
+        // (volts, already scaled by the firmware). This is NOT a transport split, whatever the
+        // comment here used to say — measured on the bench board (Nq1, fw 3.7.2) over USB, its
+        // frames carry AnalogInData with AnalogInDataFloat empty. Both are decoded because the
+        // choice belongs to the firmware, not to us.
         var hasAnalogData = message.AnalogInData.Count > 0 || message.AnalogInDataFloat.Count > 0;
 
         // Process analog channels - device sends data in channel index order, not activation order
@@ -1259,8 +1276,8 @@ public abstract partial class AbstractStreamingDevice : ObservableObject, IStrea
                                                       .OrderBy(c => c.Index)
                                                       .ToList();
 
-                // USB firmware sends pre-scaled float values (already in volts); use them directly.
-                // WiFi firmware sends raw integer ADC counts; apply channel calibration scaling.
+                // Pre-scaled floats when the frame carries them, raw integer ADC counts otherwise
+                // — see the payload note above. Presence, not transport, is what picks the branch.
                 var hasFloatData = message.AnalogInDataFloat.Count > 0;
                 var dataCount = hasFloatData ? message.AnalogInDataFloat.Count : message.AnalogInData.Count;
 
@@ -1277,6 +1294,36 @@ public abstract partial class AbstractStreamingDevice : ObservableObject, IStrea
                     {
                         // Raw ADC count — apply channel calibration/scaling via Core
                         scaledValue = channel.GetScaledValue((int)message.AnalogInData[dataIndex]);
+                    }
+
+                    // A reading that is not a finite number is not a measurement, and it costs far
+                    // more than the one sample it arrived on. Core's per-channel statistics keep a
+                    // running ValueSum, so a single NaN makes the Summary flyout's Average read NaN
+                    // for the rest of the session while Min and Max keep working — one column of a
+                    // row going wrong, which reads as a display bug rather than a bad reading
+                    // (issue #295). The plot takes it as a series point and the exporter writes it
+                    // out. Refusing it here, at the one place a streamed analog value enters the
+                    // app, is what stops it being every consumer's problem to solve separately.
+                    //
+                    // IsFinite, not IsNaN: an infinity poisons a running sum exactly as thoroughly
+                    // and is no more a voltage. That is a different question from the one
+                    // SessionSampleWriter answers at the database door, where the constraint is
+                    // what SQLite can store — and SQLite stores infinities fine.
+                    //
+                    // After the branch, not inside the float one, and that placement is the point.
+                    // The float payload is the unvalidated leg — a protobuf float straight off the
+                    // wire, checked by nobody — while the integer leg goes through Core, which
+                    // substitutes an assumed resolution and sanitizes every calibration
+                    // coefficient, so GetScaledValue is not expected to return a non-finite value.
+                    // But "which leg a board uses" is a firmware decision that changes under us
+                    // (the bench board at fw 3.7.2 uses the integer one), so the invariant worth
+                    // holding is about the value being published, not about where it came from.
+                    // On the integer leg this is defence in depth against a Core regression; on
+                    // the float leg it is the only check there is.
+                    if (!double.IsFinite(scaledValue))
+                    {
+                        ReportNonFiniteReading(channel, scaledValue);
+                        continue;
                     }
 
                     var sample = new DataSample(this, channel, messageTimestamp, scaledValue, firmwareDeltaMs);
@@ -1820,6 +1867,7 @@ public abstract partial class AbstractStreamingDevice : ObservableObject, IStrea
         Interlocked.Exchange(ref _analogProcessingFailureCount, 0);
         Interlocked.Exchange(ref _digitalProcessingFailureCount, 0);
         Interlocked.Exchange(ref _debugDataFailureCount, 0);
+        _nonFiniteReadingCounts.Clear();
         _checkForLeftoverFrames = _hasSeenDeviceTimestamp;
         _pendingFirstFrameValidation = !_hasSeenDeviceTimestamp;
         _heldFirstFrame = null;
@@ -1901,11 +1949,102 @@ public abstract partial class AbstractStreamingDevice : ObservableObject, IStrea
     }
 
     /// <summary>
-    /// How many occurrences of a per-message decode failure are logged in full before the
-    /// report thins out to powers of ten. Ten is enough to capture a transient fault end to
-    /// end while staying a small fraction of the bounded breadcrumb ring.
+    /// How many occurrences of a per-message fault are logged in full before the report thins
+    /// out to powers of ten — a decode failure (<see cref="ReportStreamProcessingFailure"/>) or a
+    /// discarded non-finite reading (<see cref="ReportNonFiniteReading"/>). Ten is enough to
+    /// capture a transient fault end to end while staying a small fraction of the bounded
+    /// breadcrumb ring.
     /// </summary>
     private const int FullyLoggedFailureCount = 10;
+
+    /// <summary>
+    /// Reports a reading refused by <see cref="ProcessStreamMessage"/> for not being a finite
+    /// number, throttled the way every other per-message report in this class is.
+    /// </summary>
+    /// <remarks>
+    /// <para>
+    /// Counted <b>per channel</b>, not once for the device, and that is the difference between a
+    /// diagnosis and a misleading silence: a board that starts emitting NaN on a second channel an
+    /// hour into a run would say nothing at all if the first channel had already pushed a shared
+    /// count past the next power of ten. Every channel gets its own occurrence 1.
+    /// </para>
+    /// <para>
+    /// The first <see cref="FullyLoggedFailureCount"/> occurrences on a channel are logged in
+    /// full and the report then thins to powers of ten — the same two-band shape
+    /// <see cref="ReportStreamProcessingFailure"/> uses, for the same reasons it documents at
+    /// length: a channel whose every reading is bad keeps announcing itself once per decade of
+    /// samples, which is often enough to be found and rare enough that it cannot flush the
+    /// bounded Sentry breadcrumb ring or turn the log into a write storm.
+    /// </para>
+    /// <para>
+    /// The opening band is not decoration, and a powers-of-ten-only throttle was wrong without
+    /// it. The per-session reset below races in-flight callbacks — a handler already past the
+    /// <c>IsStreaming</c> guard when a restart clears the tally can increment afterwards, which
+    /// pushes the new session's first real discard to occurrence 2. That race is accepted here
+    /// exactly as it is for the three sibling counters (closing it needs a stream generation
+    /// threaded through every dispatched message, real work in the per-message path to make a log
+    /// line's ordinal exact); what must not be accepted is the race turning a channel's first
+    /// discard <em>silent</em>, which is what powers of ten alone would have done.
+    /// </para>
+    /// <para>
+    /// <b>There is no UI surface for this</b>, and that is a deliberate limit rather than an
+    /// oversight: it is a warning in the log plus a Sentry breadcrumb, the same answer
+    /// <c>SessionSampleWriter</c> gives for the rows it refuses. Raising it to the notification
+    /// bell means crossing <c>LoggingManager</c> and <c>DaqifiViewModel</c> and is a separate
+    /// decision. What the user sees without reading a log is the absence of the symptom — the
+    /// Average stays a number, and a channel whose readings are unusable stops updating rather
+    /// than showing NaN.
+    /// </para>
+    /// </remarks>
+    private void ReportNonFiniteReading(AnalogChannel channel, double value)
+    {
+        var occurrence = _nonFiniteReadingCounts.AddOrUpdate(
+            channel.Index, 1L, static (_, previous) => previous + 1);
+
+        if (!IsReportedDiscardOccurrence(occurrence))
+        {
+            // Silent: the next power-of-ten report carries the count.
+            return;
+        }
+
+        // Invariant formatting for the value, so a NaN or an infinity is written the way it is
+        // searched for regardless of the machine's locale.
+        AppLogger.Warning(
+            $"Discarded a non-finite reading ({value.ToString("R", CultureInfo.InvariantCulture)}) from " +
+            $"channel {channel.Name} on {Name}: it is not a measurement and would corrupt this " +
+            $"channel's statistics for the rest of the session. " +
+            $"{occurrence.ToString(CultureInfo.InvariantCulture)} discarded on this channel so far " +
+            $"this session.");
+    }
+
+    /// <summary>
+    /// Whether the <paramref name="occurrence"/>-th discard on a channel gets a log line: the
+    /// first <see cref="FullyLoggedFailureCount"/> in full, then powers of ten.
+    /// </summary>
+    /// <remarks>
+    /// Internal rather than private so the throttle can be pinned by a test — the same seam
+    /// <c>SummaryLogger.FormatStatuses</c> and <c>PlotLogger.BuildPlotStatsSummary</c> already
+    /// use, and the only way to hold the opening band in place: <see cref="AppLogger"/> discards
+    /// its NLog logger in test mode, so the lines themselves cannot be asserted on, and narrowing
+    /// this back to powers of ten alone would silently reintroduce the hole
+    /// <see cref="ReportNonFiniteReading"/> describes.
+    /// </remarks>
+    internal static bool IsReportedDiscardOccurrence(long occurrence) =>
+        occurrence < FullyLoggedFailureCount || IsPowerOfTen(occurrence);
+
+    /// <summary>
+    /// How many non-finite readings this device has discarded on the analog channel with
+    /// <paramref name="channelIndex"/> since streaming last started.
+    /// </summary>
+    /// <remarks>
+    /// Visible to <c>Daqifi.Avalonia.Tests</c> only, via InternalsVisibleTo in
+    /// Daqifi.Avalonia.csproj. It is the tally <see cref="ReportNonFiniteReading"/> draws its
+    /// occurrence number from, and the only way to pin that the tally is kept per channel rather
+    /// than per device — <see cref="AppLogger"/> is a singleton that discards its NLog logger in
+    /// test mode, so the warning line itself cannot be asserted on.
+    /// </remarks>
+    internal long DiscardedNonFiniteReadings(int channelIndex) =>
+        _nonFiniteReadingCounts.TryGetValue(channelIndex, out var count) ? count : 0;
 
     /// <summary>Whether <paramref name="value"/> is 1, 10, 100, 1000, …</summary>
     private static bool IsPowerOfTen(long value)
