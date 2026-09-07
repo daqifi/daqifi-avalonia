@@ -67,6 +67,15 @@ public partial class DevicesPaneViewModel : ObservableObject, IDisposable
     /// setter — which blocks changes and shows an error dialog while a
     /// logging session is active.
     /// </summary>
+    /// <remarks>
+    /// Reading the device live is only half of it: a read with nothing announcing it is a value
+    /// the screen never re-reads. <see cref="SelectedTile"/> announces this, but a drawer left open
+    /// on one device never changes tile — and the rate moves underneath it, because
+    /// <c>AbstractStreamingDevice.HoldRateToCurrentConfigurationCap</c> lowers it at the start of
+    /// every session to what the enabled channel set can sustain (issue #282). So the selected
+    /// device's own <c>StreamingFrequency</c> notification is followed too, in
+    /// <see cref="OnSelectedDeviceStateChanged"/>.
+    /// </remarks>
     // @port: Daqifi.Desktop.ViewModels.DevicesPaneViewModel.FrequencyHz
     public int FrequencyHz
     {
@@ -152,13 +161,56 @@ public partial class DevicesPaneViewModel : ObservableObject, IDisposable
     }
 
     // @port: Daqifi.Desktop.ViewModels.DevicesPaneViewModel.OnSelectedTileChanged
-    partial void OnSelectedTileChanged(DeviceTileViewModel? value)
+    partial void OnSelectedTileChanged(DeviceTileViewModel? oldValue, DeviceTileViewModel? newValue)
     {
         // Derived-property change notifications are declared via
         // [NotifyPropertyChangedFor] attributes above; the partial is only
         // for imperative work the source generator can't do.
+        //
+        // Follow the drawer's device from tile to tile. Rebuild() replaces every tile with a fresh
+        // one over the same device and re-selects it, so this runs on a rebuild too and stays
+        // balanced: one unsubscribe for each subscribe, against the same device instance.
+        Unfollow(oldValue?.Device);
+        Follow(newValue?.Device);
+
         DisconnectSelectedCommand.NotifyCanExecuteChanged();
         RebootSelectedCommand.NotifyCanExecuteChanged();
+    }
+
+    private void Follow(IStreamingDevice? device)
+    {
+        if (device is INotifyPropertyChanged notifier)
+        {
+            notifier.PropertyChanged += OnSelectedDeviceStateChanged;
+        }
+    }
+
+    private void Unfollow(IStreamingDevice? device)
+    {
+        if (device is INotifyPropertyChanged notifier)
+        {
+            notifier.PropertyChanged -= OnSelectedDeviceStateChanged;
+        }
+    }
+
+    /// <summary>
+    /// Keeps the open drawer's FREQUENCY readout on the rate its device is actually holding.
+    /// </summary>
+    /// <remarks>
+    /// Raised on Core's callback thread when <c>HydrateDeviceMetadata</c> re-clamps the rate, and
+    /// deliberately not marshalled: the only consumer is a binding, and Avalonia's
+    /// <c>InpcPropertyAccessorPlugin</c> subscribes through <c>WeakEvents.ThreadSafePropertyChanged</c>,
+    /// which performs the <c>CheckAccess()</c>-or-<c>Post</c> before the target is set (issue #264).
+    /// The <see cref="_dispatcher"/> hop in <see cref="OnConnectionManagerPropertyChanged"/> stays:
+    /// that one rebuilds the <see cref="Devices"/> collection, and <c>WeakEvents.CollectionChanged</c>
+    /// does no such hop.
+    /// </remarks>
+    private void OnSelectedDeviceStateChanged(object? sender, PropertyChangedEventArgs e)
+    {
+        if (e.PropertyName == nameof(IStreamingDevice.StreamingFrequency))
+        {
+            OnPropertyChanged(nameof(FrequencyHz));
+        }
     }
 
     // @port: Daqifi.Desktop.ViewModels.DevicesPaneViewModel.OnConnectionManagerPropertyChanged
@@ -286,6 +338,7 @@ public partial class DevicesPaneViewModel : ObservableObject, IDisposable
         _disposed = true;
 
         ConnectionManager.Instance.PropertyChanged -= OnConnectionManagerPropertyChanged;
+        Unfollow(SelectedDevice);
 
         foreach (var tile in Devices) tile.Dispose();
         Devices.Clear();
