@@ -290,6 +290,37 @@ public class ChannelScalingExpressionTests
         Assert.Contains("NESTED PARENTHESES", channel.ScaleExpressionError, StringComparison.Ordinal);
     }
 
+    [Theory]
+    // Qodo review of #314. A ')' inside a string literal is text to NCalc and closes nothing, so
+    // letting it decrement the depth counter let a crafted paste present more open parentheses to
+    // the parser than the guard had counted: the eight quoted ')' below cancelled eight real '('
+    // for the counter while the parser still had all twelve open. Both of NCalc 7.1.0's quoting
+    // forms have to be skipped — it accepts '...' and "..." alike, and \ escapes inside each.
+    [InlineData("((((((((')))))))))' + ((((")]
+    [InlineData("((((((((\"))))))))\" + ((((")]
+    [InlineData("(((((((('\\'))))))))' + ((((")]
+    public void Closing_parentheses_inside_a_string_literal_do_not_buy_back_nesting_depth(string expression)
+    {
+        var channel = Scaled(expression);
+
+        Assert.False(channel.HasValidExpression);
+        Assert.Contains("NESTED PARENTHESES", channel.ScaleExpressionError, StringComparison.Ordinal);
+    }
+
+    [Theory]
+    [InlineData("x * if('a' == 'a', 2, 3)")]
+    [InlineData("x * if(\"a\" == \"a\", 2, 3)")]
+    public void A_string_literal_is_still_ordinary_text_the_guard_lets_through(string expression)
+    {
+        // The control the assertions above need: skipping literals must not make the guard
+        // paranoid about an expression that merely contains a quote. Nesting depth 1, and it has
+        // to keep parsing and evaluating exactly as before.
+        var channel = Scaled(expression);
+
+        Assert.True(channel.HasValidExpression);
+        Assert.Equal(6.0, Push(channel, 3.0));
+    }
+
     [Fact]
     public void The_twelve_character_paste_that_wedged_the_UI_for_fifty_seconds_returns_at_once()
     {

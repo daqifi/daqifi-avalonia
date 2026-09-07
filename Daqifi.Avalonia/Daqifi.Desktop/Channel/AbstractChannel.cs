@@ -237,13 +237,40 @@ public abstract partial class AbstractChannel : ObservableObject, IChannel
     /// count negative, so <c>))((((</c> counts as 4: what costs the parser is how many parens
     /// are open when it starts backtracking, and a leading <c>)</c> cannot cancel one out.
     /// </summary>
+    /// <remarks>
+    /// Parentheses inside a string literal are skipped, because they are text to the parser and
+    /// close nothing. Counting them let a crafted input talk its way past the cap: in
+    /// <c>((((((((')))))))))' + ((((</c> the eight quoted <c>)</c> cancelled eight real <c>(</c>
+    /// for this counter while closing no group at all, so the parser was handed twelve open
+    /// parentheses behind a count of eight. NCalc 7.1.0 quotes with either <c>'</c> or <c>"</c>
+    /// and escapes with <c>\</c>, and both forms are honoured here — verified against the
+    /// package rather than assumed, since skipping the wrong delimiter would silently reopen
+    /// the same hole. An unterminated quote swallows the rest of the string, which is safe in
+    /// the direction that matters: the parser rejects the malformed literal outright instead of
+    /// descending into whatever follows it.
+    /// </remarks>
     private static int DeepestParenthesisNesting(string expression)
     {
         var open = 0;
         var deepest = 0;
+        var quote = '\0';
+        var escaped = false;
+
         foreach (var character in expression)
         {
-            if (character == '(')
+            if (quote != '\0')
+            {
+                if (escaped) { escaped = false; }
+                else if (character == '\\') { escaped = true; }
+                else if (character == quote) { quote = '\0'; }
+                continue;
+            }
+
+            if (character is '\'' or '"')
+            {
+                quote = character;
+            }
+            else if (character == '(')
             {
                 open++;
                 if (open > deepest) { deepest = open; }
@@ -253,6 +280,7 @@ public abstract partial class AbstractChannel : ObservableObject, IChannel
                 open--;
             }
         }
+
         return deepest;
     }
 
