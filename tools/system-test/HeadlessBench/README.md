@@ -21,6 +21,12 @@ It goes through the **user's** code path, not a convenient one:
   pane binds. `ConnectionManager.Instance.Disconnect(device)` is only one of the four things
   that command does, and `device.Disconnect()` is worse still: it closes the port but leaves
   the device registered, precisely the stale-"Connected" state `CONN-DISC` exists to catch.
+- Connects a row makes to **set itself up** — every `DEV-NAME` reconnect, including the one that
+  puts the board's name back — retry once if the port does not come back, and the run records that
+  it happened in a `DEV-NAME`/`unexpected` line. The connect `CONN-USB` is *checking* does not
+  retry, because retrying the thing under test is how a rig comes to report a broken connect as a
+  working one. One run in five used to redden here for a rig reason: the port failed to come back
+  inside 20 s where the other four took 5.3-5.6 s (#287).
 - The sampling rate is set through `shell.SelectedStreamingFrequency`, the guarded setter the
   drawer's FREQUENCY control writes, rather than assigning `device.StreamingFrequency`, which
   skips the guard and leaves the shell's own value stale.
