@@ -306,17 +306,31 @@ jobs:
                       print(f"::error::'{state}' skipped {check.get('row')}/{check.get('check')} "
                             f"as not-run, so this job did not measure it: {check.get('evidence')}")
                       ok = False
-              # Passed, and exactly once. A row emitted twice means two different code paths
-              # are filing under one name, which makes the verdict ambiguous rather than
-              # doubly reassuring.
+              # Emitted exactly once, AND that one record passed — counted in that order,
+              # because the two questions fail differently. A row emitted twice means two
+              # code paths are filing under one name, which makes the verdict ambiguous
+              # rather than doubly reassuring.
+              #
+              # Counting only the PASSING records would answer the second question while
+              # silently dropping the first: `Emit` writes an arbitrary status and, unlike
+              # `Step`, does not set the rig's `_failed`, so a `finding` record (what
+              # ReportPumpLatency writes for a slow pump) leaves the process exit 0. One
+              # pass plus a duplicate `finding` under the same row/check would then filter
+              # down to a single passing record and be accepted, against the contract
+              # stated right here. No current code path does that — every `finding` today
+              # is filed under the check name `unexpected`, which no required pair uses —
+              # so this is the gate being closed before something walks through it, not a
+              # live escape. Qodo round 3 on #324.
               for row, name in wanted:
-                  passing = [c for c in checks
-                             if c.get("row") == row and c.get("check") == name
-                             and c.get("status") == "pass"]
-                  if len(passing) != 1:
-                      print(f"::error::'{state}' emitted {len(passing)} passing "
-                            f"{row}/{name} record(s), expected exactly 1. The state ran and "
-                            "exited 0, so the row it exists to check was not reached.")
+                  matching = [c for c in checks
+                              if c.get("row") == row and c.get("check") == name]
+                  passing = [c for c in matching if c.get("status") == "pass"]
+                  if len(matching) != 1 or len(passing) != 1:
+                      print(f"::error::'{state}' emitted {len(matching)} {row}/{name} "
+                            f"record(s) of which {len(passing)} passed, expected exactly "
+                            "one record and that record passing. The state ran and exited "
+                            "0, so either the row it exists to check was not reached, or "
+                            "more than one code path is filing under that name.")
                       ok = False
               names = ", ".join(f"{r}/{n}" for r, n in wanted)
               print(f"{state}: {len(checks)} check(s), "

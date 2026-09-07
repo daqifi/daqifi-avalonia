@@ -413,6 +413,13 @@ Two things about that step are deliberate:
   Same failure shape as the `Test` step reading its TRX counters back — a run that asserts nothing
   exits 0 — and the same shape this rig exists to catch, one level up. **Add a state and you must
   add its row to that list**, or CI will run it and check nothing about what it reported.
+  **The two halves are counted in that order — one record, then that record passing — and the order
+  is the point.** Counting the *passing* records alone answers the second question and silently drops
+  the first: `Emit` writes whatever status it is given and, unlike `Step`, never sets `_failed`, so a
+  `finding` record leaves the process exit 0. One `pass` plus a duplicate `finding` under the same
+  row/check would filter down to a single passing record and be accepted, against the contract this
+  bullet states. Nothing does that today — every `finding` is filed under the check name `unexpected`,
+  which no required pair uses — so it is a door closed rather than an escape found (Qodo round 3).
 - **It runs on `ubuntu-latest`, which had never rendered this app.** Headless Skia and font
   availability there were open questions (the same ones the `Build` step's note raises about
   `tools/parity-audit/AvaloniaCapture`, which is still compile-only for exactly that reason). The
