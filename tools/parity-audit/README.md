@@ -711,11 +711,16 @@ hashes were recorded from that run's own `r1`. The five new lines land in one co
 block between `desktop-min-9-*` and `dialog-*`, touching no existing line — `devicelogs`
 sorts there because `s` &lt; `v` and `e` &lt; `i`.
 
-What this recording does **not** establish is cross-machine agreement: that is what the
-`macos-latest` job on the PR reports, and it is the same question every entry above had
-answered for it there. Nor does it establish anything about these five states at the
-minimum window size, which are not captured — see the one-size note in [Device
-Logs](#device-logs).
+The recording is **not** single-host: on the PR that made it the `macos-latest` runner — macOS
+**26.6.2** (25G83), arm64, image `macos26/20260831.0337.3`, a different machine on a newer macOS
+build than the 26.5 (25F71) Mac that recorded it — passed its own five-run determinism check
+**39/39** and then reproduced this manifest, all five new hashes included. That matters a little
+more here than for a pure re-recording: four of these five screens are rendered from a *posed*
+view-model, and "the pose is reproducible on the machine that wrote it" would be a much weaker
+claim than the one every other line in this file makes.
+
+What it does not establish is anything about these five states at the minimum window size, which
+are not captured — see the one-size note in [Device Logs](#device-logs).
 
 **A mismatch is a prompt, not a verdict** — re-read that environment line first. In CI
 the same applies with one addition: the baseline step prints the runner's macOS build and
