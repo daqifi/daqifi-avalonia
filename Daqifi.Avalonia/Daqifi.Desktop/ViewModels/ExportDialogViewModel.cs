@@ -53,9 +53,17 @@ public partial class ExportDialogViewModel : ObservableObject, IDisposable
     /// </summary>
     private readonly Func<int, string?> _sessionNameLookup = SessionNameFromLoggingManager;
 
+    /// <summary>
+    /// The smallest averaging window that can produce a row — every sample is its own average.
+    /// Anything below it produces no rows and therefore no file (issue #312).
+    /// </summary>
+    private const int MINIMUM_AVERAGE_WINDOW = 1;
+
     [ObservableProperty]
     private bool _exportAllSelected = true;
     [ObservableProperty]
+    [NotifyPropertyChangedFor(nameof(IsAverageQuantityValid))]
+    [NotifyCanExecuteChangedFor(nameof(ExportLoggingSessionsCommand))]
     private bool _exportAverageSelected;
     [ObservableProperty]
     [NotifyPropertyChangedFor(nameof(IsConfiguring))]
@@ -68,6 +76,8 @@ public partial class ExportDialogViewModel : ObservableObject, IDisposable
     [ObservableProperty]
     private string? _exportResultMessage;
     [ObservableProperty]
+    [NotifyPropertyChangedFor(nameof(IsAverageQuantityValid))]
+    [NotifyCanExecuteChangedFor(nameof(ExportLoggingSessionsCommand))]
     private int _averageQuantity = 2;
     [ObservableProperty]
     private bool _exportRelativeTime;
@@ -106,6 +116,15 @@ public partial class ExportDialogViewModel : ObservableObject, IDisposable
     /// </summary>
     // @port: Daqifi.Desktop.ViewModels.ExportDialogViewModel.IsConfiguring
     public bool IsConfiguring => !IsExporting && !IsExportComplete;
+
+    /// <summary>
+    /// False only while the dialog is set to average and the window in the box cannot produce a
+    /// single row. Disables Export and shows the reason beside the box, so an export that could only
+    /// do nothing is never started (issue #312) — the box is a bare <c>TextBox</c> with no minimum
+    /// and no spinner, so clearing it and typing a digit passes through <c>0</c> on the way to
+    /// <c>10</c>. Bound by <c>ExportDialog.axaml</c> by reflection; see the binding facts test.
+    /// </summary>
+    public bool IsAverageQuantityValid => !ExportAverageSelected || AverageQuantity >= MINIMUM_AVERAGE_WINDOW;
     #endregion
 
     #region Commands
@@ -239,6 +258,11 @@ public partial class ExportDialogViewModel : ObservableObject, IDisposable
         var cancelled = false;
         var failed = false;
 
+        // How many of the <see cref="targets"/> actually produced a file. Compared against
+        // targets.Count below rather than assumed: the export used to report "Export complete" on
+        // the strength of not having thrown, which is not the same question (issue #312).
+        var exported = 0;
+
         // Non-null once we can tell the user *why* the export failed (a locked or unwritable
         // destination). Everything else falls back to the generic message.
         string? failureReason = null;
@@ -291,14 +315,12 @@ public partial class ExportDialogViewModel : ObservableObject, IDisposable
                     cancellationToken.ThrowIfCancellationRequested();
                     currentFilepath = live[i].Filepath;
 
-                    if (ExportAllSelected)
-                    {
-                        ExportAllSamples(live[i].Session, currentFilepath, progress, cancellationToken, i, live.Count);
-                    }
-                    else if (ExportAverageSelected)
-                    {
-                        ExportAverageSamples(live[i].Session, currentFilepath, progress, cancellationToken, i, live.Count);
-                    }
+                    var wroteFile = ExportAllSelected
+                        ? ExportAllSamples(live[i].Session, currentFilepath, progress, cancellationToken, i, live.Count)
+                        : ExportAverageSelected
+                          && ExportAverageSamples(live[i].Session, currentFilepath, progress, cancellationToken, i, live.Count);
+
+                    if (wroteFile) { exported++; }
                 }
             }, cancellationToken);
 
@@ -306,6 +328,18 @@ public partial class ExportDialogViewModel : ObservableObject, IDisposable
             {
                 failed = true;
                 AppLogger.Instance.AddBreadcrumb("export", "Data export blocked by destination file",
+                    Common.Loggers.BreadcrumbLevel.Warning);
+            }
+            else if (exported < targets.Count)
+            {
+                // The run finished without throwing and still did not produce every file it set out
+                // to: a session whose rows are gone, or one that was deleted between the dialog
+                // opening and Export being pressed. Not an exception anywhere — which is precisely
+                // why "did not throw" was the wrong question to answer "Export complete" with.
+                failed = true;
+                failureReason = DescribeShortfall(exported, targets.Count);
+                AppLogger.Instance.Warning($"Export finished short: {failureReason}");
+                AppLogger.Instance.AddBreadcrumb("export", "Data export wrote fewer files than requested",
                     Common.Loggers.BreadcrumbLevel.Warning);
             }
             else
@@ -379,7 +413,7 @@ public partial class ExportDialogViewModel : ObservableObject, IDisposable
     }
 
     // @port: Daqifi.Desktop.ViewModels.ExportDialogViewModel.CanExport
-    private bool CanExport => !string.IsNullOrWhiteSpace(ExportFilePath);
+    private bool CanExport => !string.IsNullOrWhiteSpace(ExportFilePath) && IsAverageQuantityValid;
 
     /// <summary>
     /// Opens the export destination in the platform's file manager: the folder itself for a
@@ -458,19 +492,32 @@ public partial class ExportDialogViewModel : ObservableObject, IDisposable
         Process.Start(startInfo);
     }
 
+    /// <returns>Whether the CSV was written; see <see cref="OptimizedLoggingSessionExporter.ExportLoggingSession"/>.</returns>
     // @port: Daqifi.Desktop.ViewModels.ExportDialogViewModel.ExportAllSamples
-    private void ExportAllSamples(LoggingSession session, string filepath, IProgress<int> progress, CancellationToken cancellationToken, int sessionIndex, int totalSessions)
+    private bool ExportAllSamples(LoggingSession session, string filepath, IProgress<int> progress, CancellationToken cancellationToken, int sessionIndex, int totalSessions)
     {
         var loggingSessionExporter = new OptimizedLoggingSessionExporter(_loggingContext);
-        loggingSessionExporter.ExportLoggingSession(session, filepath, ExportRelativeTime, progress, cancellationToken, sessionIndex, totalSessions);
+        return loggingSessionExporter.ExportLoggingSession(session, filepath, ExportRelativeTime, progress, cancellationToken, sessionIndex, totalSessions);
     }
 
+    /// <returns>Whether the CSV was written; see <see cref="OptimizedLoggingSessionExporter.ExportAverageSamples"/>.</returns>
     // @port: Daqifi.Desktop.ViewModels.ExportDialogViewModel.ExportAverageSamples
-    private void ExportAverageSamples(LoggingSession session, string filepath, IProgress<int> progress, CancellationToken cancellationToken, int sessionIndex, int totalSessions)
+    private bool ExportAverageSamples(LoggingSession session, string filepath, IProgress<int> progress, CancellationToken cancellationToken, int sessionIndex, int totalSessions)
     {
         var loggingSessionExporter = new OptimizedLoggingSessionExporter(_loggingContext);
-        loggingSessionExporter.ExportAverageSamples(session, filepath, AverageQuantity, ExportRelativeTime, progress, cancellationToken, sessionIndex, totalSessions);
+        return loggingSessionExporter.ExportAverageSamples(session, filepath, AverageQuantity, ExportRelativeTime, progress, cancellationToken, sessionIndex, totalSessions);
     }
+
+    /// <summary>
+    /// What the dialog says when the export ran to completion but produced fewer files than the user
+    /// selected sessions. The count is in the message because "some of your sessions are missing" is
+    /// only actionable if the user can see how many landed — and because the destination shown
+    /// underneath it may well contain files from an earlier, complete export.
+    /// </summary>
+    private static string DescribeShortfall(int exported, int requested) =>
+        exported == 0
+            ? "Nothing was exported: no logged data was found."
+            : $"Exported {exported} of {requested} sessions. The rest had no logged data.";
 
     /// <summary>
     /// One session mapped to the file it will be written to.

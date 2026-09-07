@@ -26,10 +26,20 @@
 
             <!-- Export Type -->
             <HeaderedContentControl Grid.Row="1" Header="Export Type" Theme="{StaticResource DarkGroupBox}">
-                <Grid ColumnDefinitions="Auto,Auto" RowDefinitions="Auto,Auto">
+                <Grid ColumnDefinitions="Auto,Auto,*" RowDefinitions="Auto,Auto">
                     <RadioButton Grid.Column="0" Grid.Row="0" Content="All Samples" IsChecked="{Binding ExportAllSelected}" Margin="0,0,0,8"/>
                     <RadioButton Grid.Column="0" Grid.Row="1" Content="Average Every &quot;N&quot; Samples" IsChecked="{Binding ExportAverageSelected}" VerticalAlignment="Center"/>
                     <TextBox Grid.Column="1" Grid.Row="1" Width="60" Margin="12,0,0,0" Text="{Binding AverageQuantity, Mode=TwoWay}"/>
+                    <!--
+                        Why Export is greyed out, beside the box that greyed it out: a window below 1
+                        produces no rows and so no file, and the export used to run anyway and report
+                        "Export complete" over an empty folder (issue #312). Collapsed whenever the
+                        window is usable — which is every state this dialog is captured in — so the
+                        ordinary layout is untouched.
+                    -->
+                    <TextBlock Grid.Column="2" Grid.Row="1" Text="Enter 1 or more" VerticalAlignment="Center"
+                               Margin="8,0,0,0" Foreground="{StaticResource StatusRed}"
+                               IsVisible="{Binding !IsAverageQuantityValid}"/>
                 </Grid>
             </HeaderedContentControl>
 
