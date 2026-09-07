@@ -7,10 +7,20 @@ namespace Daqifi.Avalonia.Tests;
 /// Reads the checkout's own source files and states facts about the bindings in them.
 ///
 /// <para>
-/// None of the views in this repo declare an <c>x:DataType</c>, so their bindings are resolved by
+/// Most views in this repo declare no <c>x:DataType</c>, so their bindings are resolved by
 /// reflection at runtime: a renamed, moved or deleted member fails <b>silently</b> — the control
-/// renders blank — while every head still builds green. Nothing in the compiler or the build gate
-/// can see that break, which is why these facts are asserted textually here instead.
+/// renders blank, or, for a <c>bool</c> target, sits at its default, which for <c>IsVisible</c> is
+/// <c>true</c> — while every head still builds green. Nothing in the compiler or the build gate can
+/// see that break, which is why these facts are asserted textually here instead.
+/// </para>
+///
+/// <para>
+/// <c>ConnectionDialog.axaml</c> and <c>MobileShellView.axaml</c> are the exceptions: they declare
+/// <c>x:DataType</c>, so their member names are the compiler's business rather than this helper's.
+/// What is still worth pinning on such a view is the part compiled bindings do not check — which
+/// attribute a binding feeds — and the declaration itself, whose removal is silent. Spreading
+/// <c>x:DataType</c> to the rest of the views is tracked separately; do not take this helper's
+/// continued existence as a reason not to.
 /// </para>
 ///
 /// <para>

@@ -4,44 +4,57 @@ using Xunit;
 namespace Daqifi.Avalonia.Tests.ViewModels;
 
 /// <summary>
-/// Pins the connection dialog's discovery bindings to the members that back them.
+/// Pins the connection dialog's discovery bindings to the <b>attributes</b> they feed.
 ///
 /// <para>
-/// <c>ConnectionDialog.axaml</c> declares no <c>x:DataType</c>, so every binding on it is resolved by
-/// reflection at runtime. Renaming, moving or deleting one of these members fails <b>silently</b> —
-/// the tile list renders empty, or the "Scanning for USB devices…" overlay never appears or never
-/// leaves — while both heads still build green and every other test still passes.
+/// The half these tests used to carry — that the member named by each binding still exists on the
+/// type the markup meets — is now the XAML compiler's, because <c>ConnectionDialog.axaml</c> declares
+/// <c>x:DataType</c> and <c>x:CompileBindings="True"</c> (issue #323). A renamed, moved or deleted
+/// member is a build error there, for every binding in the view at once rather than only the pinned
+/// ones, and inside each <c>DataTemplate</c> against the item type rather than the view model. That
+/// is strictly stronger than a substring search and it is why these theories are no longer the thing
+/// standing between #317's kind of rewrite and a silently blank dialog.
 /// </para>
 ///
 /// <para>
-/// Added with the move of the dialog's discovery onto Core's <c>ContinuousDeviceFinder</c>, which
-/// rewrote everything behind these members and touched none of their names. That is exactly the
-/// change that would have been caught by nothing: the loop that fills these collections and sets
-/// these messages was replaced wholesale, and the compiler has no view of whether the markup still
-/// finds them.
+/// What the compiler still does <b>not</b> check is which attribute a binding feeds: bound to
+/// <c>Tag</c> instead of <c>ItemsSource</c>, or swapped between <c>Text</c> and <c>IsVisible</c> —
+/// which is how the two error messages differ from each other — it type-checks and compiles just as
+/// happily. That is the residual gap these anchored literals cover, and the reason they are kept
+/// rather than deleted as redundant (issue #318 asked for the names; the attribute anchor is what
+/// survives #323).
 /// </para>
 ///
 /// <para>
-/// Every expected binding is written with the attribute it feeds. <see cref="BindingFacts.AssertBinds"/>
-/// is a substring match over the raw markup, so a bare <c>"{Binding AvailableWiFiDevices}"</c> keeps
-/// passing after the binding is repurposed onto a different attribute — bound to <c>Tag</c>, say, or
-/// swapped between <c>Text</c> and <c>IsVisible</c>, which is how the two error messages differ from
-/// each other. Naming the attribute costs nothing and closes that gap (issue #318).
-/// </para>
-///
-/// <para>
-/// What it does <b>not</b> establish is which element the binding sits on. The search is file-wide, so
-/// moving a list's <c>ItemsSource</c> onto one of the other two <c>ListBox</c>es — or into a
-/// <c>DataTemplate</c>, where it would resolve against the item rather than the view model — leaves the
-/// asserted text intact and these tests green. Closing that would mean parsing the markup structurally
-/// and teaching the helper about element scope; the value does not carry the cost for one view, and it
-/// is a worse trade than declaring <c>x:DataType</c> on the dialog and letting the compiler do it. The
-/// pin here is on the names, which is the failure #317's rewrite could actually have caused.
+/// <see cref="The_view_declares_its_data_type"/> is the guard on the guard: nothing else in the build
+/// notices <c>x:CompileBindings</c> being dropped, and dropping it would put every binding in the file
+/// back on reflection with all of the above still green.
 /// </para>
 /// </summary>
 public class ConnectionDialogDiscoveryBindingTests
 {
     private const string View = "Daqifi.Avalonia/Daqifi.Desktop/View/ConnectionDialog.axaml";
+
+    /// <summary>
+    /// The declaration that makes every other binding in the view a compile-time fact.
+    ///
+    /// <para>
+    /// Asserted textually because there is nothing else to assert it with: removing
+    /// <c>x:CompileBindings="True"</c> silently downgrades all 37 bindings in the file back to
+    /// runtime reflection, and desktop, iOS and every test in this assembly still pass. The three
+    /// <c>DataTemplate</c> scopes are named too — a template that loses its own <c>x:DataType</c>
+    /// while the file still compiles has been given <c>x:CompileBindings="False"</c> or an inherited
+    /// scope, which is the escape hatch #323 exists to remove.
+    /// </para>
+    /// </summary>
+    [Theory]
+    [InlineData("x:DataType=\"vm:ConnectionDialogViewModel\"")]
+    [InlineData("x:CompileBindings=\"True\"")]
+    [InlineData("<DataTemplate x:DataType=\"wifiDevice:DaqifiStreamingDevice\">")]
+    [InlineData("<DataTemplate x:DataType=\"serialDevice:SerialStreamingDevice\">")]
+    [InlineData("<DataTemplate x:DataType=\"firmware:HeldBootloader\">")]
+    public void The_view_declares_its_data_type(string declaration) =>
+        BindingFacts.AssertBinds(View, declaration);
 
     /// <summary>
     /// The three tabs' device lists, and the three members that gate each tab's animated
@@ -67,9 +80,10 @@ public class ConnectionDialogDiscoveryBindingTests
     [InlineData("Text=\"{Binding SerialDiscoveryError}\"", nameof(ConnectionDialogViewModel.SerialDiscoveryError))]
     public void The_discovery_bindings_resolve_against_the_view_model(string binding, string memberName)
     {
-        // Both halves, because either alone passes while the screen is broken: the markup still names
-        // it on the attribute it is supposed to feed, and the runtime type still exposes it as
-        // something a binding can read.
+        // The first half is the load-bearing one now: that the binding still feeds THIS attribute,
+        // which the compiler has no opinion about. The second is kept as a cheap restatement of what
+        // compiled bindings already require of the member — public, instance, readable — so that a
+        // future decision to drop x:CompileBindings does not also silently drop this check.
         BindingFacts.AssertBinds(View, binding);
         BindingFacts.AssertExposes(typeof(ConnectionDialogViewModel), memberName);
     }
