@@ -1759,6 +1759,32 @@ internal static class HeadlessBench
         var ai = device.AddAnalogInput(0);
         ConnectScripted(shell, device);
 
+        // How many times the manager moved the notification flag. That is a proxy for "how many
+        // notifications the app raised", and the proxy is deliberate — the row cannot count the
+        // dialogs themselves, for two reasons worth writing down rather than rediscovering:
+        //
+        //   * The DIALOG is out of reach. DaqifiViewModel shows it with
+        //     DialogService.ShowDialogAsync, which parents it to the window registered for the
+        //     shell — and this rig never runs the lifetime, so the headless MainWindow is not in
+        //     ClassicDesktopStyleApplicationLifetime.Windows (measured: it is empty even after
+        //     main.Show()). The show therefore fails into a fire-and-forget task and no window
+        //     appears to count.
+        //   * The REASON TEXT is gone by the time any later subscriber sees it. The shell's handler
+        //     clears LastDisconnectReason and puts NotifyConnection back REENTRANTLY, from inside
+        //     the same PropertyChanged dispatch, and it subscribed at boot (DaqifiViewModel:899)
+        //     while this rig subscribes afterwards — so this handler always reads the settled
+        //     values, never the raised ones.
+        //
+        // What survives both is the number of raises, which is exactly what "once, not repeatedly"
+        // is about, plus the fact that they were consumed. The sentence the user reads is NOT
+        // asserted here; the rig README says so under Known gaps.
+        var raises = 0;
+        void CountNotifications(object? _, PropertyChangedEventArgs e)
+        {
+            if (e.PropertyName == nameof(ConnectionManager.NotifyConnection)) { raises++; }
+        }
+        ConnectionManager.Instance.PropertyChanged += CountNotifications;
+
         try
         {
             // Clicking the channel's tile: ToggleChannelCommand both enables the channel on the
@@ -1809,47 +1835,45 @@ internal static class HeadlessBench
             sw.Stop();
 
             var subscribedAfter = LoggingManager.Instance.SubscribedChannels.Count;
-            var dialogs = ErrorDialogs();
-            var message = ErrorDialogMessage(dialogs.FirstOrDefault());
-            // Both halves: a generic "Device disconnected unexpectedly." is the fallback the shell
-            // shows when a producer raises the flag without a reason, and it is what a regression in
-            // TearDownDroppedDevice looks like — not a crash.
-            var namesDevice = message is not null
-                              && message.Contains(ScriptedSerial, StringComparison.Ordinal)
-                              && message.Contains(reason, StringComparison.Ordinal);
+            var raisedByDrop = raises;
+            // Consumed, not merely raised: DaqifiViewModel's NotifyConnection handler is the only
+            // thing on this path that puts the flag back and clears the reason, so finding both
+            // settled is how the rig knows the shell's notification handler ran rather than the
+            // manager having raised into nothing.
+            var consumed = !ConnectionManager.Instance.NotifyConnection
+                           && ConnectionManager.Instance.LastDisconnectReason.Length == 0;
             var shot = Capture(main, "t1-connlost-dropped");
 
             Step(1, "CONN-LOST", "works",
-                 midStream && removed && subscribedAfter == 0 && dialogs.Count == 1 && namesDevice,
+                 midStream && removed && subscribedAfter == 0 && raisedByDrop > 0 && consumed,
                  $"streaming when the link went: LoggingManager.Active={activeBefore}, " +
                  $"{subscribedBefore} subscribed channel(s), {plottedBefore} live plot point(s); " +
                  $"after the drop the device left both lists in {sw.Elapsed.TotalSeconds:F1} s " +
                  $"(shell.ConnectedDevices={shell.ConnectedDevices.Count}, " +
                  $"manager.ConnectedDevices={ConnectionManager.Instance.ConnectedDevices.Count}) and " +
-                 $"{subscribedAfter} channel(s) were left subscribed; {dialogs.Count} notification(s) " +
-                 $"on screen reading '{message ?? "(none)"}' — names the device and the reason={namesDevice}; " +
-                 $"the session itself is left running (shell.IsLogging={shell.IsLogging}), which the " +
-                 "teardown does not stop and this row does not judge",
+                 $"{subscribedAfter} channel(s) were left subscribed; the manager raised " +
+                 $"{raisedByDrop} NotifyConnection change(s) and the shell consumed the " +
+                 $"notification={consumed}; the session itself is left running " +
+                 $"(shell.IsLogging={shell.IsLogging}), which the teardown does not stop and this " +
+                 "row does not judge",
                  shot, sw.Elapsed.TotalSeconds);
 
             // Once, not repeatedly. The guard that makes a second report a no-op is
             // `if (!ConnectedDevices.Contains(device)) { return; }` in OnDeviceConnectionLost.
             device.Drop(reason);
             PumpFor(TimeSpan.FromSeconds(1));
-            var dialogsAfter = ErrorDialogs();
             Step(1, "CONN-LOST", "limits",
-                 dialogs.Count == 1 && dialogsAfter.Count == dialogs.Count
-                     && shell.ConnectedDevices.Count == 0,
-                 $"a second drop report on the same device left {dialogsAfter.Count} notification(s) " +
-                 $"open against the {dialogs.Count} the first one raised, and ConnectedDevices at " +
-                 $"{shell.ConnectedDevices.Count}",
+                 raisedByDrop > 0 && raises == raisedByDrop && shell.ConnectedDevices.Count == 0,
+                 $"a second drop report on the same device raised {raises - raisedByDrop} further " +
+                 $"notification change(s) against the {raisedByDrop} the first one raised, and left " +
+                 $"ConnectedDevices at {shell.ConnectedDevices.Count}",
                  Capture(main, "t1-connlost-second-drop"));
         }
         finally
         {
-            // Nothing here is board state or user state — it is all inside <out> — but a session
-            // left running and a modal dialog left owning the main window both outlive the row, and
-            // the second one makes every later screenshot a picture of the dialog.
+            ConnectionManager.Instance.PropertyChanged -= CountNotifications;
+            // Nothing here is board state or user state — it is all inside <out> — but the session
+            // outlives the row, and the run's shutdown is tidier with the writer drained.
             try
             {
                 if (shell.IsLogging)
@@ -1859,25 +1883,9 @@ internal static class HeadlessBench
                 }
             }
             catch (Exception ex) { Console.WriteLine($"[WARN] cleanup stop logging: {ex.Message}"); }
-
-            foreach (var dialog in ErrorDialogs())
-            {
-                try { dialog.Close(); }
-                catch (Exception ex) { Console.WriteLine($"[WARN] cleanup close notification: {ex.Message}"); }
-            }
             Pump();
         }
     }
-
-    /// <summary>The connection-drop notifications currently on screen. <c>DaqifiViewModel</c>'s
-    /// <c>NotifyConnection</c> handler opens one <c>ErrorDialog</c> per notification, so the number
-    /// of open ones is what "it appeared once" means to the person looking at the app.</summary>
-    private static List<ErrorDialog> ErrorDialogs() =>
-        (Application.Current?.ApplicationLifetime as IClassicDesktopStyleApplicationLifetime)
-            ?.Windows.OfType<ErrorDialog>().ToList() ?? [];
-
-    private static string? ErrorDialogMessage(ErrorDialog? dialog) =>
-        (dialog?.DataContext as ErrorDialogViewModel)?.ErrorMessage;
 
     /// <summary>The control the app tagged with <paramref name="id"/>. Reading the same
     /// <c>AutomationProperties.AutomationId</c> a UI-automation script would means a row and a
