@@ -364,9 +364,15 @@ public class ChannelScalingExpressionTests
         // cannot cover: the budget has to be small enough that a user notices nothing, and large
         // enough that it never refuses work the app is supposed to accept. A real calibration
         // parses in single-digit milliseconds, so 250 ms is ~50x headroom — but an edit to 5 ms
-        // would start rejecting valid formulas on a loaded machine, and one to 30 s would put the
-        // freeze back, and neither shows up in any other test here.
-        Assert.InRange(AbstractChannel.MaxScaleExpressionParseMilliseconds, 50, 2000);
+        // would start rejecting valid formulas on a loaded machine, and neither end shows up in
+        // any other test here.
+        //
+        // The upper bound is 500 ms rather than something roomier because THIS is what pins how
+        // long the UI can stall: the promptness test above has to stay tolerant of a slow build
+        // agent, so it cannot also be the thing that keeps the freeze small. Raising the budget
+        // to a couple of seconds would put a visible stall back while every other assertion here
+        // still passed.
+        Assert.InRange(AbstractChannel.MaxScaleExpressionParseMilliseconds, 50, 500);
 
         const string steinhartHart =
             "1 / (0.001129148 + 0.000234125 * Ln(10000 * (1023 / x - 1)) + " +
