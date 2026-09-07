@@ -680,9 +680,22 @@ internal static class HeadlessBench
         // exactly what it measured before — including CONN-DISC's thread probe, which is still
         // spanning one connect/disconnect cycle rather than four.
         RunFriendlyNameRow(main, shell, devicesPane);
-        // A retry that worked leaves no trace otherwise, and a rig that quietly needed two goes at
-        // the port is one whose next red is harder to read. Not a failure — the mechanism doing its
-        // job is exactly what this records (#287).
+        EmitSetupReconnectSummary();
+    }
+
+    /// <summary>One <c>DEV-NAME</c>/<c>unexpected</c> line saying whether any setup reconnect in
+    /// this run needed its retry.</summary>
+    /// <remarks>
+    /// A retry that worked leaves no trace otherwise, and a rig that quietly needed two goes at the
+    /// port is one whose next red is harder to read. Not a failure — the mechanism doing its job is
+    /// exactly what this records (#287). Called by BOTH modes that can retry: the hardware sequence
+    /// and <see cref="RunRestoreName"/>, which reaches <see cref="ReconnectForSetup"/> through its
+    /// own connect and through <see cref="Bounce"/>. A repair run is the one an agent is least able
+    /// to re-run — the board is already misnamed — so its retries are the last ones that should go
+    /// unrecorded.
+    /// </remarks>
+    private static void EmitSetupReconnectSummary()
+    {
         Emit(2, "DEV-NAME", "unexpected", SetupReconnectRetries.Count > 0 ? "finding" : "pass",
              SetupReconnectRetries.Count == 0
                  ? "every setup reconnect in this run connected on the first attempt"
@@ -926,6 +939,9 @@ internal static class HeadlessBench
             // Same net the hardware sequence uses, and idempotent for the same reason: on the
             // normal path the disconnect above has already happened and this does nothing.
             StopAndDisconnect(shell);
+            // In the finally, not after the try: the early return above — the repair connect that
+            // never came back — is exactly the run whose retries are worth recording.
+            EmitSetupReconnectSummary();
         }
     }
 
@@ -986,10 +1002,21 @@ internal static class HeadlessBench
         if (device is not null) { return device; }
 
         Console.WriteLine($"[WARN] {purpose}: {_port} did not come back after {seconds:F1} s; retrying the connect once (#287)");
-        StopAndDisconnect(shell);
-        // Longer than the 1 s the callers settle for before their first attempt: this one follows a
-        // connect that has just been given up on, which is the state the flake was seen in.
-        PumpFor(TimeSpan.FromSeconds(3));
+        // Let the abandoned attempt finish arriving BEFORE clearing up after it, and look twice.
+        // A connect that missed its deadline is not cancelled, and can still register a device
+        // seconds later; disconnecting first and retrying straight away would leave a window for
+        // that late device to land in between, and ConnectSerial — which cannot tell it from one a
+        // silently-failed disconnect stranded — would then refuse the retry as stale. Pumping first
+        // moves the window past the cleanup, and the second pass catches an arrival during the
+        // first. It cannot be closed completely here: ConnectSerial does not hand back the task it
+        // abandoned, so there is nothing at this layer to await. Also longer overall than the 1 s
+        // the callers settle for before their first attempt, which is the state the flake was seen
+        // in. StopAndDisconnect is idempotent and silent when there is nothing to clear.
+        for (var settle = 0; settle < 2; settle++)
+        {
+            PumpFor(TimeSpan.FromSeconds(2));
+            StopAndDisconnect(shell);
+        }
         device = ConnectSerial(shell, out var retrySeconds);
         SetupReconnectRetries.Add(
             $"{purpose}: first attempt gave up after {seconds:F1} s, retry " +
