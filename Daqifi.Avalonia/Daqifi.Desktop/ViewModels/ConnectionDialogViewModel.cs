@@ -1158,7 +1158,12 @@ public partial class ConnectionDialogViewModel : ObservableObject
     #region Desktop Device Event Handlers
 
     // @port: Daqifi.Desktop.ViewModels.ConnectionDialogViewModel.HandleWifiDeviceFound
-    private void HandleWifiDeviceFound(object sender, IDevice device)
+    // `object?`, not the upstream `object`: this is not an event handler and has no target
+    // delegate — its one caller is HandleCoreWifiDeviceDiscovered, whose own `sender` comes from
+    // Core's event and is declared nullable there. Promising more than that caller can supply was
+    // CS8604 at the call site. The parameter is never read here, so widening it cannot change
+    // behaviour, and NRT annotations are erased at runtime — the emitted signature is unchanged.
+    private void HandleWifiDeviceFound(object? sender, IDevice device)
     {
         if (device is not DaqifiStreamingDevice wifiDevice)
         {
