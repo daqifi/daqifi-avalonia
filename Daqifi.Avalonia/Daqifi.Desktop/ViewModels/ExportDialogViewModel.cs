@@ -82,11 +82,16 @@ public partial class ExportDialogViewModel : ObservableObject, IDisposable
     /// one — the binding conversion simply failed and the property kept its last good value, so the
     /// dialog showed a blank box, an enabled Export button and no complaint, and then exported
     /// averaged by a number that was no longer on screen.
+    /// <para>Nullable because <c>TextBox.Text</c> is: an emptied box can hand the binding a null,
+    /// and annotating this as non-null would only mean the next person to reach for
+    /// <c>.Trim()</c> here gets a NullReferenceException instead of a compiler warning. Nothing
+    /// dereferences it — <see cref="AverageWindow"/> parses it, and a null parses to 0 like any
+    /// other unusable box.</para>
     /// </summary>
     [ObservableProperty]
     [NotifyPropertyChangedFor(nameof(IsAverageQuantityValid))]
     [NotifyCanExecuteChangedFor(nameof(ExportLoggingSessionsCommand))]
-    private string _averageQuantityText = "2";
+    private string? _averageQuantityText = "2";
     [ObservableProperty]
     private bool _exportRelativeTime;
     private int _exportProgress;
@@ -278,9 +283,9 @@ public partial class ExportDialogViewModel : ObservableObject, IDisposable
         var cancelled = false;
         var failed = false;
 
-        // How many of the <see cref="targets"/> actually produced a file. Compared against
-        // targets.Count below rather than assumed: the export used to report "Export complete" on
-        // the strength of not having thrown, which is not the same question (issue #312).
+        // How many of the resolved targets actually produced a file. Compared against targets.Count
+        // below rather than assumed: the export used to report "Export complete" on the strength of
+        // not having thrown, which is not the same question (issue #312).
         var exported = 0;
 
         // Non-null once we can tell the user *why* the export failed (a locked or unwritable

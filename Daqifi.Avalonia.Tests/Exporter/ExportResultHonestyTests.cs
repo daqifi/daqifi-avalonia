@@ -79,7 +79,8 @@ public sealed class ExportResultHonestyTests : IDisposable
     [InlineData("abc")]
     [InlineData("2.5")]
     [InlineData("99999999999999999999")]
-    public async Task An_averaged_export_with_an_unusable_window_is_not_reported_as_complete(string box)
+    [InlineData(null)]
+    public async Task An_averaged_export_with_an_unusable_window_is_not_reported_as_complete(string? box)
     {
         var session = SeedSession("AI0", 1.25, withSamples: true);
         var destination = Path.Combine(_root, "readings.csv");
@@ -191,10 +192,12 @@ public sealed class ExportResultHonestyTests : IDisposable
     [InlineData("2.5", false)]
     [InlineData("1e3", false)]
     [InlineData("99999999999999999999", false)]
+    // Null because TextBox.Text is nullable and an emptied box can hand the binding one.
+    [InlineData(null, false)]
     [InlineData("1", true)]
     [InlineData("2", true)]
     [InlineData(" 10 ", true)]
-    public void The_export_button_is_disabled_unless_the_box_holds_a_usable_window(string box, bool expected)
+    public void The_export_button_is_disabled_unless_the_box_holds_a_usable_window(string? box, bool expected)
     {
         var viewModel = new ExportDialogViewModel(_contexts, 1)
         {
@@ -216,7 +219,8 @@ public sealed class ExportResultHonestyTests : IDisposable
     [InlineData("0")]
     [InlineData("")]
     [InlineData("abc")]
-    public void An_unused_average_window_does_not_block_an_all_samples_export(string box)
+    [InlineData(null)]
+    public void An_unused_average_window_does_not_block_an_all_samples_export(string? box)
     {
         var viewModel = new ExportDialogViewModel(_contexts, 1)
         {
