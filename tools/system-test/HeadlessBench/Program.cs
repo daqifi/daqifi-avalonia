@@ -15,7 +15,7 @@ using Daqifi.Desktop;
 using Daqifi.Desktop.Channel;
 using Daqifi.Desktop.Device;
 using Daqifi.Desktop.Logger;
-using Daqifi.Desktop.View;
+using Daqifi.Desktop.Models;
 using Daqifi.Desktop.ViewModels;
 using EFCore.BulkExtensions;
 using Microsoft.EntityFrameworkCore;
@@ -1708,31 +1708,72 @@ internal static class HeadlessBench
 
         // The pane, not only the view model: NO FILES is what a user sees for an empty card, and
         // the file grid is what must not be showing beside it.
-        var noFiles = ByAutomationId(main, "DeviceLogsNoFilesTitle");
-        var fileGrid = main.GetVisualDescendants().OfType<Control>()
-            .FirstOrDefault(c => c.Name == "DeviceFilesList");
         var statusText = ByAutomationId(main, "SdCardStatusText") as TextBlock;
-        var emptyPanelShown = noFiles?.IsEffectivelyVisible == true;
-        var gridShown = fileGrid?.IsEffectivelyVisible == true;
+        var emptyPanelShown = NoFilesPanelVisible(main);
+        var gridShown = FileGridVisible(main);
+        // Snapshotted, because the control refresh below overwrites every one of them.
+        var emptyCount = logs.DeviceFiles.Count;
+        var emptyState = logs.SdCardState;
+        var emptyHasNoFiles = logs.HasNoFiles;
+        var emptyHasFiles = logs.HasFiles;
+        var emptyNotPresent = logs.HasSdCardNotPresent;
+        var emptyError = logs.HasSdCardError;
+        var emptyStatusLine = logs.SdCardStatusLine;
+        var emptyStatusText = statusText?.Text;
+
+        // Then the SAME pane with one file on the card, because "the NO FILES panel is showing" is
+        // not on its own evidence that the binding works. A binding that cannot resolve — a typo'd
+        // path, a renamed property — leaves IsVisible at its DEFAULT, which is true, so the panel
+        // stays on screen for the wrong reason and an empty-card-only check reads green. Measured,
+        // not assumed: typing HasNoFiles as HasNoFilez in DeviceLogsView.axaml left this row green
+        // until this second phase existed. One file is also the other half of what the matrix asks
+        // of SD-LIST — the row has to tell an empty card from a card with something on it, and that
+        // needs both.
+        device.SdCardListing = [new SdCardFile { FileName = "control.bin", CreatedDate = DateTime.Now }];
+        PumpUntil(() => logs.RefreshFilesCommand.CanExecute(null), TimeSpan.FromSeconds(10));
+        var second = logs.RefreshFilesCommand.ExecuteAsync(null);
+        PumpUntil(() => second.IsCompleted, TimeSpan.FromSeconds(30));
+        PumpFor(TimeSpan.FromMilliseconds(300));
+        var controlShot = Capture(main, "t1-sdlist-one-file");
+        var emptyPanelHidden = !NoFilesPanelVisible(main);
+        var gridShownWithFile = FileGridVisible(main);
 
         Step(1, "SD-LIST", "limits",
-             device.SdListingRequests > 0
-                 && logs.SdCardState == SdCardState.Ok
-                 && logs.DeviceFiles.Count == 0
-                 && logs is { HasNoFiles: true, HasFiles: false, HasSdCardNotPresent: false, HasSdCardError: false }
-                 && logs.SdCardStatusLine == " · SD card OK · 0 files"
-                 && emptyPanelShown && !gridShown,
-             $"the app asked the device for a listing {device.SdListingRequests} time(s) and got " +
-             $"{logs.DeviceFiles.Count} file(s) back in {sw.Elapsed.TotalSeconds:F1} s; " +
-             $"SdCardState={logs.SdCardState} (an empty card has to read Ok — NotPresent and Error " +
-             $"are the two other panels this one is told apart from); HasNoFiles={logs.HasNoFiles} " +
-             $"HasFiles={logs.HasFiles} HasSdCardNotPresent={logs.HasSdCardNotPresent} " +
-             $"HasSdCardError={logs.HasSdCardError}; status line '{logs.SdCardStatusLine}'; " +
-             $"the DEVICE LOGS segment was {(deviceLogsTab is null ? "NOT FOUND in the pane" : "selected")} and " +
-             $"the pane shows the NO FILES panel={emptyPanelShown} beside a hidden file grid={!gridShown}" +
-             (statusText is null ? "; the status line control was not found" : $"; it reads '{statusText.Text}'"),
+             device.SdListingRequests > 1
+                 && emptyCount == 0 && emptyState == SdCardState.Ok
+                 && emptyHasNoFiles && !emptyHasFiles && !emptyNotPresent && !emptyError
+                 && emptyStatusLine == " · SD card OK · 0 files"
+                 && emptyPanelShown && !gridShown
+                 && logs.DeviceFiles.Count == 1 && logs.SdCardState == SdCardState.Ok
+                 && !logs.HasNoFiles && logs.HasFiles
+                 && logs.SdCardStatusLine == " · SD card OK · 1 file"
+                 && emptyPanelHidden && gridShownWithFile,
+             $"empty card: the app asked the device for a listing {device.SdListingRequests} time(s) " +
+             $"and got {emptyCount} file(s) back in {sw.Elapsed.TotalSeconds:F1} s; " +
+             $"SdCardState={emptyState} (an empty card has to read Ok — NotPresent and Error are the " +
+             $"two other panels this one is told apart from); HasNoFiles={emptyHasNoFiles} " +
+             $"HasFiles={emptyHasFiles} HasSdCardNotPresent={emptyNotPresent} " +
+             $"HasSdCardError={emptyError}; status line '{emptyStatusLine}'; the DEVICE LOGS segment " +
+             $"was {(deviceLogsTab is null ? "NOT FOUND in the pane" : "selected")} and the pane shows " +
+             $"the NO FILES panel={emptyPanelShown} beside a hidden file grid={!gridShown}" +
+             (emptyStatusText is null ? "; the status line control was not found" : $"; it reads '{emptyStatusText}'") +
+             $". Control — one file on the same card ({controlShot ?? "no capture"}): " +
+             $"{logs.DeviceFiles.Count} file(s), SdCardState={logs.SdCardState}, " +
+             $"HasNoFiles={logs.HasNoFiles} HasFiles={logs.HasFiles}, status line " +
+             $"'{logs.SdCardStatusLine}', NO FILES panel hidden={emptyPanelHidden}, " +
+             $"file grid shown={gridShownWithFile}",
              shot, sw.Elapsed.TotalSeconds);
     }
+
+    /// <summary>Whether the Logged Data pane is showing its "NO FILES" empty state.</summary>
+    private static bool NoFilesPanelVisible(Window main) =>
+        ByAutomationId(main, "DeviceLogsNoFilesTitle")?.IsEffectivelyVisible == true;
+
+    /// <summary>Whether the Logged Data pane is showing the SD file grid. Found by name rather
+    /// than by type so the rig does not have to name Avalonia's DataGrid.</summary>
+    private static bool FileGridVisible(Window main) =>
+        main.GetVisualDescendants().OfType<Control>()
+            .FirstOrDefault(c => c.Name == "DeviceFilesList")?.IsEffectivelyVisible == true;
 
     /// <summary>
     /// CONN-LOST at the matrix's stated edge case: the link goes away <em>mid-stream</em>. What the
@@ -1834,6 +1875,12 @@ internal static class HeadlessBench
             PumpFor(TimeSpan.FromMilliseconds(500));
             sw.Stop();
 
+            // How many channels are left holding a device that is gone. This asserts the OUTCOME,
+            // and it is backstopped: DaqifiViewModel's ConnectedDevices handler sweeps orphaned
+            // subscriptions for exactly the auto-removal paths this row drives (DaqifiViewModel
+            // :2062). Measured — deleting TearDownDroppedDevice's own unsubscribe loop leaves this
+            // row green, and the same shape is already recorded for CONN-DISC in the rig README. So
+            // it says "no channel was left stranded", not "the teardown released them".
             var subscribedAfter = LoggingManager.Instance.SubscribedChannels.Count;
             var raisedByDrop = raises;
             // Consumed, not merely raised: DaqifiViewModel's NotifyConnection handler is the only
@@ -1858,8 +1905,12 @@ internal static class HeadlessBench
                  "row does not judge",
                  shot, sw.Elapsed.TotalSeconds);
 
-            // Once, not repeatedly. The guard that makes a second report a no-op is
-            // `if (!ConnectedDevices.Contains(device)) { return; }` in OnDeviceConnectionLost.
+            // Once, not repeatedly. TWO mechanisms hold this up and the check cannot tell them
+            // apart, which is worth saying rather than leaving to be rediscovered: Disconnect's
+            // UnsubscribeDeviceEvents detaches this very handler, so a later report reaches nobody,
+            // and OnDeviceConnectionLost's `if (!ConnectedDevices.Contains(device)) { return; }`
+            // catches the race where a second path arrives before that. Measured: removing either
+            // one alone leaves this green; removing both raises a second notification and fails it.
             device.Drop(reason);
             PumpFor(TimeSpan.FromSeconds(1));
             Step(1, "CONN-LOST", "limits",

@@ -165,15 +165,16 @@ jobs:
       # succeed is how a gate arrives broken. That is its own change, with its own
       # evidence.
       #
-      # tools/system-test/HeadlessBench is compiled here for the same reason and with the
-      # same limit — COMPILED, never run. It cannot run here at all: it drives a real
-      # DAQiFi board over serial, and no runner has one. What a compile buys is the thing
-      # the rig was missing while it sat untracked (#254): it reaches deep into the app's
-      # internals — DaqifiViewModel, ConnectionDialogViewModel.ConnectManualSerialCommand,
-      # LoggingManager.Subscribe, shell.Plotter.LoggedPoints — none of which are public
-      # API, and all of which move. #245 and #246 both DELETED view-model members after
-      # searching the repo for readers; a rig outside the repo is invisible to that search
-      # and would have been broken by it silently. Now it breaks the build instead.
+      # tools/system-test/HeadlessBench is compiled here for the same reason, and since
+      # #304 it is also RUN — but only its `--scripted` states, in the step below. Its
+      # hardware rows cannot run on any runner: they drive a real DAQiFi board over serial.
+      # What a compile buys on its own is the thing the rig was missing while it sat
+      # untracked (#254): it reaches deep into the app's internals — DaqifiViewModel,
+      # ConnectionDialogViewModel.ConnectManualSerialCommand, LoggingManager.Subscribe,
+      # shell.Plotter.LoggedPoints — none of which are public API, and all of which move.
+      # #245 and #246 both DELETED view-model members after searching the repo for readers;
+      # a rig outside the repo is invisible to that search and would have been broken by it
+      # silently. Now it breaks the build instead.
       - name: Build
         run: |
           dotnet build Daqifi.Avalonia/Daqifi.Avalonia.csproj \
@@ -233,6 +234,82 @@ jobs:
               raise SystemExit(1)
           print(f"{passed}/{total} tests passed")
           PY
+
+      # The system-test rig's T1 rows, RUN rather than merely compiled (#304). Until now
+      # everything HeadlessBench checks lived on one bench Mac and CI could only say that it
+      # still built — see the note on the Build step above. The five `--scripted` states open
+      # no serial port and need no board (three fabricate a database the app finds at boot,
+      # two fabricate an IStreamingDevice), so they are the part of this rig a runner can
+      # actually execute, which was the whole argument for building `--scripted` (#260).
+      #
+      # This is the first time any of it has run on a LINUX runner. Headless Skia and font
+      # availability on ubuntu are exactly the open questions the Build step's note raises
+      # about the capture harness, and they apply here too — so if the app cannot render
+      # here, this step is what says so out loud instead of the rig quietly never running
+      # anywhere but one laptop.
+      #
+      # One process and one --out per state, because that is the rig's own contract:
+      # results.jsonl is truncated at startup, so a shared --out would discard the previous
+      # state's verdicts rather than interleave them. Under RUNNER_TEMP, never the
+      # workspace, so nothing here can disturb the lock-file checks that run after it.
+      #
+      # A `not-run` FAILS THIS STEP even though it does not fail the run. The rig emits it
+      # when a check could not be attempted at all — export-readonly reports it when its
+      # chmod-555 destination turns out to still be writable, which is what running as root
+      # looks like — and a step that accepted it would report green for a job that measured
+      # nothing. There is no legitimate `not-run` in a healthy scripted run: all five states
+      # emit none.
+      - name: Run the HeadlessBench --scripted states
+        run: |
+          set -euo pipefail
+          for state in sessions-500 session-10h export-readonly sd-empty drop-mid-stream; do
+            echo "::group::--scripted ${state}"
+            dotnet run --project tools/system-test/HeadlessBench/HeadlessBench.csproj \
+              -c Release --no-build -- \
+              --scripted "${state}" --out "${RUNNER_TEMP}/headlessbench/${state}"
+            echo "::endgroup::"
+          done
+          python3 - "${RUNNER_TEMP}/headlessbench" <<'PY'
+          import json, pathlib, sys
+
+          # The states this step drives. Named here as well as in the loop so a state that
+          # exits 0 without writing anything cannot pass as a state that ran.
+          expected = ["sessions-500", "session-10h", "export-readonly",
+                      "sd-empty", "drop-mid-stream"]
+          root = pathlib.Path(sys.argv[1])
+          failed = False
+          for state in expected:
+              results = root / state / "results.jsonl"
+              if not results.is_file():
+                  print(f"::error::'{state}' wrote no results.jsonl, so it reported nothing "
+                        "even though the process exited 0.")
+                  failed = True
+                  continue
+              checks = [json.loads(line) for line in results.read_text().splitlines() if line.strip()]
+              if not checks:
+                  print(f"::error::'{state}' wrote an EMPTY results.jsonl: the run exited 0 "
+                        "having emitted no check at all.")
+                  failed = True
+                  continue
+              for check in checks:
+                  if check.get("status") == "not-run":
+                      print(f"::error::'{state}' skipped {check.get('row')}/{check.get('check')} "
+                            f"as not-run, so this job did not measure it: {check.get('evidence')}")
+                      failed = True
+              print(f"{state}: {len(checks)} check(s)")
+          raise SystemExit(1 if failed else 0)
+          PY
+
+      # Only on failure, and only because this is the one step here whose failure cannot be
+      # diagnosed from its log: the rig's verdicts and the PNG of the window it was looking
+      # at are what say whether ubuntu rendered the app at all.
+      - name: Upload the --scripted run directories
+        if: failure()
+        uses: actions/upload-artifact@v4
+        with:
+          name: headlessbench-scripted
+          path: ${{ runner.temp }}/headlessbench
+          if-no-files-found: ignore
 
       - name: Upload dependency graphs
         uses: actions/upload-artifact@v4
