@@ -138,6 +138,35 @@ public class ConnectionDialogSerialListTests
         Assert.False(viewModel.Value.HasNoSerialDevices);
     }
 
+    /// <summary>
+    /// A sweep runs every couple of seconds and reports the same port each time, so the list is
+    /// only stable because the second report is matched to the device the first one added and
+    /// refreshes it in place.
+    /// </summary>
+    /// <remarks>
+    /// This is the lookup's only caller, and the lookup is what the tile's identity hangs on: a
+    /// miss appends a second row for a port that is already listed. Pinned here because the
+    /// lookup matches on the device's own <c>PortName</c> projection rather than on the
+    /// <c>SerialPort</c> the device holds — the same substitution the tile's binding made.
+    /// </remarks>
+    [Fact]
+    public void The_same_port_rediscovered_refreshes_its_row_instead_of_adding_another()
+    {
+        using var viewModel = CreateViewModel();
+
+        InvokePrivate(viewModel.Value, "StartSerialDiscovery");
+        var currentFinder = GetPrivateField(viewModel.Value, "_serialFinder");
+
+        RaiseDiscovery(viewModel.Value, currentFinder, "COM-REPEAT");
+        var first = Assert.Single(viewModel.Value.AvailableSerialDevices);
+
+        RaiseDiscovery(viewModel.Value, currentFinder, "COM-REPEAT");
+
+        var still = Assert.Single(viewModel.Value.AvailableSerialDevices);
+        Assert.Same(first, still);
+        Assert.Equal("COM-REPEAT", still.PortName);
+    }
+
     #region Harness
     /// <summary>
     /// Raises <c>DeviceDiscovered</c> at the view model the way a finder does, with
