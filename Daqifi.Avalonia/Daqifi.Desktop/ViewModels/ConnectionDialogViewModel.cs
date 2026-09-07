@@ -1117,7 +1117,7 @@ public partial class ConnectionDialogViewModel : ObservableObject
     private SerialStreamingDevice? FindSerialDeviceByPortName(string portName)
     {
         return AvailableSerialDevices.FirstOrDefault(d =>
-            d.Port?.PortName.Equals(portName, StringComparison.OrdinalIgnoreCase) == true);
+            d.PortName.Equals(portName, StringComparison.OrdinalIgnoreCase));
     }
 
     // @port: Daqifi.Desktop.ViewModels.ConnectionDialogViewModel.UpdateSerialDeviceMetadata

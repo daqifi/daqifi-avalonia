@@ -289,13 +289,6 @@ public abstract partial class AbstractStreamingDevice : ObservableObject, IStrea
 
 
     /// <summary>
-    /// Max length for a friendly device name, matching firmware's
-    /// <c>FRIENDLY_DEVICE_NAME_SIZE</c> (32-byte NVM buffer, NUL-terminated).
-    /// </summary>
-    // @port: Daqifi.Desktop.Device.AbstractStreamingDevice.MAX_FRIENDLY_NAME_LENGTH
-    private const int MAX_FRIENDLY_NAME_LENGTH = 31;
-
-    /// <summary>
     /// Device-wide PWM frequency shown (and commanded on the first enable) before the user
     /// picks one. The device does not report its frequency usefully — readback echoes the
     /// last request — so the session starts from a mid-range default.
@@ -2220,27 +2213,27 @@ public abstract partial class AbstractStreamingDevice : ObservableObject, IStrea
     /// Sets and persists a user-defined friendly name to the device's NVM.
     /// </summary>
     /// <remarks>
-    /// No producer helper exists in <c>Daqifi.Core.Communication.Producers.ScpiMessageProducer</c>
-    /// for this firmware command yet, so the SCPI text is built directly here (mirrors the
-    /// quoted-string pattern <c>ScpiMessageProducer</c> already uses for SSID/password).
-    /// Commands: <c>SYSTem:DEVice:NAME "name"</c> then <c>SYSTem:DEVice:NAME:SAVE</c>.
+    /// <c>ScpiMessageProducer</c> owns both commands — <c>SYSTem:DEVice:NAME "name"</c> then
+    /// <c>SYSTem:DEVice:NAME:SAVE</c> — and the name-acceptance rule behind them. They are
+    /// produced before the connected check so an invalid name is refused whether or not a device
+    /// is listening.
     /// </remarks>
     /// <param name="name">
-    /// 1-31 printable ASCII characters (0x20-0x7E); cannot contain <c>"</c> or <c>\</c> — matches
-    /// firmware's <c>daqifi_settings_FriendlyNameIsValid</c> validation exactly, so a name that
-    /// passes here will not be rejected by the device.
+    /// 1-<see cref="ScpiMessageProducer.MaxFriendlyNameLength"/> printable ASCII characters
+    /// (0x20-0x7E); cannot contain <c>"</c> or <c>\</c>. Core's rule matches firmware's
+    /// <c>daqifi_settings_FriendlyNameIsValid</c> exactly, so a name that passes here will not be
+    /// rejected by the device.
     /// </param>
+    /// <exception cref="ArgumentNullException">Thrown when <paramref name="name"/> is null.</exception>
     /// <exception cref="ArgumentException">Thrown when <paramref name="name"/> fails validation.</exception>
     // @port: Daqifi.Desktop.Device.AbstractStreamingDevice.SetFriendlyName
     public void SetFriendlyName(string name)
     {
+        // Ahead of Core's validator, which treats null as merely invalid.
         ArgumentNullException.ThrowIfNull(name);
-        if (!IsFriendlyNameValid(name))
-        {
-            throw new ArgumentException(
-                "Device name must be 1-31 printable ASCII characters and cannot contain '\"' or '\\'.",
-                nameof(name));
-        }
+
+        var stageName = ScpiMessageProducer.SetDeviceName(name);
+        var persistName = ScpiMessageProducer.SaveDeviceName;
 
         if (CoreDevice is not { IsConnected: true })
         {
@@ -2248,36 +2241,12 @@ public abstract partial class AbstractStreamingDevice : ObservableObject, IStrea
             return;
         }
 
-        SendMessage(new ScpiMessage($"SYSTem:DEVice:NAME \"{name}\""));
-        SendMessage(new ScpiMessage("SYSTem:DEVice:NAME:SAVE"));
+        SendMessage(stageName);
+        SendMessage(persistName);
 
         // Optimistic local update: the device does not echo the new name back synchronously,
         // and it may not stream another status frame for a while (e.g. StreamToApp is idle).
         FriendlyName = name;
-    }
-
-    /// <summary>
-    /// Validates a candidate friendly name against firmware's acceptance rule: printable ASCII
-    /// (0x20-0x7E) only, excluding <c>"</c> and <c>\</c> (which would break the SCPI string
-    /// literal and the JSON info-message encoding), within <see cref="MAX_FRIENDLY_NAME_LENGTH"/>.
-    /// </summary>
-    // @port: Daqifi.Desktop.Device.AbstractStreamingDevice.IsFriendlyNameValid
-    private static bool IsFriendlyNameValid(string name)
-    {
-        if (name.Length is 0 or > MAX_FRIENDLY_NAME_LENGTH)
-        {
-            return false;
-        }
-
-        foreach (var c in name)
-        {
-            if (c is < (char)0x20 or > (char)0x7E or '"' or '\\')
-            {
-                return false;
-            }
-        }
-
-        return true;
     }
 
     /// <summary>
