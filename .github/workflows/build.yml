@@ -599,8 +599,9 @@ jobs:
           # 18 desktop/mobile screens + 7 dialog screens (#213, plus the firmware
           # upload scrim added for #241) + the 9 minimum-size desktop screens (#253:
           # the same nine panes and drawers again at MainWindow's declared
-          # MinWidth=720 MinHeight=480).
-          expected=34
+          # MinWidth=720 MinHeight=480) + the 5 Device Logs states (#280: the Logged
+          # Data pane's second tab, which no other screen here selects).
+          expected=39
           actual=$(find "${PARITY_OUT}/determinism/r1" -maxdepth 1 -type f -name '*.png' \
                      | wc -l | tr -d '[:space:]')
           if [ "${actual}" != "${expected}" ]; then
