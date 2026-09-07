@@ -189,9 +189,37 @@ public class WifiChipInfoProbeTests
         var silentReason = FirmwareUpdateCoordinator.DescribeUnreadableModule(neverAnswered);
 
         Assert.NotEqual(stuckReason, silentReason);
-        Assert.Contains("uninitialized", stuckReason, StringComparison.OrdinalIgnoreCase);
+        Assert.Contains("uninitialized WINC state machine", stuckReason, StringComparison.OrdinalIgnoreCase);
         Assert.Contains("-200", stuckReason, StringComparison.Ordinal);
-        Assert.Contains("never reported an uninitialized state", silentReason, StringComparison.OrdinalIgnoreCase);
+        Assert.Contains("failed some other way", silentReason, StringComparison.OrdinalIgnoreCase);
+    }
+
+    /// <summary>
+    /// Neither clause may claim more than the flag establishes. <c>WasLanNotInitialized</c>
+    /// classifies the <em>terminal</em> attempt only, so a field log must not assert what earlier
+    /// attempts did, nor name the specific error that ended the probe — Core resets the flag after
+    /// any other failure, and that failure can be a timeout, an unparseable response, or any other
+    /// provider exception. Inventing either would mislead support about the startup sequence.
+    /// </summary>
+    [Fact]
+    public async Task Neither_clause_claims_a_probe_history_or_a_specific_terminal_error()
+    {
+        var stuck = FirmwareUpdateCoordinator.DescribeUnreadableModule(
+            await ScriptedProvider.ThatAlwaysThrows(new LanNotInitializedException("SCPI -200"))
+                .GetLanChipInfoWithRetryAsync(FastPolicy()));
+        var other = FirmwareUpdateCoordinator.DescribeUnreadableModule(
+            await ScriptedProvider.ThatAlwaysThrows(new InvalidOperationException("something else"))
+                .GetLanChipInfoWithRetryAsync(FastPolicy()));
+
+        // Scoped to the attempt the flag actually describes.
+        Assert.Contains("final attempt", stuck, StringComparison.OrdinalIgnoreCase);
+        Assert.Contains("final attempt", other, StringComparison.OrdinalIgnoreCase);
+
+        // No claim about what earlier attempts did...
+        Assert.DoesNotContain("never", other, StringComparison.OrdinalIgnoreCase);
+        // ...and no guess at which error ended it. This probe threw neither of these.
+        Assert.DoesNotContain("timed out", other, StringComparison.OrdinalIgnoreCase);
+        Assert.DoesNotContain("unparseable", other, StringComparison.OrdinalIgnoreCase);
     }
 
     /// <summary>
@@ -236,12 +264,13 @@ public class WifiChipInfoProbeTests
 
     /// <summary>
     /// <c>WasLanNotInitialized</c> describes the <em>terminal</em> failure — Core resets it on any
-    /// other kind — so a module that reported <c>-200</c> early and then went silent must read as
-    /// "never answered", not as the self-clearing case. Getting this backwards would tell support
-    /// to wait out a module that is actually dead.
+    /// other kind — so a module that reported <c>-200</c> twice and then timed out must not read as
+    /// the self-clearing case. Getting that backwards would tell support to wait out a module that
+    /// is actually dead. Equally, it must not read as "never reported an uninitialized state",
+    /// which this probe would make a lie: it reported one twice.
     /// </summary>
     [Fact]
-    public async Task An_early_uninitialized_report_does_not_survive_a_later_different_failure()
+    public async Task An_early_uninitialized_report_neither_survives_nor_is_denied()
     {
         var probe = await ScriptedProvider.That(
                 Outcome.Throws(new LanNotInitializedException("SCPI -200")),
@@ -251,10 +280,14 @@ public class WifiChipInfoProbeTests
 
         Assert.Null(probe.ChipInfo);
         Assert.False(probe.WasLanNotInitialized);
-        Assert.Contains(
-            "never reported an uninitialized state",
-            FirmwareUpdateCoordinator.DescribeUnreadableModule(probe),
-            StringComparison.OrdinalIgnoreCase);
+
+        var reason = FirmwareUpdateCoordinator.DescribeUnreadableModule(probe);
+
+        // Not the self-clearing verdict...
+        Assert.DoesNotContain("normally clears on its own", reason, StringComparison.OrdinalIgnoreCase);
+        // ...and not a denial that -200 was ever seen, because it was — twice.
+        Assert.DoesNotContain("never", reason, StringComparison.OrdinalIgnoreCase);
+        Assert.Contains("final attempt failed some other way", reason, StringComparison.OrdinalIgnoreCase);
     }
 
     #region Helpers

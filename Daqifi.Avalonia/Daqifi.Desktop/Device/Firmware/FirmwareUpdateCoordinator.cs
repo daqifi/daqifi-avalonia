@@ -713,6 +713,12 @@ public class FirmwareUpdateCoordinator
     /// support engineer needs from a field log, and Core hands it to us in
     /// <see cref="LanChipInfoProbeResult.WasLanNotInitialized"/>.
     /// <para>
+    /// That flag classifies the <em>terminal</em> attempt only — Core resets it after any other
+    /// kind of failure — so both clauses are worded to claim nothing about earlier attempts or
+    /// about which specific error ended the probe. A field log that invented either would be worse
+    /// than one that said nothing.
+    /// </para>
+    /// <para>
     /// Core also logs this per attempt, but at <c>LogDebug</c>, which the app drops twice over —
     /// <c>AppLoggerLoggerProvider</c>'s bridge forwards Information and above, and <c>App.cs</c>
     /// filters the provider to Information and above again. Lowering either floor would flood
@@ -730,9 +736,14 @@ public class FirmwareUpdateCoordinator
             return string.Empty;
         }
 
+        // Both clauses speak only of the FINAL attempt, because that is the whole of what the flag
+        // establishes. Core resets it after any non-not-initialized failure, so a false value does
+        // NOT mean the module never reported -200 — an earlier attempt may well have — and it does
+        // not name the terminal cause either, which can be a timeout, an unparseable response or
+        // any other provider exception. Claiming either would put invented history in a field log.
         return probe.WasLanNotInitialized
-            ? " — the module reported an uninitialized WINC state machine (SCPI -200), which normally clears on its own"
-            : " — the module never reported an uninitialized state (it timed out or answered unparseably)";
+            ? " — the final attempt reported an uninitialized WINC state machine (SCPI -200), which normally clears on its own"
+            : " — the final attempt failed some other way, not with an uninitialized-state report";
     }
 
     // @port: Daqifi.Desktop.Device.Firmware.FirmwareUpdateCoordinator.CreateWifiFirmwareUpdateService
