@@ -143,13 +143,46 @@ public abstract partial class AbstractChannel : ObservableObject, IChannel
         };
 
     /// <summary>
-    /// Longest expression the scaling box will hand to the parser. Real calibrations are far
-    /// shorter — a Steinhart-Hart thermistor conversion, about the most involved thing anyone
-    /// writes here, is ~120 characters — so this is roughly double the realistic maximum while
-    /// still being nowhere near the ~1,700 characters of nested parentheses (or the ~25,600
-    /// leading <c>-</c>) at which NCalc's recursive-descent parser overflows the stack.
+    /// Longest expression the scaling box will hand to the parser.
+    ///
+    /// <para>
+    /// This started at 256, chosen against a Steinhart-Hart thermistor conversion (124
+    /// characters) as "about the most involved thing anyone writes here". That was wrong, and
+    /// #316 is the report: thermocouple linearisation is the other main class of calibration a
+    /// DAQ user writes, and it is longer. Measured here, as an expression in <c>x</c>:
+    /// </para>
+    ///
+    /// <list type="bullet">
+    /// <item>Steinhart-Hart thermistor — <b>124</b> characters, nesting 4.</item>
+    /// <item>Type-K direct, ITS-90 0-1372 °C, degree 9 plus the Gaussian term, at 7 significant
+    /// figures — <b>267</b> characters, nesting 2. <em>This one was refused by 11 characters.</em></item>
+    /// <item>The same at the full 12-significant-figure NIST precision — <b>389</b>.</item>
+    /// <item>Type-K <em>inverse</em>, full range: the NIST inverse function is piecewise over
+    /// three sub-ranges, so linearising a thermocouple in one box is an <c>if()</c> chain over
+    /// three polynomials — <b>639</b> characters as a person types it, nesting 3, and about
+    /// <b>993</b> with all three polynomials at full NIST precision.</item>
+    /// </list>
+    ///
+    /// <para>
+    /// 1,024 clears every one of those. The price is known and linear, which is why raising it
+    /// is safe: with <see cref="MaxScaleExpressionDepth"/> holding the contiguous run of <c>(</c>
+    /// at 8, the exponent is already bounded and what is left grows in proportion to the text.
+    /// Measured on macOS/arm64 against NCalcSync 7.1.0, the worst input found that satisfies both
+    /// caps (8 <c>(</c> then <c>!</c> filler) costs 1.4 s at 256, 1.7 s at 512, 2.4 s at 768 and
+    /// <b>3.2 s at 1,024</b> — roughly 3 ms per character. So this constant buys expression room
+    /// at a fixed rate rather than opening anything up; the ceiling moves, it does not disappear,
+    /// and #311's 48 s and its process abort are both still out of reach.
+    /// </para>
+    ///
+    /// <para>
+    /// It is also still far below the other stack-growth shapes: ~1,700 characters of nested
+    /// parentheses (which the depth cap refuses long before this one) and the ~25,600 leading
+    /// <c>-</c> at which NCalc's recursive-descent parser overflows an 8 MB stack. Checked on a
+    /// deliberately small 1 MiB stack rather than assumed: 1,023 leading <c>-</c>, <c>!</c> and
+    /// <c>~</c> each parse in under a millisecond and none of them comes near overflowing.
+    /// </para>
     /// </summary>
-    public const int MaxScaleExpressionLength = 256;
+    public const int MaxScaleExpressionLength = 1024;
 
     /// <summary>
     /// Deepest parenthesis nesting the scaling box will hand to the parser. The Steinhart-Hart
@@ -170,7 +203,16 @@ public abstract partial class AbstractChannel : ObservableObject, IChannel
     /// to interpret it, and therefore however a future disagreement between the two readings
     /// turns out. Separated runs do not backtrack into one another: 14 blocks of 8 open
     /// parentheses (112 parser-level opens in 252 characters) parse in 0.000 s, and the slowest
-    /// input found that satisfies both caps costs 1.1 s.
+    /// input found that satisfies both caps costs 3.2 s at the 1,024-character cap.
+    /// </para>
+    ///
+    /// <para>
+    /// This is the cap that is <em>not</em> raised, and #316 asks about it: a polynomial written
+    /// in Horner form nests once per degree, so degree 8 sits exactly here and degree 9 is
+    /// refused. Raising it is the one change that would move the exponent — 9 costs 0.9 s where 8
+    /// costs 0.22 s, 10 costs 3.5 s and 11 over 12 s — so the answer for a high-degree polynomial
+    /// is the expanded <c>Pow(x, n)</c> form, which nests once and now has the length budget to
+    /// fit: the full-range type-K inverse above is nesting 3 at 639 characters.
     /// </para>
     /// </summary>
     public const int MaxScaleExpressionDepth = 8;
