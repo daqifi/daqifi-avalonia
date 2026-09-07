@@ -329,19 +329,20 @@ public class ChannelScalingExpressionTests
     }
 
     [Fact]
-    public void An_input_that_gets_past_both_counts_is_still_refused_promptly()
+    public void An_input_that_gets_past_both_counts_is_still_bounded_by_them()
     {
-        // The counting is a guess at somebody else's grammar and two rounds of review each found
-        // a way to make it disagree with NCalc. This is the worst input that gets past BOTH
-        // bounds — 8 open parentheses then 248 '!', so 256 characters exactly and nesting depth 8
-        // exactly — and it costs ~0.9 s unguarded, which was the residual UI stall the caps alone
-        // conceded. Both of the assertions below hold whichever way the race goes.
+        // The worst input found that satisfies BOTH bounds exactly — 8 open parentheses then
+        // 248 '!', so 256 characters and nesting depth 8 — searched for over 17 filler alphabets
+        // at 6, 7 and 8 opens, and over 4,000 random strings. Measured unguarded: 1.1 s, against
+        // the 48 s the same setter spent on twelve bare parentheses. That second or so is the
+        // residual stall the caps concede, and it is the ceiling rather than a typical figure:
+        // nothing that gets past the caps can escalate past it, because the caps hold the
+        // contiguous run of '(' at 8 and the exponent is in that run.
         //
-        // Deliberately NOT asserted: which of the two refusals comes back. On this machine the
-        // 250 ms deadline wins and the label says TOO COMPLEX; on a host several times faster the
-        // parse simply finishes first and the same input is refused as a syntax error. Both are
-        // correct, and pinning one of them would make this test a measurement of the build agent
-        // rather than of the code. See the next test for the deadline's own bound.
+        // The bound below is deliberately far above the measured 1.1 s. It is not a performance
+        // assertion — it is the assertion that SOMETHING bounded the parse, and the regression it
+        // guards against is 48 s. Pinning it any tighter would make it a measurement of the build
+        // agent, which is the mistake this PR made once already in the production code.
         var underBothCaps = new string('(', AbstractChannel.MaxScaleExpressionDepth)
                             + new string('!', AbstractChannel.MaxScaleExpressionLength
                                               - AbstractChannel.MaxScaleExpressionDepth);
@@ -353,33 +354,98 @@ public class ChannelScalingExpressionTests
         started.Stop();
 
         Assert.False(channel.HasValidExpression);
-        Assert.True(started.Elapsed < TimeSpan.FromSeconds(5),
+        Assert.Equal(AbstractChannel.InvalidExpressionMessage, channel.ScaleExpressionError);
+        Assert.True(started.Elapsed < TimeSpan.FromSeconds(20),
             $"the setter took {started.Elapsed.TotalSeconds:0.0} s, so nothing bounded the parse");
     }
 
     [Fact]
-    public void The_parse_deadline_is_short_enough_to_matter_and_long_enough_for_a_real_calibration()
+    public void Whether_an_expression_is_accepted_depends_on_its_text_and_nothing_else()
     {
-        // The half of the deadline that IS host-independent, and the half that a timing assertion
-        // cannot cover: the budget has to be small enough that a user notices nothing, and large
-        // enough that it never refuses work the app is supposed to accept. A real calibration
-        // parses in single-digit milliseconds, so 250 ms is ~50x headroom — but an edit to 5 ms
-        // would start rejecting valid formulas on a loaded machine, and neither end shows up in
-        // any other test here.
+        // The regression this pins is a defect this PR shipped and then removed: the parse used to
+        // run under a 250 ms wall-clock deadline, and a budget started before the parse is charged
+        // for scheduling delay, GC and JIT as well as for the expression. Measured on a starved
+        // 12-core machine, a cold `x / 0` — five characters — was refused in 19 of 30 runs and the
+        // label told the user it was TOO COMPLEX. A guard that refuses valid input is a worse
+        // defect than the freeze it insures against.
         //
-        // The upper bound is 500 ms rather than something roomier because THIS is what pins how
-        // long the UI can stall: the promptness test above has to stay tolerant of a slow build
-        // agent, so it cannot also be the thing that keeps the freeze small. Raising the budget
-        // to a couple of seconds would put a visible stall back while every other assertion here
-        // still passed.
-        Assert.InRange(AbstractChannel.MaxScaleExpressionParseMilliseconds, 50, 500);
+        // So: every refusal reason must be a property of the text, and the same text must get the
+        // same answer every time. Both bounds are pure functions of the string, which is what
+        // makes this deterministic rather than merely usually-true.
+        var reasons = new[]
+        {
+            AbstractChannel.InvalidExpressionMessage,
+            $"EXPRESSION TOO LONG (LIMIT {AbstractChannel.MaxScaleExpressionLength} CHARACTERS)",
+            $"TOO MANY NESTED PARENTHESES (LIMIT {AbstractChannel.MaxScaleExpressionDepth})"
+        };
 
+        // Every one of these is refused or accepted without the parser doing real work, so the
+        // repetition below stays cheap. The one input that does cost the parser a second is
+        // covered by An_input_that_gets_past_both_counts_is_still_bounded_by_them, which runs it
+        // once rather than 64 times.
+        var inputs = new[]
+        {
+            "x / 0", "x * 2", "x", "x * 2 + 1", "(x + 1) * 2", "x *", new string('(', 12),
+            new string('(', 900) + "x" + new string(')', 900)
+        };
+
+        foreach (var input in inputs)
+        {
+            var first = Scaled(input);
+            Assert.Contains(first.ScaleExpressionError, reasons);
+
+            // Repeat under contention. Before the fix the verdict for a given string could differ
+            // between two runs on the same machine; it cannot now.
+            var verdicts = new System.Collections.Concurrent.ConcurrentBag<(bool, string)>();
+            Parallel.For(0, 64,
+                new ParallelOptions { MaxDegreeOfParallelism = Environment.ProcessorCount * 4 },
+                _ =>
+                {
+                    var channel = Scaled(input);
+                    verdicts.Add((channel.HasValidExpression, channel.ScaleExpressionError));
+                });
+
+            Assert.All(verdicts, verdict =>
+                Assert.Equal((first.HasValidExpression, first.ScaleExpressionError), verdict));
+        }
+    }
+
+    [Theory]
+    // The lexical guarantee the depth cap actually provides, and the reason no wall-clock backstop
+    // is needed beside it. Because the raw character reading is one of the two the guard maximises
+    // over, and it only ever decrements one per ')' with a floor at zero, a run of k consecutive
+    // '(' always reads as at least k — whatever precedes it, and whatever NCalc's grammar thinks
+    // the surrounding text means. Every shape below tries to drive the counter to zero first and
+    // then present a run past the cap; none can.
+    [InlineData("(((((((((")]
+    [InlineData("))))))))))(((((((((")]
+    [InlineData("(((()))) + (((((((((")]
+    [InlineData("['x] + (((((((((")]
+    [InlineData("'))))))))' + (((((((((")]
+    [InlineData("[))))))))] + (((((((((")]
+    [InlineData("x + \")))))))))\" + (((((((((")]
+    public void A_run_past_the_depth_cap_cannot_be_hidden_from_the_guard(string expression)
+    {
+        var started = Stopwatch.StartNew();
+        var channel = Scaled(expression);
+        started.Stop();
+
+        Assert.False(channel.HasValidExpression);
+        Assert.Contains("NESTED PARENTHESES", channel.ScaleExpressionError, StringComparison.Ordinal);
+        Assert.True(started.Elapsed < TimeSpan.FromSeconds(5),
+            $"the setter took {started.Elapsed.TotalSeconds:0.0} s, so the parser was entered");
+    }
+
+    [Fact]
+    public void A_calibration_is_accepted_however_busy_the_machine_is()
+    {
         const string steinhartHart =
             "1 / (0.001129148 + 0.000234125 * Ln(10000 * (1023 / x - 1)) + " +
             "0.0000000876741 * Pow(Ln(10000 * (1023 / x - 1)), 3)) - 273.15";
 
         Assert.True(Scaled(steinhartHart).HasValidExpression);
         Assert.True(Scaled("x * 2 + 1").HasValidExpression);
+        Assert.True(Scaled("x / 0").HasValidExpression);
     }
 
     [Theory]

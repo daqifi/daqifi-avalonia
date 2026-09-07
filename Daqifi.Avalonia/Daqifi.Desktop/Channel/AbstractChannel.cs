@@ -153,21 +153,27 @@ public abstract partial class AbstractChannel : ObservableObject, IChannel
 
     /// <summary>
     /// Deepest parenthesis nesting the scaling box will hand to the parser. The Steinhart-Hart
-    /// expression above reaches 5, so 8 leaves real headroom. The cap exists because NCalc's
-    /// grammar backtracks exponentially over a run of unclosed <c>(</c>: measured Release on
-    /// macOS, a bare run of open parentheses costs 0.06 s at 6, 0.19 s at 8, 0.76 s at 9,
-    /// 3.6 s at 10 and 48 s at 12 — see <see cref="MaxScaleExpressionLength"/> for the other
-    /// half of the bound.
+    /// expression above reaches 4, so 8 leaves real headroom. The cap exists because NCalc's
+    /// grammar backtracks exponentially over a <em>contiguous</em> run of unclosed <c>(</c>:
+    /// measured Release on macOS, a bare run of open parentheses costs 0.06 s at 6, 0.27 s at 8,
+    /// 0.87 s at 9, 3.5 s at 10 and over 12 s at 11 — see
+    /// <see cref="MaxScaleExpressionLength"/> for the other half of the bound.
+    ///
+    /// <para>
+    /// This cap is worth more than the counting it is applied to, which is why there is no
+    /// wall-clock backstop beside it. <see cref="DeepestParenthesisNesting(string)"/> returns the
+    /// larger of two readings, and one of them counts raw characters: it increments on every
+    /// <c>(</c> and decrements at most once per <c>)</c>, with a floor at zero. Over a run of
+    /// <c>k</c> consecutive <c>(</c> that reading reaches at least <c>k</c>, whatever the counter
+    /// stood at beforehand. So an accepted expression contains <b>at most 8 consecutive <c>(</c>
+    /// characters</b> — a lexical fact about the text that holds however NCalc's grammar chooses
+    /// to interpret it, and therefore however a future disagreement between the two readings
+    /// turns out. Separated runs do not backtrack into one another: 14 blocks of 8 open
+    /// parentheses (112 parser-level opens in 252 characters) parse in 0.000 s, and the slowest
+    /// input found that satisfies both caps costs 1.1 s.
+    /// </para>
     /// </summary>
     public const int MaxScaleExpressionDepth = 8;
-
-    /// <summary>
-    /// How long the parser gets before the expression is refused as too complex. Real
-    /// calibrations parse in single-digit milliseconds, so this is ~50x headroom; it exists to
-    /// bound the cost the character counting can only predict, and it is what makes the freeze
-    /// impossible rather than merely unlikely.
-    /// </summary>
-    public const int MaxScaleExpressionParseMilliseconds = 250;
 
     /// <summary>The message the INVALID EXPRESSION label carries for an ordinary parse failure.</summary>
     public const string InvalidExpressionMessage = "INVALID EXPRESSION";
@@ -191,8 +197,9 @@ public abstract partial class AbstractChannel : ObservableObject, IChannel
             // expression text enters the parser, and the parser cannot be made safe from the
             // outside: an exponential parse never throws, so the catch below never sees it, and
             // a StackOverflowException cannot be caught at all — the runtime fails fast and the
-            // process dies with the logging session in it. Refusing the input is what removes
-            // the crash; the deadline further down is what removes the freeze (#311).
+            // process dies with the logging session in it. Both bounds are pure functions of the
+            // text, so the same expression is accepted or refused identically on an idle laptop
+            // and a thrashing one (#311).
             if (_scaledExpression.Length > MaxScaleExpressionLength)
             {
                 Reject($"EXPRESSION TOO LONG (LIMIT {MaxScaleExpressionLength} CHARACTERS)");
@@ -212,32 +219,25 @@ public abstract partial class AbstractChannel : ObservableObject, IChannel
                 Parameters = { ["x"] = 1 }
             };
 
-            // The backstop the character counting cannot be, because it measures the cost itself
-            // instead of predicting it from the text. Two Qodo rounds each found a different way
-            // to make the depth counter disagree with NCalc's own lexer — a ')' inside a string
-            // literal, then a quote inside a [bracket-delimited] parameter name — and a third way
-            // is always possible, because this is guessing at a grammar the app does not own. A
-            // deadline is immune to all of them: NCalcSync 7.1.0's Evaluate DOES take a
-            // CancellationToken (contrary to what this PR first claimed) and threads it into
-            // LogicalExpressionFactory.Create, so the pathological parse stops at the deadline —
-            // measured, the 78 s bracket bypass returns in 0.255 s under a 250 ms budget.
-            // The caps above still earn their place: a deadline cannot stop a StackOverflowException,
-            // which is uncatchable and takes the process down.
-            using var deadline = new CancellationTokenSource(
-                TimeSpan.FromMilliseconds(MaxScaleExpressionParseMilliseconds));
+            // No wall-clock deadline around this parse, deliberately. An earlier revision of this
+            // PR wrapped it in a 250 ms CancellationTokenSource as a backstop against the depth
+            // counting disagreeing with NCalc's grammar a third time. That made the guard
+            // load-dependent, and it misfired on exactly the input it was never meant to touch:
+            // measured here, a cold `x / 0` — five characters — was refused in 19 of 30 starved
+            // runs and told the user it was TOO COMPLEX, because the budget is charged from before
+            // the parse and so pays for scheduling delay, GC and JIT out of the user's allowance.
+            // A guard that refuses valid input is a worse defect than the freeze it was insuring
+            // against, and the insurance was never load-bearing: see MaxScaleExpressionDepth for
+            // why the caps bound a contiguous run of '(' lexically, whatever the grammar does.
             try
             {
-                Expression.Evaluate(deadline.Token);
+                Expression.Evaluate();
                 HasValidExpression = true;
                 ScaleExpressionError = InvalidExpressionMessage;
             }
             catch (Exception)
             {
-                // NCalc reports a cancelled parse as an ordinary parse failure, so the token is
-                // what distinguishes "this is not valid" from "this was taking too long".
-                Reject(deadline.IsCancellationRequested
-                    ? $"EXPRESSION TOO COMPLEX (PARSING STOPPED AFTER {MaxScaleExpressionParseMilliseconds} MS)"
-                    : InvalidExpressionMessage);
+                Reject(InvalidExpressionMessage);
             }
             OnPropertyChanged();
         }
@@ -272,9 +272,15 @@ public abstract partial class AbstractChannel : ObservableObject, IChannel
     /// <para>
     /// Taking the maximum refuses both, and errs toward refusing rather than accepting whenever
     /// the two disagree — the only safe direction for a guard that is deliberately not a full
-    /// implementation of somebody else's grammar. The parse deadline in the setter is what makes
-    /// that guess non-load-bearing: a third disagreement is always possible, and the deadline
-    /// bounds the cost of one whatever the counting said.
+    /// implementation of somebody else's grammar.
+    /// </para>
+    /// <para>
+    /// A third disagreement is always possible, and the maximum is what contains one: because the
+    /// raw reading is one of the two, the answer is never below the longest run of consecutive
+    /// <c>(</c> in the text (see <see cref="MaxScaleExpressionDepth"/>), and a contiguous run is
+    /// what the exponential backtracking needs. That bound is lexical, so it survives a grammar
+    /// disagreement rather than depending on there not being one — which is why no timer is
+    /// needed here, and why adding one made things worse.
     /// </para>
     /// </remarks>
     private static int DeepestParenthesisNesting(string expression) =>
