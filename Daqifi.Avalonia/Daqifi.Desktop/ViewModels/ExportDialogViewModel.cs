@@ -9,6 +9,7 @@ using Daqifi.Desktop.Logger;
 using Microsoft.EntityFrameworkCore;
 using Microsoft.Extensions.DependencyInjection;
 using System.Diagnostics;
+using System.Globalization;
 using System.IO;
 using System.Windows.Input;
 using Avalonia;
@@ -53,9 +54,17 @@ public partial class ExportDialogViewModel : ObservableObject, IDisposable
     /// </summary>
     private readonly Func<int, string?> _sessionNameLookup = SessionNameFromLoggingManager;
 
+    /// <summary>
+    /// The smallest averaging window that can produce a row — every sample is its own average.
+    /// Anything below it produces no rows and therefore no file (issue #312).
+    /// </summary>
+    private const int MINIMUM_AVERAGE_WINDOW = 1;
+
     [ObservableProperty]
     private bool _exportAllSelected = true;
     [ObservableProperty]
+    [NotifyPropertyChangedFor(nameof(IsAverageQuantityValid))]
+    [NotifyCanExecuteChangedFor(nameof(ExportLoggingSessionsCommand))]
     private bool _exportAverageSelected;
     [ObservableProperty]
     [NotifyPropertyChangedFor(nameof(IsConfiguring))]
@@ -67,8 +76,22 @@ public partial class ExportDialogViewModel : ObservableObject, IDisposable
     private bool _exportSucceeded;
     [ObservableProperty]
     private string? _exportResultMessage;
+    /// <summary>
+    /// The averaging window AS THE USER TYPED IT, because that is what the box actually holds. It
+    /// used to bind straight to an <c>int</c>, and an empty or non-numeric box could not update
+    /// one — the binding conversion simply failed and the property kept its last good value, so the
+    /// dialog showed a blank box, an enabled Export button and no complaint, and then exported
+    /// averaged by a number that was no longer on screen.
+    /// <para>Nullable because <c>TextBox.Text</c> is: an emptied box can hand the binding a null,
+    /// and annotating this as non-null would only mean the next person to reach for
+    /// <c>.Trim()</c> here gets a NullReferenceException instead of a compiler warning. Nothing
+    /// dereferences it — <see cref="AverageWindow"/> parses it, and a null parses to 0 like any
+    /// other unusable box.</para>
+    /// </summary>
     [ObservableProperty]
-    private int _averageQuantity = 2;
+    [NotifyPropertyChangedFor(nameof(IsAverageQuantityValid))]
+    [NotifyCanExecuteChangedFor(nameof(ExportLoggingSessionsCommand))]
+    private string? _averageQuantityText = "2";
     [ObservableProperty]
     private bool _exportRelativeTime;
     private int _exportProgress;
@@ -106,6 +129,27 @@ public partial class ExportDialogViewModel : ObservableObject, IDisposable
     /// </summary>
     // @port: Daqifi.Desktop.ViewModels.ExportDialogViewModel.IsConfiguring
     public bool IsConfiguring => !IsExporting && !IsExportComplete;
+
+    /// <summary>
+    /// The window the averaged export will use: the number in the box, or <c>0</c> when the box does
+    /// not hold one — empty, non-numeric, or larger than an <c>int</c>. Nothing downstream needs to
+    /// tell those apart from a box holding <c>"0"</c>, because a window of 0 is already refused, so
+    /// this collapses "no number" and "a useless number" into the one case both are.
+    /// </summary>
+    private int AverageWindow =>
+        int.TryParse(AverageQuantityText, NumberStyles.Integer, CultureInfo.CurrentCulture, out var window)
+            ? window
+            : 0;
+
+    /// <summary>
+    /// False only while the dialog is set to average and the box cannot produce a single row.
+    /// Disables Export and shows the reason under the box, so an export that could only do nothing is
+    /// never started (issue #312) — the box is a bare <c>TextBox</c> with no minimum and no spinner,
+    /// so clearing it and typing a digit passes through <c>0</c> on the way to <c>10</c>, and holds
+    /// whatever else is typed in the meantime. Bound by <c>ExportDialog.axaml</c> by reflection; see
+    /// the binding facts test.
+    /// </summary>
+    public bool IsAverageQuantityValid => !ExportAverageSelected || AverageWindow >= MINIMUM_AVERAGE_WINDOW;
     #endregion
 
     #region Commands
@@ -239,6 +283,16 @@ public partial class ExportDialogViewModel : ObservableObject, IDisposable
         var cancelled = false;
         var failed = false;
 
+        // How many of the resolved targets actually produced a file. Compared against targets.Count
+        // below rather than assumed: the export used to report "Export complete" on the strength of
+        // not having thrown, which is not the same question (issue #312).
+        var exported = 0;
+
+        // How many of them were already gone from the database by the time Export was pressed — the
+        // OTHER reason a run comes up short, kept apart from "had no rows" so the message can say
+        // which one happened.
+        var missing = 0;
+
         // Non-null once we can tell the user *why* the export failed (a locked or unwritable
         // destination). Everything else falls back to the generic message.
         string? failureReason = null;
@@ -260,6 +314,12 @@ public partial class ExportDialogViewModel : ObservableObject, IDisposable
                     var loggingSession = await GetLoggingSessionFromId(target.SessionId);
                     if (loggingSession == null)
                     {
+                        // Counted, not just logged: this is one of the two reasons a run can come up
+                        // short, and the result message has to name the one that actually happened.
+                        // "The rest had no logged data" is simply untrue of a session that was
+                        // deleted while the dialog was open, and sends the user looking through data
+                        // that was never the problem.
+                        missing++;
                         AppLogger.Instance.Warning(
                             $"Skipping export for session {target.SessionId}: it was not found in the database.");
                         continue;
@@ -291,14 +351,12 @@ public partial class ExportDialogViewModel : ObservableObject, IDisposable
                     cancellationToken.ThrowIfCancellationRequested();
                     currentFilepath = live[i].Filepath;
 
-                    if (ExportAllSelected)
-                    {
-                        ExportAllSamples(live[i].Session, currentFilepath, progress, cancellationToken, i, live.Count);
-                    }
-                    else if (ExportAverageSelected)
-                    {
-                        ExportAverageSamples(live[i].Session, currentFilepath, progress, cancellationToken, i, live.Count);
-                    }
+                    var wroteFile = ExportAllSelected
+                        ? ExportAllSamples(live[i].Session, currentFilepath, progress, cancellationToken, i, live.Count)
+                        : ExportAverageSelected
+                          && ExportAverageSamples(live[i].Session, currentFilepath, progress, cancellationToken, i, live.Count);
+
+                    if (wroteFile) { exported++; }
                 }
             }, cancellationToken);
 
@@ -306,6 +364,24 @@ public partial class ExportDialogViewModel : ObservableObject, IDisposable
             {
                 failed = true;
                 AppLogger.Instance.AddBreadcrumb("export", "Data export blocked by destination file",
+                    Common.Loggers.BreadcrumbLevel.Warning);
+            }
+            else if (exported == 0 || exported < targets.Count)
+            {
+                // The run finished without throwing and still did not produce every file it set out
+                // to: a session whose rows are gone, or one that was deleted between the dialog
+                // opening and Export being pressed. Not an exception anywhere — which is precisely
+                // why "did not throw" was the wrong question to answer "Export complete" with.
+                //
+                // `exported == 0` is not redundant with the comparison beside it: it is what catches
+                // ZERO targets, where `0 < 0` is false and the success branch would otherwise run
+                // over an export that was never even attempted. Only LoggingSessionListViewModel's
+                // own count check keeps the dialog from opening on an empty selection today, and a
+                // guard in another class is not what should decide whether this one tells the truth.
+                failed = true;
+                failureReason = DescribeShortfall(exported, targets.Count, missing);
+                AppLogger.Instance.Warning($"Export finished short: {failureReason}");
+                AppLogger.Instance.AddBreadcrumb("export", "Data export wrote fewer files than requested",
                     Common.Loggers.BreadcrumbLevel.Warning);
             }
             else
@@ -379,7 +455,7 @@ public partial class ExportDialogViewModel : ObservableObject, IDisposable
     }
 
     // @port: Daqifi.Desktop.ViewModels.ExportDialogViewModel.CanExport
-    private bool CanExport => !string.IsNullOrWhiteSpace(ExportFilePath);
+    private bool CanExport => !string.IsNullOrWhiteSpace(ExportFilePath) && IsAverageQuantityValid;
 
     /// <summary>
     /// Opens the export destination in the platform's file manager: the folder itself for a
@@ -458,18 +534,68 @@ public partial class ExportDialogViewModel : ObservableObject, IDisposable
         Process.Start(startInfo);
     }
 
+    /// <returns>Whether the CSV was written; see <see cref="OptimizedLoggingSessionExporter.ExportLoggingSession"/>.</returns>
     // @port: Daqifi.Desktop.ViewModels.ExportDialogViewModel.ExportAllSamples
-    private void ExportAllSamples(LoggingSession session, string filepath, IProgress<int> progress, CancellationToken cancellationToken, int sessionIndex, int totalSessions)
+    private bool ExportAllSamples(LoggingSession session, string filepath, IProgress<int> progress, CancellationToken cancellationToken, int sessionIndex, int totalSessions)
     {
         var loggingSessionExporter = new OptimizedLoggingSessionExporter(_loggingContext);
-        loggingSessionExporter.ExportLoggingSession(session, filepath, ExportRelativeTime, progress, cancellationToken, sessionIndex, totalSessions);
+        return loggingSessionExporter.ExportLoggingSession(session, filepath, ExportRelativeTime, progress, cancellationToken, sessionIndex, totalSessions);
     }
 
+    /// <returns>Whether the CSV was written; see <see cref="OptimizedLoggingSessionExporter.ExportAverageSamples"/>.</returns>
     // @port: Daqifi.Desktop.ViewModels.ExportDialogViewModel.ExportAverageSamples
-    private void ExportAverageSamples(LoggingSession session, string filepath, IProgress<int> progress, CancellationToken cancellationToken, int sessionIndex, int totalSessions)
+    private bool ExportAverageSamples(LoggingSession session, string filepath, IProgress<int> progress, CancellationToken cancellationToken, int sessionIndex, int totalSessions)
     {
         var loggingSessionExporter = new OptimizedLoggingSessionExporter(_loggingContext);
-        loggingSessionExporter.ExportAverageSamples(session, filepath, AverageQuantity, ExportRelativeTime, progress, cancellationToken, sessionIndex, totalSessions);
+        return loggingSessionExporter.ExportAverageSamples(session, filepath, AverageWindow, ExportRelativeTime, progress, cancellationToken, sessionIndex, totalSessions);
+    }
+
+    /// <summary>
+    /// What the dialog says when the export ran to completion but produced fewer files than the user
+    /// selected sessions. The count is in the message because "some of your sessions are missing" is
+    /// only actionable if the user can see how many landed — and because the destination shown
+    /// underneath it may well contain files from an earlier, complete export.
+    /// </summary>
+    /// <param name="exported">Sessions that produced a CSV.</param>
+    /// <param name="requested">Sessions the user selected.</param>
+    /// <param name="missing">How many of the shortfall were already gone from the database, as
+    /// opposed to present but empty. Named separately because the two are different things to a user
+    /// hunting for a file that is not there: a session deleted while the dialog was open is not a
+    /// session with no rows in it, and reporting the second when the first happened sends them
+    /// looking through data that was never the problem.</param>
+    private static string DescribeShortfall(int exported, int requested, int missing)
+    {
+        if (requested == 0) { return "Nothing was exported: no sessions were selected."; }
+
+        var lead = exported == 0
+            ? "Nothing was exported"
+            : $"Exported {exported} of {requested} sessions";
+
+        // Agreement done by hand rather than with a "(s)": this string is read by someone who has
+        // just been told their export did not fully happen, and that is the wrong moment to look
+        // sloppy about how many of their sessions are gone.
+        var goneSessions = missing == 1 ? "1 session is" : $"{missing} sessions are";
+
+        // "No data was found", NOT "had no logged data". The difference matters because the two
+        // causes are observed at different moments and the database can change in between: a
+        // session deleted after the lookup pass but before its samples are read comes back with
+        // missing == 0 and no rows, and calling that "had no logged data" would assert something
+        // this code did not see. What it did see is that no data was found — which is true of an
+        // empty session and of one deleted underneath it, so the sentence cannot be made false by
+        // losing that race. The missing count is still reported when the deletion WAS observed,
+        // because then it is a fact and the more useful one.
+        //
+        // Deliberately not closed further: distinguishing the two after the fact would mean the
+        // exporter returning a reason rather than a bool, threaded through three public methods, to
+        // choose between two sentences in a window of milliseconds — and a re-query would only move
+        // the race, since the row can go at any point after any observation.
+        return missing switch
+        {
+            0 when exported == 0 => $"{lead}: no data was found to export.",
+            0 => $"{lead}: no data was found for the rest.",
+            _ when missing == requested - exported => $"{lead}: {goneSessions} no longer in the database.",
+            _ => $"{lead}: {goneSessions} no longer in the database, and no data was found for the rest.",
+        };
     }
 
     /// <summary>

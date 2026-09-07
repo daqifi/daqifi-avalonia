@@ -26,10 +26,31 @@
 
             <!-- Export Type -->
             <HeaderedContentControl Grid.Row="1" Header="Export Type" Theme="{StaticResource DarkGroupBox}">
-                <Grid ColumnDefinitions="Auto,Auto" RowDefinitions="Auto,Auto">
+                <Grid ColumnDefinitions="Auto,Auto" RowDefinitions="Auto,Auto,Auto">
                     <RadioButton Grid.Column="0" Grid.Row="0" Content="All Samples" IsChecked="{Binding ExportAllSelected}" Margin="0,0,0,8"/>
                     <RadioButton Grid.Column="0" Grid.Row="1" Content="Average Every &quot;N&quot; Samples" IsChecked="{Binding ExportAverageSelected}" VerticalAlignment="Center"/>
-                    <TextBox Grid.Column="1" Grid.Row="1" Width="60" Margin="12,0,0,0" Text="{Binding AverageQuantity, Mode=TwoWay}"/>
+                    <!--
+                        Bound to the raw TEXT, not to an int. Against an int, an empty or
+                        non-numeric box could not update the property at all: the conversion failed
+                        silently and the view-model kept its last good number, so the dialog showed
+                        an empty box, an enabled Export button, and then averaged by a number that
+                        was no longer on screen.
+                    -->
+                    <TextBox Grid.Column="1" Grid.Row="1" Width="60" Margin="12,0,0,0" Text="{Binding AverageQuantityText, Mode=TwoWay}"/>
+                    <!--
+                        Why Export is greyed out, under the box that greyed it out: a window below 1
+                        produces no rows and so no file, and the export used to run anyway and report
+                        "Export complete" over an empty folder (issue #312).
+
+                        A third ROW rather than a third column, and no change to the existing two
+                        columns: this dialog is a captured visual-gate screen, and adding a star
+                        column moved the "N" TextBox by a sub-pixel — enough to change every pixel of
+                        its border and fail the baseline. An Auto row holding one collapsed child is
+                        zero high, so the configured dialog renders byte-identically.
+                    -->
+                    <TextBlock Grid.Column="0" Grid.Row="2" Grid.ColumnSpan="2" Text="Enter a whole number, 1 or more"
+                               Margin="0,6,0,0" Foreground="{StaticResource StatusRed}"
+                               IsVisible="{Binding !IsAverageQuantityValid}"/>
                 </Grid>
             </HeaderedContentControl>
 

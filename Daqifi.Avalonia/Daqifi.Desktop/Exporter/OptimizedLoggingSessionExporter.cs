@@ -92,25 +92,24 @@ public class OptimizedLoggingSessionExporter
     /// <param name="cancellationToken">Token that aborts the export.</param>
     /// <param name="sessionIndex">Zero-based index of this session within a multi-session export.</param>
     /// <param name="totalSessions">Total number of sessions in this export run.</param>
+    /// <returns>
+    /// <c>true</c> when the CSV was written; <c>false</c> when the session held no data to export, in
+    /// which case nothing was written and the destination still holds whatever it held before.
+    /// <para>This used to return <c>void</c>, which made "declined to run" indistinguishable from
+    /// "ran and wrote the file" to the only caller that reports the outcome — so the export dialog
+    /// showed a green tick and "Export complete" over an empty folder (issue #312).</para>
+    /// </returns>
     // @port: Daqifi.Desktop.Exporter.OptimizedLoggingSessionExporter.ExportLoggingSession
-    public void ExportLoggingSession(LoggingSession loggingSession, string filepath, bool exportRelativeTime,
+    public bool ExportLoggingSession(LoggingSession loggingSession, string filepath, bool exportRelativeTime,
         IProgress<int> progress, CancellationToken cancellationToken, int sessionIndex, int totalSessions)
     {
         try
         {
-            var source = TryBuildSource(loggingSession);
-            if (source == null)
-            {
-                return;
-            }
-
-            var options = new CsvExportOptions
+            return WriteCsv(loggingSession, filepath, new CsvExportOptions
             {
                 Delimiter = _delimiter,
                 UseRelativeTime = exportRelativeTime,
-            };
-
-            RunExport(source, filepath, options, progress, cancellationToken, sessionIndex, totalSessions);
+            }, progress, cancellationToken, sessionIndex, totalSessions);
         }
         catch (OperationCanceledException)
         {
@@ -119,9 +118,9 @@ public class OptimizedLoggingSessionExporter
         }
         catch (Exception ex)
         {
-            // Propagate after logging: this void overload is the desktop export path, and its sole
-            // caller (ExportDialogViewModel) needs the failure to surface a truthful result instead of
-            // a false "Export complete". The Try* overload keeps swallowing (returns false) for mobile.
+            // Propagate after logging: this overload is the desktop export path, and its sole caller
+            // (ExportDialogViewModel) needs the failure to surface a truthful result instead of a
+            // false "Export complete". The Try* overload keeps swallowing (returns false) for mobile.
             _appLogger.Error(ex,
                 $"Exception in OptimizedExportLoggingSession (sessionId={loggingSession?.ID}, filepath={filepath}, relativeTime={exportRelativeTime})");
             throw;
@@ -129,14 +128,14 @@ public class OptimizedLoggingSessionExporter
     }
 
     /// <summary>
-    /// As <see cref="ExportLoggingSession"/>, but RETURNS whether the export completed
-    /// successfully instead of throwing. Downstream addition (not in the upstream @port): the
-    /// mobile export reports a per-session count to the user, so it needs a truthful signal for a
-    /// mid-export failure (disk full, a transient DB/IO error after rows have already flushed)
-    /// rather than an exception to catch around every session. The destination is safe either way —
-    /// <see cref="RunExport"/> stages the CSV and moves it into place only on success — so false
-    /// means "the destination still holds whatever it held before", never "the destination is now
-    /// half a file". Returns false on any failure (logged);
+    /// As <see cref="ExportLoggingSession"/>, but folds a FAILURE into the same false its sibling
+    /// uses for "nothing to export", instead of throwing. Downstream addition (not in the upstream
+    /// @port): the mobile export reports a per-session count to the user, so it needs a truthful
+    /// signal for a mid-export failure (disk full, a transient DB/IO error after rows have already
+    /// flushed) rather than an exception to catch around every session. The destination is safe
+    /// either way — <see cref="RunExport"/> stages the CSV and moves it into place only on success —
+    /// so false means "the destination still holds whatever it held before", never "the destination
+    /// is now half a file". Returns false on any failure (logged);
     /// <see cref="OperationCanceledException"/> still propagates.
     /// </summary>
     public bool TryExportLoggingSession(LoggingSession loggingSession, string filepath, bool exportRelativeTime,
@@ -144,20 +143,11 @@ public class OptimizedLoggingSessionExporter
     {
         try
         {
-            var source = TryBuildSource(loggingSession);
-            if (source == null)
-            {
-                return false;
-            }
-
-            var options = new CsvExportOptions
+            return WriteCsv(loggingSession, filepath, new CsvExportOptions
             {
                 Delimiter = _delimiter,
                 UseRelativeTime = exportRelativeTime,
-            };
-
-            RunExport(source, filepath, options, progress, cancellationToken, sessionIndex, totalSessions);
-            return true;
+            }, progress, cancellationToken, sessionIndex, totalSessions);
         }
         catch (OperationCanceledException)
         {
@@ -178,40 +168,40 @@ public class OptimizedLoggingSessionExporter
     /// </summary>
     /// <param name="session">Session to export.</param>
     /// <param name="filepath">Absolute path to the output CSV file.</param>
-    /// <param name="averageQuantity">Window size in samples. Must be positive; non-positive values short-circuit with a warning log.</param>
+    /// <param name="averageQuantity">Window size in samples. Must be 1 or more.</param>
     /// <param name="exportRelativeTime">When true, the time column is seconds-since-first-sample; otherwise ISO 8601.</param>
     /// <param name="progress">Optional progress sink reporting overall percentage across all sessions.</param>
     /// <param name="cancellationToken">Token that aborts the export.</param>
     /// <param name="sessionIndex">Zero-based index of this session within a multi-session export.</param>
     /// <param name="totalSessions">Total number of sessions in this export run.</param>
+    /// <returns>As <see cref="ExportLoggingSession"/>: whether the CSV was written.</returns>
+    /// <exception cref="ArgumentOutOfRangeException"><paramref name="averageQuantity"/> is not positive.</exception>
+    /// <remarks>
+    /// <paramref name="averageQuantity"/> is an <c>int</c> rather than the upstream <c>double</c>
+    /// (the @port marker still names that method): the value came in from the dialog as an int, was
+    /// immediately truncated by a cast, and the only thing the wider type could express was a
+    /// fractional window that silently became a different one — 0.5 becoming a window of 0 being the
+    /// worst of them. The narrower parameter deletes the cast and the case together.
+    /// </remarks>
     // @port: Daqifi.Desktop.Exporter.OptimizedLoggingSessionExporter.ExportAverageSamples
-    public void ExportAverageSamples(LoggingSession session, string filepath, double averageQuantity,
+    public bool ExportAverageSamples(LoggingSession session, string filepath, int averageQuantity,
         bool exportRelativeTime, IProgress<int> progress, CancellationToken cancellationToken, int sessionIndex, int totalSessions)
     {
+        // Thrown, not logged-and-returned, and outside the try so it reaches the caller unchanged. A
+        // window of zero or less cannot produce a single row, and the bare `return` this used to do
+        // was indistinguishable from a finished export: the dialog reported "Export complete" over an
+        // empty folder (issue #312). The dialog now refuses to start such an export at all, so
+        // arriving here at all is a caller bug — which is what this exception is for.
+        ArgumentOutOfRangeException.ThrowIfNegativeOrZero(averageQuantity);
+
         try
         {
-            var window = (int)averageQuantity;
-            if (window <= 0)
-            {
-                _appLogger.Warning(
-                    $"Skipping average export: AverageWindow must be positive (was {averageQuantity}, sessionId={session?.ID}, filepath={filepath}).");
-                return;
-            }
-
-            var source = TryBuildSource(session);
-            if (source == null)
-            {
-                return;
-            }
-
-            var options = new CsvExportOptions
+            return WriteCsv(session, filepath, new CsvExportOptions
             {
                 Delimiter = _delimiter,
                 UseRelativeTime = exportRelativeTime,
-                AverageWindow = window,
-            };
-
-            RunExport(source, filepath, options, progress, cancellationToken, sessionIndex, totalSessions);
+                AverageWindow = averageQuantity,
+            }, progress, cancellationToken, sessionIndex, totalSessions);
         }
         catch (OperationCanceledException)
         {
@@ -230,6 +220,25 @@ public class OptimizedLoggingSessionExporter
     #endregion
 
     #region Private Helpers
+    /// <summary>
+    /// The one place that answers "did this export write its file?", so the three public entry
+    /// points cannot drift apart on it: builds the session's sample source and runs the export, or
+    /// returns false — having touched neither the destination nor anything beside it — when there is
+    /// no source to build.
+    /// </summary>
+    private bool WriteCsv(LoggingSession session, string filepath, CsvExportOptions options,
+        IProgress<int> progress, CancellationToken cancellationToken, int sessionIndex, int totalSessions)
+    {
+        var source = TryBuildSource(session);
+        if (source == null)
+        {
+            return false;
+        }
+
+        RunExport(source, filepath, options, progress, cancellationToken, sessionIndex, totalSessions);
+        return true;
+    }
+
     /// <summary>
     /// Builds the appropriate <see cref="ISampleSource"/> for this session, or
     /// returns null if there is no usable data source. Mirrors the legacy
