@@ -24,6 +24,13 @@ It goes through the **user's** code path, not a convenient one:
 - The sampling rate is set through `shell.SelectedStreamingFrequency`, the guarded setter the
   drawer's FREQUENCY control writes, rather than assigning `device.StreamingFrequency`, which
   skips the guard and leaves the shell's own value stale.
+- `DEV-RATE` and `STREAM-AI` then judge against the rate the device **settled on**, not the
+  `--rate` that was asked for. Two things legitimately lower it: the wrapper holds any rate to
+  the board's advertised ceiling, and `InitializeStreaming` lowers it again to the cap the device
+  publishes for the channel set enabled at that moment (`current_max_rate_hz` — 7746 Hz on the
+  bench Nq1 with one analog input, against a 22000 Hz ceiling). Both are the app working, and
+  measuring delivery against `--rate` reported them as failures indistinguishable from nothing
+  having streamed at all (#281). The evidence string names both numbers whenever they differ.
 - Streaming is driven by toggling `shell.IsLogging`, so the disk-space check, session
   creation and `LoggingFleet.Start` all happen the way they do in the app.
 - The Devices and Channels panes are the real pane view models, built the way their own views

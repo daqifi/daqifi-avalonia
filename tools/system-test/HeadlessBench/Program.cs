@@ -261,12 +261,24 @@ internal static class HeadlessBench
         // device.StreamingFrequency directly, as this rig used to before streaming, skips the guard
         // and leaves the shell's own value stale — the STREAM-AI rate below now comes from here.
         // Selecting the device first is what clicking its tile does.
+        // Assert against the rate the device will accept, not the one --rate asked for. The
+        // wrapper holds an assignment to 1..MaxStreamingFrequency, so on a board whose advertised
+        // ceiling is below --rate a correct clamp would read as the control failing to take. What
+        // this row actually claims is that the write reached the device and that the shell reports
+        // what the device holds; both survive the clamp. Same shape as the STREAM-AI comparison
+        // below, one layer earlier (#281) — this one trips only above the board ceiling, because
+        // the channel-set cap is not applied until the handoff to Core.
         shell.SelectedDevice = device;
         Pump();
         shell.SelectedStreamingFrequency = _rate;
         Pump();
-        Step(2, "DEV-RATE", "works", device.StreamingFrequency == _rate && shell.SelectedStreamingFrequency == _rate,
-             $"asked for {_rate} Hz through SelectedStreamingFrequency; device.StreamingFrequency={device.StreamingFrequency}, shell.SelectedStreamingFrequency={shell.SelectedStreamingFrequency}",
+        var rateCeiling = device.MaxStreamingFrequency;
+        var acceptedRate = Math.Min(_rate, rateCeiling);
+        Step(2, "DEV-RATE", "works",
+             device.StreamingFrequency == acceptedRate && shell.SelectedStreamingFrequency == device.StreamingFrequency,
+             $"asked for {_rate} Hz through SelectedStreamingFrequency, expected {acceptedRate} Hz" +
+             (acceptedRate == _rate ? "" : $" (held under the {rateCeiling} Hz ceiling this device advertises)") +
+             $"; device.StreamingFrequency={device.StreamingFrequency}, shell.SelectedStreamingFrequency={shell.SelectedStreamingFrequency}",
              Capture(main, "t2-05-rate"));
 
         var ai = device.DataChannels.FirstOrDefault(c => !c.IsDigital && !c.IsOutput);
@@ -333,6 +345,15 @@ internal static class HeadlessBench
             ai.OnChannelUpdated += counter;
             var started = PumpUntil(() => first is not null, TimeSpan.FromSeconds(10));
             var latency = sw.Elapsed.TotalSeconds;
+            // The rate this session is actually running at, read after the start because that is
+            // when it is decided. InitializeStreaming re-reads the device's capability document and
+            // holds the rate under current_max_rate_hz — the cap for the channel set enabled right
+            // now, 7746 Hz on the bench Nq1 with one analog input against a 22000 Hz board ceiling
+            // — assigning the lowered value back onto the wrapper (#272). Measuring delivery
+            // against --rate therefore reported a device honouring its own cap as a streaming
+            // failure, and the row could not be told apart from one where nothing streamed at
+            // all (#281).
+            var commandedRate = device.StreamingFrequency;
             if (started) { PumpFor(TimeSpan.FromSeconds(_seconds)); }
             var window = first is null ? 0 : (DateTime.UtcNow - first.Value).TotalSeconds;
             var counted = samples;
@@ -365,11 +386,15 @@ internal static class HeadlessBench
 
             var shot = Capture(main, "t2-07-streamed");
             var effective = window > 0 ? counted / window : 0;
-            var within = started && Math.Abs(effective - _rate) <= _rate * 0.1;
+            var asked = commandedRate == _rate ? "" : $" after --rate asked for {_rate} Hz";
+            var within = started && commandedRate > 0 && Math.Abs(effective - commandedRate) <= commandedRate * 0.1;
             Step(2, "STREAM-AI", "works", within,
                  started
-                     ? $"{counted} samples in {window:F1} s after a {latency:F1} s start latency -> {effective:F1} Hz effective (set {_rate} Hz) on '{ai.Name}'; IsStreaming after stop={(device as AbstractStreamingDevice)?.IsStreaming}"
-                     : $"no sample within 10 s of IsLogging=true at {_rate} Hz; LoggingManager.Active={LoggingManager.Instance.Active}",
+                     ? $"{counted} samples in {window:F1} s after a {latency:F1} s start latency -> {effective:F1} Hz effective " +
+                       $"against {commandedRate} Hz commanded{asked} on '{ai.Name}'; " +
+                       $"IsStreaming after stop={(device as AbstractStreamingDevice)?.IsStreaming}"
+                     : $"no sample within 10 s of IsLogging=true at {commandedRate} Hz{asked}; " +
+                       $"LoggingManager.Active={LoggingManager.Instance.Active}",
                  shot, window);
             var listed = session is not null && LoggingManager.Instance.LoggingSessions.Any(s => s.ID == session.ID);
             Step(2, "LOG-SESSION", "works",
