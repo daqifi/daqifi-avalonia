@@ -407,13 +407,18 @@ internal static class AvaloniaCapture
             return;
         }
         Quiesce(main, paneAtRest);
-        SweepDrawer(main, vm, "IsAppSettingsOpen", $"{prefix}-6-settings-drawer", paneAtRest);
-        SweepDrawer(main, vm, "IsNotificationsOpen", $"{prefix}-7-notifications-flyout", paneAtRest);
-        SweepDrawer(main, vm, "IsLiveGraphSettingsOpen", $"{prefix}-8-livegraph-settings-flyout", paneAtRest);
-        SweepDrawer(main, vm, "IsLogSummaryOpen", $"{prefix}-9-summary-flyout", paneAtRest);
+        SweepDrawer(main, vm, "IsAppSettingsOpen",
+                    $"{prefix}-6-settings-drawer", paneAtRest);
+        SweepDrawer(main, vm, "IsNotificationsOpen",
+                    $"{prefix}-7-notifications-flyout", paneAtRest);
+        SweepDrawer(main, vm, "IsLiveGraphSettingsOpen",
+                    $"{prefix}-8-livegraph-settings-flyout", paneAtRest);
+        SweepDrawer(main, vm, "IsLogSummaryOpen",
+                    $"{prefix}-9-summary-flyout", paneAtRest);
     }
 
-    private static void SweepDrawer(Window main, object vm, string prop, string name, EndState? paneAtRest)
+    private static void SweepDrawer(
+        Window main, object vm, string prop, string name, EndState? paneAtRest)
     {
         if (!Set(vm, prop, true))
         {
@@ -1268,16 +1273,17 @@ internal static class AvaloniaCapture
         {
             _failed = true;
             Console.WriteLine(
-                $"[FAIL] {prefix} drawer end state: the SplitView template holds {panes.Length} controls " +
-                $"named '{PaneRootPart}'. That part is what animates open, so without exactly one " +
-                "of it there is nothing to check the drawer captures against.");
+                $"[FAIL] {prefix} drawer end state: the SplitView template holds " +
+                $"{panes.Length} controls named '{PaneRootPart}'. That part is what animates " +
+                "open, so without exactly one of it there is nothing to check the drawer " +
+                "captures against.");
             return null;
         }
 
         var pane = panes[0];
         Console.WriteLine(
-            $"[INFO] {prefix} drawer end state: {PaneRootPart} must be {view.OpenPaneLength} wide when the " +
-            $"pane is open and {ClosedPaneLength(view)} when it is closed " +
+            $"[INFO] {prefix} drawer end state: {PaneRootPart} must be {view.OpenPaneLength} " +
+            $"wide when the pane is open and {ClosedPaneLength(view)} when it is closed " +
             $"(OpenPaneLength={view.OpenPaneLength}, DisplayMode={view.DisplayMode}), read off " +
             "the SplitView rather than restated here");
 

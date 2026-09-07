@@ -223,8 +223,9 @@ run fails **by name** with both widths in the message.
 Demonstrated on demand rather than waited for. With the render timer frozen once the pane is
 within four pixels of open — the measured failure mode written down as code — the pre-fix
 harness reports `[OK] desktop-min-7/8/9 … settled in 4 round(s)` and saves three frames that
-differ from the committed baseline by exactly the field signature (1.1%, 1.1%, 2.0% of pixels,
-worst delta 222 on each). The same lever on the fixed harness fails all three by name —
+differ from the committed baseline by exactly the field signature (1.301%, 1.101% and 2.044%
+of pixels, worst delta 222 on each). The same lever on the fixed harness fails all three by
+name —
 `it is 378 wide (Bounds=342, 0, 378, 447) but the pane is OPEN, and MainWindow.axaml declares
 OpenPaneLength=380` — and exits non-zero. Zero baseline bytes moved.
 
