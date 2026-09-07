@@ -56,8 +56,35 @@ public class FirmwareUpdateCoordinator
     private CancellationTokenSource? _firmwareUploadCts;
     private string _latestFirmwareVersion = string.Empty;
 
-    private const int WifiChipInfoMaxAttempts = 3;
-    private static readonly TimeSpan WifiChipInfoRetryDelay = TimeSpan.FromSeconds(2);
+    /// <summary>
+    /// The retry budget the app spends asking a WiFi module what firmware it carries. Shared with
+    /// the connect-time probe in <c>DaqifiViewModel</c> — the two surfaces must never disagree
+    /// about how hard to try, for the same reason they share
+    /// <see cref="WifiFirmwareNeedsFlash"/>: a module that answers one of them and not the other
+    /// would be reported as two different versions.
+    /// <para>
+    /// The loop itself is Core's (<see cref="LanChipInfoProviderExtensions.GetLanChipInfoWithRetryAsync"/>),
+    /// which exists because every consumer had hand-rolled it. Only the budget is ours, and it is
+    /// the one this app has always spent: three attempts, two seconds apart.
+    /// </para>
+    /// <para>
+    /// The two options that are <em>not</em> Core's defaults are deliberate, and both preserve
+    /// today's behaviour rather than adopting a change this app cannot verify without a board.
+    /// <see cref="LanChipInfoRetryOptions.TotalTimeout"/> is unbounded because Core's 8s default
+    /// would cut the third attempt short (3 × the device's own 2s query timeout + 2 × 2s of pause
+    /// runs to ~10s), turning a module that would have answered into a needless reflash.
+    /// <see cref="LanChipInfoRetryOptions.KickLanApplyOnNotInitialized"/> is off because it puts a
+    /// state-changing <c>LAN:APPLY</c> on the wire — which this probe has never done, and which
+    /// runs during a firmware flash. Enabling either is a separate, bench-verified change.
+    /// </para>
+    /// </summary>
+    internal static readonly LanChipInfoRetryOptions WifiChipInfoRetryOptions = new()
+    {
+        MaxAttempts = 3,
+        RetryDelay = TimeSpan.FromSeconds(2),
+        TotalTimeout = Timeout.InfiniteTimeSpan,
+        KickLanApplyOnNotInitialized = false,
+    };
 
     /// <summary>Production default for <see cref="_wifiUpdateModeSettleDelay"/>.</summary>
     public static readonly TimeSpan DefaultWifiUpdateModeSettleDelay = TimeSpan.FromSeconds(5);
@@ -424,7 +451,8 @@ public class FirmwareUpdateCoordinator
             // already powers on before its query; mirror that here so the version check can succeed.
             serialStreamingDevice.PowerOnWifiModule();
 
-            var chipInfo = await TryGetLanChipInfoAsync(lanChipProvider, cancellationToken);
+            var chipInfo = (await lanChipProvider.GetLanChipInfoWithRetryAsync(
+                WifiChipInfoRetryOptions, _firmwareLogger, cancellationToken)).ChipInfo;
 
             if (chipInfo == null)
             {
@@ -637,47 +665,6 @@ public class FirmwareUpdateCoordinator
             _appLogger.Warning($"Raw transparent-mode exit could not open {portName}: {ex.Message}");
             return false;
         }
-    }
-
-    // @port: Daqifi.Desktop.Device.Firmware.FirmwareUpdateCoordinator.TryGetLanChipInfoAsync
-    private async Task<LanChipInfo?> TryGetLanChipInfoAsync(
-        ILanChipInfoProvider lanChipProvider,
-        CancellationToken cancellationToken)
-    {
-        for (var attempt = 1; attempt <= WifiChipInfoMaxAttempts; attempt++)
-        {
-            cancellationToken.ThrowIfCancellationRequested();
-
-            try
-            {
-                var chipInfo = await lanChipProvider.GetLanChipInfoAsync(cancellationToken);
-                if (chipInfo != null)
-                {
-                    return chipInfo;
-                }
-            }
-            catch (OperationCanceledException)
-            {
-                throw;
-            }
-            catch (Exception ex)
-            {
-                _appLogger.Warning(ex,
-                    $"WiFi chip info query attempt {attempt}/{WifiChipInfoMaxAttempts} failed.");
-            }
-
-            if (attempt >= WifiChipInfoMaxAttempts)
-            {
-                break;
-            }
-
-            _appLogger.Information(
-                $"WiFi chip info unavailable on attempt {attempt}/{WifiChipInfoMaxAttempts}; retrying after startup delay.");
-            _host.FirmwareUpdateStatusText = "Waiting for device to finish starting up before checking WiFi firmware version...";
-            await Task.Delay(WifiChipInfoRetryDelay, cancellationToken);
-        }
-
-        return null;
     }
 
     /// <summary>

@@ -1,4 +1,5 @@
 using Daqifi.Core.Firmware;
+using Daqifi.Desktop.Device.Firmware;
 using Xunit;
 
 namespace Daqifi.Avalonia.Tests.Device.Firmware;
@@ -38,15 +39,12 @@ public class WifiChipInfoProbeTests
     private static readonly TimeSpan UnwindTimeout = TimeSpan.FromSeconds(5);
 
     /// <summary>
-    /// The retry budget the app spends on a chip-info probe.
+    /// The retry budget the app actually ships — read from the shipped constant rather than
+    /// restated here, so these tests fail when the budget changes instead of describing a copy
+    /// of it that nothing uses.
     /// </summary>
-    private static LanChipInfoRetryOptions AppPolicy() => new()
-    {
-        MaxAttempts = 3,
-        RetryDelay = TimeSpan.FromSeconds(2),
-        TotalTimeout = Timeout.InfiniteTimeSpan,
-        KickLanApplyOnNotInitialized = false,
-    };
+    private static LanChipInfoRetryOptions AppPolicy() =>
+        FirmwareUpdateCoordinator.WifiChipInfoRetryOptions;
 
     /// <summary>
     /// The same policy with the pause removed. The pause's <em>value</em> is asserted directly in
