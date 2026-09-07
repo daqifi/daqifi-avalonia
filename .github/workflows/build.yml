@@ -259,6 +259,13 @@ jobs:
       # looks like — and a step that accepted it would report green for a job that measured
       # nothing. There is no legitimate `not-run` in a healthy scripted run: all five states
       # emit none.
+      #
+      # And each state's own row/check records are named below rather than the file merely
+      # being required to be non-empty. Non-emptiness is NOT evidence that the state ran its
+      # row: ReportPumpLatency appends an `unexpected` record for the state's row on the way
+      # out of every run, so a state whose Step stopped being reached would still write a
+      # file with a record in it and pass a "not empty" test. This is the same defect the
+      # rig itself exists to catch, one level up (Qodo round 1 on #324).
       - name: Run the HeadlessBench --scripted states
         run: |
           set -euo pipefail
@@ -272,13 +279,20 @@ jobs:
           python3 - "${RUNNER_TEMP}/headlessbench" <<'PY'
           import json, pathlib, sys
 
-          # The states this step drives. Named here as well as in the loop so a state that
-          # exits 0 without writing anything cannot pass as a state that ran.
-          expected = ["sessions-500", "session-10h", "export-readonly",
-                      "sd-empty", "drop-mid-stream"]
+          # What each state owes: the matrix row and check it exists to run. Named here, not
+          # merely counted, because a file with SOMETHING in it is not a state that ran its
+          # row — the end-of-run latency probe files an `unexpected` record under the same
+          # row whether the Step above it ran or not.
+          required = {
+              "sessions-500":    [("LOGGED-LIST", "limits")],
+              "session-10h":     [("LOGGED-PLOT", "limits")],
+              "export-readonly": [("EXPORT-FAIL", "works"), ("EXPORT-FAIL", "cleanup")],
+              "sd-empty":        [("SD-LIST", "limits")],
+              "drop-mid-stream": [("CONN-LOST", "works"), ("CONN-LOST", "limits")],
+          }
           root = pathlib.Path(sys.argv[1])
           failed = False
-          for state in expected:
+          for state, wanted in required.items():
               results = root / state / "results.jsonl"
               if not results.is_file():
                   print(f"::error::'{state}' wrote no results.jsonl, so it reported nothing "
@@ -286,17 +300,28 @@ jobs:
                   failed = True
                   continue
               checks = [json.loads(line) for line in results.read_text().splitlines() if line.strip()]
-              if not checks:
-                  print(f"::error::'{state}' wrote an EMPTY results.jsonl: the run exited 0 "
-                        "having emitted no check at all.")
-                  failed = True
-                  continue
+              ok = True
               for check in checks:
                   if check.get("status") == "not-run":
                       print(f"::error::'{state}' skipped {check.get('row')}/{check.get('check')} "
                             f"as not-run, so this job did not measure it: {check.get('evidence')}")
-                      failed = True
-              print(f"{state}: {len(checks)} check(s)")
+                      ok = False
+              # Passed, and exactly once. A row emitted twice means two different code paths
+              # are filing under one name, which makes the verdict ambiguous rather than
+              # doubly reassuring.
+              for row, name in wanted:
+                  passing = [c for c in checks
+                             if c.get("row") == row and c.get("check") == name
+                             and c.get("status") == "pass"]
+                  if len(passing) != 1:
+                      print(f"::error::'{state}' emitted {len(passing)} passing "
+                            f"{row}/{name} record(s), expected exactly 1. The state ran and "
+                            "exited 0, so the row it exists to check was not reached.")
+                      ok = False
+              names = ", ".join(f"{r}/{n}" for r, n in wanted)
+              print(f"{state}: {len(checks)} check(s), "
+                    f"{names} {'present' if ok else 'NOT ACCOUNTED FOR'}")
+              failed = failed or not ok
           raise SystemExit(1 if failed else 0)
           PY
 

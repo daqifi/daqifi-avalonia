@@ -1621,6 +1621,19 @@ internal static class HeadlessBench
     private const int DroppedRunSamples = 120;
 
     /// <summary>
+    /// How many <c>NotifyConnection</c> changes ONE user-visible connection notification is worth:
+    /// the manager sets the flag true, and <c>DaqifiViewModel</c>'s handler shows the dialog and
+    /// sets it back to false, synchronously, inside the same dispatch.
+    /// </summary>
+    /// <remarks>
+    /// Pinned to the exact number rather than asserted as "more than zero", because the failure
+    /// this row is about is a SECOND notification for one drop — and `&gt; 0` accepts two
+    /// notifications (four changes) as its baseline and then only asks that the repeat drop add
+    /// none, which is a check that cannot see the defect it names (Qodo round 1 on #324).
+    /// </remarks>
+    private const int ChangesPerNotification = 2;
+
+    /// <summary>
     /// Puts <paramref name="device"/> in front of the app the way the desktop puts a real one
     /// there: <c>ConnectionManager.Connect</c>, which every desktop connect path ends in —
     /// <c>ConnectionDialogViewModel.ConnectManualSerialCommand</c> included. The only layer above
@@ -1892,15 +1905,17 @@ internal static class HeadlessBench
             var shot = Capture(main, "t1-connlost-dropped");
 
             Step(1, "CONN-LOST", "works",
-                 midStream && removed && subscribedAfter == 0 && raisedByDrop > 0 && consumed,
+                 midStream && removed && subscribedAfter == 0
+                     && raisedByDrop == ChangesPerNotification && consumed,
                  $"streaming when the link went: LoggingManager.Active={activeBefore}, " +
                  $"{subscribedBefore} subscribed channel(s), {plottedBefore} live plot point(s); " +
                  $"after the drop the device left both lists in {sw.Elapsed.TotalSeconds:F1} s " +
                  $"(shell.ConnectedDevices={shell.ConnectedDevices.Count}, " +
                  $"manager.ConnectedDevices={ConnectionManager.Instance.ConnectedDevices.Count}) and " +
                  $"{subscribedAfter} channel(s) were left subscribed; the manager raised " +
-                 $"{raisedByDrop} NotifyConnection change(s) and the shell consumed the " +
-                 $"notification={consumed}; the session itself is left running " +
+                 $"{raisedByDrop} NotifyConnection change(s) against the " +
+                 $"{ChangesPerNotification} that one notification is worth, and the shell " +
+                 $"consumed the notification={consumed}; the session itself is left running " +
                  $"(shell.IsLogging={shell.IsLogging}), which the teardown does not stop and this " +
                  "row does not judge",
                  shot, sw.Elapsed.TotalSeconds);
@@ -1914,7 +1929,8 @@ internal static class HeadlessBench
             device.Drop(reason);
             PumpFor(TimeSpan.FromSeconds(1));
             Step(1, "CONN-LOST", "limits",
-                 raisedByDrop > 0 && raises == raisedByDrop && shell.ConnectedDevices.Count == 0,
+                 raisedByDrop == ChangesPerNotification && raises == raisedByDrop
+                     && shell.ConnectedDevices.Count == 0,
                  $"a second drop report on the same device raised {raises - raisedByDrop} further " +
                  $"notification change(s) against the {raisedByDrop} the first one raised, and left " +
                  $"ConnectedDevices at {shell.ConnectedDevices.Count}",

@@ -405,8 +405,14 @@ Two things about that step are deliberate:
   when a check could not be attempted at all — `export-readonly` reports it when its `chmod 555`
   destination turns out to still be writable, which is what running as root looks like — and a step
   that accepted it would report green for a job that measured nothing. A healthy scripted run emits
-  none. The step also fails a state that wrote no `results.jsonl`, or an empty one, for the same
-  reason the `Test` step reads its TRX counters back: a run that asserts nothing exits 0.
+  none.
+- **Each state's own row and check are named in the step, and must appear exactly once with a
+  `pass`.** "The file is not empty" is *not* evidence that the state ran its row: `ReportPumpLatency`
+  files an `unexpected` record under the state's row on the way out of every run, so a state whose
+  `Step` stopped being reached would still leave a record behind and satisfy a non-emptiness test.
+  Same failure shape as the `Test` step reading its TRX counters back — a run that asserts nothing
+  exits 0 — and the same shape this rig exists to catch, one level up. **Add a state and you must
+  add its row to that list**, or CI will run it and check nothing about what it reported.
 - **It runs on `ubuntu-latest`, which had never rendered this app.** Headless Skia and font
   availability there were open questions (the same ones the `Build` step's note raises about
   `tools/parity-audit/AvaloniaCapture`, which is still compile-only for exactly that reason). The
