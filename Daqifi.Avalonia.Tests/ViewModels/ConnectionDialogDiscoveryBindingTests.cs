@@ -15,10 +15,28 @@ namespace Daqifi.Avalonia.Tests.ViewModels;
 ///
 /// <para>
 /// Added with the move of the dialog's discovery onto Core's <c>ContinuousDeviceFinder</c>, which
-/// rewrote everything behind these six members and touched none of their names. That is exactly the
+/// rewrote everything behind these members and touched none of their names. That is exactly the
 /// change that would have been caught by nothing: the loop that fills these collections and sets
 /// these messages was replaced wholesale, and the compiler has no view of whether the markup still
 /// finds them.
+/// </para>
+///
+/// <para>
+/// Every expected binding is written with the attribute it feeds. <see cref="BindingFacts.AssertBinds"/>
+/// is a substring match over the raw markup, so a bare <c>"{Binding AvailableWiFiDevices}"</c> keeps
+/// passing after the binding is repurposed onto a different attribute — bound to <c>Tag</c>, say, or
+/// swapped between <c>Text</c> and <c>IsVisible</c>, which is how the two error messages differ from
+/// each other. Naming the attribute costs nothing and closes that gap (issue #318).
+/// </para>
+///
+/// <para>
+/// What it does <b>not</b> establish is which element the binding sits on. The search is file-wide, so
+/// moving a list's <c>ItemsSource</c> onto one of the other two <c>ListBox</c>es — or into a
+/// <c>DataTemplate</c>, where it would resolve against the item rather than the view model — leaves the
+/// asserted text intact and these tests green. Closing that would mean parsing the markup structurally
+/// and teaching the helper about element scope; the value does not carry the cost for one view, and it
+/// is a worse trade than declaring <c>x:DataType</c> on the dialog and letting the compiler do it. The
+/// pin here is on the names, which is the failure #317's rewrite could actually have caused.
 /// </para>
 /// </summary>
 public class ConnectionDialogDiscoveryBindingTests
@@ -26,20 +44,32 @@ public class ConnectionDialogDiscoveryBindingTests
     private const string View = "Daqifi.Avalonia/Daqifi.Desktop/View/ConnectionDialog.axaml";
 
     /// <summary>
-    /// The two device lists the tabs render, and the four members that decide what the tab says when
-    /// a list is empty: the animated overlay's gate and the give-up message, per transport.
+    /// The three tabs' device lists, and the three members that gate each tab's animated
+    /// "Scanning…" overlay.
+    ///
+    /// <para>
+    /// WiFi and USB gate their overlay on the computed <c>Is*DiscoveryScanning</c> rather than on
+    /// <c>HasNo*Devices</c>, so the overlay stops claiming to scan once discovery has given up
+    /// (issue #290). The Firmware tab has no give-up state to report — the HID bootloader watcher is
+    /// app-global and never stops — so it gates on <see cref="ConnectionDialogViewModel.HasNoHidDevices"/>
+    /// directly. That asymmetry is deliberate; what matters here is that each tab's overlay is still
+    /// wired to a member that exists.
+    /// </para>
     /// </summary>
     [Theory]
-    [InlineData("{Binding AvailableWiFiDevices}", nameof(ConnectionDialogViewModel.AvailableWiFiDevices))]
-    [InlineData("{Binding AvailableSerialDevices}", nameof(ConnectionDialogViewModel.AvailableSerialDevices))]
-    [InlineData("{Binding IsWiFiDiscoveryScanning}", nameof(ConnectionDialogViewModel.IsWiFiDiscoveryScanning))]
-    [InlineData("{Binding IsSerialDiscoveryScanning}", nameof(ConnectionDialogViewModel.IsSerialDiscoveryScanning))]
-    [InlineData("{Binding WiFiDiscoveryError}", nameof(ConnectionDialogViewModel.WiFiDiscoveryError))]
-    [InlineData("{Binding SerialDiscoveryError}", nameof(ConnectionDialogViewModel.SerialDiscoveryError))]
+    [InlineData("ItemsSource=\"{Binding AvailableWiFiDevices}\"", nameof(ConnectionDialogViewModel.AvailableWiFiDevices))]
+    [InlineData("ItemsSource=\"{Binding AvailableSerialDevices}\"", nameof(ConnectionDialogViewModel.AvailableSerialDevices))]
+    [InlineData("ItemsSource=\"{Binding AvailableHidDevices}\"", nameof(ConnectionDialogViewModel.AvailableHidDevices))]
+    [InlineData("IsVisible=\"{Binding IsWiFiDiscoveryScanning}\"", nameof(ConnectionDialogViewModel.IsWiFiDiscoveryScanning))]
+    [InlineData("IsVisible=\"{Binding IsSerialDiscoveryScanning}\"", nameof(ConnectionDialogViewModel.IsSerialDiscoveryScanning))]
+    [InlineData("IsVisible=\"{Binding HasNoHidDevices}\"", nameof(ConnectionDialogViewModel.HasNoHidDevices))]
+    [InlineData("Text=\"{Binding WiFiDiscoveryError}\"", nameof(ConnectionDialogViewModel.WiFiDiscoveryError))]
+    [InlineData("Text=\"{Binding SerialDiscoveryError}\"", nameof(ConnectionDialogViewModel.SerialDiscoveryError))]
     public void The_discovery_bindings_resolve_against_the_view_model(string binding, string memberName)
     {
         // Both halves, because either alone passes while the screen is broken: the markup still names
-        // it, and the runtime type still exposes it.
+        // it on the attribute it is supposed to feed, and the runtime type still exposes it as
+        // something a binding can read.
         BindingFacts.AssertBinds(View, binding);
         BindingFacts.AssertExposes(typeof(ConnectionDialogViewModel), memberName);
     }
@@ -50,8 +80,71 @@ public class ConnectionDialogDiscoveryBindingTests
     /// longer toggles anything visible is the same bug as no message at all.
     /// </summary>
     [Theory]
-    [InlineData("{Binding WiFiDiscoveryError, Converter={StaticResource NotNullToVis}}")]
-    [InlineData("{Binding SerialDiscoveryError, Converter={StaticResource NotNullToVis}}")]
+    [InlineData("IsVisible=\"{Binding WiFiDiscoveryError, Converter={StaticResource NotNullToVis}}\"")]
+    [InlineData("IsVisible=\"{Binding SerialDiscoveryError, Converter={StaticResource NotNullToVis}}\"")]
     public void The_give_up_message_still_controls_its_own_visibility(string binding) =>
         BindingFacts.AssertBinds(View, binding);
+}
+
+/// <summary>
+/// Pins the third leg of the same contract: that the two computed overlay gates are actually
+/// re-raised when the state they are computed from changes.
+///
+/// <para>
+/// <c>IsWiFiDiscoveryScanning</c> and <c>IsSerialDiscoveryScanning</c> are expressions over two
+/// members each, and depend entirely on four <c>[NotifyPropertyChangedFor]</c> attributes to reach
+/// the screen. Drop one and nothing above catches it: the markup still names the gate, the type
+/// still exposes it, and the binding still resolves — the overlay simply keeps animating "Scanning
+/// for USB devices…" over a discovery that has already given up, which is the exact defect
+/// issue #290 was filed for. The wiring is correct today; these assertions are what keep it so.
+/// </para>
+///
+/// <para>
+/// Asserted through the observable contract rather than by looking for the attributes, so hand-written
+/// notification would satisfy it too. In the <c>ConnectionManager</c> singleton collection because the
+/// view model's constructor subscribes to that singleton; nothing here starts discovery, opens a port
+/// or touches a socket.
+/// </para>
+/// </summary>
+[Collection(ConnectionManagerSingletonCollection.Name)]
+public class ConnectionDialogScanningOverlayRefreshTests
+{
+    [Theory]
+    [InlineData(
+        nameof(ConnectionDialogViewModel.HasNoWiFiDevices), false,
+        nameof(ConnectionDialogViewModel.IsWiFiDiscoveryScanning))]
+    [InlineData(
+        nameof(ConnectionDialogViewModel.WiFiDiscoveryError), "WiFi discovery gave up.",
+        nameof(ConnectionDialogViewModel.IsWiFiDiscoveryScanning))]
+    [InlineData(
+        nameof(ConnectionDialogViewModel.HasNoSerialDevices), false,
+        nameof(ConnectionDialogViewModel.IsSerialDiscoveryScanning))]
+    [InlineData(
+        nameof(ConnectionDialogViewModel.SerialDiscoveryError), "USB discovery gave up.",
+        nameof(ConnectionDialogViewModel.IsSerialDiscoveryScanning))]
+    public void Changing_what_an_overlay_gate_is_computed_from_re_raises_the_gate(
+        string sourceMember, object newValue, string gate)
+    {
+        var viewModel = new ConnectionDialogViewModel(null!, null);
+        try
+        {
+            var raised = new List<string?>();
+            viewModel.PropertyChanged += (_, e) => raised.Add(e.PropertyName);
+
+            var source = typeof(ConnectionDialogViewModel).GetProperty(sourceMember);
+            Assert.NotNull(source);
+            source.SetValue(viewModel, newValue);
+
+            // A null or empty PropertyName is INotifyPropertyChanged's "all properties changed"
+            // convention, and refreshes the gate's binding just as well as naming it. The app reads it
+            // that way too (DeviceTileViewModel, ProfilesMobileView, DeviceLogsViewModel), so accepting
+            // it here is what keeps this an assertion about the contract rather than about
+            // [NotifyPropertyChangedFor] being the implementation of it.
+            Assert.Contains(raised, name => name == gate || string.IsNullOrEmpty(name));
+        }
+        finally
+        {
+            viewModel.Close();
+        }
+    }
 }
