@@ -24,7 +24,6 @@ using Daqifi.Core.Firmware;
 using Daqifi.Desktop.Device.Firmware;
 using Daqifi.Desktop.Device.SerialDevice;
 using ILanChipInfoProvider = Daqifi.Core.Firmware.ILanChipInfoProvider;
-using LanChipInfo = Daqifi.Core.Firmware.LanChipInfo;
 using System.Collections.ObjectModel;
 using System.Collections.Specialized;
 using System.ComponentModel;
@@ -45,6 +44,14 @@ namespace Daqifi.Desktop.ViewModels;
 public partial class DaqifiViewModel : ObservableObject, IFirmwareUpdateHost, ILoggingSessionListHost, IDiskSpaceMonitorHost, IDisposable
 {
     private readonly AppLogger _appLogger = AppLogger.Instance;
+
+    /// <summary>
+    /// The same <see cref="Microsoft.Extensions.Logging"/> logger handed to the firmware
+    /// coordinator, kept so the connect-time WiFi chip-info probe reports through the same channel
+    /// the during-a-flash probe does rather than discarding Core's per-attempt diagnostics.
+    /// Production routes it back into <c>DAQifiAppLog.log</c> via <see cref="AppLoggerLoggerProvider"/>.
+    /// </summary>
+    private readonly ILogger<FirmwareUpdateService> _firmwareLogger;
 
     #region Private Variables
     private const int SidePanelWidth = 85;
@@ -197,9 +204,6 @@ public partial class DaqifiViewModel : ObservableObject, IFirmwareUpdateHost, IL
     /// UI refresh. Entries are pruned when their device disconnects. Case-insensitive to
     /// match the casing used elsewhere for serial numbers / COM keys.
     /// </summary>
-    private const int WifiChipInfoMaxAttempts = 3;
-    private static readonly TimeSpan WifiChipInfoRetryDelay = TimeSpan.FromSeconds(2);
-
     private readonly HashSet<string> _wifiFirmwareCheckedDevices = new(StringComparer.OrdinalIgnoreCase);
 
     // Cancels an in-flight WiFi firmware probe. A probe powers on the WiFi module and runs a
@@ -836,6 +840,7 @@ public partial class DaqifiViewModel : ObservableObject, IFirmwareUpdateHost, IL
         // feeds the coordinator through the IFirmwareUpdateHost seam (which it implements below).
         var firmwareDownload = firmwareDownloadService ?? CreateDefaultFirmwareDownloadService();
         var resolvedFirmwareLogger = firmwareLogger ?? NullLogger<FirmwareUpdateService>.Instance;
+        _firmwareLogger = resolvedFirmwareLogger;
         var firmwareUpdate = firmwareUpdateService
             ?? CreateDefaultFirmwareUpdateService(firmwareDownload, resolvedFirmwareLogger);
         _firmwareCoordinator = new FirmwareUpdateCoordinator(
@@ -2403,7 +2408,13 @@ public partial class DaqifiViewModel : ObservableObject, IFirmwareUpdateHost, IL
                 // SYSTem:POWer:STATe 1 — power on the WiFi module before GETChipInfo?.
                 serialStreamingDevice.PowerOnWifiModule();
 
-                var chipInfo = await TryGetLanChipInfoAsync(lanChipProvider, wifiCheckToken);
+                // Core owns the retry loop; the budget is the coordinator's, shared so the
+                // connect-time probe and the during-a-flash probe can never disagree about how
+                // hard to try — the same reason WifiFirmwareNeedsFlash is shared below.
+                var chipInfo = (await lanChipProvider.GetLanChipInfoWithRetryAsync(
+                    FirmwareUpdateCoordinator.WifiChipInfoRetryOptions,
+                    _firmwareLogger,
+                    wifiCheckToken)).ChipInfo;
                 var needsFlash = FirmwareUpdateCoordinator.WifiFirmwareNeedsFlash(chipInfo, out var reportedVersion);
 
                 // These mutate UI-bound state (device properties + the NotificationList collection),
@@ -2457,51 +2468,6 @@ public partial class DaqifiViewModel : ObservableObject, IFirmwareUpdateHost, IL
                 _wifiFirmwareCheckedDevices.Remove(key);
             }
         }
-    }
-
-    // @port: Daqifi.Desktop.ViewModels.DaqifiViewModel.TryGetLanChipInfoAsync
-    private async Task<LanChipInfo?> TryGetLanChipInfoAsync(
-        ILanChipInfoProvider lanChipProvider,
-        CancellationToken cancellationToken)
-    {
-        for (var attempt = 1; attempt <= WifiChipInfoMaxAttempts; attempt++)
-        {
-            cancellationToken.ThrowIfCancellationRequested();
-
-            try
-            {
-                var chipInfo = await lanChipProvider.GetLanChipInfoAsync(cancellationToken);
-                if (chipInfo != null)
-                {
-                    return chipInfo;
-                }
-            }
-            catch (OperationCanceledException)
-            {
-                throw;
-            }
-            catch (Exception ex)
-            {
-                _appLogger.Warning(ex,
-                    $"WiFi chip info query attempt {attempt}/{WifiChipInfoMaxAttempts} failed.");
-            }
-
-            if (attempt >= WifiChipInfoMaxAttempts)
-            {
-                break;
-            }
-
-            // No FirmwareUpdateStatusText here: this is the connect-time probe, which runs only when
-            // IsFirmwareUploading is false (CheckWifiFirmwareCoreAsync hard-returns otherwise) — and
-            // the status line is rendered only while that flag is true (issue #241). The identical
-            // message in FirmwareUpdateCoordinator.TryGetLanChipInfoAsync covers the during-a-flash
-            // case, which is the one a user can actually see.
-            _appLogger.Information(
-                $"WiFi chip info unavailable on attempt {attempt}/{WifiChipInfoMaxAttempts}; retrying after startup delay.");
-            await Task.Delay(WifiChipInfoRetryDelay, cancellationToken);
-        }
-
-        return null;
     }
 
     /// <summary>
