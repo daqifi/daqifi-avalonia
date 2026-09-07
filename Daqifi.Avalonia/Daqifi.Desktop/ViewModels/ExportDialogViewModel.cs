@@ -9,6 +9,7 @@ using Daqifi.Desktop.Logger;
 using Microsoft.EntityFrameworkCore;
 using Microsoft.Extensions.DependencyInjection;
 using System.Diagnostics;
+using System.Globalization;
 using System.IO;
 using System.Windows.Input;
 using Avalonia;
@@ -75,10 +76,17 @@ public partial class ExportDialogViewModel : ObservableObject, IDisposable
     private bool _exportSucceeded;
     [ObservableProperty]
     private string? _exportResultMessage;
+    /// <summary>
+    /// The averaging window AS THE USER TYPED IT, because that is what the box actually holds. It
+    /// used to bind straight to an <c>int</c>, and an empty or non-numeric box could not update
+    /// one — the binding conversion simply failed and the property kept its last good value, so the
+    /// dialog showed a blank box, an enabled Export button and no complaint, and then exported
+    /// averaged by a number that was no longer on screen.
+    /// </summary>
     [ObservableProperty]
     [NotifyPropertyChangedFor(nameof(IsAverageQuantityValid))]
     [NotifyCanExecuteChangedFor(nameof(ExportLoggingSessionsCommand))]
-    private int _averageQuantity = 2;
+    private string _averageQuantityText = "2";
     [ObservableProperty]
     private bool _exportRelativeTime;
     private int _exportProgress;
@@ -118,13 +126,25 @@ public partial class ExportDialogViewModel : ObservableObject, IDisposable
     public bool IsConfiguring => !IsExporting && !IsExportComplete;
 
     /// <summary>
-    /// False only while the dialog is set to average and the window in the box cannot produce a
-    /// single row. Disables Export and shows the reason beside the box, so an export that could only
-    /// do nothing is never started (issue #312) — the box is a bare <c>TextBox</c> with no minimum
-    /// and no spinner, so clearing it and typing a digit passes through <c>0</c> on the way to
-    /// <c>10</c>. Bound by <c>ExportDialog.axaml</c> by reflection; see the binding facts test.
+    /// The window the averaged export will use: the number in the box, or <c>0</c> when the box does
+    /// not hold one — empty, non-numeric, or larger than an <c>int</c>. Nothing downstream needs to
+    /// tell those apart from a box holding <c>"0"</c>, because a window of 0 is already refused, so
+    /// this collapses "no number" and "a useless number" into the one case both are.
     /// </summary>
-    public bool IsAverageQuantityValid => !ExportAverageSelected || AverageQuantity >= MINIMUM_AVERAGE_WINDOW;
+    private int AverageWindow =>
+        int.TryParse(AverageQuantityText, NumberStyles.Integer, CultureInfo.CurrentCulture, out var window)
+            ? window
+            : 0;
+
+    /// <summary>
+    /// False only while the dialog is set to average and the box cannot produce a single row.
+    /// Disables Export and shows the reason under the box, so an export that could only do nothing is
+    /// never started (issue #312) — the box is a bare <c>TextBox</c> with no minimum and no spinner,
+    /// so clearing it and typing a digit passes through <c>0</c> on the way to <c>10</c>, and holds
+    /// whatever else is typed in the meantime. Bound by <c>ExportDialog.axaml</c> by reflection; see
+    /// the binding facts test.
+    /// </summary>
+    public bool IsAverageQuantityValid => !ExportAverageSelected || AverageWindow >= MINIMUM_AVERAGE_WINDOW;
     #endregion
 
     #region Commands
@@ -505,7 +525,7 @@ public partial class ExportDialogViewModel : ObservableObject, IDisposable
     private bool ExportAverageSamples(LoggingSession session, string filepath, IProgress<int> progress, CancellationToken cancellationToken, int sessionIndex, int totalSessions)
     {
         var loggingSessionExporter = new OptimizedLoggingSessionExporter(_loggingContext);
-        return loggingSessionExporter.ExportAverageSamples(session, filepath, AverageQuantity, ExportRelativeTime, progress, cancellationToken, sessionIndex, totalSessions);
+        return loggingSessionExporter.ExportAverageSamples(session, filepath, AverageWindow, ExportRelativeTime, progress, cancellationToken, sessionIndex, totalSessions);
     }
 
     /// <summary>

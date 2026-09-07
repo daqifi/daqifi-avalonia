@@ -63,15 +63,23 @@ public sealed class ExportResultHonestyTests : IDisposable
 
     /// <summary>
     /// The reported scenario exactly: an averaged export with the window set to <c>0</c> (or a
-    /// negative number, which the bare TextBox accepted just as happily). Driven through the command
-    /// itself rather than through <c>CanExecute</c>, so it holds even for a caller that skips the
-    /// guard the dialog now applies — the user must never be told an export succeeded when the
-    /// folder is empty.
+    /// negative number, which the bare TextBox accepted just as happily). The box is driven as TEXT
+    /// because that is what it holds — an emptied box and a box holding letters are the same
+    /// "the number on screen cannot be exported by" as <c>"0"</c> is, and against an <c>int</c>
+    /// property they were not: the conversion failed, the last good number survived out of sight,
+    /// and the export used it. Driven through the command rather than through <c>CanExecute</c>, so
+    /// it holds even for a caller that skips the guard the dialog now applies — the user must never
+    /// be told an export succeeded when the folder is empty.
     /// </summary>
     [Theory]
-    [InlineData(0)]
-    [InlineData(-1)]
-    public async Task An_averaged_export_with_a_non_positive_window_is_not_reported_as_complete(int window)
+    [InlineData("0")]
+    [InlineData("-1")]
+    [InlineData("")]
+    [InlineData("   ")]
+    [InlineData("abc")]
+    [InlineData("2.5")]
+    [InlineData("99999999999999999999")]
+    public async Task An_averaged_export_with_an_unusable_window_is_not_reported_as_complete(string box)
     {
         var session = SeedSession("AI0", 1.25, withSamples: true);
         var destination = Path.Combine(_root, "readings.csv");
@@ -81,7 +89,7 @@ public sealed class ExportResultHonestyTests : IDisposable
             ExportFilePath = destination,
             ExportAllSelected = false,
             ExportAverageSelected = true,
-            AverageQuantity = window,
+            AverageQuantityText = box,
         };
 
         await viewModel.ExportLoggingSessionsCommand.ExecuteAsync(null);
@@ -156,7 +164,7 @@ public sealed class ExportResultHonestyTests : IDisposable
             ExportFilePath = destination,
             ExportAllSelected = false,
             ExportAverageSelected = true,
-            AverageQuantity = 2,
+            AverageQuantityText = "2",
         };
 
         await viewModel.ExportLoggingSessionsCommand.ExecuteAsync(null);
@@ -168,23 +176,32 @@ public sealed class ExportResultHonestyTests : IDisposable
     // ──────────────────────── the input the user actually typed ────────────────────────
 
     /// <summary>
-    /// Where the failure is now made visible: the export cannot be STARTED with a window below one,
-    /// so the run that could only do nothing never begins. A window of 1 is the smallest meaningful
-    /// one (every sample is its own average) and must stay allowed.
+    /// Where the failure is now made visible: the export cannot be STARTED unless the box holds a
+    /// whole number of 1 or more, so the run that could only do nothing never begins. 1 is the
+    /// smallest meaningful window (every sample is its own average) and must stay allowed; an
+    /// emptied or half-typed box must not be, which is the case an <c>int</c>-typed property could
+    /// not even represent.
     /// </summary>
     [Theory]
-    [InlineData(0, false)]
-    [InlineData(-1, false)]
-    [InlineData(1, true)]
-    [InlineData(2, true)]
-    public void The_export_button_is_disabled_while_the_average_window_is_below_one(int window, bool expected)
+    [InlineData("0", false)]
+    [InlineData("-1", false)]
+    [InlineData("", false)]
+    [InlineData("   ", false)]
+    [InlineData("abc", false)]
+    [InlineData("2.5", false)]
+    [InlineData("1e3", false)]
+    [InlineData("99999999999999999999", false)]
+    [InlineData("1", true)]
+    [InlineData("2", true)]
+    [InlineData(" 10 ", true)]
+    public void The_export_button_is_disabled_unless_the_box_holds_a_usable_window(string box, bool expected)
     {
         var viewModel = new ExportDialogViewModel(_contexts, 1)
         {
             ExportFilePath = Path.Combine(_root, "readings.csv"),
             ExportAllSelected = false,
             ExportAverageSelected = true,
-            AverageQuantity = window,
+            AverageQuantityText = box,
         };
 
         Assert.Equal(expected, viewModel.IsAverageQuantityValid);
@@ -195,13 +212,16 @@ public sealed class ExportResultHonestyTests : IDisposable
     /// The guard belongs to the averaged export only: the same nonsense left in the box while
     /// <b>All Samples</b> is selected is not read by anything and must not block that export.
     /// </summary>
-    [Fact]
-    public void An_unused_average_window_does_not_block_an_all_samples_export()
+    [Theory]
+    [InlineData("0")]
+    [InlineData("")]
+    [InlineData("abc")]
+    public void An_unused_average_window_does_not_block_an_all_samples_export(string box)
     {
         var viewModel = new ExportDialogViewModel(_contexts, 1)
         {
             ExportFilePath = Path.Combine(_root, "readings.csv"),
-            AverageQuantity = 0,
+            AverageQuantityText = box,
         };
 
         Assert.True(viewModel.IsAverageQuantityValid);
@@ -227,14 +247,19 @@ public sealed class ExportResultHonestyTests : IDisposable
         var raised = 0;
         viewModel.ExportLoggingSessionsCommand.CanExecuteChanged += (_, _) => raised++;
 
-        viewModel.AverageQuantity = 0;
+        // The keystrokes a user actually makes going from "2" to "10": the box is empty for a
+        // moment, then holds "1", and Export has to follow all the way through.
+        viewModel.AverageQuantityText = string.Empty;
         Assert.False(viewModel.ExportLoggingSessionsCommand.CanExecute(null));
 
-        viewModel.AverageQuantity = 10;
+        viewModel.AverageQuantityText = "0";
+        Assert.False(viewModel.ExportLoggingSessionsCommand.CanExecute(null));
+
+        viewModel.AverageQuantityText = "10";
         Assert.True(viewModel.ExportLoggingSessionsCommand.CanExecute(null));
 
         // Switching export type re-queries too: the same 0 becomes harmless under All Samples.
-        viewModel.AverageQuantity = 0;
+        viewModel.AverageQuantityText = "0";
         viewModel.ExportAverageSelected = false;
         viewModel.ExportAllSelected = true;
         Assert.True(viewModel.ExportLoggingSessionsCommand.CanExecute(null));
@@ -307,15 +332,19 @@ public sealed class ExportResultHonestyTests : IDisposable
     // ──────────────────────────────── the markup half ────────────────────────────────
 
     /// <summary>
-    /// <c>ExportDialog.axaml</c> declares no <c>x:DataType</c>, so the validation message resolves by
-    /// reflection: a rename would hide it silently and leave a disabled Export button with no reason
-    /// beside it — the exact "the app won't say why" failure this fix exists to remove. Asserted in
-    /// pairs, per <see cref="BindingFacts"/>.
+    /// <c>ExportDialog.axaml</c> declares no <c>x:DataType</c>, so both halves of this fix resolve by
+    /// reflection: the box the user types in, and the message saying why Export is greyed out. A
+    /// rename would break either silently — a disabled button with no reason beside it is the exact
+    /// "the app won't say why" failure this fix exists to remove, and a dead box would be worse.
+    /// Asserted in pairs, per <see cref="BindingFacts"/>.
     /// </summary>
     [Fact]
-    public void The_dialog_shows_the_reason_the_export_is_disabled()
+    public void The_dialog_binds_the_average_box_and_the_reason_the_export_is_disabled()
     {
         const string view = "Daqifi.Avalonia/Daqifi.Desktop/View/ExportDialog.axaml";
+
+        BindingFacts.AssertBinds(view, "Text=\"{Binding AverageQuantityText, Mode=TwoWay}\"");
+        BindingFacts.AssertExposes(typeof(ExportDialogViewModel), nameof(ExportDialogViewModel.AverageQuantityText));
 
         BindingFacts.AssertBinds(view, "IsVisible=\"{Binding !IsAverageQuantityValid}\"");
         BindingFacts.AssertExposes(typeof(ExportDialogViewModel), nameof(ExportDialogViewModel.IsAverageQuantityValid));
