@@ -19,6 +19,8 @@ using Microsoft.EntityFrameworkCore;
 using Microsoft.EntityFrameworkCore.Diagnostics;
 using Optris.Icons.Avalonia;
 using Optris.Icons.Avalonia.MaterialDesign;
+using OxyPlot;
+using OxyPlot.Axes;
 using OxyPlot.Series;
 using ChannelDirection = Daqifi.Core.Channel.ChannelDirection;
 using ChannelType = Daqifi.Core.Channel.ChannelType;
@@ -1173,6 +1175,10 @@ internal static class HeadlessBench
     /// </summary>
     private const int ExportSampleCount = 600;
 
+    /// <summary>Position of the Logged Data tab in MainWindow's nav TabControl, whose SelectedIndex
+    /// binds <c>DaqifiViewModel.SelectedIndex</c>: 0 Live Graph, 1 Logged Data, 2 Channels.</summary>
+    private const int LoggedDataTabIndex = 1;
+
     private const string SeedSerial = "SCRIPTED-0001";
     private const string SeedDeviceName = "Scripted Nyquist";
     private const string SeedChannelName = "AI0";
@@ -1347,39 +1353,68 @@ internal static class HeadlessBench
             return;
         }
 
+        // Show the Logged Data pane first. MainWindow's nav TabControl binds SelectedIndex, and
+        // Avalonia only realises the selected tab's content, so until this runs the pane's PlotView
+        // does not exist — and an OxyPlot model with no view attached never gets an actual axis
+        // range, which is what every viewport-driven redraw below is computed from.
+        shell.SelectedIndex = LoggedDataTabIndex;
+        PumpFor(TimeSpan.FromMilliseconds(500));
+
         var sw = Stopwatch.StartNew();
         var plotting = shell.DisplayLoggingSessionCommand.ExecuteAsync(session);
         // Never block: headless, Dispatcher.UIThread is this thread, and the load marshals onto it.
         PumpUntil(() => plotting.IsCompleted, TimeSpan.FromMinutes(2));
         PumpUntil(() => !shell.DbLogger.IsRefiningData, TimeSpan.FromSeconds(30));
-        Pump();
         sw.Stop();
+        // The pane re-downsamples for the visible window on a 60 fps throttle and again 200 ms
+        // after the last viewport change (DatabaseLogger's throttle and settle timers), both on
+        // dispatcher timers. Pump past both, or this row reads the plot mid-redraw.
+        PumpFor(TimeSpan.FromSeconds(2));
 
         var db = shell.DbLogger;
+        // Read what the plot DRAWS, which is the series' ItemsSource, not Points: SetupUiCollections
+        // hands each LineSeries a min/max-downsampled list rather than filling Points, so a check
+        // on Points reads zero against a plot that is drawing perfectly well.
+        var drawn = Drawn(db.PlotModel).ToList();
+        var minimap = Drawn(db.MinimapPlotModel).Count();
         // X is milliseconds since the session's first sample (SessionDataRepository builds every
         // DataPoint as (ticks - firstTicks) / 10000.0), so the last point of a ten-hour session
         // sits at ~3.6e7. Asserting the SPAN rather than the point count is what makes this a
         // ten-hour check: a load that stopped at the fast first batch would draw plenty of points
-        // and cover only the first minutes.
-        var spanHours = db.PlotModel.Series.OfType<LineSeries>()
-            .SelectMany(s => s.Points)
-            .Select(p => p.X)
-            .DefaultIfEmpty(0)
-            .Max() / 3_600_000.0;
-        var points = db.PlotModel.Series.OfType<LineSeries>().Sum(s => s.Points.Count);
+        // and cover only the first minutes of the session.
+        var spanHours = drawn.Select(p => p.X).DefaultIfEmpty(0).Max() / 3_600_000.0;
         var expectedHours = TenHourSeconds / 3600.0;
 
         Step(1, "LOGGED-PLOT", "limits",
-             db.IsSessionOpen && db.HasSessionData && points > 0
+             db.IsSessionOpen && db.HasSessionData && drawn.Count > 0
                  && Math.Abs(spanHours - expectedHours) < 0.1
                  && db.CurrentSessionSampleCount == TenHourSampleCount,
              $"{TenHourSampleCount} samples at {TenHourRateHz} Hz loaded in {sw.Elapsed.TotalSeconds:F1} s; " +
              $"IsSessionOpen={db.IsSessionOpen} HasSessionData={db.HasSessionData}; " +
-             $"{db.PlotModel.Series.Count} series holding {points} plotted point(s) spanning " +
-             $"{spanHours:F2} h of the seeded {expectedHours:F2} h; header reads " +
-             $"'{db.CurrentSessionSampleCountDisplay}' ({db.CurrentSessionSampleCount}); " +
+             $"{db.PlotModel.Series.Count} series drawing {drawn.Count} downsampled point(s) " +
+             $"(minimap {minimap}) spanning {spanHours:F2} h of the seeded {expectedHours:F2} h; " +
+             $"time axis {AxisRange(db.PlotModel)}; " +
+             $"header reads '{db.CurrentSessionSampleCountDisplay}' ({db.CurrentSessionSampleCount}); " +
              $"{db.LegendItems.Count} legend item(s)",
              Capture(main, "t1-loggedplot-10h"), sw.Elapsed.TotalSeconds);
+    }
+
+    /// <summary>Every point a plot model is actually drawing. <c>LineSeries.ItemsSource</c> is where
+    /// <c>DatabaseLogger.SetupUiCollections</c> puts the downsampled buckets; <c>Points</c> is the
+    /// other way of filling a LineSeries and is left empty by this path, so read both.</summary>
+    private static IEnumerable<DataPoint> Drawn(PlotModel model) =>
+        model.Series.OfType<LineSeries>()
+            .SelectMany(s => s.ItemsSource?.OfType<DataPoint>() ?? s.Points);
+
+    /// <summary>The horizontal window the plot is showing, in hours. Reported alongside the point
+    /// count because the two answer different questions: a plot can hold the whole session and be
+    /// SHOWING a sliver of it, and only the axis says which.</summary>
+    private static string AxisRange(PlotModel model)
+    {
+        var axis = model.Axes.FirstOrDefault(a => a.Position == AxisPosition.Bottom);
+        return axis is null
+            ? "absent"
+            : $"{axis.ActualMinimum / 3_600_000.0:F2}..{axis.ActualMaximum / 3_600_000.0:F2} h";
     }
 
     /// <summary>
