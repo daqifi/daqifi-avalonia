@@ -91,6 +91,14 @@ public abstract partial class AbstractChannel : ObservableObject, IChannel
     private bool _hasValidExpression;
 
     /// <summary>
+    /// Why the current <see cref="ScaleExpression"/> was refused, in the words the red label
+    /// under the scaling box shows. Defaults to the generic wording the label used to carry
+    /// verbatim, so an ordinary syntax error still reads exactly as it did before (#311).
+    /// </summary>
+    [ObservableProperty]
+    private string _scaleExpressionError = InvalidExpressionMessage;
+
+    /// <summary>
     /// Gets the channel index. Implemented by derived classes to delegate to core.
     /// </summary>
     // @port: Daqifi.Desktop.Channel.AbstractChannel.Index
@@ -134,6 +142,85 @@ public abstract partial class AbstractChannel : ObservableObject, IChannel
             _ => "Unknown"
         };
 
+    /// <summary>
+    /// Longest expression the scaling box will hand to the parser.
+    ///
+    /// <para>
+    /// This started at 256, chosen against a Steinhart-Hart thermistor conversion (124
+    /// characters) as "about the most involved thing anyone writes here". That was wrong, and
+    /// #316 is the report: thermocouple linearisation is the other main class of calibration a
+    /// DAQ user writes, and it is longer. Measured here, as an expression in <c>x</c>:
+    /// </para>
+    ///
+    /// <list type="bullet">
+    /// <item>Steinhart-Hart thermistor — <b>124</b> characters, nesting 4.</item>
+    /// <item>Type-K direct, ITS-90 0-1372 °C, degree 9 plus the Gaussian term, at 7 significant
+    /// figures — <b>267</b> characters, nesting 2. <em>This one was refused by 11 characters.</em></item>
+    /// <item>The same at the full 12-significant-figure NIST precision — <b>389</b>.</item>
+    /// <item>Type-K <em>inverse</em>, full range: the NIST inverse function is piecewise over
+    /// three sub-ranges, so linearising a thermocouple in one box is an <c>if()</c> chain over
+    /// three polynomials — <b>639</b> characters as a person types it, nesting 3, and about
+    /// <b>993</b> with all three polynomials at full NIST precision.</item>
+    /// </list>
+    ///
+    /// <para>
+    /// 1,024 clears every one of those. The price is known and linear, which is why raising it
+    /// is safe: with <see cref="MaxScaleExpressionDepth"/> holding the contiguous run of <c>(</c>
+    /// at 8, the exponent is already bounded and what is left grows in proportion to the text.
+    /// Measured on macOS/arm64 against NCalcSync 7.1.0, the worst input found that satisfies both
+    /// caps (8 <c>(</c> then <c>!</c> filler) costs 1.4 s at 256, 1.7 s at 512, 2.4 s at 768 and
+    /// <b>3.2 s at 1,024</b> — roughly 3 ms per character. So this constant buys expression room
+    /// at a fixed rate rather than opening anything up; the ceiling moves, it does not disappear,
+    /// and #311's 48 s and its process abort are both still out of reach.
+    /// </para>
+    ///
+    /// <para>
+    /// It is also still far below the other stack-growth shapes: ~1,700 characters of nested
+    /// parentheses (which the depth cap refuses long before this one) and the ~25,600 leading
+    /// <c>-</c> at which NCalc's recursive-descent parser overflows an 8 MB stack. Checked on a
+    /// deliberately small 1 MiB stack rather than assumed — 1,023 leading <c>-</c>, <c>!</c> or
+    /// <c>~</c>, 511 <c>+1</c> terms, 340 <c>*</c> factors and 204 nested ternaries all parse in
+    /// under 40 ms, and none of them comes near overflowing.
+    /// </para>
+    /// </summary>
+    public const int MaxScaleExpressionLength = 1024;
+
+    /// <summary>
+    /// Deepest parenthesis nesting the scaling box will hand to the parser. The Steinhart-Hart
+    /// expression above reaches 4, so 8 leaves real headroom. The cap exists because NCalc's
+    /// grammar backtracks exponentially over a <em>contiguous</em> run of unclosed <c>(</c>:
+    /// measured Release on macOS, a bare run of open parentheses costs 0.06 s at 6, 0.27 s at 8,
+    /// 0.87 s at 9, 3.5 s at 10 and over 12 s at 11 — see
+    /// <see cref="MaxScaleExpressionLength"/> for the other half of the bound.
+    ///
+    /// <para>
+    /// This cap is worth more than the counting it is applied to, which is why there is no
+    /// wall-clock backstop beside it. <see cref="DeepestParenthesisNesting(string)"/> returns the
+    /// larger of two readings, and one of them counts raw characters: it increments on every
+    /// <c>(</c> and decrements at most once per <c>)</c>, with a floor at zero. Over a run of
+    /// <c>k</c> consecutive <c>(</c> that reading reaches at least <c>k</c>, whatever the counter
+    /// stood at beforehand. So an accepted expression contains <b>at most 8 consecutive <c>(</c>
+    /// characters</b> — a lexical fact about the text that holds however NCalc's grammar chooses
+    /// to interpret it, and therefore however a future disagreement between the two readings
+    /// turns out. Separated runs do not backtrack into one another: 14 blocks of 8 open
+    /// parentheses (112 parser-level opens in 252 characters) parse in 0.000 s, and the slowest
+    /// input found that satisfies both caps costs 3.2 s at the 1,024-character cap.
+    /// </para>
+    ///
+    /// <para>
+    /// This is the cap that is <em>not</em> raised, and #316 asks about it: a polynomial written
+    /// in Horner form nests once per degree, so degree 8 sits exactly here and degree 9 is
+    /// refused. Raising it is the one change that would move the exponent — 9 costs 0.9 s where 8
+    /// costs 0.22 s, 10 costs 3.5 s and 11 over 12 s — so the answer for a high-degree polynomial
+    /// is the expanded <c>Pow(x, n)</c> form, which nests once and now has the length budget to
+    /// fit: the full-range type-K inverse above is nesting 3 at 639 characters.
+    /// </para>
+    /// </summary>
+    public const int MaxScaleExpressionDepth = 8;
+
+    /// <summary>The message the INVALID EXPRESSION label carries for an ordinary parse failure.</summary>
+    public const string InvalidExpressionMessage = "INVALID EXPRESSION";
+
     [NotMapped]
     // @port: Daqifi.Desktop.Channel.AbstractChannel.ScaleExpression
     public string ScaleExpression
@@ -145,8 +232,28 @@ public abstract partial class AbstractChannel : ObservableObject, IChannel
 
             if (string.IsNullOrWhiteSpace(_scaledExpression))
             {
-                HasValidExpression = false;
-                Expression = null;
+                Reject(InvalidExpressionMessage);
+                return;
+            }
+
+            // Bound the text BEFORE it reaches NCalc. This is the one place user-entered
+            // expression text enters the parser, and the parser cannot be made safe from the
+            // outside: an exponential parse never throws, so the catch below never sees it, and
+            // a StackOverflowException cannot be caught at all — the runtime fails fast and the
+            // process dies with the logging session in it. Both bounds are pure functions of the
+            // text, so the same expression is accepted or refused identically on an idle laptop
+            // and a thrashing one (#311).
+            if (_scaledExpression.Length > MaxScaleExpressionLength)
+            {
+                Reject($"EXPRESSION TOO LONG (LIMIT {MaxScaleExpressionLength} CHARACTERS)");
+                OnPropertyChanged();
+                return;
+            }
+
+            if (DeepestParenthesisNesting(_scaledExpression) > MaxScaleExpressionDepth)
+            {
+                Reject($"TOO MANY NESTED PARENTHESES (LIMIT {MaxScaleExpressionDepth})");
+                OnPropertyChanged();
                 return;
             }
 
@@ -155,18 +262,119 @@ public abstract partial class AbstractChannel : ObservableObject, IChannel
                 Parameters = { ["x"] = 1 }
             };
 
+            // No wall-clock deadline around this parse, deliberately. An earlier revision of this
+            // PR wrapped it in a 250 ms CancellationTokenSource as a backstop against the depth
+            // counting disagreeing with NCalc's grammar a third time. That made the guard
+            // load-dependent, and it misfired on exactly the input it was never meant to touch:
+            // measured here, a cold `x / 0` — five characters — was refused in 19 of 30 starved
+            // runs and told the user it was TOO COMPLEX, because the budget is charged from before
+            // the parse and so pays for scheduling delay, GC and JIT out of the user's allowance.
+            // A guard that refuses valid input is a worse defect than the freeze it was insuring
+            // against, and the insurance was never load-bearing: see MaxScaleExpressionDepth for
+            // why the caps bound a contiguous run of '(' lexically, whatever the grammar does.
             try
             {
                 Expression.Evaluate();
                 HasValidExpression = true;
+                ScaleExpressionError = InvalidExpressionMessage;
             }
             catch (Exception)
             {
-                HasValidExpression = false;
-                Expression = null;
+                Reject(InvalidExpressionMessage);
             }
             OnPropertyChanged();
         }
+    }
+
+    /// <summary>
+    /// Marks the current expression unusable and says why. <see cref="ScaleExpressionError"/> is
+    /// what the red label under the scaling box shows, so a refusal the user cannot explain —
+    /// a pasted fragment silently doing nothing — is not one of the outcomes here.
+    /// </summary>
+    private void Reject(string reason)
+    {
+        HasValidExpression = false;
+        Expression = null;
+        ScaleExpressionError = reason;
+    }
+
+    /// <summary>
+    /// The most <c>(</c> open at once, counted the pessimistic way: the larger of two readings of
+    /// the same text, one that treats quotes as string delimiters and one that does not.
+    /// </summary>
+    /// <remarks>
+    /// <para>
+    /// Both readings are needed because each is wrong in a different direction, and Qodo found
+    /// both. Reading the text raw lets a <c>)</c> <em>inside</em> a string literal cancel a real
+    /// <c>(</c> that it does not close, so <c>((((((((')))))))))' + ((((</c> reports 8 while the
+    /// parser is handed 12. Reading it quote-aware lets a quote that is <em>not</em> a delimiter
+    /// — NCalc's <c>[bracket-delimited]</c> parameter names may contain one — leave the scan
+    /// stuck inside an imaginary string for the rest of the input, so <c>['x] + ((((((((((((</c>
+    /// reports 0 while the parser is handed 12 and takes 78 seconds over it.
+    /// </para>
+    /// <para>
+    /// Taking the maximum refuses both, and errs toward refusing rather than accepting whenever
+    /// the two disagree — the only safe direction for a guard that is deliberately not a full
+    /// implementation of somebody else's grammar.
+    /// </para>
+    /// <para>
+    /// A third disagreement is always possible, and the maximum is what contains one: because the
+    /// raw reading is one of the two, the answer is never below the longest run of consecutive
+    /// <c>(</c> in the text (see <see cref="MaxScaleExpressionDepth"/>), and a contiguous run is
+    /// what the exponential backtracking needs. That bound is lexical, so it survives a grammar
+    /// disagreement rather than depending on there not being one — which is why no timer is
+    /// needed here, and why adding one made things worse.
+    /// </para>
+    /// </remarks>
+    private static int DeepestParenthesisNesting(string expression) =>
+        Math.Max(
+            DeepestParenthesisNesting(expression, skipStringLiterals: false),
+            DeepestParenthesisNesting(expression, skipStringLiterals: true));
+
+    /// <summary>
+    /// One reading of the text. Unmatched <c>)</c> are ignored rather than driving the count
+    /// negative, so <c>))((((</c> counts as 4: what costs the parser is how many parentheses are
+    /// open when it starts backtracking, and a leading <c>)</c> cannot cancel one out.
+    /// </summary>
+    /// <param name="expression">The text the user typed.</param>
+    /// <param name="skipStringLiterals">
+    /// When true, <c>'…'</c> and <c>"…"</c> runs are skipped whole — NCalc 7.1.0 accepts both
+    /// quoting forms and escapes with <c>\</c> inside each, checked against the package rather
+    /// than assumed.
+    /// </param>
+    private static int DeepestParenthesisNesting(string expression, bool skipStringLiterals)
+    {
+        var open = 0;
+        var deepest = 0;
+        var quote = '\0';
+        var escaped = false;
+
+        foreach (var character in expression)
+        {
+            if (quote != '\0')
+            {
+                if (escaped) { escaped = false; }
+                else if (character == '\\') { escaped = true; }
+                else if (character == quote) { quote = '\0'; }
+                continue;
+            }
+
+            if (skipStringLiterals && character is '\'' or '"')
+            {
+                quote = character;
+            }
+            else if (character == '(')
+            {
+                open++;
+                if (open > deepest) { deepest = open; }
+            }
+            else if (character == ')' && open > 0)
+            {
+                open--;
+            }
+        }
+
+        return deepest;
     }
 
     // @port: Daqifi.Desktop.Channel.AbstractChannel.Expression
