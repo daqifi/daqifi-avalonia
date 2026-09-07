@@ -199,6 +199,49 @@ public class ConnectionDialogDiscoveryFailureTests
     }
 
     /// <summary>
+    /// A retired scan's last pass can still complete after its replacement has started, and its
+    /// "that pass was clean" signal must not be applied to the replacement's fault count — otherwise
+    /// a scan that is failing every pass never reaches the give-up, because a ghost keeps zeroing it.
+    /// </summary>
+    /// <remarks>
+    /// The reset is the one callback here that comes from the <em>wrapped</em> finder rather than
+    /// from <c>ContinuousDeviceFinder</c>, so it does not get the currency guard for free the way the
+    /// discovery, loss and error callbacks do — it has to carry its own. Raised directly at the
+    /// retired finder because the race it stands for (a bounded stop that gave up, leaving a pass in
+    /// flight) is not something a test can schedule reliably.
+    /// </remarks>
+    [Fact]
+    public async Task A_retired_scans_late_clean_pass_does_not_reset_the_current_scans_faults()
+    {
+        var created = new List<ScriptedSerialFinder>();
+        using var viewModel = CreateViewModel(SilentScript(), onSerialFinderCreated: created.Add);
+
+        StartSerialDiscovery(viewModel.Value);
+        var retired = Assert.Single(created);
+
+        await StopSerialDiscoveryAsync(viewModel.Value);
+
+        // The replacement faults on every pass, and the retired finder — still in flight, which is
+        // the whole premise — completes a pass of its own alongside each of them. Driving the retired
+        // finder from the replacement's script is what makes the interleaving deterministic; the race
+        // it stands for cannot be scheduled from outside.
+        SetPrivateField(
+            viewModel.Value,
+            "_createSerialFinder",
+            (Func<SerialDeviceFinder>)(() => new ScriptedSerialFinder(new SweepScript(_ =>
+            {
+                retired.RaiseCompleted();
+                return Fault();
+            }))));
+        StartSerialDiscovery(viewModel.Value);
+
+        await WaitUntil(
+            viewModel.Value,
+            vm => vm.SerialDiscoveryError != null,
+            "A retired scan's late clean pass must not keep the current scan from ever giving up.");
+    }
+
+    /// <summary>
     /// Starting discovery again is the remedy the message tells the user to reach for, so it has to
     /// clear the message it gave up with.
     /// </summary>
@@ -293,6 +336,15 @@ public class ConnectionDialogDiscoveryFailureTests
     private static void StartWiFiDiscovery(ConnectionDialogViewModel viewModel) =>
         InvokePrivate(viewModel, "StartWiFiDiscovery");
 
+    /// <summary>Awaits the dialog's own serial stop, so the scan is really retired.</summary>
+    private static async Task StopSerialDiscoveryAsync(ConnectionDialogViewModel viewModel)
+    {
+        var method = typeof(ConnectionDialogViewModel).GetMethod(
+            "StopSerialDiscoveryAsync", BindingFlags.Instance | BindingFlags.NonPublic);
+        Assert.NotNull(method);
+        await Assert.IsAssignableFrom<Task>(method.Invoke(viewModel, null));
+    }
+
     /// <summary>
     /// Waits for a bound property to reach the state under test, driven by the view model's own
     /// change notifications rather than by polling.
@@ -349,14 +401,22 @@ public class ConnectionDialogDiscoveryFailureTests
     /// running Avalonia app <c>Dispatcher.UIThread</c> is never pumped), both finder seams replaced by
     /// scripted stand-ins that open nothing, and the scan cadence shortened.
     /// </summary>
-    private static ClosingViewModel CreateViewModel(SweepScript script, SweepScript? wifiScript = null)
+    private static ClosingViewModel CreateViewModel(
+        SweepScript script,
+        SweepScript? wifiScript = null,
+        Action<ScriptedSerialFinder>? onSerialFinderCreated = null)
     {
         var viewModel = new ConnectionDialogViewModel(null!, null);
         SetPrivateField(viewModel, "_marshalToUiThread", (Action<Action>)(action => action()));
         SetPrivateField(
             viewModel,
             "_createSerialFinder",
-            (Func<SerialDeviceFinder>)(() => new ScriptedSerialFinder(script)));
+            (Func<SerialDeviceFinder>)(() =>
+            {
+                var finder = new ScriptedSerialFinder(script);
+                onSerialFinderCreated?.Invoke(finder);
+                return finder;
+            }));
         SetPrivateField(
             viewModel,
             "_createWifiFinder",
@@ -398,6 +458,12 @@ public class ConnectionDialogDiscoveryFailureTests
             OnDiscoveryCompleted();
             return found;
         }
+
+        /// <summary>
+        /// Raises the completion the way a pass ending late would, for the retired-scan race that
+        /// cannot be scheduled reliably from outside.
+        /// </summary>
+        public void RaiseCompleted() => OnDiscoveryCompleted();
     }
 
     /// <summary>The WiFi counterpart, which likewise binds no socket.</summary>

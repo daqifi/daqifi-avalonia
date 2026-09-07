@@ -433,10 +433,6 @@ public partial class ConnectionDialogViewModel : ObservableObject
         _wifiConsecutiveFaults = 0;
 
         var inner = _createWifiFinder();
-        // Reset the fault counter on a pass that actually completed. Core reports faults but has no
-        // "pass finished" signal of its own; the wrapped finder raises DiscoveryCompleted only on its
-        // success path, which is exactly the "this sweep was clean" edge the old loop counted on.
-        inner.DiscoveryCompleted += HandleWifiPassCompleted;
 
         // Core's default identity for WiFi prefers MAC address, which is the same key
         // HandleWifiDeviceFound dedups AvailableWiFiDevices by — so its live set and the bound list
@@ -448,6 +444,19 @@ public partial class ConnectionDialogViewModel : ObservableObject
                 Interval = _wifiScanInterval,
                 PassTimeout = _wifiPassTimeout,
             });
+
+        // Reset the fault counter on a pass that actually completed. Core reports faults but has no
+        // "pass finished" signal of its own; the wrapped finder raises DiscoveryCompleted only on its
+        // success path, which is exactly the "this sweep was clean" edge the old loop counted on.
+        //
+        // Guarded on the scan being current, like every other callback here. A stop that gave up on
+        // its bounded wait leaves the retired pass in flight, and its eventual completion would
+        // otherwise clear the REPLACEMENT scan's fault count and keep it from ever giving up.
+        inner.DiscoveryCompleted += (_, _) =>
+        {
+            if (ReferenceEquals(finder, _wifiFinder)) { _wifiConsecutiveFaults = 0; }
+        };
+
         finder.DeviceDiscovered += HandleCoreWifiDeviceDiscovered;
         finder.DeviceLost += HandleCoreWifiDeviceLost;
         finder.ScanError += HandleWifiScanError;
@@ -521,7 +530,6 @@ public partial class ConnectionDialogViewModel : ObservableObject
         _serialConsecutiveFaults = 0;
 
         var inner = _createSerialFinder();
-        inner.DiscoveryCompleted += HandleSerialPassCompleted;
 
         var finder = new ContinuousDeviceFinder(
             inner,
@@ -543,6 +551,14 @@ public partial class ConnectionDialogViewModel : ObservableObject
                         ? "port:" + device.PortName.Trim().ToLowerInvariant()
                         : "sn:" + device.SerialNumber,
             });
+
+        // The serial counterpart of the reset in StartWiFiDiscovery, with the same currency guard and
+        // for the same reason — see there.
+        inner.DiscoveryCompleted += (_, _) =>
+        {
+            if (ReferenceEquals(finder, _serialFinder)) { _serialConsecutiveFaults = 0; }
+        };
+
         finder.DeviceDiscovered += HandleCoreSerialDeviceDiscovered;
         finder.DeviceLost += HandleCoreSerialDeviceLost;
         finder.ScanError += HandleSerialScanError;
@@ -563,19 +579,6 @@ public partial class ConnectionDialogViewModel : ObservableObject
     /// </para>
     /// </summary>
     private const int MaxConsecutiveDiscoveryFaults = 3;
-
-    /// <summary>
-    /// A serial pass completed without faulting, so the run of faults (if any) is over.
-    /// </summary>
-    /// <remarks>
-    /// Raised by the wrapped <c>SerialDeviceFinder</c>, not by <see cref="ContinuousDeviceFinder"/>,
-    /// which has no per-pass completion signal. The finder raises it on its success path only, so it
-    /// is precisely the "clean sweep" edge <see cref="MaxConsecutiveDiscoveryFaults"/> counts against.
-    /// </remarks>
-    private void HandleSerialPassCompleted(object? sender, EventArgs e) => _serialConsecutiveFaults = 0;
-
-    /// <summary>The WiFi counterpart of <see cref="HandleSerialPassCompleted"/>.</summary>
-    private void HandleWifiPassCompleted(object? sender, EventArgs e) => _wifiConsecutiveFaults = 0;
 
     /// <summary>
     /// A serial discovery pass faulted. Stops the dialog's scan — and says so where the user is
@@ -1202,8 +1205,11 @@ public partial class ConnectionDialogViewModel : ObservableObject
     // @port: Daqifi.Desktop.ViewModels.ConnectionDialogViewModel.StopSerialDiscoveryAsync
     private Task StopSerialDiscoveryAsync()
     {
-        var finder = _serialFinder;
-        _serialFinder = null;
+        // Atomic take: whoever wins gets the finder, everyone else gets null and returns. A stop can
+        // be started from Core's scan-loop thread (the third-fault give-up) at the same moment the UI
+        // thread starts one from Close, a connect, or a firmware pause — and a plain read-then-null
+        // would hand the same instance to both, so both would stop and dispose it.
+        var finder = Interlocked.Exchange(ref _serialFinder, null);
         if (finder == null) { return Task.CompletedTask; }
 
         finder.DeviceDiscovered -= HandleCoreSerialDeviceDiscovered;
@@ -1219,8 +1225,8 @@ public partial class ConnectionDialogViewModel : ObservableObject
     // @port: Daqifi.Desktop.ViewModels.ConnectionDialogViewModel.StopWiFiDiscoveryAsync
     private Task StopWiFiDiscoveryAsync()
     {
-        var finder = _wifiFinder;
-        _wifiFinder = null;
+        // Atomic take — see StopSerialDiscoveryAsync.
+        var finder = Interlocked.Exchange(ref _wifiFinder, null);
         if (finder == null) { return Task.CompletedTask; }
 
         finder.DeviceDiscovered -= HandleCoreWifiDeviceDiscovered;
