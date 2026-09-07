@@ -451,12 +451,17 @@ public class FirmwareUpdateCoordinator
             // already powers on before its query; mirror that here so the version check can succeed.
             serialStreamingDevice.PowerOnWifiModule();
 
-            var chipInfo = (await lanChipProvider.GetLanChipInfoWithRetryAsync(
-                WifiChipInfoRetryOptions, _firmwareLogger, cancellationToken)).ChipInfo;
+            // Keep the whole probe result, not just .ChipInfo: when nothing was read, the result
+            // is the only record of WHY, and this outcome line is the only one that survives the
+            // app's Information+ log floor (see DescribeUnreadableModule).
+            var probe = await lanChipProvider.GetLanChipInfoWithRetryAsync(
+                WifiChipInfoRetryOptions, _firmwareLogger, cancellationToken);
+            var chipInfo = probe.ChipInfo;
 
             if (chipInfo == null)
             {
-                _appLogger.Warning("WiFi chip info unavailable after startup retries; continuing with WiFi update.");
+                _appLogger.Warning(
+                    $"WiFi chip info unavailable after startup retries{DescribeUnreadableModule(probe)}; continuing with WiFi update.");
                 _host.FirmwareUpdateStatusText = "WiFi firmware version unavailable; continuing with update.";
             }
             else
@@ -691,6 +696,43 @@ public class FirmwareUpdateCoordinator
         }
 
         return current < minimum;
+    }
+
+    /// <summary>
+    /// Why a chip-info probe read nothing, as a clause to append to the outcome line the caller
+    /// already writes. Empty when the module answered, so a call site can interpolate it
+    /// unconditionally.
+    /// </summary>
+    /// <remarks>
+    /// Both surfaces that probe a WiFi module log only the outcome — "unreadable" — and an
+    /// unreadable module is exactly the condition <see cref="WifiFirmwareNeedsFlash"/> maps to
+    /// <c>Unknown</c> → flash, so it is what sends a user into a multi-minute reflash of
+    /// already-current firmware. Whether that was a WINC still booting (SCPI <c>-200</c>, which
+    /// clears itself, so the retry budget was simply too small) or a module that never answered at
+    /// all (serial timeout, unparseable response — possibly genuinely dead) is the distinction a
+    /// support engineer needs from a field log, and Core hands it to us in
+    /// <see cref="LanChipInfoProbeResult.WasLanNotInitialized"/>.
+    /// <para>
+    /// Core also logs this per attempt, but at <c>LogDebug</c>, which the app drops twice over —
+    /// <c>AppLoggerLoggerProvider</c>'s bridge forwards Information and above, and <c>App.cs</c>
+    /// filters the provider to Information and above again. Lowering either floor would flood
+    /// <c>DAQifiAppLog.log</c>; carrying the one bit that matters on a line already written does
+    /// not. Shared between the two call sites for the same reason
+    /// <see cref="WifiFirmwareNeedsFlash"/> is: they must never describe one module two ways.
+    /// </para>
+    /// </remarks>
+    internal static string DescribeUnreadableModule(LanChipInfoProbeResult probe)
+    {
+        // WasLanNotInitialized is documented as meaningless when ChipInfo is non-null, so a
+        // readable module contributes nothing rather than a misleading "not not-initialized".
+        if (probe.ChipInfo != null)
+        {
+            return string.Empty;
+        }
+
+        return probe.WasLanNotInitialized
+            ? " — the module reported an uninitialized WINC state machine (SCPI -200), which normally clears on its own"
+            : " — the module never reported an uninitialized state (it timed out or answered unparseably)";
     }
 
     // @port: Daqifi.Desktop.Device.Firmware.FirmwareUpdateCoordinator.CreateWifiFirmwareUpdateService
