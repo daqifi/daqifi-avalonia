@@ -1,3 +1,4 @@
+using System.Diagnostics;
 using Daqifi.Desktop.Channel;
 using Xunit;
 using ChannelDirection = Daqifi.Core.Channel.ChannelDirection;
@@ -208,5 +209,176 @@ public class ChannelScalingExpressionTests
 
         Assert.Equal(5.0, Push(channel, 5.0));
         Assert.False(channel.HasValidExpression);
+    }
+
+    // ---- The bounds on what reaches the parser (#311) ----------------------------------------
+    //
+    // NCalc's grammar backtracks exponentially over a run of unclosed '(' and recurses once per
+    // nesting level, and the setter's catch cannot see either failure: an exponential parse never
+    // throws, and a StackOverflowException is uncatchable — the runtime fails fast and the whole
+    // process goes, taking a running logging session with it. So the tests below assert on the
+    // GUARD refusing the input, which is the only thing a test host can survive asserting on.
+
+    /// <summary>The longest valid expression that still fits the length cap exactly.</summary>
+    private static string ExpressionOfLength(int length)
+    {
+        // "x +1+1+1..." — syntactically valid at any odd/even length, and cheap to parse.
+        var text = "x " + string.Concat(Enumerable.Repeat("+1", (length - 2) / 2));
+        return length % 2 == 0 ? text : text + " ";
+    }
+
+    [Fact]
+    public void An_expression_at_the_length_cap_is_still_accepted()
+    {
+        var expression = ExpressionOfLength(AbstractChannel.MaxScaleExpressionLength);
+        Assert.Equal(AbstractChannel.MaxScaleExpressionLength, expression.Length);
+
+        var channel = Scaled(expression);
+
+        Assert.True(channel.HasValidExpression);
+        Assert.NotNull(channel.Expression);
+    }
+
+    [Fact]
+    public void An_expression_past_the_length_cap_is_refused_before_it_reaches_the_parser()
+    {
+        // Syntactically perfect and only one character over — the refusal is the length, not the
+        // grammar, which is exactly what stops a 25,600-character run of '-' from overflowing.
+        var expression = ExpressionOfLength(AbstractChannel.MaxScaleExpressionLength + 1);
+
+        var channel = Scaled(expression);
+
+        Assert.False(channel.HasValidExpression);
+        Assert.Null(channel.Expression);
+        Assert.Contains("TOO LONG", channel.ScaleExpressionError, StringComparison.Ordinal);
+    }
+
+    [Fact]
+    public void Nesting_at_the_depth_cap_is_still_accepted()
+    {
+        var depth = AbstractChannel.MaxScaleExpressionDepth;
+        var channel = Scaled(new string('(', depth) + "x" + new string(')', depth));
+
+        Assert.True(channel.HasValidExpression);
+        Assert.Equal(21.0, Push(channel, 21.0));
+    }
+
+    [Fact]
+    public void Nesting_past_the_depth_cap_is_refused_before_it_reaches_the_parser()
+    {
+        // Balanced and syntactically valid, so nothing but the depth cap can refuse it.
+        var depth = AbstractChannel.MaxScaleExpressionDepth + 1;
+
+        var channel = Scaled(new string('(', depth) + "x" + new string(')', depth));
+
+        Assert.False(channel.HasValidExpression);
+        Assert.Null(channel.Expression);
+        Assert.Contains("NESTED PARENTHESES", channel.ScaleExpressionError, StringComparison.Ordinal);
+    }
+
+    [Fact]
+    public void Unmatched_closing_parentheses_do_not_buy_back_nesting_depth()
+    {
+        // ')' before any '(' is ignored rather than driving the counter negative: what costs the
+        // parser is how many parentheses are open when it starts backtracking, so ")))" followed
+        // by a deep run must still be refused.
+        var run = new string(')', 8) + new string('(', AbstractChannel.MaxScaleExpressionDepth + 1);
+
+        var channel = Scaled(run);
+
+        Assert.False(channel.HasValidExpression);
+        Assert.Contains("NESTED PARENTHESES", channel.ScaleExpressionError, StringComparison.Ordinal);
+    }
+
+    [Fact]
+    public void The_twelve_character_paste_that_wedged_the_UI_for_fifty_seconds_returns_at_once()
+    {
+        // Measured against this same setter before the guard: 0.07 s at 4 open parentheses,
+        // 0.69 s at 8, 3.6 s at 10, 48.5 s at 12 — on the UI thread, so the window stopped
+        // painting and logging could not be stopped. The bound below is ~10x the pre-fix figure's
+        // safety margin in the wrong direction on purpose: anything under it proves the parser
+        // was never entered, and a regression lands nowhere near it.
+        var stopwatch = Stopwatch.StartNew();
+        var channel = Scaled(new string('(', 12));
+        stopwatch.Stop();
+
+        Assert.False(channel.HasValidExpression);
+        Assert.True(stopwatch.Elapsed < TimeSpan.FromSeconds(5),
+            $"the guard let a 12-character run of '(' reach the parser: {stopwatch.Elapsed}");
+    }
+
+    /// <summary>
+    /// The crash half. This asserts the <em>guard</em> refuses the input, not that the input
+    /// crashes: a test that actually let this reach NCalc would abort the test host with an
+    /// uncatchable <c>StackOverflowException</c> and there would be no result to report.
+    ///
+    /// <para>
+    /// That the unguarded input really does abort was confirmed separately, out of process,
+    /// against the built <c>Daqifi.Avalonia.dll</c> at this branch's merge base: assigning
+    /// <c>new string('(', 900) + "x" + new string(')', 900)</c> to this property exited 134
+    /// (SIGABRT) with <c>Stack overflow.</c> and 26,648 frames of
+    /// <c>NCalc.LogicalExpressionParser</c>/<c>Parlot.Fluent</c>, and a <c>catch (Exception)</c>
+    /// wrapped around the assignment did not run.
+    /// </para>
+    /// </summary>
+    [Fact]
+    public void The_paste_that_aborted_the_process_is_refused_by_the_guard_and_never_parsed()
+    {
+        var text = new string('(', 900) + "x" + new string(')', 900);
+
+        var channel = Scaled(text);
+
+        Assert.False(channel.HasValidExpression);
+        Assert.Null(channel.Expression);
+        // Length is checked first, so that is the reason the user is given for this one.
+        Assert.Contains("TOO LONG", channel.ScaleExpressionError, StringComparison.Ordinal);
+    }
+
+    [Fact]
+    public void An_ordinary_syntax_error_still_reads_exactly_as_it_did_before()
+    {
+        var channel = Scaled("x *");
+
+        Assert.False(channel.HasValidExpression);
+        Assert.Equal("INVALID EXPRESSION", channel.ScaleExpressionError);
+    }
+
+    [Fact]
+    public void A_calibration_a_real_user_would_write_is_well_inside_both_bounds()
+    {
+        // Steinhart-Hart, about the most involved expression this box is asked for: 122
+        // characters and 4 levels of nesting, against caps of 256 and 8.
+        const string steinhartHart =
+            "1 / (0.001129148 + 0.000234125 * Ln(10000 * (1023 / x - 1)) + " +
+            "0.0000000876741 * Pow(Ln(10000 * (1023 / x - 1)), 3)) - 273.15";
+
+        Assert.True(steinhartHart.Length < AbstractChannel.MaxScaleExpressionLength);
+
+        var channel = Scaled(steinhartHart);
+
+        Assert.True(channel.HasValidExpression);
+        var scaled = Push(channel, 512.0);
+        Assert.True(double.IsFinite(scaled));
+        Assert.NotEqual(512.0, scaled);
+    }
+
+    [Fact]
+    public void The_scaling_error_label_shows_the_reason_on_both_heads()
+    {
+        // Neither view declares an x:DataType, so these bindings resolve by reflection: renaming
+        // the property would leave the label blank on both heads with a green build.
+        const string desktop = "Daqifi.Avalonia/Daqifi.Desktop/View/Prototype/ChannelsPanePrototype.axaml";
+        const string mobile = "Daqifi.Avalonia/Views/Mobile/ChannelsMobileView.axaml";
+        const string binding = "Text=\"{Binding SelectedChannel.ScaleExpressionError}\"";
+
+        BindingFacts.AssertBinds(desktop, binding);
+        BindingFacts.AssertBinds(mobile, binding);
+        BindingFacts.AssertExposes(typeof(AbstractChannel), nameof(AbstractChannel.ScaleExpressionError));
+
+        // The other half: no head still carries the wording as a literal, which would pin the
+        // label to "INVALID EXPRESSION" whatever the reason was. AssertBinds above is the
+        // positive control that these two paths are read rather than silently missing.
+        Assert.DoesNotContain("Text=\"INVALID EXPRESSION\"", BindingFacts.Source(desktop), StringComparison.Ordinal);
+        Assert.DoesNotContain("Text=\"INVALID EXPRESSION\"", BindingFacts.Source(mobile), StringComparison.Ordinal);
     }
 }

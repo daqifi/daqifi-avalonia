@@ -557,10 +557,13 @@
               <!-- INVALID EXPRESSION: desktop MultiBinding (IsScalingActive AND
                    !HasValidExpression) -> nested IsVisible containers. -->
               <StackPanel IsVisible="{Binding SelectedChannel.IsScalingActive}">
-                <TextBlock Text="INVALID EXPRESSION"
+                <!-- Text is bound, not literal: a refusal for length or nesting depth says
+                     which, instead of the generic wording (#311). -->
+                <TextBlock Text="{Binding SelectedChannel.ScaleExpressionError}"
                            FontSize="{DynamicResource FontSizeSmall}"
                            FontWeight="SemiBold"
                            Foreground="{DynamicResource StatusRed}"
+                           TextWrapping="Wrap"
                            IsVisible="{Binding !SelectedChannel.HasValidExpression}" />
               </StackPanel>
             </StackPanel>

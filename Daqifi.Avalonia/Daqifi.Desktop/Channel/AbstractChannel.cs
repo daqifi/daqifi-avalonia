@@ -91,6 +91,14 @@ public abstract partial class AbstractChannel : ObservableObject, IChannel
     private bool _hasValidExpression;
 
     /// <summary>
+    /// Why the current <see cref="ScaleExpression"/> was refused, in the words the red label
+    /// under the scaling box shows. Defaults to the generic wording the label used to carry
+    /// verbatim, so an ordinary syntax error still reads exactly as it did before (#311).
+    /// </summary>
+    [ObservableProperty]
+    private string _scaleExpressionError = InvalidExpressionMessage;
+
+    /// <summary>
     /// Gets the channel index. Implemented by derived classes to delegate to core.
     /// </summary>
     // @port: Daqifi.Desktop.Channel.AbstractChannel.Index
@@ -134,6 +142,28 @@ public abstract partial class AbstractChannel : ObservableObject, IChannel
             _ => "Unknown"
         };
 
+    /// <summary>
+    /// Longest expression the scaling box will hand to the parser. Real calibrations are far
+    /// shorter — a Steinhart-Hart thermistor conversion, about the most involved thing anyone
+    /// writes here, is ~120 characters — so this is roughly double the realistic maximum while
+    /// still being nowhere near the ~1,700 characters of nested parentheses (or the ~25,600
+    /// leading <c>-</c>) at which NCalc's recursive-descent parser overflows the stack.
+    /// </summary>
+    public const int MaxScaleExpressionLength = 256;
+
+    /// <summary>
+    /// Deepest parenthesis nesting the scaling box will hand to the parser. The Steinhart-Hart
+    /// expression above reaches 5, so 8 leaves real headroom. The cap exists because NCalc's
+    /// grammar backtracks exponentially over a run of unclosed <c>(</c>: measured Release on
+    /// macOS, a bare run of open parentheses costs 0.06 s at 6, 0.19 s at 8, 0.76 s at 9,
+    /// 3.6 s at 10 and 48 s at 12 — see <see cref="MaxScaleExpressionLength"/> for the other
+    /// half of the bound.
+    /// </summary>
+    public const int MaxScaleExpressionDepth = 8;
+
+    /// <summary>The message the INVALID EXPRESSION label carries for an ordinary parse failure.</summary>
+    public const string InvalidExpressionMessage = "INVALID EXPRESSION";
+
     [NotMapped]
     // @port: Daqifi.Desktop.Channel.AbstractChannel.ScaleExpression
     public string ScaleExpression
@@ -145,8 +175,29 @@ public abstract partial class AbstractChannel : ObservableObject, IChannel
 
             if (string.IsNullOrWhiteSpace(_scaledExpression))
             {
-                HasValidExpression = false;
-                Expression = null;
+                Reject(InvalidExpressionMessage);
+                return;
+            }
+
+            // Bound the text BEFORE it reaches NCalc. This is the one place user-entered
+            // expression text enters the parser, and the parser cannot be made safe from the
+            // outside: an exponential parse never throws, so the catch below never sees it, and
+            // a StackOverflowException cannot be caught at all — the runtime fails fast and the
+            // process dies with the logging session in it. Nor can the parse be given a
+            // deadline: NCalc's parse takes no CancellationToken and .NET cannot abort a
+            // thread, so a timeout would only hide a core that keeps spinning. Refusing the
+            // input is the only fix that actually removes the failure (#311).
+            if (_scaledExpression.Length > MaxScaleExpressionLength)
+            {
+                Reject($"EXPRESSION TOO LONG (LIMIT {MaxScaleExpressionLength} CHARACTERS)");
+                OnPropertyChanged();
+                return;
+            }
+
+            if (DeepestParenthesisNesting(_scaledExpression) > MaxScaleExpressionDepth)
+            {
+                Reject($"TOO MANY NESTED PARENTHESES (LIMIT {MaxScaleExpressionDepth})");
+                OnPropertyChanged();
                 return;
             }
 
@@ -159,14 +210,50 @@ public abstract partial class AbstractChannel : ObservableObject, IChannel
             {
                 Expression.Evaluate();
                 HasValidExpression = true;
+                ScaleExpressionError = InvalidExpressionMessage;
             }
             catch (Exception)
             {
-                HasValidExpression = false;
-                Expression = null;
+                Reject(InvalidExpressionMessage);
             }
             OnPropertyChanged();
         }
+    }
+
+    /// <summary>
+    /// Marks the current expression unusable and says why. <see cref="ScaleExpressionError"/> is
+    /// what the red label under the scaling box shows, so a refusal the user cannot explain —
+    /// a pasted fragment silently doing nothing — is not one of the outcomes here.
+    /// </summary>
+    private void Reject(string reason)
+    {
+        HasValidExpression = false;
+        Expression = null;
+        ScaleExpressionError = reason;
+    }
+
+    /// <summary>
+    /// The most <c>(</c> open at once. Unmatched <c>)</c> are ignored rather than driving the
+    /// count negative, so <c>))((((</c> counts as 4: what costs the parser is how many parens
+    /// are open when it starts backtracking, and a leading <c>)</c> cannot cancel one out.
+    /// </summary>
+    private static int DeepestParenthesisNesting(string expression)
+    {
+        var open = 0;
+        var deepest = 0;
+        foreach (var character in expression)
+        {
+            if (character == '(')
+            {
+                open++;
+                if (open > deepest) { deepest = open; }
+            }
+            else if (character == ')' && open > 0)
+            {
+                open--;
+            }
+        }
+        return deepest;
     }
 
     // @port: Daqifi.Desktop.Channel.AbstractChannel.Expression

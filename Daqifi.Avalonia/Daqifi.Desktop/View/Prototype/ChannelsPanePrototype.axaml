@@ -802,10 +802,13 @@
                                            FontSize="10"
                                            Foreground="{DynamicResource TextTertiary}"
                                            Margin="0,6,0,0"/>
-                                <TextBlock Text="INVALID EXPRESSION"
+                                <!-- Text is bound, not literal: a refusal for length or nesting
+                                     depth says which, instead of the generic wording (#311). -->
+                                <TextBlock Text="{Binding SelectedChannel.ScaleExpressionError}"
                                            FontSize="10"
                                            FontWeight="SemiBold"
                                            Foreground="#F43F5E"
+                                           TextWrapping="Wrap"
                                            Margin="0,6,0,0">
                                     <TextBlock.IsVisible>
                                         <MultiBinding Converter="{StaticResource BoolAndToVis}">
