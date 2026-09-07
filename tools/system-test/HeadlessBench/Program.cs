@@ -14,9 +14,15 @@ using Daqifi.Desktop.Channel;
 using Daqifi.Desktop.Device;
 using Daqifi.Desktop.Logger;
 using Daqifi.Desktop.ViewModels;
+using EFCore.BulkExtensions;
+using Microsoft.EntityFrameworkCore;
+using Microsoft.EntityFrameworkCore.Diagnostics;
 using Optris.Icons.Avalonia;
 using Optris.Icons.Avalonia.MaterialDesign;
+using OxyPlot.Series;
 using ChannelDirection = Daqifi.Core.Channel.ChannelDirection;
+using ChannelType = Daqifi.Core.Channel.ChannelType;
+using DesktopApp = Daqifi.Desktop.App;
 
 // HeadlessBench — the avalonia-full-test skill's T2/T3 rig. See
 // ~/.claude/skills/avalonia-full-test/references/harness.md for the why; the short version:
@@ -38,12 +44,13 @@ using ChannelDirection = Daqifi.Core.Channel.ChannelDirection;
 //
 // Usage:
 //   HeadlessBench --port /dev/cu.usbmodemNNNN --out <run-dir> [--rate 100] [--seconds 5]
-//   HeadlessBench --scripted <state> --out <run-dir>          (T1; states not yet implemented)
+//   HeadlessBench --scripted <state> --out <run-dir>          (T1; no board — see RunScripted)
 //   DAQIFI_RESTORE_NAME=<name> HeadlessBench --port ... --out ...   (repair; see RunRestoreName)
 //
-// Exit code 1 on any [FAIL]. Rows covered: CONN-USB, DEV-INFO, DEV-TILE, CH-TILE, DEV-RATE, CH-AI,
-// STREAM-AI, LOG-SESSION, GRAPH-LIVE, CH-DIO, CH-PWM, SD-LIST, CONN-DISC, DEV-NAME. Add a Step per
-// matrix row; keep the shape.
+// Exit code 1 on any [FAIL]. Rows covered with a board: CONN-USB, DEV-INFO, DEV-TILE, CH-TILE,
+// DEV-RATE, CH-AI, STREAM-AI, LOG-SESSION, GRAPH-LIVE, CH-DIO, CH-PWM, SD-LIST, CONN-DISC,
+// DEV-NAME. Rows covered by --scripted, which needs none: LOGGED-LIST, LOGGED-PLOT, EXPORT-FAIL.
+// Add a Step per matrix row; keep the shape.
 
 internal static class HeadlessBench
 {
@@ -54,6 +61,12 @@ internal static class HeadlessBench
     private static string? _scripted;
     private static string? _restoreName;
     private static bool _failed;
+
+    /// <summary>Which row the end-of-run UI-stall probe belongs to. GRAPH-LIVE is the live plot,
+    /// which is what a hardware run stalls on; a --scripted run never opens it, so each state
+    /// re-points this at the row it actually exercised rather than filing its latency under a row
+    /// the run did not run.</summary>
+    private static (int Tier, string Row) UiProbe = (2, "GRAPH-LIVE");
     private static readonly List<double> PumpLatenciesMs = [];
     private static readonly List<string> SetupReconnectRetries = [];
     private static readonly Vector Dpi = new(96, 96);
@@ -84,12 +97,36 @@ internal static class HeadlessBench
             return 2;
         }
 
+        // The database a --scripted state needs has to exist BEFORE the app boots: the one caller
+        // of LoggingManager.ReloadPersistedLoggingSessions is DaqifiViewModel's one-time init,
+        // which runs inside SetupWithLifetime below. Seeding afterwards would be the rig putting
+        // rows in a list the app had already finished loading — the opposite of the state being
+        // scripted, which is "the app launched and found this on disk".
+        if (_scripted is not null)
+        {
+            try
+            {
+                SeedScriptedDatabase();
+            }
+            catch (Exception ex)
+            {
+                // A [FAIL], not exit 2: the arguments were fine and the rig got as far as writing
+                // to the run directory, so this is the rig failing rather than being misused.
+                Console.WriteLine($"[FAIL] seed '{_scripted}': {ex}");
+                return 1;
+            }
+        }
+
         var lifetime = new ClassicDesktopStyleApplicationLifetime
         {
             Args = args,
             ShutdownMode = ShutdownMode.OnExplicitShutdown,
         };
 
+        // Timed because for LOGGED-LIST the boot IS the check: the 500 seeded sessions are read,
+        // purged, backfilled and bound during SetupWithLifetime, so this is the only stopwatch
+        // that can span the load the row is about.
+        var boot = Stopwatch.StartNew();
         try
         {
             AppBuilder.Configure<Daqifi.Avalonia.App>()
@@ -97,6 +134,7 @@ internal static class HeadlessBench
                 .UseHarfBuzz()
                 .UseHeadless(new AvaloniaHeadlessPlatformOptions { UseHeadlessDrawing = false })
                 .SetupWithLifetime(lifetime);
+            boot.Stop();
             Console.WriteLine("[OK]   app boot");
         }
         catch (Exception ex)
@@ -119,8 +157,7 @@ internal static class HeadlessBench
             }
             else if (_scripted is not null)
             {
-                Emit(1, "SCRIPTED", "works", "not-run", $"--scripted {_scripted}: state not implemented in this stub");
-                Console.WriteLine($"[INFO] scripted state '{_scripted}' not implemented yet");
+                RunScripted(main, shell, boot.Elapsed);
             }
             else
             {
@@ -1106,6 +1143,386 @@ internal static class HeadlessBench
         return shell.FriendlyNameError;
     }
 
+    // ---------------------------------------------------------------- the T1 (--scripted) states
+
+    // The states --scripted understands. Each one is a DATABASE the app finds at boot, not a fake
+    // device: these are the three matrix rows whose test double is disk contents, and they are the
+    // whole of what this mode covers. The other states the matrix asks for (sd-empty,
+    // drop-mid-stream) need an IStreamingDevice double, which is a different piece of work and is
+    // still open on #260 — see the rig README.
+    private const string StateSessions500 = "sessions-500";
+    private const string StateSession10H = "session-10h";
+    private const string StateExportReadonly = "export-readonly";
+    private static readonly string[] ScriptedStates = [StateSessions500, StateSession10H, StateExportReadonly];
+
+    /// <summary>Sessions <see cref="StateSessions500"/> writes — the matrix's stated limit for
+    /// LOGGED-LIST.</summary>
+    private const int SeededSessionCount = 500;
+
+    /// <summary>Sample rate and span of the <see cref="StateSession10H"/> session. 3 Hz over ten
+    /// hours is 108 000 rows, deliberately past SessionDataRepository.INITIAL_LOAD_POINTS
+    /// (100 000), so the load runs its Phase 2 full-range pass instead of stopping at the fast
+    /// first batch. A denser rate would only make the seed slower without reaching new code.
+    /// </summary>
+    private const int TenHourRateHz = 3;
+    private const int TenHourSeconds = 10 * 60 * 60;
+    private const int TenHourSampleCount = TenHourRateHz * TenHourSeconds;
+
+    /// <summary>Samples in the small session <see cref="StateExportReadonly"/> exports — enough
+    /// that the control export writes a file with real rows in it, few enough to seed instantly.
+    /// </summary>
+    private const int ExportSampleCount = 600;
+
+    private const string SeedSerial = "SCRIPTED-0001";
+    private const string SeedDeviceName = "Scripted Nyquist";
+    private const string SeedChannelName = "AI0";
+
+    /// <summary>
+    /// Writes <c>&lt;out&gt;/appdata/DAQiFiDatabase.db</c> for the requested <c>--scripted</c>
+    /// state, before the app boots.
+    /// </summary>
+    /// <remarks>
+    /// <para>Schema comes from the app's own migrator, and the samples go in through
+    /// <c>BulkInsert</c> — the same call <c>SessionSampleWriter</c> makes in production — so the
+    /// rows the app reads back are shaped by the app's own write path rather than by this rig's
+    /// idea of the schema.</para>
+    /// <para>Every seeded session gets at least one sample on purpose:
+    /// <c>LoggingManager.LoadPersistedLoggingSessions</c> DELETES sample-less sessions at startup
+    /// as litter from an abandoned run, so a 500-session seed with no samples would arrive as a
+    /// zero-session app and the row would be measuring the purge.</para>
+    /// <para><see cref="LoggingSession.SampleCount"/> is left NULL for the 500, which is what a
+    /// database written before that column existed looks like. That makes the backfill
+    /// (<c>BackfillMissingSampleCounts</c>) part of what LOGGED-LIST checks rather than an
+    /// untested step on the way.</para>
+    /// </remarks>
+    private static void SeedScriptedDatabase()
+    {
+        var sw = Stopwatch.StartNew();
+        var factory = new SeedContextFactory(DesktopApp.DatabasePath);
+        Directory.CreateDirectory(DesktopApp.DaqifiDataDirectory);
+        if (DatabaseMigrator.PrepareMigration(factory, DesktopApp.DatabasePath))
+        {
+            DatabaseMigrator.ApplyMigrations(factory, DesktopApp.DatabasePath);
+        }
+
+        using var db = factory.CreateDbContext();
+        db.ChangeTracker.AutoDetectChangesEnabled = false;
+
+        var start = DateTime.Now.AddHours(-11);
+        int sessions;
+        long samples;
+        switch (_scripted)
+        {
+            case StateSessions500:
+                for (var i = 1; i <= SeededSessionCount; i++)
+                {
+                    db.Sessions.Add(NewSession(i, start.AddMinutes(i), $"Scripted session {i}", sampleCount: null));
+                    db.SessionDeviceMetadata.Add(NewMetadata(i));
+                }
+                db.SaveChanges();
+                db.BulkInsert(Enumerable.Range(1, SeededSessionCount)
+                    .Select(i => NewSample(i, start.AddMinutes(i), i / 100.0)).ToList());
+                sessions = SeededSessionCount;
+                samples = SeededSessionCount;
+                break;
+
+            case StateSession10H:
+                db.Sessions.Add(NewSession(1, start, "Ten-hour session", TenHourSampleCount));
+                db.SessionDeviceMetadata.Add(NewMetadata(1, TenHourRateHz));
+                db.SaveChanges();
+                db.BulkInsert(Enumerable.Range(0, TenHourSampleCount)
+                    .Select(i => NewSample(1, start.AddSeconds(i / (double)TenHourRateHz),
+                                           Math.Sin(i / 500.0))).ToList());
+                sessions = 1;
+                samples = TenHourSampleCount;
+                break;
+
+            case StateExportReadonly:
+                db.Sessions.Add(NewSession(1, start, "Export target", ExportSampleCount));
+                db.SessionDeviceMetadata.Add(NewMetadata(1));
+                db.SaveChanges();
+                db.BulkInsert(Enumerable.Range(0, ExportSampleCount)
+                    .Select(i => NewSample(1, start.AddSeconds(i), i * 0.001)).ToList());
+                sessions = 1;
+                samples = ExportSampleCount;
+                break;
+
+            default:
+                throw new ArgumentException($"unknown --scripted state '{_scripted}'");
+        }
+
+        Console.WriteLine($"[OK]   seeded '{_scripted}': {sessions} session(s), {samples} sample(s) " +
+                          $"in {sw.Elapsed.TotalSeconds:F1} s -> {DesktopApp.DatabasePath}");
+    }
+
+    private static LoggingSession NewSession(int id, DateTime startedAt, string name, long? sampleCount) => new()
+    {
+        ID = id,
+        Name = name,
+        SessionStart = startedAt,
+        SampleCount = sampleCount,
+        Status = SessionStatus.Complete,
+    };
+
+    private static SessionDeviceMetadata NewMetadata(int sessionId, int frequencyHz = 1) => new()
+    {
+        LoggingSessionID = sessionId,
+        DeviceSerialNo = SeedSerial,
+        DeviceName = SeedDeviceName,
+        SamplingFrequencyHz = frequencyHz,
+    };
+
+    private static DataSample NewSample(int sessionId, DateTime at, double value) => new()
+    {
+        LoggingSessionID = sessionId,
+        DeviceName = SeedDeviceName,
+        DeviceSerialNo = SeedSerial,
+        ChannelName = SeedChannelName,
+        Type = ChannelType.Analog,
+        Color = "#FF1E88E5",
+        Value = value,
+        TimestampTicks = at.Ticks,
+    };
+
+    /// <summary>The factory the seed writes through. The app's own is inside its DI container,
+    /// which does not exist until <c>AppBuilder.Configure</c> — and the seed has to be on disk
+    /// before that — so these two lines mirror the registration in <c>Daqifi.Desktop.App</c>.
+    /// Keep them the same.</summary>
+    private sealed class SeedContextFactory(string databasePath) : IDbContextFactory<LoggingContext>
+    {
+        public LoggingContext CreateDbContext() => new(
+            new DbContextOptionsBuilder<LoggingContext>()
+                .UseSqlite($"Data source={databasePath}")
+                .ConfigureWarnings(w => w.Ignore(RelationalEventId.PendingModelChangesWarning))
+                .Options);
+    }
+
+    private static void RunScripted(Window main, DaqifiViewModel shell, TimeSpan boot)
+    {
+        switch (_scripted)
+        {
+            case StateSessions500: UiProbe = (1, "LOGGED-LIST"); RunSessionListRow(main, shell, boot); break;
+            case StateSession10H: UiProbe = (1, "LOGGED-PLOT"); RunSessionPlotRow(main, shell); break;
+            case StateExportReadonly: UiProbe = (1, "EXPORT-FAIL"); RunExportFailureRow(main, shell); break;
+            default: throw new ArgumentException($"unknown --scripted state '{_scripted}'");
+        }
+    }
+
+    /// <summary>
+    /// LOGGED-LIST at the matrix's stated limit: 500 persisted sessions. The check is on what the
+    /// BOOT produced, because that is where the load happens — nothing the rig can click reloads
+    /// the desktop list.
+    /// </summary>
+    private static void RunSessionListRow(Window main, DaqifiViewModel shell, TimeSpan boot)
+    {
+        // shell.LoggingSessions is the collection the Logged Data pane's grid binds
+        // (LoggedDataPanePrototype.axaml), and it is LoggingManager's own list, not a copy.
+        var listed = shell.LoggingSessions;
+        var backfilled = listed.Count(s => s.SampleCount == 1);
+        var named = listed.Count(s => s.Name.StartsWith("Scripted session", StringComparison.Ordinal));
+        var withFrequency = listed.Count(s => s.HasFrequencyDisplay);
+
+        Step(1, "LOGGED-LIST", "limits",
+             listed.Count == SeededSessionCount && shell.HasLoggingSessions
+                 && backfilled == SeededSessionCount && named == SeededSessionCount,
+             $"{listed.Count} of {SeededSessionCount} seeded sessions reached the bound list in " +
+             $"{boot.TotalSeconds:F1} s of app boot; HasLoggingSessions={shell.HasLoggingSessions}; " +
+             $"{named} carry their seeded name; {backfilled} had their NULL SampleCount backfilled to 1; " +
+             $"{withFrequency} show a frequency from session metadata; " +
+             $"EXPORT ALL enabled={shell.ExportAllLoggingSessionCommand.CanExecute(null)}",
+             Capture(main, "t1-loggedlist-500"), boot.TotalSeconds);
+    }
+
+    /// <summary>
+    /// LOGGED-PLOT at the matrix's stated limit: a ten-hour session. Driven through
+    /// <c>DisplayLoggingSessionCommand</c> — the command each session row's PLOT button binds —
+    /// and asserted on the plot the pane actually shows.
+    /// </summary>
+    private static void RunSessionPlotRow(Window main, DaqifiViewModel shell)
+    {
+        var session = shell.LoggingSessions.FirstOrDefault();
+        if (session is null)
+        {
+            Step(1, "LOGGED-PLOT", "limits", false, "the seeded session did not survive startup", null);
+            return;
+        }
+
+        var sw = Stopwatch.StartNew();
+        var plotting = shell.DisplayLoggingSessionCommand.ExecuteAsync(session);
+        // Never block: headless, Dispatcher.UIThread is this thread, and the load marshals onto it.
+        PumpUntil(() => plotting.IsCompleted, TimeSpan.FromMinutes(2));
+        PumpUntil(() => !shell.DbLogger.IsRefiningData, TimeSpan.FromSeconds(30));
+        Pump();
+        sw.Stop();
+
+        var db = shell.DbLogger;
+        // X is milliseconds since the session's first sample (SessionDataRepository builds every
+        // DataPoint as (ticks - firstTicks) / 10000.0), so the last point of a ten-hour session
+        // sits at ~3.6e7. Asserting the SPAN rather than the point count is what makes this a
+        // ten-hour check: a load that stopped at the fast first batch would draw plenty of points
+        // and cover only the first minutes.
+        var spanHours = db.PlotModel.Series.OfType<LineSeries>()
+            .SelectMany(s => s.Points)
+            .Select(p => p.X)
+            .DefaultIfEmpty(0)
+            .Max() / 3_600_000.0;
+        var points = db.PlotModel.Series.OfType<LineSeries>().Sum(s => s.Points.Count);
+        var expectedHours = TenHourSeconds / 3600.0;
+
+        Step(1, "LOGGED-PLOT", "limits",
+             db.IsSessionOpen && db.HasSessionData && points > 0
+                 && Math.Abs(spanHours - expectedHours) < 0.1
+                 && db.CurrentSessionSampleCount == TenHourSampleCount,
+             $"{TenHourSampleCount} samples at {TenHourRateHz} Hz loaded in {sw.Elapsed.TotalSeconds:F1} s; " +
+             $"IsSessionOpen={db.IsSessionOpen} HasSessionData={db.HasSessionData}; " +
+             $"{db.PlotModel.Series.Count} series holding {points} plotted point(s) spanning " +
+             $"{spanHours:F2} h of the seeded {expectedHours:F2} h; header reads " +
+             $"'{db.CurrentSessionSampleCountDisplay}' ({db.CurrentSessionSampleCount}); " +
+             $"{db.LegendItems.Count} legend item(s)",
+             Capture(main, "t1-loggedplot-10h"), sw.Elapsed.TotalSeconds);
+    }
+
+    /// <summary>
+    /// EXPORT-FAIL: a destination the app cannot write. Runs the SAME export twice — once to a
+    /// writable directory, then to a read-only one — because "no file appeared" is not evidence
+    /// on its own. The control run is what makes the second one mean "the destination stopped it"
+    /// rather than "nothing was ever going to be written".
+    /// </summary>
+    /// <remarks>
+    /// The dialog's own view model is constructed the way <c>DaqifiViewModel.
+    /// ShowExportDialogForSessionAsync</c> constructs it, and driven the way the dialog drives it:
+    /// <c>ExportFilePath</c> is what the Browse picker assigns, and
+    /// <c>ExportLoggingSessionsCommand</c> is the EXPORT button. Going through the shell's
+    /// <c>ExportLoggingSessionCommand</c> instead would run the same code but drop the view model
+    /// on the floor, and the failure message this row is about lives on it.
+    /// </remarks>
+    private static void RunExportFailureRow(Window main, DaqifiViewModel shell)
+    {
+        var session = shell.LoggingSessions.FirstOrDefault();
+        if (session is null)
+        {
+            Step(1, "EXPORT-FAIL", "works", false, "the seeded session did not survive startup", null);
+            return;
+        }
+
+        if (OperatingSystem.IsWindows())
+        {
+            Emit(1, "EXPORT-FAIL", "works", "not-run",
+                 "the read-only destination is made with a POSIX mode; on Windows the equivalent is an ACL " +
+                 "denial this rig does not set up");
+            return;
+        }
+
+        var writable = Path.Combine(_out, "export-ok");
+        var readOnly = Path.Combine(_out, "export-readonly");
+        Directory.CreateDirectory(writable);
+        Directory.CreateDirectory(readOnly);
+
+        // Control: the same session, the same command, a destination that works.
+        var okPath = Path.Combine(writable, "session.csv");
+        var control = RunExport(session.ID, okPath);
+        var okBytes = File.Exists(okPath) ? new FileInfo(okPath).Length : 0;
+
+        try
+        {
+            File.SetUnixFileMode(readOnly,
+                UnixFileMode.UserRead | UnixFileMode.UserExecute |
+                UnixFileMode.GroupRead | UnixFileMode.GroupExecute |
+                UnixFileMode.OtherRead | UnixFileMode.OtherExecute);
+
+            // Root ignores the mode bits, and so would a filesystem that does not honour them.
+            // Say the check could not run rather than reporting a pass it did not earn.
+            if (CanStillWriteTo(readOnly))
+            {
+                Emit(1, "EXPORT-FAIL", "works", "not-run",
+                     $"'{readOnly}' is still writable after chmod 555 — running as root, or a filesystem " +
+                     "that ignores POSIX modes; there is no unwritable destination to test against");
+                return;
+            }
+
+            var blockedPath = Path.Combine(readOnly, "session.csv");
+            var blocked = RunExport(session.ID, blockedPath);
+            var shot = Capture(main, "t1-exportfail-readonly");
+            var leftBehind = Directory.EnumerateFileSystemEntries(readOnly).ToList();
+
+            // "Classified" is the point of the row: DestinationFailureClassifier turns the denial
+            // into a sentence naming the file and saying what to do, and the alternative is the
+            // dialog's generic "Export failed. Please try again." — which is what a regression
+            // here looks like, not a crash.
+            var classified = blocked.Message is not null
+                             && blocked.Message.Contains("access was denied", StringComparison.Ordinal)
+                             && blocked.Message.Contains("session.csv", StringComparison.Ordinal);
+
+            Step(1, "EXPORT-FAIL", "works",
+                 control is { Completed: true, Succeeded: true } && okBytes > 0
+                     && blocked is { Completed: true, Succeeded: false } && classified,
+                 $"control export to a writable folder: Succeeded={control.Succeeded}, " +
+                 $"{okBytes} byte(s) written, message '{control.Message}'; the same export to a " +
+                 $"chmod-555 folder: Succeeded={blocked.Succeeded}, IsExportComplete={blocked.Completed}, " +
+                 $"message '{blocked.Message}'",
+                 shot);
+
+            // Atomicity: the exporter stages each CSV and moves it into place, so a blocked
+            // destination must be left with nothing in it at all — not a zero-byte file, not a
+            // temp file.
+            Step(1, "EXPORT-FAIL", "unexpected", leftBehind.Count == 0,
+                 leftBehind.Count == 0
+                     ? "the blocked destination was left empty — no partial or staged file"
+                     : $"the blocked destination holds {leftBehind.Count} leftover entr(y/ies): " +
+                       string.Join(", ", leftBehind.Select(Path.GetFileName)),
+                 null);
+        }
+        finally
+        {
+            // A directory the run cannot delete is the filesystem equivalent of leaving the bench
+            // board driving a pin: everything downstream — the next run, the user's `rm -rf` of
+            // --out — trips over it. Restore, then check the restore rather than assuming it.
+            string? restoreError = null;
+            try
+            {
+                File.SetUnixFileMode(readOnly,
+                    UnixFileMode.UserRead | UnixFileMode.UserWrite | UnixFileMode.UserExecute |
+                    UnixFileMode.GroupRead | UnixFileMode.GroupExecute |
+                    UnixFileMode.OtherRead | UnixFileMode.OtherExecute);
+            }
+            catch (Exception ex) { restoreError = ex.Message; }
+
+            Step(1, "EXPORT-FAIL", "cleanup", restoreError is null && CanStillWriteTo(readOnly),
+                 restoreError is null
+                     ? $"'{readOnly}' is writable again, verified by writing to it"
+                     : $"could not restore '{readOnly}' to writable ({restoreError}) — remove it with " +
+                       $"chmod u+w before deleting {_out}",
+                 null);
+        }
+    }
+
+    /// <summary>Drives one export to <paramref name="destination"/> through the export dialog's own
+    /// view model and returns what the dialog would be showing when it finishes.</summary>
+    private static (bool Completed, bool Succeeded, string? Message) RunExport(int sessionId, string destination)
+    {
+        using var dialog = new ExportDialogViewModel(sessionId)
+        {
+            // What BrowseExportPathAsync assigns when the save picker returns a path.
+            ExportFilePath = destination,
+        };
+        var export = dialog.ExportLoggingSessionsCommand.ExecuteAsync(null);
+        PumpUntil(() => export.IsCompleted && dialog.IsExportComplete, TimeSpan.FromMinutes(2));
+        Pump();
+        return (dialog.IsExportComplete, dialog.ExportSucceeded, dialog.ExportResultMessage);
+    }
+
+    private static bool CanStillWriteTo(string directory)
+    {
+        var probe = Path.Combine(directory, $".probe-{Guid.NewGuid():N}");
+        try
+        {
+            File.WriteAllText(probe, "");
+            File.Delete(probe);
+            return true;
+        }
+        catch (Exception) { return false; }
+    }
+
     /// <summary>The pane's live tile for a channel, from whichever section it is shelved in. Always
     /// re-fetch after a change that can re-shelve it: the pane disposes and rebuilds every tile.</summary>
     private static ChannelTileViewModel? FindTile(ChannelsPaneViewModel pane, IChannel channel) =>
@@ -1166,7 +1583,7 @@ internal static class HeadlessBench
         if (PumpLatenciesMs.Count == 0) { return; }
         var max = PumpLatenciesMs.Max();
         var over100 = PumpLatenciesMs.Count(l => l > 100);
-        Emit(2, "GRAPH-LIVE", "unexpected", max > 250 ? "finding" : "pass",
+        Emit(UiProbe.Tier, UiProbe.Row, "unexpected", max > 250 ? "finding" : "pass",
              $"UI pump max {max:F0} ms; {over100} of {PumpLatenciesMs.Count} pumps over 100 ms");
     }
 
@@ -1226,6 +1643,14 @@ internal static class HeadlessBench
         if (string.IsNullOrEmpty(_out)) { Console.WriteLine("--out <run-dir> is required"); return false; }
         if (_restoreName is not null && _scripted is not null) { Console.WriteLine("DAQIFI_RESTORE_NAME repairs a real board; it cannot be combined with --scripted"); return false; }
         if (_scripted is null && string.IsNullOrEmpty(_port)) { Console.WriteLine("--port <serial port> or --scripted <state> is required"); return false; }
+        // A typo'd state is a bad argument, and it has to be rejected HERE: past this point the
+        // next thing that would notice is the seed, and by then the run directory has been written
+        // and the exit code would be 1 (a failing check) rather than 2 (a misuse).
+        if (_scripted is not null && !ScriptedStates.Contains(_scripted))
+        {
+            Console.WriteLine($"unknown --scripted state '{_scripted}'; known states: {string.Join(", ", ScriptedStates)}");
+            return false;
+        }
         if (_rate < 1 || _seconds < 1) { Console.WriteLine("--rate and --seconds must be >= 1"); return false; }
         return true;
     }
