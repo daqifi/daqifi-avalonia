@@ -1497,15 +1497,20 @@ internal static class HeadlessBench
                  $"message '{blocked.Message}'",
                  shot);
 
-            // Atomicity: the exporter stages each CSV and moves it into place, so a blocked
-            // destination must be left with nothing in it at all — not a zero-byte file, not a
-            // temp file.
-            Step(1, "EXPORT-FAIL", "unexpected", leftBehind.Count == 0,
+            // Atomicity, and exactly as much of it as this destination can show. The exporter
+            // stages each CSV beside its destination and renames it into place, so the interesting
+            // case is a staged file that failed at the rename — and a read-only DIRECTORY cannot
+            // produce one, because the staging file is refused by the same permission that refuses
+            // the destination. So this says "nothing was created", not "a staged file was cleaned
+            // up". A probe rather than a Step for that reason: with this destination it has no way
+            // to fail, and a check that cannot fail should not be able to redden a run.
+            Emit(1, "EXPORT-FAIL", "unexpected", leftBehind.Count == 0 ? "pass" : "finding",
                  leftBehind.Count == 0
-                     ? "the blocked destination was left empty — no partial or staged file"
+                     ? "the blocked destination was left empty — though a read-only directory also " +
+                       "refuses the staging file, so this confirms nothing was written rather than " +
+                       "that a partial write was rolled back"
                      : $"the blocked destination holds {leftBehind.Count} leftover entr(y/ies): " +
-                       string.Join(", ", leftBehind.Select(Path.GetFileName)),
-                 null);
+                       string.Join(", ", leftBehind.Select(Path.GetFileName)));
         }
         finally
         {
