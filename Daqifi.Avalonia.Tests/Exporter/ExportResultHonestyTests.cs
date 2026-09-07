@@ -124,6 +124,16 @@ public sealed class ExportResultHonestyTests : IDisposable
         Assert.False(viewModel.ExportSucceeded,
             $"the dialog reported success over an empty folder: '{viewModel.ExportResultMessage}'");
         Assert.True(viewModel.IsExportComplete);
+
+        // Reports what it OBSERVED, not a diagnosis it cannot stand behind. A session deleted
+        // between the lookup pass and the sample read arrives here indistinguishable from an empty
+        // one, so wording that asserts the session still exists and merely holds no rows would be a
+        // claim this code never verified. "No data was found" is true of both, so the sentence
+        // cannot be made false by losing that race.
+        Assert.Contains("no data was found", viewModel.ExportResultMessage ?? string.Empty,
+            StringComparison.Ordinal);
+        Assert.DoesNotContain("had no logged data", viewModel.ExportResultMessage ?? string.Empty,
+            StringComparison.Ordinal);
     }
 
     /// <summary>
@@ -171,7 +181,7 @@ public sealed class ExportResultHonestyTests : IDisposable
         Assert.False(viewModel.ExportSucceeded, message);
         Assert.Contains("1 of 2", message, StringComparison.Ordinal);
         Assert.Contains("no longer in the database", message, StringComparison.Ordinal);
-        Assert.DoesNotContain("had no logged data", message, StringComparison.Ordinal);
+        Assert.DoesNotContain("no data was found", message, StringComparison.Ordinal);
         Assert.Single(Directory.GetFiles(destination));
     }
 

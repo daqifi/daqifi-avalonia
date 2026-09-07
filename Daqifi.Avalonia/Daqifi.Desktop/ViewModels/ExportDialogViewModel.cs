@@ -576,12 +576,25 @@ public partial class ExportDialogViewModel : ObservableObject, IDisposable
         // sloppy about how many of their sessions are gone.
         var goneSessions = missing == 1 ? "1 session is" : $"{missing} sessions are";
 
+        // "No data was found", NOT "had no logged data". The difference matters because the two
+        // causes are observed at different moments and the database can change in between: a
+        // session deleted after the lookup pass but before its samples are read comes back with
+        // missing == 0 and no rows, and calling that "had no logged data" would assert something
+        // this code did not see. What it did see is that no data was found — which is true of an
+        // empty session and of one deleted underneath it, so the sentence cannot be made false by
+        // losing that race. The missing count is still reported when the deletion WAS observed,
+        // because then it is a fact and the more useful one.
+        //
+        // Deliberately not closed further: distinguishing the two after the fact would mean the
+        // exporter returning a reason rather than a bool, threaded through three public methods, to
+        // choose between two sentences in a window of milliseconds — and a re-query would only move
+        // the race, since the row can go at any point after any observation.
         return missing switch
         {
-            0 when exported == 0 => $"{lead}: no logged data was found.",
-            0 => $"{lead}: the rest had no logged data.",
+            0 when exported == 0 => $"{lead}: no data was found to export.",
+            0 => $"{lead}: no data was found for the rest.",
             _ when missing == requested - exported => $"{lead}: {goneSessions} no longer in the database.",
-            _ => $"{lead}: {goneSessions} no longer in the database, and the rest had no logged data.",
+            _ => $"{lead}: {goneSessions} no longer in the database, and no data was found for the rest.",
         };
     }
 
