@@ -9,6 +9,7 @@ using Avalonia.Headless;
 using Avalonia.Media.Imaging;
 using Avalonia.Platform;
 using Avalonia.Threading;
+using Avalonia.VisualTree;
 using Daqifi.Desktop;
 using Daqifi.Desktop.Channel;
 using Daqifi.Desktop.Device;
@@ -1315,28 +1316,55 @@ internal static class HeadlessBench
     }
 
     /// <summary>
-    /// LOGGED-LIST at the matrix's stated limit: 500 persisted sessions. The check is on what the
-    /// BOOT produced, because that is where the load happens — nothing the rig can click reloads
-    /// the desktop list.
+    /// LOGGED-LIST at the matrix's stated limit: 500 persisted sessions. The load itself happens
+    /// during boot — nothing the rig can click reloads the desktop list — so what this drives is
+    /// the navigation that puts those sessions in front of a user, and what it asserts is the
+    /// pane's own ListBox as well as the collection behind it.
     /// </summary>
     private static void RunSessionListRow(Window main, DaqifiViewModel shell, TimeSpan boot)
     {
-        // shell.LoggingSessions is the collection the Logged Data pane's grid binds
-        // (LoggedDataPanePrototype.axaml), and it is LoggingManager's own list, not a copy.
+        // Show the Logged Data pane. Without this the row would assert against the view model while
+        // the window still shows the Live Graph tab, and the TabControl would never have built the
+        // pane at all — so a broken ItemsSource binding or a row template that throws on 500 items
+        // would leave every count correct and the check green. Same trap LOGGED-PLOT hits, and it
+        // applies here for the same reason.
+        shell.SelectedIndex = LoggedDataTabIndex;
+        PumpFor(TimeSpan.FromMilliseconds(500));
+        var shot = Capture(main, "t1-loggedlist-500");
+        PumpFor(TimeSpan.FromMilliseconds(500));
+
+        // shell.LoggingSessions is LoggingManager's own list, not a copy of it.
         var listed = shell.LoggingSessions;
         var backfilled = listed.Count(s => s.SampleCount == 1);
-        var named = listed.Count(s => s.Name.StartsWith("Scripted session", StringComparison.Ordinal));
         var withFrequency = listed.Count(s => s.HasFrequencyDisplay);
+        // Exact names, not a prefix count: "Scripted session 7" repeated 500 times would satisfy a
+        // prefix test, and a rename or a truncation past the prefix is exactly the kind of damage
+        // this row exists to notice.
+        var expectedNames = Enumerable.Range(1, SeededSessionCount).Select(i => $"Scripted session {i}");
+        var namesIntact = listed.Select(s => s.Name).ToHashSet(StringComparer.Ordinal)
+                                .SetEquals(expectedNames);
+
+        // The pane's own list control (LoggedDataPanePrototype.axaml, x:Name="SessionList"), which
+        // is where the binding either resolved or did not. ItemCount is what the ListBox took from
+        // the binding; the realised container count is smaller because the list virtualises, so it
+        // is asserted as "some rows were built", not as 500.
+        var listBox = main.GetVisualDescendants().OfType<ListBox>()
+            .FirstOrDefault(l => l.Name == "SessionList");
+        var boundToPane = listBox?.ItemCount ?? -1;
+        var realised = listBox?.ItemsPanelRoot?.Children.Count ?? -1;
 
         Step(1, "LOGGED-LIST", "limits",
              listed.Count == SeededSessionCount && shell.HasLoggingSessions
-                 && backfilled == SeededSessionCount && named == SeededSessionCount,
+                 && backfilled == SeededSessionCount && namesIntact
+                 && withFrequency == SeededSessionCount
+                 && boundToPane == SeededSessionCount && realised > 0,
              $"{listed.Count} of {SeededSessionCount} seeded sessions reached the bound list in " +
              $"{boot.TotalSeconds:F1} s of app boot; HasLoggingSessions={shell.HasLoggingSessions}; " +
-             $"{named} carry their seeded name; {backfilled} had their NULL SampleCount backfilled to 1; " +
-             $"{withFrequency} show a frequency from session metadata; " +
+             $"names intact={namesIntact}; {backfilled} had their NULL SampleCount backfilled to 1; " +
+             $"{withFrequency} show a frequency from session metadata; the pane's SessionList holds " +
+             $"{boundToPane} item(s) with {realised} row container(s) realised (it virtualises); " +
              $"EXPORT ALL enabled={shell.ExportAllLoggingSessionCommand.CanExecute(null)}",
-             Capture(main, "t1-loggedlist-500"), boot.TotalSeconds);
+             shot, boot.TotalSeconds);
     }
 
     /// <summary>
@@ -1538,6 +1566,14 @@ internal static class HeadlessBench
 
     /// <summary>Drives one export to <paramref name="destination"/> through the export dialog's own
     /// view model and returns what the dialog would be showing when it finishes.</summary>
+    /// <remarks>
+    /// A wait that ran out is an error, not a result. Disposing the view model cancels the export's
+    /// token, and the caller goes straight on to read the destination and put its permissions back —
+    /// so returning here with the command still in flight would have the cleanup racing an export
+    /// that is still writing. So on a timeout this waits for the task to actually finish before
+    /// returning, and says in the message that the wait ran out; the row fails either way, but it
+    /// fails describing what happened rather than reporting whatever the half-finished dialog held.
+    /// </remarks>
     private static (bool Completed, bool Succeeded, string? Message) RunExport(int sessionId, string destination)
     {
         using var dialog = new ExportDialogViewModel(sessionId)
@@ -1546,7 +1582,14 @@ internal static class HeadlessBench
             ExportFilePath = destination,
         };
         var export = dialog.ExportLoggingSessionsCommand.ExecuteAsync(null);
-        PumpUntil(() => export.IsCompleted && dialog.IsExportComplete, TimeSpan.FromMinutes(2));
+        if (!PumpUntil(() => export.IsCompleted && dialog.IsExportComplete, TimeSpan.FromMinutes(2)))
+        {
+            var settled = PumpUntil(() => export.IsCompleted, TimeSpan.FromMinutes(1));
+            return (false, false,
+                    $"the export to '{destination}' had not reported a result 2 min after it was " +
+                    $"started; the command task {(settled ? "has since finished" : "is STILL running, and " +
+                    "anything read from the destination after this is racing it")}");
+        }
         Pump();
         return (dialog.IsExportComplete, dialog.ExportSucceeded, dialog.ExportResultMessage);
     }

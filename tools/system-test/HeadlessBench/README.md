@@ -114,7 +114,7 @@ are the only rows that can run on a machine with no hardware attached:
 
 | state | row | what it fabricates | what it checks |
 | --- | --- | --- | --- |
-| `sessions-500` | `LOGGED-LIST` | 500 persisted sessions, one sample each, `SampleCount` NULL | all 500 reach the pane's bound list, keep their names and metadata, and get their counts backfilled |
+| `sessions-500` | `LOGGED-LIST` | 500 persisted sessions, one sample each, `SampleCount` NULL | all 500 reach the Logged Data pane's own `SessionList`, keep their exact names and their metadata, and get their counts backfilled |
 | `session-10h` | `LOGGED-PLOT` | one session, 108 000 samples at 3 Hz across ten hours | the Logged Data pane plots it and the drawn range covers all ten hours |
 | `export-readonly` | `EXPORT-FAIL` | one 600-sample session, plus a `chmod 555` destination | the export fails with the *classified* message and leaves the destination empty — measured against a control export to a writable folder in the same run |
 
@@ -266,7 +266,7 @@ exist — are tracked in #304.
   mode because it *"can choke a device with a blank/erased WINC"*. That is not something to
   run unattended against a shared bench board for the sake of a checkbox row.
 
-## Six traps it encodes, for whoever edits it
+## Seven traps it encodes, for whoever edits it
 
 - **An optimistic local update is not a device read-back.** `SetFriendlyName` assigns
   `FriendlyName = name` itself, right after sending the SCPI write and without waiting for anything
@@ -301,14 +301,29 @@ exist — are tracked in #304.
   becomes selected, and a second `RefreshFilesCommand.ExecuteAsync` while the first is in
   flight is dropped, so `SD-LIST` waits for `CanExecute` before it drives the button.
 
-- **An unrealised pane reads as a broken one.** Avalonia's `TabControl` only builds the selected
-  tab's content, and an OxyPlot `PlotModel` with no `PlotView` attached never gets an actual axis
-  range — so every viewport-driven redraw computes against a degenerate window. `LOGGED-PLOT`
-  measured **one** drawn point over **0.00 h** of a ten-hour session until it set
-  `shell.SelectedIndex` to the Logged Data tab first; with the tab selected the same session
-  draws 4000 downsampled points over 10.00 h. Read the plot's `ItemsSource` too, not `Points`:
-  `DatabaseLogger.SetupUiCollections` hands each series a downsampled list and leaves `Points`
-  empty, so a check on `Points` reads zero against a plot that is drawing correctly.
+- **An unrealised pane reads as a broken one — and, worse, as a working one.** Avalonia's
+  `TabControl` only builds the selected tab's content, so a row that does not set
+  `shell.SelectedIndex` first is asserting against view models while the window shows a different
+  pane. It fails both ways:
+  - *False red.* An OxyPlot `PlotModel` with no `PlotView` attached never gets an actual axis
+    range, so every viewport-driven redraw computes against a degenerate window. `LOGGED-PLOT`
+    measured **one** drawn point over **0.00 h** of a ten-hour session until the tab was selected;
+    with it selected the same session draws 4000 downsampled points over 10.00 h.
+  - *False green.* `LOGGED-LIST` read 500 sessions out of `LoggingManager` and passed with the
+    pane never built. Measured: breaking the `ItemsSource` binding on the pane's own `SessionList`
+    leaves every view-model count at 500 and only the pane's `ItemCount` drops to 0. Assert the
+    control, not just the collection behind it.
+
+  Read the plot's `ItemsSource` too, not `Points`: `DatabaseLogger.SetupUiCollections` hands each
+  series a downsampled list and leaves `Points` empty, so a check on `Points` reads zero against a
+  plot that is drawing correctly. The session list virtualises, so its realised container count is
+  a handful, not 500 — assert `ItemCount` for the binding and `> 0` containers for the template.
+- **A count you compute is not a count you asserted.** `LOGGED-LIST` had `withFrequency` in its
+  evidence string and not in its pass condition, so dropping
+  `LoadPersistedLoggingSessions`'s `.Include(session => session.DeviceMetadata)` printed
+  `0 show a frequency` **in a green row**. Same shape as a prefix match standing in for an equality
+  one: `Name.StartsWith("Scripted session")` counts 500 whether the names are 1..500 or the same
+  name 500 times. Both now sit in the predicate.
 
 ## Two build constraints it shares with `AvaloniaCapture`
 
