@@ -311,4 +311,31 @@ public class NonFiniteStreamedReadingTests
 
         Assert.Equal(0, device.DiscardedNonFiniteReadings(0));
     }
+
+    /// <summary>
+    /// The throttle logs the first ten discards on a channel in full and only then thins to
+    /// powers of ten.
+    /// </summary>
+    /// <remarks>
+    /// The opening band is what keeps the accepted reset race from costing a channel its first
+    /// line altogether. A handler that was already past the <c>IsStreaming</c> guard when a
+    /// restart cleared the tally can increment afterwards, so the new session's first real
+    /// discard can land as occurrence 2 — which powers of ten alone would have swallowed until
+    /// occurrence 10. Narrowing this back to <c>IsPowerOfTen</c> reintroduces exactly that, and
+    /// this is the test that stops it.
+    /// </remarks>
+    [Theory]
+    [InlineData(1, true)]
+    [InlineData(2, true)]
+    [InlineData(9, true)]
+    [InlineData(10, true)]
+    [InlineData(11, false)]
+    [InlineData(99, false)]
+    [InlineData(100, true)]
+    [InlineData(101, false)]
+    [InlineData(1_000, true)]
+    public void The_first_ten_discards_are_reported_and_then_only_powers_of_ten(long occurrence, bool reported)
+    {
+        Assert.Equal(reported, AbstractStreamingDevice.IsReportedDiscardOccurrence(occurrence));
+    }
 }

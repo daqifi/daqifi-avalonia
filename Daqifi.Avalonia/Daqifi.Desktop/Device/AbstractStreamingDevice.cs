@@ -1967,10 +1967,22 @@ public abstract partial class AbstractStreamingDevice : ObservableObject, IStrea
     /// count past the next power of ten. Every channel gets its own occurrence 1.
     /// </para>
     /// <para>
-    /// Only powers of ten are logged. A channel whose every reading is bad produces one per
-    /// decade of samples — enough that it keeps announcing itself, few enough that it cannot flush
-    /// the bounded Sentry breadcrumb ring or turn the log into a write storm, which is the same
-    /// arithmetic <see cref="ReportStreamProcessingFailure"/> documents at length.
+    /// The first <see cref="FullyLoggedFailureCount"/> occurrences on a channel are logged in
+    /// full and the report then thins to powers of ten — the same two-band shape
+    /// <see cref="ReportStreamProcessingFailure"/> uses, for the same reasons it documents at
+    /// length: a channel whose every reading is bad keeps announcing itself once per decade of
+    /// samples, which is often enough to be found and rare enough that it cannot flush the
+    /// bounded Sentry breadcrumb ring or turn the log into a write storm.
+    /// </para>
+    /// <para>
+    /// The opening band is not decoration, and a powers-of-ten-only throttle was wrong without
+    /// it. The per-session reset below races in-flight callbacks — a handler already past the
+    /// <c>IsStreaming</c> guard when a restart clears the tally can increment afterwards, which
+    /// pushes the new session's first real discard to occurrence 2. That race is accepted here
+    /// exactly as it is for the three sibling counters (closing it needs a stream generation
+    /// threaded through every dispatched message, real work in the per-message path to make a log
+    /// line's ordinal exact); what must not be accepted is the race turning a channel's first
+    /// discard <em>silent</em>, which is what powers of ten alone would have done.
     /// </para>
     /// <para>
     /// <b>There is no UI surface for this</b>, and that is a deliberate limit rather than an
@@ -1987,7 +1999,7 @@ public abstract partial class AbstractStreamingDevice : ObservableObject, IStrea
         var occurrence = _nonFiniteReadingCounts.AddOrUpdate(
             channel.Index, 1L, static (_, previous) => previous + 1);
 
-        if (!IsPowerOfTen(occurrence))
+        if (!IsReportedDiscardOccurrence(occurrence))
         {
             // Silent: the next power-of-ten report carries the count.
             return;
@@ -2002,6 +2014,21 @@ public abstract partial class AbstractStreamingDevice : ObservableObject, IStrea
             $"{occurrence.ToString(CultureInfo.InvariantCulture)} discarded on this channel so far " +
             $"this session.");
     }
+
+    /// <summary>
+    /// Whether the <paramref name="occurrence"/>-th discard on a channel gets a log line: the
+    /// first <see cref="FullyLoggedFailureCount"/> in full, then powers of ten.
+    /// </summary>
+    /// <remarks>
+    /// Internal rather than private so the throttle can be pinned by a test — the same seam
+    /// <c>SummaryLogger.FormatStatuses</c> and <c>PlotLogger.BuildPlotStatsSummary</c> already
+    /// use, and the only way to hold the opening band in place: <see cref="AppLogger"/> discards
+    /// its NLog logger in test mode, so the lines themselves cannot be asserted on, and narrowing
+    /// this back to powers of ten alone would silently reintroduce the hole
+    /// <see cref="ReportNonFiniteReading"/> describes.
+    /// </remarks>
+    internal static bool IsReportedDiscardOccurrence(long occurrence) =>
+        occurrence < FullyLoggedFailureCount || IsPowerOfTen(occurrence);
 
     /// <summary>
     /// How many non-finite readings this device has discarded on the analog channel with
