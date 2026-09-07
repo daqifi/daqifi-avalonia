@@ -99,7 +99,7 @@ public class ConnectionDialogSerialListTests
     /// abandoning timed-out sweeps.
     /// </summary>
     [Fact]
-    public void A_retired_finders_late_discovery_cannot_put_a_ghost_back()
+    public async Task A_retired_finders_late_discovery_cannot_put_a_ghost_back()
     {
         using var viewModel = CreateViewModel();
 
@@ -107,9 +107,9 @@ public class ConnectionDialogSerialListTests
         var retiredFinder = GetPrivateField(viewModel.Value, "_serialFinder");
         Assert.NotNull(retiredFinder);
 
-        // A second start retires the first finder and installs a new one, exactly as the
-        // firmware-flash resume does.
-        SetPrivateField(viewModel.Value, "_serialDiscoveryTask", null);
+        // Stop and start again, exactly as the firmware-flash resume does. Awaited rather than faked,
+        // because the stop is what retires the finder whose late callback this test is about.
+        await StopSerialDiscoveryAsync(viewModel.Value);
         InvokePrivate(viewModel.Value, "StartSerialDiscovery");
         Assert.NotSame(retiredFinder, GetPrivateField(viewModel.Value, "_serialFinder"));
 
@@ -241,6 +241,15 @@ public class ConnectionDialogSerialListTests
         public override Task<IEnumerable<IDeviceInfo>> DiscoverAsync(
             CancellationToken cancellationToken = default) =>
             Task.FromResult(Enumerable.Empty<IDeviceInfo>());
+    }
+
+    /// <summary>Awaits the dialog's own serial stop, so the finder is really retired.</summary>
+    private static async Task StopSerialDiscoveryAsync(ConnectionDialogViewModel viewModel)
+    {
+        var method = typeof(ConnectionDialogViewModel).GetMethod(
+            "StopSerialDiscoveryAsync", BindingFlags.Instance | BindingFlags.NonPublic);
+        Assert.NotNull(method);
+        await Assert.IsAssignableFrom<Task>(method.Invoke(viewModel, null));
     }
 
     private static void InvokePrivate(ConnectionDialogViewModel viewModel, string methodName)
