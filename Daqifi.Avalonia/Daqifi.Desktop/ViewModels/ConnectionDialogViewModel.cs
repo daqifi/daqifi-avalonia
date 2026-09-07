@@ -30,12 +30,27 @@ namespace Daqifi.Desktop.ViewModels;
 public partial class ConnectionDialogViewModel : ObservableObject
 {
     #region Private Variables
-    private WiFiDeviceFinder? _wifiFinder;
-    private Daqifi.Core.Device.Discovery.SerialDeviceFinder? _serialFinder;
-    private CancellationTokenSource? _wifiDiscoveryCts;
-    private CancellationTokenSource? _serialDiscoveryCts;
-    private Task? _wifiDiscoveryTask;
-    private Task? _serialDiscoveryTask;
+    /// <summary>
+    /// The running WiFi scan, or null when WiFi discovery is stopped. Non-null means running — it is
+    /// set only by <see cref="StartWiFiDiscovery"/> and cleared only by the stop paths — so it also
+    /// serves as the "already running" guard the hand-rolled loop needed a task reference for.
+    /// </summary>
+    private ContinuousDeviceFinder? _wifiFinder;
+
+    /// <summary>The serial counterpart of <see cref="_wifiFinder"/>.</summary>
+    private ContinuousDeviceFinder? _serialFinder;
+
+    /// <summary>
+    /// Consecutive <see cref="ContinuousDeviceFinder.ScanError"/> reports per transport. Core scans
+    /// through a faulted pass for ever, which is right for a library and wrong for a dialog that
+    /// would otherwise animate "Scanning…" over a permanently broken finder — so the give-up after
+    /// <see cref="MaxConsecutiveDiscoveryFaults"/> stays here, with the bound message it sets (issue
+    /// #290). Cleared by the wrapped finder's <c>DiscoveryCompleted</c>, which it raises only on a
+    /// pass that completed without faulting.
+    /// </summary>
+    private int _serialConsecutiveFaults;
+    private int _wifiConsecutiveFaults;
+
     private readonly IDialogService _dialogService;
 
     /// <summary>
@@ -90,6 +105,40 @@ public partial class ConnectionDialogViewModel : ObservableObject
     private Func<Daqifi.Core.Device.Discovery.SerialDeviceFinder> _createSerialFinder =
         static () => new Daqifi.Core.Device.Discovery.SerialDeviceFinder();
 
+    /// <summary>
+    /// The WiFi counterpart of <see cref="_createSerialFinder"/>, and the same test-only seam. A real
+    /// <c>WiFiDeviceFinder</c> binds a UDP socket on every NIC, so the discovery-failure tests used to
+    /// reach past this by installing a finder into the field and invoking the loop by hand; with the
+    /// loop now owned by Core there is no loop to invoke, so the seam is the only way in.
+    /// </summary>
+    private Func<WiFiDeviceFinder> _createWifiFinder =
+        static () => new WiFiDeviceFinder(WiFiDiscoveryPort);
+
+    /// <summary>UDP port Nyquist boards answer discovery broadcasts on.</summary>
+    private const int WiFiDiscoveryPort = 30303;
+
+    /// <summary>
+    /// Pause between serial scan passes, and the ceiling on one pass. Core bounds the pass itself
+    /// (<see cref="ContinuousDiscoveryOptions.PassTimeout"/>), so the ceiling here replaces the
+    /// hand-rolled per-sweep watchdog; it is generous because a pass probes every DAQiFi VID/PID port
+    /// on the machine, and Core's own per-port ceiling is 3 s.
+    /// <para>
+    /// Fields rather than constants for the same test-only reason as <see cref="_createSerialFinder"/>:
+    /// pinning the give-up path at the shipped cadence would cost seconds of wall clock per assertion.
+    /// Nothing in the app ever assigns them.
+    /// </para>
+    /// </summary>
+    private TimeSpan _serialScanInterval = TimeSpan.FromSeconds(2);
+    private TimeSpan _serialPassTimeout = TimeSpan.FromSeconds(10);
+
+    /// <summary>
+    /// The WiFi counterparts. <c>WiFiDeviceFinder.DiscoverAsync(CancellationToken)</c> listens until
+    /// its token is cancelled, so for WiFi the pass timeout IS the response-collection window rather
+    /// than a failure ceiling — 3 s, matching the window the old loop's inter-sweep delay produced.
+    /// </summary>
+    private TimeSpan _wifiScanInterval = TimeSpan.FromSeconds(1);
+    private TimeSpan _wifiPassTimeout = TimeSpan.FromSeconds(3);
+
     [ObservableProperty]
     [NotifyPropertyChangedFor(nameof(IsWiFiDiscoveryScanning))]
     private bool _hasNoWiFiDevices = true;
@@ -138,11 +187,11 @@ public partial class ConnectionDialogViewModel : ObservableObject
     private string? _serialConnectError;
 
     /// <summary>
-    /// Why serial discovery is no longer running, or null while it is. Set only on the paths that
-    /// end <see cref="RunContinuousSerialDiscoveryAsync"/> for good — the watchdog's deliberate
-    /// give-up after repeatedly wedged sweeps, and repeated sweep faults — and cleared whenever
-    /// discovery is started again. Shown in place of the USB tab's "Scanning for USB devices…"
-    /// overlay, which otherwise keeps animating over a discovery that has stopped (issue #290).
+    /// Why serial discovery is no longer running, or null while it is. Set on the one path that now
+    /// ends the scan for good — <see cref="MaxConsecutiveDiscoveryFaults"/> passes faulting with no
+    /// clean pass between them — and cleared whenever discovery is started again. Shown in place of
+    /// the USB tab's "Scanning for USB devices…" overlay, which otherwise keeps animating over a
+    /// discovery that has stopped (issue #290).
     /// </summary>
     [ObservableProperty]
     [NotifyPropertyChangedFor(nameof(IsSerialDiscoveryScanning))]
@@ -270,7 +319,7 @@ public partial class ConnectionDialogViewModel : ObservableObject
 
             if (ConnectionManager.Instance.IsFirmwareUpdateInProgress)
             {
-                StopWiFiDiscovery();
+                _ = StopWiFiDiscoveryAsync();
                 _ = StopSerialDiscoveryAsync();
             }
             else
@@ -312,13 +361,16 @@ public partial class ConnectionDialogViewModel : ObservableObject
     // @port: Daqifi.Desktop.ViewModels.ConnectionDialogViewModel.RestartDiscoveryAfterFirmwarePause
     private void RestartDiscoveryAfterFirmwarePause()
     {
-        // The stop issued when the pause began may still be draining (a wedged port can hold the
-        // discovery loop task past its cancellation, leaving _*DiscoveryTask incomplete), and
-        // Start*Discovery refuses to start while that drain is in flight. So retry the start once the
-        // drain completes rather than dropping it — otherwise discovery could stay stopped for the rest
-        // of the dialog (issue #738).
-        RestartDiscoveryWhenDrained(_wifiDiscoveryTask, StartWiFiDiscovery);
-        RestartDiscoveryWhenDrained(_serialDiscoveryTask, StartSerialDiscovery);
+        // Straight calls. The hand-rolled loop needed these deferred until an in-flight stop had
+        // drained, because its stop could leave the loop task running past cancellation on a wedged
+        // port and Start*Discovery refused to start while that was true — so a dropped start could
+        // leave discovery stopped for the rest of the dialog (issue #738). The stop paths now retire
+        // the finder reference before they await Core's ordered stop, so a start issued during a drain
+        // is accepted rather than refused, and the probe of the finder being torn down cannot collide
+        // with the new one's: Core claims serial-port probes process-wide, so the fresh pass waits for
+        // the retiring claim to clear instead of double-opening the port.
+        StartWiFiDiscovery();
+        StartSerialDiscovery();
     }
 
     /// <summary>
@@ -334,29 +386,6 @@ public partial class ConnectionDialogViewModel : ObservableObject
         ConnectionManager.Instance.IsFirmwareUpdateInProgress
         || _hidFirmwareDialogOpen
         || _watcher?.IsFlashInProgress == true;
-
-    /// <summary>
-    /// Starts a discovery transport, deferring the start until any in-flight stop/drain for that
-    /// transport completes. The drain signal is the port's discovery-loop task (nulled by its own
-    /// completion continuation), so a non-completed task means "still winding down". <paramref name="start"/>
-    /// carries its own idempotency + firmware-in-progress guards, so a redundant or now-invalid call is a
-    /// harmless no-op.
-    /// </summary>
-    // @port: Daqifi.Desktop.ViewModels.ConnectionDialogViewModel.RestartDiscoveryWhenDrained
-    private void RestartDiscoveryWhenDrained(Task? drainTask, Action start)
-    {
-        if (drainTask is { IsCompleted: false })
-        {
-            drainTask.ContinueWith(
-                _ => _marshalToUiThread(start),
-                CancellationToken.None,
-                TaskContinuationOptions.None,
-                TaskScheduler.Default);
-            return;
-        }
-
-        start();
-    }
 
     // @port: Daqifi.Desktop.ViewModels.ConnectionDialogViewModel.OnHidDevicesChanged
     private void OnHidDevicesChanged(object? sender, System.Collections.Specialized.NotifyCollectionChangedEventArgs e)
@@ -378,9 +407,10 @@ public partial class ConnectionDialogViewModel : ObservableObject
     // @port: Daqifi.Desktop.ViewModels.ConnectionDialogViewModel.StartWiFiDiscovery
     private void StartWiFiDiscovery()
     {
-        // Idempotent while actually running; allow a restart once the prior loop has completed (e.g.
-        // it was drained around a firmware flash), otherwise a stale task reference blocks discovery.
-        if (_closed || _wifiDiscoveryTask is { IsCompleted: false }) { return; }
+        // Idempotent: a non-null finder is a running scan. The stop paths await Core's ordered stop
+        // before nulling it, so unlike the hand-rolled loop there is no "cancelled but still draining"
+        // state for a restart to race — which is what RestartDiscoveryWhenDrained existed to retry past.
+        if (_closed || _wifiFinder != null) { return; }
 
         // Don't run discovery during any firmware operation: its per-cycle bus probing can starve the
         // flash / steal the reconnecting COM port (issue #738) and can starve a HID bootloader's I/O
@@ -388,19 +418,9 @@ public partial class ConnectionDialogViewModel : ObservableObject
         // reason clears last restarts discovery.
         if (IsDiscoveryPausedForFirmware) { return; }
 
-        // Restart-after-drain: dispose the prior finder/CTS before replacing them so we never leak a
-        // subscribed finder or an undisposed CancellationTokenSource.
-        if (_wifiFinder != null) { _wifiFinder.DeviceDiscovered -= HandleCoreWifiDeviceDiscovered; _wifiFinder.Dispose(); }
-        _wifiDiscoveryCts?.Dispose();
-
-        // Drop stale devices from the previous discovery session when the finder is torn down and
+        // Drop stale devices from the previous discovery session when the scan is torn down and
         // recreated (the dialog-open / firmware-flash resume path): the bound list otherwise outlives
-        // the finder that populated it and keeps devices that are no longer answering. The per-add MAC
-        // dedup guard in HandleWifiDeviceFound is RETAINED for the case this clear does not cover —
-        // RunContinuousWiFiDiscoveryAsync reuses this one finder across many DiscoverAsync sweeps and
-        // Core's dedup set is per-sweep, so a device already listed can re-fire on a later sweep (e.g.
-        // after a transient receive-socket error ends a sweep early), and this clear, which runs only
-        // on finder recreate, would not stop that duplicate. (issue #621)
+        // the scan that populated it and keeps devices that are no longer answering (issue #621).
         // Routed through the UI marshal like every other AvailableWiFiDevices mutation.
         _marshalToUiThread(() =>
         {
@@ -410,20 +430,29 @@ public partial class ConnectionDialogViewModel : ObservableObject
             WiFiDiscoveryError = null;
         });
 
-        _wifiFinder = new WiFiDeviceFinder(30303);
-        _wifiDiscoveryCts = new CancellationTokenSource();
-        _wifiFinder.DeviceDiscovered += HandleCoreWifiDeviceDiscovered;
+        _wifiConsecutiveFaults = 0;
 
-        var wifiTask = RunContinuousWiFiDiscoveryAsync(_wifiDiscoveryCts.Token);
-        _wifiDiscoveryTask = wifiTask;
-        // Clear the tracked task only once it has actually finished — not merely after
-        // StopWiFiDiscoveryAsync's drain timeout — so a cycle still blocked in the finder's
-        // synchronous prefix (issue #685) can't be raced by a subsequent StartWiFiDiscovery
-        // while it may still be using the finder/socket.
-        _ = wifiTask.ContinueWith(_ =>
-        {
-            if (ReferenceEquals(_wifiDiscoveryTask, wifiTask)) { _wifiDiscoveryTask = null; }
-        }, TaskScheduler.Default);
+        var inner = _createWifiFinder();
+        // Reset the fault counter on a pass that actually completed. Core reports faults but has no
+        // "pass finished" signal of its own; the wrapped finder raises DiscoveryCompleted only on its
+        // success path, which is exactly the "this sweep was clean" edge the old loop counted on.
+        inner.DiscoveryCompleted += HandleWifiPassCompleted;
+
+        // Core's default identity for WiFi prefers MAC address, which is the same key
+        // HandleWifiDeviceFound dedups AvailableWiFiDevices by — so its live set and the bound list
+        // agree without an IdentitySelector.
+        var finder = new ContinuousDeviceFinder(
+            inner,
+            new ContinuousDiscoveryOptions
+            {
+                Interval = _wifiScanInterval,
+                PassTimeout = _wifiPassTimeout,
+            });
+        finder.DeviceDiscovered += HandleCoreWifiDeviceDiscovered;
+        finder.DeviceLost += HandleCoreWifiDeviceLost;
+        finder.ScanError += HandleWifiScanError;
+        _wifiFinder = finder;
+        finder.Start();
     }
 
     /// <summary>
@@ -457,7 +486,9 @@ public partial class ConnectionDialogViewModel : ObservableObject
     /// </summary>
     private void StartSerialFinder(bool clearDiscoveredDevices)
     {
-        if (_closed || _serialDiscoveryTask is { IsCompleted: false }) { return; }
+        // Idempotent while running — see StartWiFiDiscovery for why a finder reference is now a
+        // sufficient guard where a task reference was not.
+        if (_closed || _serialFinder != null) { return; }
 
         // Don't probe COM ports during a firmware update: Core opens/reconnects the device's port
         // itself across the flash, and the SerialDeviceFinder opens every DAQiFi VID/PID port each
@@ -467,23 +498,13 @@ public partial class ConnectionDialogViewModel : ObservableObject
         // of whichever pause reason clears last restarts discovery.
         if (IsDiscoveryPausedForFirmware) { return; }
 
-        if (_serialFinder != null) { _serialFinder.DeviceDiscovered -= HandleCoreSerialDeviceDiscovered; _serialFinder.Dispose(); }
-        _serialDiscoveryCts?.Dispose();
-
-        // Drop what the previous finder found, for the same reason StartWiFiDiscovery does (issue
-        // #621): the bound list outlives the finder that populated it, so without this it keeps
+        // Drop what the previous scan found, for the same reason StartWiFiDiscovery does (issue
+        // #621): the bound list outlives the scan that populated it, so without this it keeps
         // devices that are no longer there. The case that bites is the firmware-flash resume — the
         // flashed board re-enumerates its USB-CDC port and can come back under a different port
         // name, leaving the pre-flash row sitting in the USB tab next to the new one, advertising a
         // port that no longer exists and the firmware version it no longer runs.
         //
-        // Only on this teardown-and-recreate path. The watchdog's in-place finder rebuild inside
-        // RunContinuousSerialDiscoveryAsync deliberately does not come through here: it is mid-session
-        // recovery from ONE wedged port, and the rest of the list is still valid.
-        //
-        // The per-port dedup in AddSerialDeviceFromDiscovery is RETAINED: this clear runs on finder
-        // recreate, not per sweep, and one finder is reused across many sweeps while Core's own
-        // dedup set is per-sweep.
         // Routed through the UI marshal like every other AvailableSerialDevices mutation. The
         // message clear is unconditional — both entry points are starting discovery again, so
         // whatever the previous run gave up with is stale either way (issue #290).
@@ -497,222 +518,110 @@ public partial class ConnectionDialogViewModel : ObservableObject
             }
         });
 
-        _serialFinder = _createSerialFinder();
-        _serialDiscoveryCts = new CancellationTokenSource();
-        _serialFinder.DeviceDiscovered += HandleCoreSerialDeviceDiscovered;
+        _serialConsecutiveFaults = 0;
 
-        var serialTask = RunContinuousSerialDiscoveryAsync(_serialDiscoveryCts.Token);
-        _serialDiscoveryTask = serialTask;
-        // Same reasoning as StartWiFiDiscovery above: only the task's own completion clears the
-        // tracked reference, so a discovery cycle still blocked on a wedged COM port can't be
-        // raced by a subsequent StartSerialDiscovery (e.g. the firmware flash resume path) while
-        // it may still hold the port.
-        _ = serialTask.ContinueWith(_ =>
-        {
-            if (ReferenceEquals(_serialDiscoveryTask, serialTask)) { _serialDiscoveryTask = null; }
-        }, TaskScheduler.Default);
+        var inner = _createSerialFinder();
+        inner.DiscoveryCompleted += HandleSerialPassCompleted;
+
+        var finder = new ContinuousDeviceFinder(
+            inner,
+            new ContinuousDiscoveryOptions
+            {
+                Interval = _serialScanInterval,
+                PassTimeout = _serialPassTimeout,
+
+                // Key the live set by port name, which is what AvailableSerialDevices is keyed by
+                // (FindSerialDeviceByPortName). Core's default prefers serial number — deliberately,
+                // so a device survives COM-port reassignment — but that would leave the bound row
+                // advertising the old port after a replug, because a metadata-only change refreshes
+                // Core's tracked copy silently and raises no event the dialog could act on. Keying on
+                // the port instead makes a replug a loss and a fresh discovery, which is exactly what
+                // the tile has to show. Falls back to the serial number so a finder that reports no
+                // port name still gets a stable key rather than colliding on the empty string.
+                IdentitySelector = static device =>
+                    !string.IsNullOrWhiteSpace(device.PortName)
+                        ? "port:" + device.PortName.Trim().ToLowerInvariant()
+                        : "sn:" + device.SerialNumber,
+            });
+        finder.DeviceDiscovered += HandleCoreSerialDeviceDiscovered;
+        finder.DeviceLost += HandleCoreSerialDeviceLost;
+        finder.ScanError += HandleSerialScanError;
+        _serialFinder = finder;
+        finder.Start();
     }
 
     /// <summary>
-    /// How many consecutive faulted sweeps either discovery loop tolerates before it stops for good.
-    /// A single fault is a bad sweep, not a broken finder — Core's <c>DiscoverAsync</c> enumerates
-    /// ports and sockets on every pass, and one hiccup there used to end discovery for the life of
-    /// the dialog because the general <c>catch</c> sat outside the <c>while</c> (issue #290).
+    /// How many consecutive faulted passes either scan tolerates before the dialog stops believing in
+    /// it. A single fault is a bad pass, not a broken finder — the wrapped finder enumerates ports and
+    /// sockets on every pass, and one hiccup there used to end discovery for the life of the dialog
+    /// because the general <c>catch</c> sat outside the <c>while</c> (issue #290).
+    /// <para>
+    /// Core scopes a faulted pass correctly on its own — <c>ScanLoopAsync</c> reports it through
+    /// <see cref="ContinuousDeviceFinder.ScanError"/> and keeps scanning — so what remains here is only
+    /// the give-up, which is a dialog decision rather than a library one: a UI that cannot say "this is
+    /// not working" has to animate "Scanning…" over a permanently broken finder for ever.
+    /// </para>
     /// </summary>
     private const int MaxConsecutiveDiscoveryFaults = 3;
 
-    // @port: Daqifi.Desktop.ViewModels.ConnectionDialogViewModel.RunContinuousWiFiDiscoveryAsync
-    private async Task RunContinuousWiFiDiscoveryAsync(CancellationToken cancellationToken)
+    /// <summary>
+    /// A serial pass completed without faulting, so the run of faults (if any) is over.
+    /// </summary>
+    /// <remarks>
+    /// Raised by the wrapped <c>SerialDeviceFinder</c>, not by <see cref="ContinuousDeviceFinder"/>,
+    /// which has no per-pass completion signal. The finder raises it on its success path only, so it
+    /// is precisely the "clean sweep" edge <see cref="MaxConsecutiveDiscoveryFaults"/> counts against.
+    /// </remarks>
+    private void HandleSerialPassCompleted(object? sender, EventArgs e) => _serialConsecutiveFaults = 0;
+
+    /// <summary>The WiFi counterpart of <see cref="HandleSerialPassCompleted"/>.</summary>
+    private void HandleWifiPassCompleted(object? sender, EventArgs e) => _wifiConsecutiveFaults = 0;
+
+    /// <summary>
+    /// A serial discovery pass faulted. Stops the dialog's scan — and says so where the user is
+    /// looking — once <see cref="MaxConsecutiveDiscoveryFaults"/> have gone by with no clean pass
+    /// between them (issue #290).
+    /// </summary>
+    private void HandleSerialScanError(object? sender, ContinuousDiscoveryErrorEventArgs e)
     {
-        var consecutiveFaults = 0;
-        try
-        {
-            while (!cancellationToken.IsCancellationRequested && _wifiFinder != null)
-            {
-                // Task.Run for the same reason as the serial loop below: keep any
-                // synchronous-before-first-await work inside Core's finder off the UI thread.
-                var finder = _wifiFinder;
-                try
-                {
-                    await Task.Run(() => finder.DiscoverAsync(cancellationToken), cancellationToken);
-                    consecutiveFaults = 0;
-                }
-                catch (Exception ex) when (ex is not OperationCanceledException and not ObjectDisposedException)
-                {
-                    // Per-sweep, not per-loop (issue #290). Cancellation and a disposed finder are
-                    // still the two terminal exits and are deliberately left to the outer catches.
-                    consecutiveFaults++;
-                    Common.Loggers.AppLogger.Instance.Error(
-                        ex,
-                        $"WiFi discovery sweep failed (fault {consecutiveFaults}/{MaxConsecutiveDiscoveryFaults}).");
-                    if (consecutiveFaults >= MaxConsecutiveDiscoveryFaults)
-                    {
-                        _marshalToUiThread(() => WiFiDiscoveryError =
-                            "WiFi discovery stopped after repeated errors. Close and reopen this " +
-                            "window to search again.");
-                        return;
-                    }
-                }
-                // Brief pause before next discovery cycle
-                await Task.Delay(3000, cancellationToken);
-            }
-        }
-        catch (OperationCanceledException)
-        {
-            // Expected when cancelled
-        }
-        catch (ObjectDisposedException)
-        {
-            // Expected when finder is disposed during discovery
-        }
-        catch (Exception ex)
-        {
-            // Backstop only: the per-sweep handler above now catches everything the sweep itself can
-            // raise, so reaching here means the handler's own logging or marshal threw. Say so in
-            // the dialog anyway — the loop is over either way.
-            Common.Loggers.AppLogger.Instance.Error(ex, "Error in WiFi discovery loop");
-            _marshalToUiThread(() => WiFiDiscoveryError =
-                "WiFi discovery stopped unexpectedly. Close and reopen this window to search again.");
-        }
+        if (!ReferenceEquals(sender, _serialFinder)) { return; }
+
+        var faults = ++_serialConsecutiveFaults;
+        Common.Loggers.AppLogger.Instance.Error(
+            e.Exception,
+            $"Serial discovery pass failed (fault {faults}/{MaxConsecutiveDiscoveryFaults}).");
+
+        if (faults < MaxConsecutiveDiscoveryFaults) { return; }
+
+        // The give-up has to reach the dialog, not just DAQifiAppLog.log: the animated "Scanning for
+        // USB devices…" overlay binds to IsSerialDiscoveryScanning, and a discovery that has stopped
+        // for good is indistinguishable from one still looking without this (issue #290).
+        _marshalToUiThread(() => SerialDiscoveryError =
+            "USB discovery stopped after repeated errors. Close and reopen this " +
+            "window to search again.");
+
+        // Fire-and-forget: this runs on Core's scan-loop thread, and StopAsync waits for that very
+        // loop to exit, so awaiting it here would deadlock the loop against itself.
+        _ = StopSerialDiscoveryAsync();
     }
 
-    // Watchdog bounds (serial loop only): with Daqifi.Core 1.0.0 a wedged CDC device hangs
-    // DiscoverAsync forever (core#294 — SerialPort.Open() stuck in native GetCommState, no
-    // per-port timeout, and DeviceDiscovered gated behind Task.WhenAll, so one zombie port
-    // silences every healthy device). Remove once the app consumes a core release with the
-    // #294 fix (PR daqifi-core#295).
-    //
-    // A field rather than a const only so a test can shorten it by reflection — the same seam, and
-    // for the same kind of reason, as _createSerialFinder above: at the shipped 10 s, pinning the
-    // give-up path costs half a minute of wall clock. Nothing in the app ever assigns it.
-    private int _serialSweepWatchdogMs = 10_000;
-    private const int MaxConsecutiveWatchdogTrips = 3;
-
-    // @port: Daqifi.Desktop.ViewModels.ConnectionDialogViewModel.RunContinuousSerialDiscoveryAsync
-    private async Task RunContinuousSerialDiscoveryAsync(CancellationToken cancellationToken)
+    /// <summary>The WiFi counterpart of <see cref="HandleSerialScanError"/>.</summary>
+    private void HandleWifiScanError(object? sender, ContinuousDiscoveryErrorEventArgs e)
     {
-        var consecutiveTrips = 0;
-        var consecutiveFaults = 0;
-        try
-        {
-            while (!cancellationToken.IsCancellationRequested && _serialFinder != null)
-            {
-                // Task.Run: Core's SerialDeviceFinder.DiscoverAsync is async-in-name-only up to its
-                // first await — it synchronously SerialPort.Open()s every candidate port on the
-                // CALLING thread. Called bare after the Task.Delay resume, that thread is the UI
-                // thread, and a wedged CDC device (Open() stuck in native GetCommState — observed
-                // live 2026-07-13) freezes the whole app. Upstream WPF has the same latent bug.
-                var finder = _serialFinder;
-                var sweep = Task.Run(() => finder.DiscoverAsync(cancellationToken), cancellationToken);
+        if (!ReferenceEquals(sender, _wifiFinder)) { return; }
 
-                var winner = await Task.WhenAny(sweep, Task.Delay(_serialSweepWatchdogMs, cancellationToken));
-                if (winner != sweep)
-                {
-                    if (cancellationToken.IsCancellationRequested)
-                    {
-                        // Stop path (step-3.5 port audit): the cancelled Task.Delay wins
-                        // this WhenAny synchronously inside Cancel(), which used to exit
-                        // the loop while the sweep still HELD the COM port (its probe's
-                        // port-closing finally takes up to ~1s) — so StopSerialDiscovery's
-                        // "port fully released" contract broke and Connect raced the
-                        // abandoned probe into a false port-in-use failure. Drain the
-                        // sweep (bounded) before surfacing cancellation; observe its
-                        // outcome either way so an abandoned fault can't go unobserved.
-                        _ = sweep.ContinueWith(
-                            static t => _ = t.Exception,
-                            CancellationToken.None,
-                            TaskContinuationOptions.NotOnRanToCompletion | TaskContinuationOptions.ExecuteSynchronously,
-                            TaskScheduler.Default);
-                        try { await sweep.WaitAsync(TimeSpan.FromSeconds(3), CancellationToken.None); }
-                        catch (TimeoutException) { /* wedged probe — proceed; Connect on OTHER ports is unaffected */ }
-                        catch (OperationCanceledException) { /* sweep observed the same token — drained */ }
-                        catch { /* probe faults are probe-misses, not stop failures */ }
-                        cancellationToken.ThrowIfCancellationRequested();
-                    }
+        var faults = ++_wifiConsecutiveFaults;
+        Common.Loggers.AppLogger.Instance.Error(
+            e.Exception,
+            $"WiFi discovery pass failed (fault {faults}/{MaxConsecutiveDiscoveryFaults}).");
 
-                    consecutiveTrips++;
-                    Common.Loggers.AppLogger.Instance.Warning(
-                        $"Serial discovery sweep exceeded {_serialSweepWatchdogMs / 1000}s " +
-                        $"(trip {consecutiveTrips}/{MaxConsecutiveWatchdogTrips}) — a serial port is " +
-                        "likely wedged; USB discovery may be incomplete.");
-                    // Observe the abandoned sweep's eventual fault so it can't surface as an
-                    // UnobservedTaskException. Its stuck probe thread is uncancellable; the
-                    // abandoned finder leaks with it (bounded by MaxConsecutiveWatchdogTrips,
-                    // and intentionally NOT disposed — disposing its in-use semaphore would
-                    // just add an ObjectDisposedException to the abandoned task).
-                    _ = sweep.ContinueWith(
-                        static t => _ = t.Exception,
-                        CancellationToken.None,
-                        TaskContinuationOptions.NotOnRanToCompletion | TaskContinuationOptions.ExecuteSynchronously,
-                        TaskScheduler.Default);
+        if (faults < MaxConsecutiveDiscoveryFaults) { return; }
 
-                    if (consecutiveTrips >= MaxConsecutiveWatchdogTrips)
-                    {
-                        Common.Loggers.AppLogger.Instance.Error(
-                            "Serial discovery stopped after repeated wedged sweeps. Power-cycle the " +
-                            "unresponsive USB device and reopen the connection dialog.");
-                        // Stopping here is deliberate — a wedged port cannot be un-wedged from this
-                        // side. What was wrong is that only the log said so while the USB tab kept
-                        // animating "Scanning for USB devices…" for ever, so put the same remedy
-                        // where the user is actually looking (issue #290).
-                        _marshalToUiThread(() => SerialDiscoveryError =
-                            "USB discovery stopped: a connected USB device is not responding. " +
-                            "Power-cycle it, then close and reopen this window to search again.");
-                        return;
-                    }
+        _marshalToUiThread(() => WiFiDiscoveryError =
+            "WiFi discovery stopped after repeated errors. Close and reopen this " +
+            "window to search again.");
 
-                    // Rebuild the finder so healthy ports get fresh sweeps on the next iteration.
-                    finder.DeviceDiscovered -= HandleCoreSerialDeviceDiscovered;
-                    _serialFinder = _createSerialFinder();
-                    _serialFinder.DeviceDiscovered += HandleCoreSerialDeviceDiscovered;
-                    continue;
-                }
-
-                consecutiveTrips = 0;
-                try
-                {
-                    await sweep; // propagate faults/cancellation exactly like the bare await did
-                    consecutiveFaults = 0;
-                }
-                catch (Exception ex) when (ex is not OperationCanceledException and not ObjectDisposedException)
-                {
-                    // Per-sweep, not per-loop (issue #290): Core's SerialDeviceFinder enumerates the
-                    // machine's ports on every pass, and one enumeration hiccup used to end USB
-                    // discovery for the life of the dialog. Cancellation and a disposed finder are
-                    // still the two terminal exits and are deliberately left to the outer catches.
-                    consecutiveFaults++;
-                    Common.Loggers.AppLogger.Instance.Error(
-                        ex,
-                        $"Serial discovery sweep failed (fault {consecutiveFaults}/{MaxConsecutiveDiscoveryFaults}).");
-                    if (consecutiveFaults >= MaxConsecutiveDiscoveryFaults)
-                    {
-                        _marshalToUiThread(() => SerialDiscoveryError =
-                            "USB discovery stopped after repeated errors. Close and reopen this " +
-                            "window to search again.");
-                        return;
-                    }
-                }
-                // Serial discovery is quick, pause longer between scans
-                await Task.Delay(2000, cancellationToken);
-            }
-        }
-        catch (OperationCanceledException)
-        {
-            // Expected when cancelled
-        }
-        catch (ObjectDisposedException)
-        {
-            // Expected when finder is disposed during discovery
-        }
-        catch (Exception ex)
-        {
-            // Backstop only: the per-sweep handler above now catches everything a sweep can raise,
-            // so reaching here means the handler's own logging or marshal threw, or the watchdog's
-            // finder rebuild did. Say so in the dialog anyway — the loop is over either way.
-            Common.Loggers.AppLogger.Instance.Error(ex, "Error in Serial discovery loop");
-            _marshalToUiThread(() => SerialDiscoveryError =
-                "USB discovery stopped unexpectedly. Close and reopen this window to search again.");
-        }
+        _ = StopWiFiDiscoveryAsync();
     }
 
     #endregion
@@ -734,7 +643,9 @@ public partial class ConnectionDialogViewModel : ObservableObject
         var selectedDevices = ToStreamingDevices(selectedItems);
         if (selectedDevices.Count == 0) { return; }
 
-        StopWiFiDiscovery();
+        // Awaited, unlike the fire-and-forget stop this replaced: the WiFi scan holds a UDP socket the
+        // connect is about to use, and Core's ordered stop is what makes "stopped" mean "released".
+        await StopWiFiDiscoveryAsync();
 
         foreach (var device in selectedDevices)
         {
@@ -1058,6 +969,68 @@ public partial class ConnectionDialogViewModel : ObservableObject
         }
     }
 
+    /// <summary>
+    /// A serial device has been absent for <see cref="ContinuousDiscoveryOptions.MissThreshold"/>
+    /// consecutive passes, so drop its tile.
+    /// </summary>
+    /// <remarks>
+    /// New behaviour, and the reason the live set is keyed by port name: the hand-rolled loop never
+    /// removed anything, so a board unplugged with the dialog open kept its tile until the dialog was
+    /// closed and reopened, and pressing Connect on it failed on a port that was no longer there.
+    /// Core's busy-port rescue (issue #532) keeps a device the app itself holds from being reported
+    /// lost, so this does not fire for the board the user just connected to.
+    /// </remarks>
+    private void HandleCoreSerialDeviceLost(object? sender, DeviceLostEventArgs e)
+    {
+        try
+        {
+            var portName = e.DeviceInfo.PortName?.Trim();
+            if (string.IsNullOrWhiteSpace(portName)) { return; }
+
+            _marshalToUiThread(() =>
+            {
+                if (!ReferenceEquals(sender, _serialFinder)) { return; }
+
+                var listed = FindSerialDeviceByPortName(portName);
+                if (listed == null) { return; }
+
+                AvailableSerialDevices.Remove(listed);
+                HasNoSerialDevices = AvailableSerialDevices.Count == 0;
+                Common.Loggers.AppLogger.Instance.Information(
+                    $"Removed DAQiFi device on {portName}: no longer answering discovery.");
+            });
+        }
+        catch (Exception ex)
+        {
+            Common.Loggers.AppLogger.Instance.Error(ex, "Error handling Serial device loss");
+        }
+    }
+
+    /// <summary>The WiFi counterpart of <see cref="HandleCoreSerialDeviceLost"/>, keyed by MAC.</summary>
+    private void HandleCoreWifiDeviceLost(object? sender, DeviceLostEventArgs e)
+    {
+        try
+        {
+            var macAddress = e.DeviceInfo.MacAddress;
+            if (string.IsNullOrWhiteSpace(macAddress)) { return; }
+
+            _marshalToUiThread(() =>
+            {
+                if (!ReferenceEquals(sender, _wifiFinder)) { return; }
+
+                var listed = AvailableWiFiDevices.FirstOrDefault(d => d.MacAddress == macAddress);
+                if (listed == null) { return; }
+
+                AvailableWiFiDevices.Remove(listed);
+                HasNoWiFiDevices = AvailableWiFiDevices.Count == 0;
+            });
+        }
+        catch (Exception ex)
+        {
+            Common.Loggers.AppLogger.Instance.Error(ex, "Error handling WiFi device loss");
+        }
+    }
+
     /// <param name="finder">
     /// The finder that raised the discovery. Used to reject a retired finder's late callback — see
     /// the guard inside the marshalled action.
@@ -1079,16 +1052,13 @@ public partial class ConnectionDialogViewModel : ObservableObject
             // already in flight, and the action this queues can land behind the very
             // StartSerialFinder call that retired the finder — so a late callback would otherwise
             // put a pre-flash port straight back into the list the clear had just emptied, or
-            // overwrite the new session's metadata with the old session's. The watchdog makes this
-            // concrete: it deliberately abandons a timed-out sweep, which can identify a device
-            // long afterwards. A rejected discovery costs at most one sweep (2s) — the current
-            // finder reports the device again if it is really there.
+            // overwrite the new session's metadata with the old session's. Core's pass timeout makes
+            // this concrete: a pass abandoned on a wedged port can still identify a device long
+            // afterwards. A rejected discovery costs at most one pass — the current finder reports the
+            // device again if it is really there.
             //
             // Also rejects everything once the dialog has stopped discovery, because
-            // StopSerialDiscoveryAsync nulls the field.
-            //
-            // (HandleWifiDeviceFound has the same shape and the same hole. Pre-existing, untouched
-            // here, and partly masked by its per-MAC dedup.)
+            // StopSerialDiscoveryAsync nulls the field before it awaits the ordered stop.
             if (finder == null || !ReferenceEquals(finder, _serialFinder)) { return; }
 
             var existing = FindSerialDeviceByPortName(portName);
@@ -1172,11 +1142,18 @@ public partial class ConnectionDialogViewModel : ObservableObject
 
         _marshalToUiThread(() =>
         {
-            // Dedup by MAC: Core's WiFiDeviceFinder dedups only within a single DiscoverAsync sweep
-            // (its discovered set is per-call), but RunContinuousWiFiDiscoveryAsync reuses this finder
-            // across sweeps while AvailableWiFiDevices persists — StartWiFiDiscovery's clear fires only
-            // on finder recreate, not per sweep — so a device already listed can re-fire on a later
-            // sweep and would be added twice without this guard. (issue #621)
+            // Only the CURRENT scan may touch the list — the same guard, for the same reason, as
+            // AddSerialDeviceFromDiscovery's. Previously absent here (the serial one's comment called
+            // this out as a known hole, partly masked by the MAC dedup below); it can be closed now
+            // because `sender` is the ContinuousDeviceFinder this dialog holds rather than a finder it
+            // rebuilt mid-run, so "is this still the current one" is a reference comparison.
+            if (!ReferenceEquals(sender, _wifiFinder)) { return; }
+
+            // Dedup by MAC. Core's ContinuousDeviceFinder keys its live set by MAC too, so it raises
+            // this once per device rather than once per pass; the guard stays because the bound list
+            // outlives a single scan — StartWiFiDiscovery's clear fires on scan recreate, not per pass,
+            // so a device listed by the previous scan is still here when the next one finds it again.
+            // (issue #621)
             if (AvailableWiFiDevices.Any(d => d.MacAddress == wifiDevice.MacAddress)) return;
             AvailableWiFiDevices.Add(wifiDevice);
             if (HasNoWiFiDevices) { HasNoWiFiDevices = false; }
@@ -1191,8 +1168,8 @@ public partial class ConnectionDialogViewModel : ObservableObject
         if (_closed) { return; }
         _closed = true;
 
-        StopWiFiDiscovery();
-        // Fire-and-forget: cancel discovery and clean up without waiting for task completion
+        // Fire-and-forget: stop both scans and release their ports without blocking the window close.
+        _ = StopWiFiDiscoveryAsync();
         _ = StopSerialDiscoveryAsync();
 
         ConnectionManager.Instance.FirmwareUpdateInProgressChanged -= OnFirmwareUpdateInProgressChanged;
@@ -1208,113 +1185,92 @@ public partial class ConnectionDialogViewModel : ObservableObject
         }
     }
 
-    // @port: Daqifi.Desktop.ViewModels.ConnectionDialogViewModel.StopWiFiDiscovery
-    private void StopWiFiDiscovery()
-    {
-        _wifiDiscoveryCts?.Cancel();
-
-        if (_wifiFinder != null)
-        {
-            _wifiFinder.DeviceDiscovered -= HandleCoreWifiDeviceDiscovered;
-            _wifiFinder.Dispose();
-            _wifiFinder = null;
-        }
-
-        _wifiDiscoveryCts?.Dispose();
-        _wifiDiscoveryCts = null;
-    }
-
+    /// <summary>
+    /// Stops serial discovery and does not return until the scan loop has actually exited and the
+    /// finder — and with it every port it had open — has been released.
+    /// </summary>
+    /// <remarks>
+    /// The port-release contract is what the connect paths depend on: <c>ConnectSerialAsync</c> awaits
+    /// this before opening the port itself, and a probe still holding it would surface to the user as a
+    /// false "port in use". The hand-rolled loop had to arrange that by hand — cancel, then drain the
+    /// in-flight sweep, bounded, before letting cancellation propagate — because cancelling its
+    /// <c>Task.WhenAny</c> raced the sweep that still held the port. <see cref="ContinuousDeviceFinder.StopAsync"/>
+    /// owns that ordering now: it cancels the loop and awaits its exit, and <c>Dispose</c> then disposes
+    /// the wrapped finder. Bounded anyway, because a pass abandoned on a wedged port unwinds on its own
+    /// schedule and the dialog must not hang waiting for it.
+    /// </remarks>
     // @port: Daqifi.Desktop.ViewModels.ConnectionDialogViewModel.StopSerialDiscoveryAsync
-    private async Task StopSerialDiscoveryAsync()
+    private Task StopSerialDiscoveryAsync()
     {
-        _serialDiscoveryCts?.Cancel();
+        var finder = _serialFinder;
+        _serialFinder = null;
+        if (finder == null) { return Task.CompletedTask; }
 
-        // Wait for the discovery task to complete so that the serial port is fully released
-        if (_serialDiscoveryTask != null)
-        {
-            try
-            {
-                await _serialDiscoveryTask.WaitAsync(TimeSpan.FromSeconds(5));
-            }
-            catch (TimeoutException)
-            {
-                // The loop's Task.Run may still be blocked in the finder's synchronous prefix (a
-                // wedged COM port, issue #685). Leave _serialDiscoveryTask set — its own
-                // continuation (see StartSerialDiscovery) clears it once it truly finishes — so
-                // Start*Discovery's guard keeps refusing a competing discovery generation against
-                // the same port, and skip disposing the finder/CTS below since the still-running
-                // call may be using them.
-                Common.Loggers.AppLogger.Instance.Warning("Serial discovery task did not complete within timeout");
-                return;
-            }
-            catch (OperationCanceledException)
-            {
-                // Expected on cancellation
-            }
-            catch (ObjectDisposedException)
-            {
-                // Expected during shutdown
-            }
-            catch (Exception ex)
-            {
-                Common.Loggers.AppLogger.Instance.Error(ex, "Unexpected error while stopping serial discovery");
-            }
-        }
-
-        if (_serialFinder != null)
-        {
-            _serialFinder.DeviceDiscovered -= HandleCoreSerialDeviceDiscovered;
-            _serialFinder.Dispose();
-            _serialFinder = null;
-        }
-
-        _serialDiscoveryCts?.Dispose();
-        _serialDiscoveryCts = null;
-
+        finder.DeviceDiscovered -= HandleCoreSerialDeviceDiscovered;
+        finder.DeviceLost -= HandleCoreSerialDeviceLost;
+        finder.ScanError -= HandleSerialScanError;
+        return StopDiscoveryAsync(finder, _serialPassTimeout, "serial");
     }
 
     /// <summary>
-    /// Stops WiFi discovery and waits for the in-flight discovery cycle to drain before returning —
-    /// the async counterpart to <see cref="StopWiFiDiscovery"/>, used before a bootloader flash so a
-    /// running UDP discovery cycle isn't still live when the flash begins. Mirrors
-    /// <see cref="StopSerialDiscoveryAsync"/>.
+    /// The WiFi counterpart of <see cref="StopSerialDiscoveryAsync"/>. Used before a bootloader flash
+    /// so a running UDP discovery cycle isn't still live when the flash begins.
     /// </summary>
     // @port: Daqifi.Desktop.ViewModels.ConnectionDialogViewModel.StopWiFiDiscoveryAsync
-    private async Task StopWiFiDiscoveryAsync()
+    private Task StopWiFiDiscoveryAsync()
     {
-        _wifiDiscoveryCts?.Cancel();
+        var finder = _wifiFinder;
+        _wifiFinder = null;
+        if (finder == null) { return Task.CompletedTask; }
 
-        if (_wifiDiscoveryTask != null)
+        finder.DeviceDiscovered -= HandleCoreWifiDeviceDiscovered;
+        finder.DeviceLost -= HandleCoreWifiDeviceLost;
+        finder.ScanError -= HandleWifiScanError;
+        return StopDiscoveryAsync(finder, _wifiPassTimeout, "WiFi");
+    }
+
+    /// <summary>
+    /// The shared stop body: await the ordered stop, bounded, then dispose either way.
+    /// </summary>
+    /// <remarks>
+    /// Disposing is what releases the wrapped finder's ports and sockets —
+    /// <see cref="ContinuousDeviceFinder"/> owns the finder it was given
+    /// (<see cref="ContinuousDiscoveryOptions.LeaveInnerFinderOpen"/> is left false), so it disposes it
+    /// — and it must happen even when the bounded wait gave up, which is why it is in a <c>finally</c>.
+    /// </remarks>
+    private static async Task StopDiscoveryAsync(
+        ContinuousDeviceFinder finder,
+        TimeSpan passTimeout,
+        string transport)
+    {
+        try
         {
-            try
-            {
-                await _wifiDiscoveryTask.WaitAsync(TimeSpan.FromSeconds(5));
-            }
-            catch (TimeoutException)
-            {
-                // Same reasoning as StopSerialDiscoveryAsync above: leave _wifiDiscoveryTask set
-                // (its StartWiFiDiscovery continuation clears it once it truly finishes) and skip
-                // disposing the finder/CTS below, since the still-running Task.Run may be using them.
-                Common.Loggers.AppLogger.Instance.Warning("WiFi discovery task did not complete within timeout");
-                return;
-            }
-            catch (OperationCanceledException) { }
-            catch (ObjectDisposedException) { }
-            catch (Exception ex)
-            {
-                Common.Loggers.AppLogger.Instance.Error(ex, "Unexpected error while stopping WiFi discovery");
-            }
+            // The loop can be mid-pass, so allow the pass its full budget plus slack to observe
+            // cancellation and unwind — the same bound HidBootloaderDiscovery uses, scaled to this
+            // transport's pass timeout.
+            await finder.StopAsync().WaitAsync(passTimeout + TimeSpan.FromSeconds(2));
         }
-
-        if (_wifiFinder != null)
+        catch (TimeoutException)
         {
-            _wifiFinder.DeviceDiscovered -= HandleCoreWifiDeviceDiscovered;
-            _wifiFinder.Dispose();
-            _wifiFinder = null;
+            Common.Loggers.AppLogger.Instance.Warning(
+                $"{transport} discovery did not stop within timeout");
         }
-
-        _wifiDiscoveryCts?.Dispose();
-        _wifiDiscoveryCts = null;
+        catch (OperationCanceledException)
+        {
+            // Expected on cancellation.
+        }
+        catch (ObjectDisposedException)
+        {
+            // Expected during shutdown.
+        }
+        catch (Exception ex)
+        {
+            Common.Loggers.AppLogger.Instance.Error(ex, $"Unexpected error while stopping {transport} discovery");
+        }
+        finally
+        {
+            finder.Dispose();
+        }
     }
 
     /// <summary>
