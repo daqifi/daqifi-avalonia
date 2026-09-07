@@ -99,7 +99,7 @@ public class ConnectionDialogSerialListTests
     /// abandoning timed-out sweeps.
     /// </summary>
     [Fact]
-    public void A_retired_finders_late_discovery_cannot_put_a_ghost_back()
+    public async Task A_retired_finders_late_discovery_cannot_put_a_ghost_back()
     {
         using var viewModel = CreateViewModel();
 
@@ -107,9 +107,9 @@ public class ConnectionDialogSerialListTests
         var retiredFinder = GetPrivateField(viewModel.Value, "_serialFinder");
         Assert.NotNull(retiredFinder);
 
-        // A second start retires the first finder and installs a new one, exactly as the
-        // firmware-flash resume does.
-        SetPrivateField(viewModel.Value, "_serialDiscoveryTask", null);
+        // Stop and start again, exactly as the firmware-flash resume does. Awaited rather than faked,
+        // because the stop is what retires the finder whose late callback this test is about.
+        await StopSerialDiscoveryAsync(viewModel.Value);
         InvokePrivate(viewModel.Value, "StartSerialDiscovery");
         Assert.NotSame(retiredFinder, GetPrivateField(viewModel.Value, "_serialFinder"));
 
@@ -167,7 +167,109 @@ public class ConnectionDialogSerialListTests
         Assert.Equal("COM-REPEAT", still.PortName);
     }
 
+    /// <summary>
+    /// A board that stops answering leaves the list. New behaviour: the hand-rolled loop never
+    /// removed anything, so a board unplugged with the dialog open kept its tile until the dialog was
+    /// closed and reopened, and pressing Connect on it failed against a port that was no longer there.
+    /// </summary>
+    /// <remarks>
+    /// This is why the scan's live set is keyed by port name rather than by Core's default (serial
+    /// number first). Core refreshes a tracked device's metadata silently, raising no event, so with
+    /// the default key a board that moved to another port would keep its old row and the row would go
+    /// on advertising a port that no longer exists. Keying on the port makes that a loss and a fresh
+    /// discovery — which is what the tile has to show.
+    /// </remarks>
+    [Fact]
+    public void A_device_that_stops_answering_loses_its_row()
+    {
+        using var viewModel = CreateViewModel();
+
+        InvokePrivate(viewModel.Value, "StartSerialDiscovery");
+        var currentFinder = GetPrivateField(viewModel.Value, "_serialFinder");
+
+        RaiseDiscovery(viewModel.Value, currentFinder, "COM-GONE");
+        RaiseDiscovery(viewModel.Value, currentFinder, "COM-STAYS");
+        Assert.Equal(2, viewModel.Value.AvailableSerialDevices.Count);
+
+        RaiseLoss(viewModel.Value, currentFinder, "COM-GONE");
+
+        Assert.Equal("COM-STAYS", Assert.Single(viewModel.Value.AvailableSerialDevices).PortName);
+        Assert.False(
+            viewModel.Value.HasNoSerialDevices,
+            "One device went away, not both, so the 'Scanning…' overlay must stay away.");
+    }
+
+    /// <summary>
+    /// Losing the last device puts the tab back to "Scanning for USB devices…", because that is again
+    /// a true description of what the dialog is doing.
+    /// </summary>
+    [Fact]
+    public void Losing_the_last_device_restores_the_scanning_overlay()
+    {
+        using var viewModel = CreateViewModel();
+
+        InvokePrivate(viewModel.Value, "StartSerialDiscovery");
+        var currentFinder = GetPrivateField(viewModel.Value, "_serialFinder");
+
+        RaiseDiscovery(viewModel.Value, currentFinder, "COM-ONLY");
+        Assert.False(viewModel.Value.HasNoSerialDevices);
+
+        RaiseLoss(viewModel.Value, currentFinder, "COM-ONLY");
+
+        Assert.Empty(viewModel.Value.AvailableSerialDevices);
+        Assert.True(viewModel.Value.HasNoSerialDevices);
+        Assert.True(viewModel.Value.IsSerialDiscoveryScanning);
+    }
+
+    /// <summary>
+    /// The loss path carries the same retired-scan guard as the discovery path, and for the same
+    /// reason: a retired scan's late callback must not reach into the current session's list, where it
+    /// would delete a row the current scan had just legitimately added for that port.
+    /// </summary>
+    [Fact]
+    public async Task A_retired_scans_late_loss_cannot_delete_a_current_row()
+    {
+        using var viewModel = CreateViewModel();
+
+        InvokePrivate(viewModel.Value, "StartSerialDiscovery");
+        var retiredFinder = GetPrivateField(viewModel.Value, "_serialFinder");
+
+        await StopSerialDiscoveryAsync(viewModel.Value);
+        InvokePrivate(viewModel.Value, "StartSerialDiscovery");
+        var currentFinder = GetPrivateField(viewModel.Value, "_serialFinder");
+        Assert.NotSame(retiredFinder, currentFinder);
+
+        RaiseDiscovery(viewModel.Value, currentFinder, "COM-KEEP");
+        RaiseLoss(viewModel.Value, retiredFinder, "COM-KEEP");
+
+        Assert.Equal("COM-KEEP", Assert.Single(viewModel.Value.AvailableSerialDevices).PortName);
+    }
+
     #region Harness
+    /// <summary>
+    /// Raises <c>DeviceLost</c> at the view model the way the scan does, with
+    /// <paramref name="finder"/> as the sender.
+    /// </summary>
+    private static void RaiseLoss(
+        ConnectionDialogViewModel viewModel,
+        object? finder,
+        string portName)
+    {
+        var handler = typeof(ConnectionDialogViewModel).GetMethod(
+            "HandleCoreSerialDeviceLost", BindingFlags.Instance | BindingFlags.NonPublic);
+        Assert.NotNull(handler);
+
+        var deviceInfo = new DeviceInfo
+        {
+            Name = portName,
+            SerialNumber = "SN-" + portName,
+            PortName = portName,
+            ConnectionType = Daqifi.Core.Device.Discovery.ConnectionType.Serial,
+        };
+
+        handler.Invoke(viewModel, [finder, new DeviceLostEventArgs(deviceInfo)]);
+    }
+
     /// <summary>
     /// Raises <c>DeviceDiscovered</c> at the view model the way a finder does, with
     /// <paramref name="finder"/> as the sender.
@@ -241,6 +343,15 @@ public class ConnectionDialogSerialListTests
         public override Task<IEnumerable<IDeviceInfo>> DiscoverAsync(
             CancellationToken cancellationToken = default) =>
             Task.FromResult(Enumerable.Empty<IDeviceInfo>());
+    }
+
+    /// <summary>Awaits the dialog's own serial stop, so the finder is really retired.</summary>
+    private static async Task StopSerialDiscoveryAsync(ConnectionDialogViewModel viewModel)
+    {
+        var method = typeof(ConnectionDialogViewModel).GetMethod(
+            "StopSerialDiscoveryAsync", BindingFlags.Instance | BindingFlags.NonPublic);
+        Assert.NotNull(method);
+        await Assert.IsAssignableFrom<Task>(method.Invoke(viewModel, null));
     }
 
     private static void InvokePrivate(ConnectionDialogViewModel viewModel, string methodName)

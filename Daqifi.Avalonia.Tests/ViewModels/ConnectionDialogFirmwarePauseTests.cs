@@ -24,10 +24,11 @@ namespace Daqifi.Avalonia.Tests.ViewModels;
 /// back once they have all cleared, in whichever order that happens. Both directions are covered here.
 ///
 /// <para>
-/// These tests never let a finder be created: a real one would open COM ports and broadcast from the
-/// test host. Where a restart is triggered deliberately, either a pause reason is still active (so the
-/// guard refuses it) or the drain tasks are parked so the restart defers forever. A test that goes red
-/// because the guard was removed <em>will</em> create one — that is the point of the assertion.
+/// These tests assert that no finder is created, and separately make sure that a run in which the
+/// guard has been removed cannot reach the hardware: both finder seams are replaced with stand-ins
+/// that open no port and bind no socket. The two are not the same thing — the assertion is what
+/// catches the regression, and the stand-ins are what stop the red run from sweeping a developer's
+/// attached board on its way to reporting it.
 /// </para>
 /// </summary>
 [Collection(ConnectionManagerSingletonCollection.Name)]
@@ -144,10 +145,16 @@ public class ConnectionDialogFirmwarePauseTests : IDisposable
         using var viewModel = CreateViewModel(new FakeBootloaderWatcher());
         var viewModelUnderTest = viewModel.Value;
 
-        // Stands in for a discovery loop that has not finished winding down: the quiesce window awaits
-        // this before it can show the firmware dialog.
-        var drainCanFinish = new TaskCompletionSource();
-        SetPrivateField(viewModelUnderTest, "_wifiDiscoveryTask", drainCanFinish.Task);
+        // A WiFi scan that cannot finish its pass, so the quiesce window's stop suspends waiting for
+        // it: Core's StopAsync cancels the scan loop and awaits its exit, and the loop can only exit
+        // once the in-flight pass returns. Stands in for the wedged port that made this ordering
+        // matter in the first place.
+        var passCanFinish = new TaskCompletionSource();
+        SetPrivateField(
+            viewModelUnderTest,
+            "_createWifiFinder",
+            (Func<Daqifi.Core.Device.Discovery.WiFiDeviceFinder>)(() => new BlockingWiFiFinder(passCanFinish.Task)));
+        InvokePrivate(viewModelUnderTest, "StartWiFiDiscovery");
 
         // The call returns only once the window has suspended on that drain — an async method runs
         // synchronously up to its first real suspension point — so control is back here at a moment
@@ -161,7 +168,7 @@ public class ConnectionDialogFirmwarePauseTests : IDisposable
 
         var pausedWhileDraining = IsDiscoveryPausedForFirmware(viewModelUnderTest);
 
-        drainCanFinish.SetResult();
+        passCanFinish.SetResult();
         await window;
 
         Assert.True(
@@ -182,7 +189,6 @@ public class ConnectionDialogFirmwarePauseTests : IDisposable
         using var viewModel = CreateViewModel(watcher);
 
         ConnectionManager.Instance.DeviceBeingUpdated = new TestDevice();
-        ParkDiscoveryDrains(viewModel.Value);
         watcher.SetFlashInProgress(true);
         Assert.True(IsDiscoveryPausedForFirmware(viewModel.Value));
 
@@ -210,7 +216,6 @@ public class ConnectionDialogFirmwarePauseTests : IDisposable
         using var viewModel = CreateViewModel(watcher);
 
         ConnectionManager.Instance.DeviceBeingUpdated = new TestDevice();
-        ParkDiscoveryDrains(viewModel.Value);
         watcher.SetFlashInProgress(true);
 
         watcher.SetFlashInProgress(false);
@@ -261,7 +266,54 @@ public class ConnectionDialogFirmwarePauseTests : IDisposable
     {
         var viewModel = new ConnectionDialogViewModel(null!, watcher);
         SetPrivateField(viewModel, "_marshalToUiThread", (Action<Action>)(action => action()));
+
+        // Both finder seams are replaced by stand-ins that touch no hardware. These tests assert that
+        // the firmware pause gate refuses to start discovery, and a red run is precisely the run where
+        // that gate did not hold — so the machine's COM ports and UDP sockets must not be what catches
+        // the regression. (Previously both discovery drains were parked on a task that never completed,
+        // which stopped a restart by a mechanism the dialog no longer has: restarts are direct now that
+        // Core's ordered stop means a stopped scan is really stopped.)
+        SetPrivateField(
+            viewModel,
+            "_createSerialFinder",
+            (Func<Daqifi.Core.Device.Discovery.SerialDeviceFinder>)(() => new SilentSerialFinder()));
+        SetPrivateField(
+            viewModel,
+            "_createWifiFinder",
+            (Func<Daqifi.Core.Device.Discovery.WiFiDeviceFinder>)(() => new SilentWiFiFinder()));
+
         return new ClosingViewModel(viewModel);
+    }
+
+    /// <summary>A serial finder that reports nothing and opens no port.</summary>
+    private sealed class SilentSerialFinder : Daqifi.Core.Device.Discovery.SerialDeviceFinder
+    {
+        public override Task<IEnumerable<Daqifi.Core.Device.Discovery.IDeviceInfo>> DiscoverAsync(
+            CancellationToken cancellationToken = default) =>
+            Task.FromResult(Enumerable.Empty<Daqifi.Core.Device.Discovery.IDeviceInfo>());
+    }
+
+    /// <summary>A WiFi finder that reports nothing and binds no socket.</summary>
+    private sealed class SilentWiFiFinder : Daqifi.Core.Device.Discovery.WiFiDeviceFinder
+    {
+        public override Task<IEnumerable<Daqifi.Core.Device.Discovery.IDeviceInfo>> DiscoverAsync(
+            CancellationToken cancellationToken = default) =>
+            Task.FromResult(Enumerable.Empty<Daqifi.Core.Device.Discovery.IDeviceInfo>());
+    }
+
+    /// <summary>
+    /// A WiFi finder whose pass does not return until the test says so, and which ignores the pass
+    /// token while it waits — the wedged-transport case, where cancelling the scan is not enough to
+    /// make the stop instant.
+    /// </summary>
+    private sealed class BlockingWiFiFinder(Task passCanFinish) : Daqifi.Core.Device.Discovery.WiFiDeviceFinder
+    {
+        public override async Task<IEnumerable<Daqifi.Core.Device.Discovery.IDeviceInfo>> DiscoverAsync(
+            CancellationToken cancellationToken = default)
+        {
+            await passCanFinish.ConfigureAwait(false);
+            return [];
+        }
     }
 
     /// <summary>
@@ -273,18 +325,6 @@ public class ConnectionDialogFirmwarePauseTests : IDisposable
         public ConnectionDialogViewModel Value { get; } = value;
 
         public void Dispose() => Value.Close();
-    }
-
-    /// <summary>
-    /// Parks both discovery drains on a task that never completes, so a restart triggered by these
-    /// tests defers instead of creating a real finder. The assertions then read the pause gate itself,
-    /// which is what every <c>Start*Discovery</c> consults before touching hardware.
-    /// </summary>
-    private static void ParkDiscoveryDrains(ConnectionDialogViewModel viewModel)
-    {
-        var neverDrains = new TaskCompletionSource().Task;
-        SetPrivateField(viewModel, "_wifiDiscoveryTask", neverDrains);
-        SetPrivateField(viewModel, "_serialDiscoveryTask", neverDrains);
     }
 
     /// <summary>
