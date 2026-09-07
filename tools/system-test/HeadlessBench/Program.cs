@@ -3,6 +3,7 @@ using System.Diagnostics;
 using System.Globalization;
 using System.Text.Json;
 using Avalonia;
+using Avalonia.Automation;
 using Avalonia.Controls;
 using Avalonia.Controls.ApplicationLifetimes;
 using Avalonia.Headless;
@@ -14,6 +15,7 @@ using Daqifi.Desktop;
 using Daqifi.Desktop.Channel;
 using Daqifi.Desktop.Device;
 using Daqifi.Desktop.Logger;
+using Daqifi.Desktop.View;
 using Daqifi.Desktop.ViewModels;
 using EFCore.BulkExtensions;
 using Microsoft.EntityFrameworkCore;
@@ -52,7 +54,8 @@ using DesktopApp = Daqifi.Desktop.App;
 //
 // Exit code 1 on any [FAIL]. Rows covered with a board: CONN-USB, DEV-INFO, DEV-TILE, CH-TILE,
 // DEV-RATE, CH-AI, STREAM-AI, LOG-SESSION, GRAPH-LIVE, CH-DIO, CH-PWM, SD-LIST, CONN-DISC,
-// DEV-NAME. Rows covered by --scripted, which needs none: LOGGED-LIST, LOGGED-PLOT, EXPORT-FAIL.
+// DEV-NAME. Rows covered by --scripted, which needs none: LOGGED-LIST, LOGGED-PLOT, EXPORT-FAIL
+// (their double is a seeded database) and SD-LIST, CONN-LOST (their double is a ScriptedDevice).
 // Add a Step per matrix row; keep the shape.
 
 internal static class HeadlessBench
@@ -1148,15 +1151,22 @@ internal static class HeadlessBench
 
     // ---------------------------------------------------------------- the T1 (--scripted) states
 
-    // The states --scripted understands. Each one is a DATABASE the app finds at boot, not a fake
-    // device: these are the three matrix rows whose test double is disk contents, and they are the
-    // whole of what this mode covers. The other states the matrix asks for (sd-empty,
-    // drop-mid-stream) need an IStreamingDevice double, which is a different piece of work and is
-    // still open on #260 — see the rig README.
+    // The states --scripted understands, in two kinds. The first three fabricate a DATABASE the
+    // app finds at boot; the last two fabricate a DEVICE (ScriptedDevice) and put it in front of
+    // the app through ConnectionManager.Connect. Neither kind opens a serial port, which is what
+    // makes all five runnable with no hardware — and therefore runnable in CI.
     private const string StateSessions500 = "sessions-500";
     private const string StateSession10H = "session-10h";
     private const string StateExportReadonly = "export-readonly";
-    private static readonly string[] ScriptedStates = [StateSessions500, StateSession10H, StateExportReadonly];
+    private const string StateSdEmpty = "sd-empty";
+    private const string StateDropMidStream = "drop-mid-stream";
+    private static readonly string[] ScriptedStates =
+        [StateSessions500, StateSession10H, StateExportReadonly, StateSdEmpty, StateDropMidStream];
+
+    /// <summary>Serial number the two device states give their <see cref="ScriptedDevice"/>. It
+    /// reaches the UI — the drop notification names the device by it — so the rows assert against
+    /// this constant rather than against whatever string happened to be passed.</summary>
+    private const string ScriptedSerial = "SCRIPTED-DEV-1";
 
     /// <summary>Sessions <see cref="StateSessions500"/> writes — the matrix's stated limit for
     /// LOGGED-LIST.</summary>
@@ -1176,8 +1186,9 @@ internal static class HeadlessBench
     /// </summary>
     private const int ExportSampleCount = 600;
 
-    /// <summary>Position of the Logged Data tab in MainWindow's nav TabControl, whose SelectedIndex
-    /// binds <c>DaqifiViewModel.SelectedIndex</c>: 0 Live Graph, 1 Logged Data, 2 Channels.</summary>
+    /// <summary>Positions in MainWindow's nav TabControl, whose SelectedIndex binds
+    /// <c>DaqifiViewModel.SelectedIndex</c>: 0 Live Graph, 1 Logged Data, 2 Channels.</summary>
+    private const int LiveGraphTabIndex = 0;
     private const int LoggedDataTabIndex = 1;
 
     private const string SeedSerial = "SCRIPTED-0001";
@@ -1204,6 +1215,11 @@ internal static class HeadlessBench
     /// </remarks>
     private static void SeedScriptedDatabase()
     {
+        // The two device states have nothing to seed: their double is a ScriptedDevice, and the
+        // database they do touch (drop-mid-stream opens a real logging session) is the one the app
+        // creates and migrates for itself at boot, under <out>/appdata.
+        if (_scripted is StateSdEmpty or StateDropMidStream) { return; }
+
         var sw = Stopwatch.StartNew();
         var factory = new SeedContextFactory(DesktopApp.DatabasePath);
         Directory.CreateDirectory(DesktopApp.DaqifiDataDirectory);
@@ -1311,6 +1327,8 @@ internal static class HeadlessBench
             case StateSessions500: UiProbe = (1, "LOGGED-LIST"); RunSessionListRow(main, shell, boot); break;
             case StateSession10H: UiProbe = (1, "LOGGED-PLOT"); RunSessionPlotRow(main, shell); break;
             case StateExportReadonly: UiProbe = (1, "EXPORT-FAIL"); RunExportFailureRow(main, shell); break;
+            case StateSdEmpty: UiProbe = (1, "SD-LIST"); RunSdEmptyRow(main, shell); break;
+            case StateDropMidStream: UiProbe = (1, "CONN-LOST"); RunDropMidStreamRow(main, shell); break;
             default: throw new ArgumentException($"unknown --scripted state '{_scripted}'");
         }
     }
@@ -1593,6 +1611,280 @@ internal static class HeadlessBench
         Pump();
         return (dialog.IsExportComplete, dialog.ExportSucceeded, dialog.ExportResultMessage);
     }
+
+    // -------------------------------------------- the T1 states whose double is a DEVICE (#304)
+
+    /// <summary>Readings <see cref="StateDropMidStream"/> streams before dropping the link. Enough
+    /// that the live plot has points and the session has rows — which is what makes the drop
+    /// "mid-stream" rather than "while idle" — and few enough to deliver in well under a second.
+    /// </summary>
+    private const int DroppedRunSamples = 120;
+
+    /// <summary>
+    /// Puts <paramref name="device"/> in front of the app the way the desktop puts a real one
+    /// there: <c>ConnectionManager.Connect</c>, which every desktop connect path ends in —
+    /// <c>ConnectionDialogViewModel.ConnectManualSerialCommand</c> included. The only layer above
+    /// it that these rows skip is the one that opens a serial port, and replacing that layer is
+    /// what a device double is for.
+    /// </summary>
+    /// <remarks>
+    /// <c>RegisterConnectedDevice</c> is the wrong door, and choosing it would quietly gut
+    /// CONN-LOST rather than fail visibly: it is the MOBILE entry point and wires diagnostics only,
+    /// deliberately leaving <c>IDevice.ConnectionLost</c> unsubscribed because the mobile shell
+    /// owns its own drop teardown. A device registered that way can be dropped all day and
+    /// <c>ConnectionManager.OnDeviceConnectionLost</c> never runs — the row would pass by
+    /// exercising nothing.
+    /// </remarks>
+    private static void ConnectScripted(DaqifiViewModel shell, ScriptedDevice device)
+    {
+        // Never block on it: headless, Dispatcher.UIThread IS this thread, and Connect's own
+        // one-second settle marshals its continuation back onto it.
+        var connecting = ConnectionManager.Instance.Connect(device);
+        if (!PumpUntil(() => connecting.IsCompleted, TimeSpan.FromSeconds(30)))
+        {
+            throw new InvalidOperationException(
+                "ConnectionManager.Connect had not returned 30 s after the scripted device was offered");
+        }
+
+        var result = connecting.GetAwaiter().GetResult();
+        if (!result.IsConnected)
+        {
+            throw new InvalidOperationException(
+                $"the scripted device was not accepted by ConnectionManager: status={result.Status}");
+        }
+
+        // The shell's own list follows from ConnectionManager's "ConnectedDevices" notification, so
+        // wait for the app to have caught up rather than assuming the manager and the shell agree.
+        if (!PumpUntil(() => shell.ConnectedDevices.Contains(device), TimeSpan.FromSeconds(10)))
+        {
+            throw new InvalidOperationException(
+                "the scripted device was accepted by ConnectionManager but never reached the shell's " +
+                "ConnectedDevices");
+        }
+    }
+
+    /// <summary>
+    /// SD-LIST at the matrix's stated edge case: a card the device can read that has nothing on it.
+    /// The three-way distinction is the whole row — an empty card is not "no SD card installed" and
+    /// not "the listing failed", and all three land on the same corner of the same pane.
+    /// </summary>
+    /// <remarks>
+    /// An empty listing is also what an unreachable device produces, so the row asserts that the
+    /// app actually asked (<see cref="ScriptedDevice.SdListingRequests"/>) as well as what came
+    /// back. Without that half, deleting the <c>RefreshSdCardFiles</c> call would leave it green.
+    /// </remarks>
+    private static void RunSdEmptyRow(Window main, DaqifiViewModel shell)
+    {
+        // SdCardListing is left empty: that IS the state.
+        var device = new ScriptedDevice(ScriptedSerial);
+        ConnectScripted(shell, device);
+
+        // The Logged Data tab, then its DEVICE LOGS segment. Both are required and neither is
+        // dressing: MainWindow's nav TabControl builds only the selected tab's content, and inside
+        // the pane DeviceLogsView is gated on the DeviceLogsTab radio button
+        // (LoggedDataPanePrototype.axaml), so without both the empty-state panel is either not
+        // built or not effectively visible while every view-model flag still reads correctly. That
+        // is the false green #305's first Qodo round found on LOGGED-LIST.
+        shell.SelectedIndex = LoggedDataTabIndex;
+        PumpFor(TimeSpan.FromMilliseconds(500));
+        var deviceLogsTab = ByAutomationId(main, "DeviceLogsTab") as RadioButton;
+        if (deviceLogsTab is not null) { deviceLogsTab.IsChecked = true; }
+        PumpFor(TimeSpan.FromMilliseconds(500));
+
+        var logs = shell.DeviceLogsViewModel;
+        // Selecting a device fires a refresh of its own, and a second RefreshFilesCommand while the
+        // first is still in flight is DROPPED — the trap the board SD-LIST row records. Wait for
+        // the button to be pressable instead of pressing it into a running command.
+        PumpUntil(() => logs.SelectedDevice is not null && logs.RefreshFilesCommand.CanExecute(null),
+                  TimeSpan.FromSeconds(15));
+
+        // REFRESH, on the instance the pane binds.
+        var sw = Stopwatch.StartNew();
+        var listing = logs.RefreshFilesCommand.ExecuteAsync(null);
+        PumpUntil(() => listing.IsCompleted, TimeSpan.FromSeconds(30));
+        PumpFor(TimeSpan.FromMilliseconds(300));
+        sw.Stop();
+        var shot = Capture(main, "t1-sdlist-empty");
+
+        // The pane, not only the view model: NO FILES is what a user sees for an empty card, and
+        // the file grid is what must not be showing beside it.
+        var noFiles = ByAutomationId(main, "DeviceLogsNoFilesTitle");
+        var fileGrid = main.GetVisualDescendants().OfType<Control>()
+            .FirstOrDefault(c => c.Name == "DeviceFilesList");
+        var statusText = ByAutomationId(main, "SdCardStatusText") as TextBlock;
+        var emptyPanelShown = noFiles?.IsEffectivelyVisible == true;
+        var gridShown = fileGrid?.IsEffectivelyVisible == true;
+
+        Step(1, "SD-LIST", "limits",
+             device.SdListingRequests > 0
+                 && logs.SdCardState == SdCardState.Ok
+                 && logs.DeviceFiles.Count == 0
+                 && logs is { HasNoFiles: true, HasFiles: false, HasSdCardNotPresent: false, HasSdCardError: false }
+                 && logs.SdCardStatusLine == " · SD card OK · 0 files"
+                 && emptyPanelShown && !gridShown,
+             $"the app asked the device for a listing {device.SdListingRequests} time(s) and got " +
+             $"{logs.DeviceFiles.Count} file(s) back in {sw.Elapsed.TotalSeconds:F1} s; " +
+             $"SdCardState={logs.SdCardState} (an empty card has to read Ok — NotPresent and Error " +
+             $"are the two other panels this one is told apart from); HasNoFiles={logs.HasNoFiles} " +
+             $"HasFiles={logs.HasFiles} HasSdCardNotPresent={logs.HasSdCardNotPresent} " +
+             $"HasSdCardError={logs.HasSdCardError}; status line '{logs.SdCardStatusLine}'; " +
+             $"the DEVICE LOGS segment was {(deviceLogsTab is null ? "NOT FOUND in the pane" : "selected")} and " +
+             $"the pane shows the NO FILES panel={emptyPanelShown} beside a hidden file grid={!gridShown}" +
+             (statusText is null ? "; the status line control was not found" : $"; it reads '{statusText.Text}'"),
+             shot, sw.Elapsed.TotalSeconds);
+    }
+
+    /// <summary>
+    /// CONN-LOST at the matrix's stated edge case: the link goes away <em>mid-stream</em>. What the
+    /// app owes the user is a teardown and one notification — not a device stuck in the list, not
+    /// channels left subscribed to a device that is gone, and not a dialog per drop report.
+    /// </summary>
+    /// <remarks>
+    /// <para>
+    /// The channels half is the substance rather than bookkeeping: left subscribed they stay in
+    /// <c>LoggingManager</c> marked active for the process lifetime, still counting toward
+    /// <c>CanToggleLogging</c> and still listed as live inputs for hardware that has been unplugged.
+    /// That leak is what <c>ConnectionManager</c>'s drop teardown exists to close.
+    /// </para>
+    /// <para>
+    /// The drop is raised TWICE on purpose. A real unplug is reported on more than one path —
+    /// Core's status transition and the port-presence watcher — and "the notification appears once,
+    /// not repeatedly" is the matrix's expectation for this row. A rig that can only raise it once
+    /// cannot check that.
+    /// </para>
+    /// </remarks>
+    private static void RunDropMidStreamRow(Window main, DaqifiViewModel shell)
+    {
+        var device = new ScriptedDevice(ScriptedSerial);
+        var ai = device.AddAnalogInput(0);
+        ConnectScripted(shell, device);
+
+        try
+        {
+            // Clicking the channel's tile: ToggleChannelCommand both enables the channel on the
+            // device AND subscribes it in LoggingManager, and only the second half is what the drop
+            // teardown has to release. The pane is built the way ChannelsPanePrototype.axaml.cs
+            // builds it, and populates itself from ConnectionManager.
+            var channelsPane = new ChannelsPaneViewModel();
+            Pump();
+            var tile = FindTile(channelsPane, ai);
+            channelsPane.ToggleChannelCommand.Execute(tile);
+            Pump();
+
+            // The LOGGING toggle — disk-space check, session creation, LoggingFleet.Start.
+            shell.SelectedIndex = LiveGraphTabIndex;
+            PumpFor(TimeSpan.FromMilliseconds(300));
+            shell.IsLogging = true;
+            PumpUntil(() => LoggingManager.Instance.Active, TimeSpan.FromSeconds(15));
+
+            // Stream. Samples arrive the way the streaming path delivers them — by assigning
+            // ActiveSample, which is what raises OnChannelUpdated — so LoggingManager, the live
+            // plot and the database writer are all really running when the link goes away.
+            var startedAt = DateTime.Now;
+            for (var i = 0; i < DroppedRunSamples; i++)
+            {
+                device.PushSample(ai, startedAt.AddMilliseconds(i * 10), Math.Sin(i / 8.0));
+                Pump();
+            }
+            PumpFor(TimeSpan.FromMilliseconds(500));
+
+            // Read the plot BEFORE the drop: LoggingManager clears the PlotLogger when Active goes
+            // false, and this row has to be able to say it was genuinely mid-stream rather than
+            // asserting a teardown against an idle app.
+            var plottedBefore = shell.Plotter?.LoggedPoints?.Values.Sum(l => l.Count) ?? -1;
+            var subscribedBefore = LoggingManager.Instance.SubscribedChannels.Count;
+            var activeBefore = LoggingManager.Instance.Active;
+            var midStream = activeBefore && plottedBefore > 0 && subscribedBefore > 0;
+            Capture(main, "t1-connlost-streaming");
+
+            // The drop.
+            const string reason = "the scripted transport went away";
+            var sw = Stopwatch.StartNew();
+            device.Drop(reason);
+            var removed = PumpUntil(
+                () => !shell.ConnectedDevices.Contains(device)
+                      && !ConnectionManager.Instance.ConnectedDevices.Contains(device),
+                TimeSpan.FromSeconds(15));
+            PumpFor(TimeSpan.FromMilliseconds(500));
+            sw.Stop();
+
+            var subscribedAfter = LoggingManager.Instance.SubscribedChannels.Count;
+            var dialogs = ErrorDialogs();
+            var message = ErrorDialogMessage(dialogs.FirstOrDefault());
+            // Both halves: a generic "Device disconnected unexpectedly." is the fallback the shell
+            // shows when a producer raises the flag without a reason, and it is what a regression in
+            // TearDownDroppedDevice looks like — not a crash.
+            var namesDevice = message is not null
+                              && message.Contains(ScriptedSerial, StringComparison.Ordinal)
+                              && message.Contains(reason, StringComparison.Ordinal);
+            var shot = Capture(main, "t1-connlost-dropped");
+
+            Step(1, "CONN-LOST", "works",
+                 midStream && removed && subscribedAfter == 0 && dialogs.Count == 1 && namesDevice,
+                 $"streaming when the link went: LoggingManager.Active={activeBefore}, " +
+                 $"{subscribedBefore} subscribed channel(s), {plottedBefore} live plot point(s); " +
+                 $"after the drop the device left both lists in {sw.Elapsed.TotalSeconds:F1} s " +
+                 $"(shell.ConnectedDevices={shell.ConnectedDevices.Count}, " +
+                 $"manager.ConnectedDevices={ConnectionManager.Instance.ConnectedDevices.Count}) and " +
+                 $"{subscribedAfter} channel(s) were left subscribed; {dialogs.Count} notification(s) " +
+                 $"on screen reading '{message ?? "(none)"}' — names the device and the reason={namesDevice}; " +
+                 $"the session itself is left running (shell.IsLogging={shell.IsLogging}), which the " +
+                 "teardown does not stop and this row does not judge",
+                 shot, sw.Elapsed.TotalSeconds);
+
+            // Once, not repeatedly. The guard that makes a second report a no-op is
+            // `if (!ConnectedDevices.Contains(device)) { return; }` in OnDeviceConnectionLost.
+            device.Drop(reason);
+            PumpFor(TimeSpan.FromSeconds(1));
+            var dialogsAfter = ErrorDialogs();
+            Step(1, "CONN-LOST", "limits",
+                 dialogs.Count == 1 && dialogsAfter.Count == dialogs.Count
+                     && shell.ConnectedDevices.Count == 0,
+                 $"a second drop report on the same device left {dialogsAfter.Count} notification(s) " +
+                 $"open against the {dialogs.Count} the first one raised, and ConnectedDevices at " +
+                 $"{shell.ConnectedDevices.Count}",
+                 Capture(main, "t1-connlost-second-drop"));
+        }
+        finally
+        {
+            // Nothing here is board state or user state — it is all inside <out> — but a session
+            // left running and a modal dialog left owning the main window both outlive the row, and
+            // the second one makes every later screenshot a picture of the dialog.
+            try
+            {
+                if (shell.IsLogging)
+                {
+                    shell.IsLogging = false;
+                    PumpUntil(() => !LoggingManager.Instance.Active, TimeSpan.FromSeconds(10));
+                }
+            }
+            catch (Exception ex) { Console.WriteLine($"[WARN] cleanup stop logging: {ex.Message}"); }
+
+            foreach (var dialog in ErrorDialogs())
+            {
+                try { dialog.Close(); }
+                catch (Exception ex) { Console.WriteLine($"[WARN] cleanup close notification: {ex.Message}"); }
+            }
+            Pump();
+        }
+    }
+
+    /// <summary>The connection-drop notifications currently on screen. <c>DaqifiViewModel</c>'s
+    /// <c>NotifyConnection</c> handler opens one <c>ErrorDialog</c> per notification, so the number
+    /// of open ones is what "it appeared once" means to the person looking at the app.</summary>
+    private static List<ErrorDialog> ErrorDialogs() =>
+        (Application.Current?.ApplicationLifetime as IClassicDesktopStyleApplicationLifetime)
+            ?.Windows.OfType<ErrorDialog>().ToList() ?? [];
+
+    private static string? ErrorDialogMessage(ErrorDialog? dialog) =>
+        (dialog?.DataContext as ErrorDialogViewModel)?.ErrorMessage;
+
+    /// <summary>The control the app tagged with <paramref name="id"/>. Reading the same
+    /// <c>AutomationProperties.AutomationId</c> a UI-automation script would means a row and a
+    /// FlaUI selector cannot drift apart silently.</summary>
+    private static Control? ByAutomationId(Window w, string id) =>
+        w.GetVisualDescendants().OfType<Control>()
+            .FirstOrDefault(c => AutomationProperties.GetAutomationId(c) == id);
 
     private static bool CanStillWriteTo(string directory)
     {
