@@ -161,6 +161,14 @@ public abstract partial class AbstractChannel : ObservableObject, IChannel
     /// </summary>
     public const int MaxScaleExpressionDepth = 8;
 
+    /// <summary>
+    /// How long the parser gets before the expression is refused as too complex. Real
+    /// calibrations parse in single-digit milliseconds, so this is ~50x headroom; it exists to
+    /// bound the cost the character counting can only predict, and it is what makes the freeze
+    /// impossible rather than merely unlikely.
+    /// </summary>
+    public const int MaxScaleExpressionParseMilliseconds = 250;
+
     /// <summary>The message the INVALID EXPRESSION label carries for an ordinary parse failure.</summary>
     public const string InvalidExpressionMessage = "INVALID EXPRESSION";
 
@@ -183,10 +191,8 @@ public abstract partial class AbstractChannel : ObservableObject, IChannel
             // expression text enters the parser, and the parser cannot be made safe from the
             // outside: an exponential parse never throws, so the catch below never sees it, and
             // a StackOverflowException cannot be caught at all — the runtime fails fast and the
-            // process dies with the logging session in it. Nor can the parse be given a
-            // deadline: NCalc's parse takes no CancellationToken and .NET cannot abort a
-            // thread, so a timeout would only hide a core that keeps spinning. Refusing the
-            // input is the only fix that actually removes the failure (#311).
+            // process dies with the logging session in it. Refusing the input is what removes
+            // the crash; the deadline further down is what removes the freeze (#311).
             if (_scaledExpression.Length > MaxScaleExpressionLength)
             {
                 Reject($"EXPRESSION TOO LONG (LIMIT {MaxScaleExpressionLength} CHARACTERS)");
@@ -206,15 +212,32 @@ public abstract partial class AbstractChannel : ObservableObject, IChannel
                 Parameters = { ["x"] = 1 }
             };
 
+            // The backstop the character counting cannot be, because it measures the cost itself
+            // instead of predicting it from the text. Two Qodo rounds each found a different way
+            // to make the depth counter disagree with NCalc's own lexer — a ')' inside a string
+            // literal, then a quote inside a [bracket-delimited] parameter name — and a third way
+            // is always possible, because this is guessing at a grammar the app does not own. A
+            // deadline is immune to all of them: NCalcSync 7.1.0's Evaluate DOES take a
+            // CancellationToken (contrary to what this PR first claimed) and threads it into
+            // LogicalExpressionFactory.Create, so the pathological parse stops at the deadline —
+            // measured, the 78 s bracket bypass returns in 0.255 s under a 250 ms budget.
+            // The caps above still earn their place: a deadline cannot stop a StackOverflowException,
+            // which is uncatchable and takes the process down.
+            using var deadline = new CancellationTokenSource(
+                TimeSpan.FromMilliseconds(MaxScaleExpressionParseMilliseconds));
             try
             {
-                Expression.Evaluate();
+                Expression.Evaluate(deadline.Token);
                 HasValidExpression = true;
                 ScaleExpressionError = InvalidExpressionMessage;
             }
             catch (Exception)
             {
-                Reject(InvalidExpressionMessage);
+                // NCalc reports a cancelled parse as an ordinary parse failure, so the token is
+                // what distinguishes "this is not valid" from "this was taking too long".
+                Reject(deadline.IsCancellationRequested
+                    ? $"EXPRESSION TOO COMPLEX (PARSING STOPPED AFTER {MaxScaleExpressionParseMilliseconds} MS)"
+                    : InvalidExpressionMessage);
             }
             OnPropertyChanged();
         }
@@ -233,23 +256,44 @@ public abstract partial class AbstractChannel : ObservableObject, IChannel
     }
 
     /// <summary>
-    /// The most <c>(</c> open at once. Unmatched <c>)</c> are ignored rather than driving the
-    /// count negative, so <c>))((((</c> counts as 4: what costs the parser is how many parens
-    /// are open when it starts backtracking, and a leading <c>)</c> cannot cancel one out.
+    /// The most <c>(</c> open at once, counted the pessimistic way: the larger of two readings of
+    /// the same text, one that treats quotes as string delimiters and one that does not.
     /// </summary>
     /// <remarks>
-    /// Parentheses inside a string literal are skipped, because they are text to the parser and
-    /// close nothing. Counting them let a crafted input talk its way past the cap: in
-    /// <c>((((((((')))))))))' + ((((</c> the eight quoted <c>)</c> cancelled eight real <c>(</c>
-    /// for this counter while closing no group at all, so the parser was handed twelve open
-    /// parentheses behind a count of eight. NCalc 7.1.0 quotes with either <c>'</c> or <c>"</c>
-    /// and escapes with <c>\</c>, and both forms are honoured here — verified against the
-    /// package rather than assumed, since skipping the wrong delimiter would silently reopen
-    /// the same hole. An unterminated quote swallows the rest of the string, which is safe in
-    /// the direction that matters: the parser rejects the malformed literal outright instead of
-    /// descending into whatever follows it.
+    /// <para>
+    /// Both readings are needed because each is wrong in a different direction, and Qodo found
+    /// both. Reading the text raw lets a <c>)</c> <em>inside</em> a string literal cancel a real
+    /// <c>(</c> that it does not close, so <c>((((((((')))))))))' + ((((</c> reports 8 while the
+    /// parser is handed 12. Reading it quote-aware lets a quote that is <em>not</em> a delimiter
+    /// — NCalc's <c>[bracket-delimited]</c> parameter names may contain one — leave the scan
+    /// stuck inside an imaginary string for the rest of the input, so <c>['x] + ((((((((((((</c>
+    /// reports 0 while the parser is handed 12 and takes 78 seconds over it.
+    /// </para>
+    /// <para>
+    /// Taking the maximum refuses both, and errs toward refusing rather than accepting whenever
+    /// the two disagree — the only safe direction for a guard that is deliberately not a full
+    /// implementation of somebody else's grammar. The parse deadline in the setter is what makes
+    /// that guess non-load-bearing: a third disagreement is always possible, and the deadline
+    /// bounds the cost of one whatever the counting said.
+    /// </para>
     /// </remarks>
-    private static int DeepestParenthesisNesting(string expression)
+    private static int DeepestParenthesisNesting(string expression) =>
+        Math.Max(
+            DeepestParenthesisNesting(expression, skipStringLiterals: false),
+            DeepestParenthesisNesting(expression, skipStringLiterals: true));
+
+    /// <summary>
+    /// One reading of the text. Unmatched <c>)</c> are ignored rather than driving the count
+    /// negative, so <c>))((((</c> counts as 4: what costs the parser is how many parentheses are
+    /// open when it starts backtracking, and a leading <c>)</c> cannot cancel one out.
+    /// </summary>
+    /// <param name="expression">The text the user typed.</param>
+    /// <param name="skipStringLiterals">
+    /// When true, <c>'…'</c> and <c>"…"</c> runs are skipped whole — NCalc 7.1.0 accepts both
+    /// quoting forms and escapes with <c>\</c> inside each, checked against the package rather
+    /// than assumed.
+    /// </param>
+    private static int DeepestParenthesisNesting(string expression, bool skipStringLiterals)
     {
         var open = 0;
         var deepest = 0;
@@ -266,7 +310,7 @@ public abstract partial class AbstractChannel : ObservableObject, IChannel
                 continue;
             }
 
-            if (character is '\'' or '"')
+            if (skipStringLiterals && character is '\'' or '"')
             {
                 quote = character;
             }

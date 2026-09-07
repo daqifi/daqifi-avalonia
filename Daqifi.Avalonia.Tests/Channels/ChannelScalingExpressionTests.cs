@@ -308,6 +308,51 @@ public class ChannelScalingExpressionTests
     }
 
     [Theory]
+    // Qodo's second round on #314, and the other direction from the case above. A quote inside
+    // an NCalc [bracket-delimited] parameter name is NOT a string delimiter, so a scan that
+    // treats it as one stays "inside a string" for the rest of the input and stops counting
+    // parentheses altogether: this 19-character paste reported depth 0 while the parser was
+    // handed twelve open parentheses and spent 78 seconds on them. The counting is therefore
+    // done both ways and the larger answer wins.
+    [InlineData("['x] + ((((((((((((")]
+    [InlineData("[\"x] + ((((((((((((")]
+    public void A_quote_in_a_bracketed_parameter_name_does_not_hide_open_parentheses(string expression)
+    {
+        var started = Stopwatch.StartNew();
+        var channel = Scaled(expression);
+        started.Stop();
+
+        Assert.False(channel.HasValidExpression);
+        Assert.Contains("NESTED PARENTHESES", channel.ScaleExpressionError, StringComparison.Ordinal);
+        Assert.True(started.Elapsed < TimeSpan.FromSeconds(5),
+            $"the setter took {started.Elapsed.TotalSeconds:0.0} s, so the parser was entered");
+    }
+
+    [Fact]
+    public void An_input_the_counting_lets_through_is_still_stopped_by_the_parse_deadline()
+    {
+        // The counting is a guess at somebody else's grammar and two rounds of review each found
+        // a way to make it disagree with NCalc. This is the backstop that does not depend on
+        // getting the guess right: 8 open parentheses followed by 248 '!' satisfies BOTH bounds
+        // — 256 characters exactly, nesting depth 8 exactly — and still costs ~1.4 s unguarded.
+        // The deadline turns that into a refusal in a quarter of a second.
+        var underBothCaps = new string('(', AbstractChannel.MaxScaleExpressionDepth)
+                            + new string('!', AbstractChannel.MaxScaleExpressionLength
+                                              - AbstractChannel.MaxScaleExpressionDepth);
+
+        Assert.Equal(AbstractChannel.MaxScaleExpressionLength, underBothCaps.Length);
+
+        var started = Stopwatch.StartNew();
+        var channel = Scaled(underBothCaps);
+        started.Stop();
+
+        Assert.False(channel.HasValidExpression);
+        Assert.Contains("TOO COMPLEX", channel.ScaleExpressionError, StringComparison.Ordinal);
+        Assert.True(started.Elapsed < TimeSpan.FromSeconds(2),
+            $"the deadline did not stop the parse: it took {started.Elapsed.TotalSeconds:0.0} s");
+    }
+
+    [Theory]
     [InlineData("x * if('a' == 'a', 2, 3)")]
     [InlineData("x * if(\"a\" == \"a\", 2, 3)")]
     public void A_string_literal_is_still_ordinary_text_the_guard_lets_through(string expression)
