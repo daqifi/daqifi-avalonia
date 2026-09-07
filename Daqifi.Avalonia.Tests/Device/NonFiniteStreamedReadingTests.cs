@@ -10,9 +10,17 @@ using CoreAnalogChannel = Daqifi.Core.Channel.AnalogChannel;
 namespace Daqifi.Avalonia.Tests.Device;
 
 /// <summary>
-/// Issue #295: the USB firmware's pre-scaled floats reach the app unvalidated, and a single
-/// non-finite one used to make the Log Summary flyout's Average read <c>NaN</c> for the rest of
-/// the session.
+/// Issue #295: a streaming frame's pre-scaled analog floats reached the app unvalidated, and a
+/// single non-finite one used to make the Log Summary flyout's Average read <c>NaN</c> for the
+/// rest of the session.
+///
+/// <para>
+/// The frames below carry <c>AnalogInDataFloat</c> because that is the payload with no upstream
+/// validation — the integer payload is scaled through Core, which sanitizes the coefficients it
+/// scales with. Which payload a board actually sends is a firmware decision (the bench board at
+/// fw 3.7.2 sends the integer one over USB), which is why the guard is placed after the branch
+/// rather than inside the float leg.
+/// </para>
 ///
 /// <para>
 /// Core's per-channel statistics keep a running <c>ValueSum</c>, so the poisoning is permanent
@@ -89,10 +97,10 @@ public class NonFiniteStreamedReadingTests
         }
 
         /// <summary>
-        /// Delivers one streaming frame carrying firmware-supplied pre-scaled floats — the USB
-        /// shape, one value per active analog channel in index order.
+        /// Delivers one streaming frame carrying firmware-supplied pre-scaled floats, one value
+        /// per active analog channel in index order.
         /// </summary>
-        internal void ReceiveUsbFrame(uint deviceTicks, params float[] preScaledVolts)
+        internal void ReceiveFloatFrame(uint deviceTicks, params float[] preScaledVolts)
         {
             var message = new DaqifiOutMessage { MsgTimeStamp = deviceTicks };
             foreach (var volts in preScaledVolts)
@@ -138,7 +146,7 @@ public class NonFiniteStreamedReadingTests
         var device = new StreamingProbeDevice();
         var channel = device.AddActiveAnalogChannel(0);
 
-        device.ReceiveUsbFrame(1_000, float.NaN);
+        device.ReceiveFloatFrame(1_000, float.NaN);
 
         Assert.Null(channel.ActiveSample);
     }
@@ -160,7 +168,7 @@ public class NonFiniteStreamedReadingTests
         var device = new StreamingProbeDevice();
         var channel = device.AddActiveAnalogChannel(0);
 
-        device.ReceiveUsbFrame(1_000, reading);
+        device.ReceiveFloatFrame(1_000, reading);
 
         Assert.Null(channel.ActiveSample);
     }
@@ -178,7 +186,7 @@ public class NonFiniteStreamedReadingTests
         var broken = device.AddActiveAnalogChannel(1);
         var last = device.AddActiveAnalogChannel(2);
 
-        device.ReceiveUsbFrame(1_000, 1.5f, float.NaN, 2.5f);
+        device.ReceiveFloatFrame(1_000, 1.5f, float.NaN, 2.5f);
 
         Assert.Equal(1.5, first.ActiveSample!.Value, precision: 5);
         Assert.Null(broken.ActiveSample);
@@ -195,8 +203,8 @@ public class NonFiniteStreamedReadingTests
         var device = new StreamingProbeDevice();
         var channel = device.AddActiveAnalogChannel(0);
 
-        device.ReceiveUsbFrame(1_000, float.NaN);
-        device.ReceiveUsbFrame(2_000, 3.25f);
+        device.ReceiveFloatFrame(1_000, float.NaN);
+        device.ReceiveFloatFrame(2_000, 3.25f);
 
         Assert.Equal(3.25, channel.ActiveSample!.Value, precision: 5);
     }
@@ -213,9 +221,9 @@ public class NonFiniteStreamedReadingTests
         var channel = device.AddActiveAnalogChannel(0);
         var summary = SummaryFedBy(device);
 
-        device.ReceiveUsbFrame(1_000, 2.0f);
-        device.ReceiveUsbFrame(2_000, float.NaN);
-        device.ReceiveUsbFrame(3_000, 4.0f);
+        device.ReceiveFloatFrame(1_000, 2.0f);
+        device.ReceiveFloatFrame(2_000, float.NaN);
+        device.ReceiveFloatFrame(3_000, 4.0f);
 
         var row = TheRow(summary);
 
@@ -235,9 +243,9 @@ public class NonFiniteStreamedReadingTests
         var channel = device.AddActiveAnalogChannel(0);
         var summary = SummaryFedBy(device);
 
-        device.ReceiveUsbFrame(1_000, 2.0f);
-        device.ReceiveUsbFrame(2_000, float.NaN);
-        device.ReceiveUsbFrame(3_000, 4.0f);
+        device.ReceiveFloatFrame(1_000, 2.0f);
+        device.ReceiveFloatFrame(2_000, float.NaN);
+        device.ReceiveFloatFrame(3_000, 4.0f);
 
         var row = TheRow(summary);
 
@@ -256,7 +264,7 @@ public class NonFiniteStreamedReadingTests
         var channel = device.AddActiveAnalogChannel(0);
         var summary = SummaryFedBy(device);
 
-        device.ReceiveUsbFrame(1_000, 1.25f);
+        device.ReceiveFloatFrame(1_000, 1.25f);
 
         Assert.Equal(1.25, channel.ActiveSample!.Value, precision: 5);
         Assert.Equal(1.25, TheRow(summary).AverageValue, precision: 5);
@@ -281,9 +289,9 @@ public class NonFiniteStreamedReadingTests
         device.AddActiveAnalogChannel(0);
         device.AddActiveAnalogChannel(1);
 
-        device.ReceiveUsbFrame(1_000, float.NaN, 1.0f);
-        device.ReceiveUsbFrame(2_000, float.NaN, 1.0f);
-        device.ReceiveUsbFrame(3_000, float.NaN, float.PositiveInfinity);
+        device.ReceiveFloatFrame(1_000, float.NaN, 1.0f);
+        device.ReceiveFloatFrame(2_000, float.NaN, 1.0f);
+        device.ReceiveFloatFrame(3_000, float.NaN, float.PositiveInfinity);
 
         Assert.Equal(3, device.DiscardedNonFiniteReadings(0));
         Assert.Equal(1, device.DiscardedNonFiniteReadings(1));
@@ -299,7 +307,7 @@ public class NonFiniteStreamedReadingTests
         var device = new StreamingProbeDevice();
         device.AddActiveAnalogChannel(0);
 
-        device.ReceiveUsbFrame(1_000, 1.0f);
+        device.ReceiveFloatFrame(1_000, 1.0f);
 
         Assert.Equal(0, device.DiscardedNonFiniteReadings(0));
     }

@@ -1258,7 +1258,12 @@ public abstract partial class AbstractStreamingDevice : ObservableObject, IStrea
         }
 
         var hasDigitalData = message.DigitalData.Length > 0;
-        // USB firmware sends pre-scaled floats (AnalogInDataFloat); WiFi sends raw ADC counts (AnalogInData).
+        // The protocol defines two analog payloads and firmware picks one: AnalogInData (raw
+        // integer ADC counts, scaled here through the channel's calibration) or AnalogInDataFloat
+        // (volts, already scaled by the firmware). This is NOT a transport split, whatever the
+        // comment here used to say — measured on the bench board (Nq1, fw 3.7.2) over USB, its
+        // frames carry AnalogInData with AnalogInDataFloat empty. Both are decoded because the
+        // choice belongs to the firmware, not to us.
         var hasAnalogData = message.AnalogInData.Count > 0 || message.AnalogInDataFloat.Count > 0;
 
         // Process analog channels - device sends data in channel index order, not activation order
@@ -1271,8 +1276,8 @@ public abstract partial class AbstractStreamingDevice : ObservableObject, IStrea
                                                       .OrderBy(c => c.Index)
                                                       .ToList();
 
-                // USB firmware sends pre-scaled float values (already in volts); use them directly.
-                // WiFi firmware sends raw integer ADC counts; apply channel calibration scaling.
+                // Pre-scaled floats when the frame carries them, raw integer ADC counts otherwise
+                // — see the payload note above. Presence, not transport, is what picks the branch.
                 var hasFloatData = message.AnalogInDataFloat.Count > 0;
                 var dataCount = hasFloatData ? message.AnalogInDataFloat.Count : message.AnalogInData.Count;
 
@@ -1305,11 +1310,16 @@ public abstract partial class AbstractStreamingDevice : ObservableObject, IStrea
                     // SessionSampleWriter answers at the database door, where the constraint is
                     // what SQLite can store — and SQLite stores infinities fine.
                     //
-                    // Only the USB float branch above can actually produce one today: Core
-                    // sanitizes the calibration coefficients the WiFi branch scales with, so
-                    // GetScaledValue cannot return a non-finite value. The guard sits after the
-                    // branch anyway because the invariant worth holding is about the value being
-                    // published, not about which transport supplied it.
+                    // After the branch, not inside the float one, and that placement is the point.
+                    // The float payload is the unvalidated leg — a protobuf float straight off the
+                    // wire, checked by nobody — while the integer leg goes through Core, which
+                    // substitutes an assumed resolution and sanitizes every calibration
+                    // coefficient, so GetScaledValue is not expected to return a non-finite value.
+                    // But "which leg a board uses" is a firmware decision that changes under us
+                    // (the bench board at fw 3.7.2 uses the integer one), so the invariant worth
+                    // holding is about the value being published, not about where it came from.
+                    // On the integer leg this is defence in depth against a Core regression; on
+                    // the float leg it is the only check there is.
                     if (!double.IsFinite(scaledValue))
                     {
                         ReportNonFiniteReading(channel, scaledValue);
