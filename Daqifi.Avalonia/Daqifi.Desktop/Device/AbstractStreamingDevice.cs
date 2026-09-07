@@ -1949,9 +1949,11 @@ public abstract partial class AbstractStreamingDevice : ObservableObject, IStrea
     }
 
     /// <summary>
-    /// How many occurrences of a per-message decode failure are logged in full before the
-    /// report thins out to powers of ten. Ten is enough to capture a transient fault end to
-    /// end while staying a small fraction of the bounded breadcrumb ring.
+    /// How many occurrences of a per-message fault are logged in full before the report thins
+    /// out to powers of ten — a decode failure (<see cref="ReportStreamProcessingFailure"/>) or a
+    /// discarded non-finite reading (<see cref="ReportNonFiniteReading"/>). Ten is enough to
+    /// capture a transient fault end to end while staying a small fraction of the bounded
+    /// breadcrumb ring.
     /// </summary>
     private const int FullyLoggedFailureCount = 10;
 
