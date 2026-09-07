@@ -288,6 +288,11 @@ public partial class ExportDialogViewModel : ObservableObject, IDisposable
         // not having thrown, which is not the same question (issue #312).
         var exported = 0;
 
+        // How many of them were already gone from the database by the time Export was pressed — the
+        // OTHER reason a run comes up short, kept apart from "had no rows" so the message can say
+        // which one happened.
+        var missing = 0;
+
         // Non-null once we can tell the user *why* the export failed (a locked or unwritable
         // destination). Everything else falls back to the generic message.
         string? failureReason = null;
@@ -309,6 +314,12 @@ public partial class ExportDialogViewModel : ObservableObject, IDisposable
                     var loggingSession = await GetLoggingSessionFromId(target.SessionId);
                     if (loggingSession == null)
                     {
+                        // Counted, not just logged: this is one of the two reasons a run can come up
+                        // short, and the result message has to name the one that actually happened.
+                        // "The rest had no logged data" is simply untrue of a session that was
+                        // deleted while the dialog was open, and sends the user looking through data
+                        // that was never the problem.
+                        missing++;
                         AppLogger.Instance.Warning(
                             $"Skipping export for session {target.SessionId}: it was not found in the database.");
                         continue;
@@ -368,7 +379,7 @@ public partial class ExportDialogViewModel : ObservableObject, IDisposable
                 // own count check keeps the dialog from opening on an empty selection today, and a
                 // guard in another class is not what should decide whether this one tells the truth.
                 failed = true;
-                failureReason = DescribeShortfall(exported, targets.Count);
+                failureReason = DescribeShortfall(exported, targets.Count, missing);
                 AppLogger.Instance.Warning($"Export finished short: {failureReason}");
                 AppLogger.Instance.AddBreadcrumb("export", "Data export wrote fewer files than requested",
                     Common.Loggers.BreadcrumbLevel.Warning);
@@ -545,12 +556,34 @@ public partial class ExportDialogViewModel : ObservableObject, IDisposable
     /// only actionable if the user can see how many landed — and because the destination shown
     /// underneath it may well contain files from an earlier, complete export.
     /// </summary>
-    private static string DescribeShortfall(int exported, int requested) => requested switch
+    /// <param name="exported">Sessions that produced a CSV.</param>
+    /// <param name="requested">Sessions the user selected.</param>
+    /// <param name="missing">How many of the shortfall were already gone from the database, as
+    /// opposed to present but empty. Named separately because the two are different things to a user
+    /// hunting for a file that is not there: a session deleted while the dialog was open is not a
+    /// session with no rows in it, and reporting the second when the first happened sends them
+    /// looking through data that was never the problem.</param>
+    private static string DescribeShortfall(int exported, int requested, int missing)
     {
-        0 => "Nothing was exported: no sessions were selected.",
-        _ when exported == 0 => "Nothing was exported: no logged data was found.",
-        _ => $"Exported {exported} of {requested} sessions. The rest had no logged data.",
-    };
+        if (requested == 0) { return "Nothing was exported: no sessions were selected."; }
+
+        var lead = exported == 0
+            ? "Nothing was exported"
+            : $"Exported {exported} of {requested} sessions";
+
+        // Agreement done by hand rather than with a "(s)": this string is read by someone who has
+        // just been told their export did not fully happen, and that is the wrong moment to look
+        // sloppy about how many of their sessions are gone.
+        var goneSessions = missing == 1 ? "1 session is" : $"{missing} sessions are";
+
+        return missing switch
+        {
+            0 when exported == 0 => $"{lead}: no logged data was found.",
+            0 => $"{lead}: the rest had no logged data.",
+            _ when missing == requested - exported => $"{lead}: {goneSessions} no longer in the database.",
+            _ => $"{lead}: {goneSessions} no longer in the database, and the rest had no logged data.",
+        };
+    }
 
     /// <summary>
     /// One session mapped to the file it will be written to.

@@ -151,6 +151,49 @@ public sealed class ExportResultHonestyTests : IDisposable
     }
 
     /// <summary>
+    /// A session deleted while the dialog was open comes up short for a completely different reason
+    /// than one holding no rows, and the message has to say which. "The rest had no logged data" is
+    /// simply untrue here, and it sends the user looking through data that was never the problem.
+    /// </summary>
+    [Fact]
+    public async Task A_session_deleted_since_the_dialog_opened_is_not_blamed_on_empty_data()
+    {
+        var withData = SeedSession("AI0", 1.25, withSamples: true);
+        // Never seeded, so GetLoggingSessionFromId finds nothing — the shape of a row deleted from
+        // another pane between this dialog opening and Export being pressed.
+        var deleted = new LoggingSession { ID = 4242, Name = "Deleted" };
+        var destination = Path.Combine(_root, "export");
+
+        var viewModel = new ExportDialogViewModel(_contexts, new[] { withData, deleted });
+        await viewModel.ExportToDirectoryAsync(destination);
+
+        var message = viewModel.ExportResultMessage ?? string.Empty;
+        Assert.False(viewModel.ExportSucceeded, message);
+        Assert.Contains("1 of 2", message, StringComparison.Ordinal);
+        Assert.Contains("no longer in the database", message, StringComparison.Ordinal);
+        Assert.DoesNotContain("had no logged data", message, StringComparison.Ordinal);
+        Assert.Single(Directory.GetFiles(destination));
+    }
+
+    /// <summary>The same, with nothing left to export at all — and the count agreeing.</summary>
+    [Fact]
+    public async Task An_export_of_only_deleted_sessions_says_so()
+    {
+        var destination = Path.Combine(_root, "export");
+
+        var viewModel = new ExportDialogViewModel(
+            _contexts,
+            new[] { new LoggingSession { ID = 4242, Name = "Deleted" } });
+        await viewModel.ExportToDirectoryAsync(destination);
+
+        var message = viewModel.ExportResultMessage ?? string.Empty;
+        Assert.False(viewModel.ExportSucceeded, message);
+        Assert.Contains("Nothing was exported", message, StringComparison.Ordinal);
+        Assert.Contains("1 session is no longer in the database", message, StringComparison.Ordinal);
+        Assert.Empty(Directory.GetFiles(destination));
+    }
+
+    /// <summary>
     /// Zero sessions is the degenerate end of the same count, and the one a naive
     /// <c>exported &lt; requested</c> misses: <c>0 &lt; 0</c> is false, so an export that was never even
     /// attempted lands on the success branch. Only <c>LoggingSessionListViewModel</c>'s own count
