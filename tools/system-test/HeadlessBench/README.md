@@ -9,9 +9,11 @@ fakes; `tools/parity-audit/AvaloniaCapture` renders screens but never connects t
 hardware. HeadlessBench is the only thing that exercises the device → Core → view-model →
 rendered-window path end to end.
 
-`--scripted` is the same boot with no board: the double is a database seeded before startup
-rather than a device, which is what the three rows about *logged* data — the session list, the
-session plot, and a failed export — actually need. See [below](#--scripted-state--the-rows-that-need-no-board).
+`--scripted` is the same boot with no board. Three of its states seed a **database** before
+startup, which is what the rows about *logged* data — the session list, the session plot, a failed
+export — need; the other two register a **fake device** (`ScriptedDevice.cs`), which is what an
+empty SD card and a connection lost mid-stream need. No state opens a serial port, so these are the
+rows CI can run, and since #304 it does. See [below](#--scripted-state--the-rows-that-need-no-board).
 
 ## What makes it different from a unit test
 
@@ -63,7 +65,12 @@ It goes through the **user's** code path, not a convenient one:
   set the way the Browse picker sets it and `ExportLoggingSessionsCommand` standing in for the
   EXPORT button — going through the shell's `ExportLoggingSessionCommand` instead runs the same
   code but drops the view model on the floor, and the failure message `EXPORT-FAIL` is about
-  lives on it.
+  lives on it. The two device states hold the same line: listing an empty card is
+  `shell.DeviceLogsViewModel.RefreshFilesCommand` on the instance the pane binds, after the Logged
+  Data tab and its DEVICE LOGS segment have been selected the way a user selects them, and enabling
+  the channel that `drop-mid-stream` streams is the Channels pane's own `ToggleChannelCommand` on
+  the channel's tile — the call that both enables it on the device and subscribes it in the logging
+  manager, which is the half the drop teardown has to release.
 
 Every step renders the live window to a PNG and appends one JSON line to
 `<out>/results.jsonl`, so a run leaves behind evidence rather than a verdict.
@@ -96,7 +103,7 @@ reused directory also mixes two runs' PNGs and two runs' databases.
 | `--out` | run directory for `results.jsonl`, `shots/` and `appdata/` (required) | — |
 | `--rate` | streaming frequency in Hz | `100` |
 | `--seconds` | how long to stream once the first sample arrives | `5` |
-| `--scripted <state>` | T1 mode — runs one row against a seeded database, no board (see below) | — |
+| `--scripted <state>` | T1 mode — runs one row against a seeded database or a fake device, no board (see below) | — |
 
 Exit codes: `0` all checks passed · `1` at least one `[FAIL]`, or the run threw ·
 `2` bad arguments (including an unknown `--scripted` state), or an `--out` the rig could not
@@ -109,7 +116,7 @@ dotnet run --project tools/system-test/HeadlessBench/HeadlessBench.csproj --no-r
   --scripted sessions-500 --out "/tmp/headlessbench-t1-$(date +%Y%m%d-%H%M%S)"
 ```
 
-Three states, one matrix row each. `--port` is not used and no serial port is opened, so these
+Five states, one matrix row each. `--port` is not used and no serial port is opened, so these
 are the only rows that can run on a machine with no hardware attached:
 
 | state | row | what it fabricates | what it checks |
@@ -117,17 +124,43 @@ are the only rows that can run on a machine with no hardware attached:
 | `sessions-500` | `LOGGED-LIST` | 500 persisted sessions, one sample each, `SampleCount` NULL | all 500 reach the Logged Data pane's own `SessionList`, keep their exact names and their metadata, and get their counts backfilled |
 | `session-10h` | `LOGGED-PLOT` | one session, 108 000 samples at 3 Hz across ten hours | the Logged Data pane plots it and the drawn range covers all ten hours |
 | `export-readonly` | `EXPORT-FAIL` | one 600-sample session, plus a `chmod 555` destination | the export fails with the *classified* message and leaves the destination empty — measured against a control export to a writable folder in the same run |
+| `sd-empty` | `SD-LIST` | a device whose SD card answers with nothing on it | an empty card reads `Ok` with zero files and the pane shows its NO FILES panel — not "no SD card installed" and not an error — then flips to the file grid when one file appears |
+| `drop-mid-stream` | `CONN-LOST` | a device that loses its transport while a logging session is streaming | the device leaves both lists, no channel is left subscribed to it, and the app raises exactly one notification however many times the drop is reported |
 
-Each state seeds `<out>/appdata/DAQiFiDatabase.db` **before** the app boots, because the one
+The first three seed `<out>/appdata/DAQiFiDatabase.db` **before** the app boots, because the one
 caller of `LoggingManager.ReloadPersistedLoggingSessions` is `DaqifiViewModel`'s one-time init:
 seeding afterwards would be the rig adding rows to a list the app had finished loading, which is
 the opposite of the state being scripted. The schema comes from the app's own
 `DatabaseMigrator`, and the samples go in through `BulkInsert` — the call `SessionSampleWriter`
 makes in production.
 
-The two states the matrix also asks for — `sd-empty` and `drop-mid-stream` — are **not**
-implemented: their double is a fake `IStreamingDevice`, not a database, which is a separate
-piece of work (#304).
+The last two seed nothing and register a `ScriptedDevice` through
+**`ConnectionManager.Instance.Connect`**, which is where every desktop connect path ends up —
+`ConnectionDialogViewModel.ConnectManualSerialCommand` included. The only layer above it these
+states skip is the one that opens a serial port, and replacing that layer is what a device double
+is for. `RegisterConnectedDevice` would be the wrong door and would gut `CONN-LOST` silently: it is
+the *mobile* entry point and wires diagnostics only, deliberately leaving `IDevice.ConnectionLost`
+unsubscribed, so a device registered that way can be dropped all day with nothing happening.
+
+**Why the double lives here rather than being shared with `Daqifi.Avalonia.Tests`.** #304 posed the
+choice as a shared `Daqifi.Avalonia.TestDoubles` library or a copy of the test project's
+`RecordingStreamingDevice` that drifts. Both assume the rig has to reuse that double. It does not:
+`IStreamingDevice`, `IChannel`, `AnalogChannel`, `DataSample` and `ConnectionManager` are all public
+production API, so `ScriptedDevice.cs` implements the interface directly — no new project, no
+`packages.lock.json`, no CI restore line, no `InternalsVisibleTo`, and nothing in the app made
+public for a test's benefit. `RecordingStreamingDevice` would not have served either row anyway: it
+answers #214's fan-out question, hardcodes `SdCardFiles => []` with a no-op `RefreshSdCardFiles`
+(an empty list that was never published is not a card that answered), and declares `ConnectionLost`
+only to suppress CS0067. Subclassing `AbstractStreamingDevice` instead — the shape
+`DroppedDeviceTestDoubles` uses — does not work for `sd-empty` either: `RefreshSdCardFiles` there is
+non-virtual and goes through `GetConnectedCoreDevice`, so a subclass with no Core device throws and
+the row would be measuring the SD classifier's error path. The interface drifting out from under
+the file is caught by the compiler, because CI builds this project.
+
+The channels the device carries are the app's own `AnalogChannel` over Core's own channel, and a
+reading is delivered by assigning `ActiveSample` — the same property the streaming path assigns —
+so `LoggingManager`, the live plot and the database writer are all really running when
+`drop-mid-stream` pulls the link. What is simulated is exactly the transport.
 
 ### `DAQIFI_RESTORE_NAME` — putting a board's name back
 
@@ -177,16 +210,15 @@ checks on `CH-DIO` and `DEV-NAME`, and four `unexpected`-check probes (sample-ar
 device-clock skew, the pin state a channel is left in after PWM is disabled, thread growth across
 connect/disconnect, and UI pump latency).
 
-**With no board** (`--scripted`): `LOGGED-LIST`, `LOGGED-PLOT`, `EXPORT-FAIL` — one per state,
-plus `EXPORT-FAIL`'s atomicity probe and its `cleanup` check.
+**With no board** (`--scripted`): `LOGGED-LIST`, `LOGGED-PLOT`, `EXPORT-FAIL`, `SD-LIST` and
+`CONN-LOST` — one per state, plus `EXPORT-FAIL`'s atomicity probe and its `cleanup` check, and
+`CONN-LOST`'s `limits` check that a repeated drop report raises no second notification.
 
 Add a row by adding a `Step`; keep the shape — drive, assert the device (or the service layer),
 pump, assert the UI, capture, emit.
 
 The full matrix has more rows than this — `DEV-NET` and `DEV-DEBUG` are not implemented, and each
-was inspected and rejected for a reason rather than left undone; `sd-empty` and `drop-mid-stream`
-are the two `--scripted` states still missing. Reasons in Known gaps below; the two `--scripted`
-states are tracked in #304.
+was inspected and rejected for a reason rather than left undone. Reasons in Known gaps below.
 
 `DEV-NAME` runs **last and on its own connections**, which is why the sequence ends with three
 connect/disconnect cycles rather than one. `SetFriendlyName` updates the device object's
@@ -200,18 +232,37 @@ a reconnect, and so does the check that the restore landed (`DEV-NAME/cleanup`).
 
 ## Known gaps — read before trusting a green run
 
-These are real limits of the current rig, not of the app. The two that are open work rather than
-deliberate choices — the missing `--scripted` device states, and CI running the ones that
-exist — are tracked in #304.
+These are real limits of the current rig, not of the app.
 
-- **`--scripted` covers the three database-backed states only.** `sessions-500`, `session-10h`
-  and `export-readonly` run; `sd-empty` and `drop-mid-stream` do not, because their double is a
-  fake `IStreamingDevice` rather than disk contents. The test project has one
-  (`Daqifi.Avalonia.Tests/Device/RecordingStreamingDevice.cs`) but it is `internal` to an
-  assembly this rig cannot see, so reaching it means either a shared test-doubles library or a
-  copy that drifts — a design call, not a missing `case`.
-- **CI compiles the `--scripted` states but still does not run them.** These are the rows that
-  could run there, and wiring them up is its own change to `.github/workflows/build.yml`.
+- **`CONN-LOST` does not assert the sentence the user reads.** The app tells the user by setting
+  `ConnectionManager.LastDisconnectReason` and raising `NotifyConnection`; `DaqifiViewModel`'s
+  handler turns that into an `ErrorDialog`. The row counts the raises and checks that they were
+  consumed, and asserts nothing about the message text, for two measured reasons. The **dialog** is
+  out of reach: the rig never runs the lifetime, so the headless `MainWindow` is not in
+  `ClassicDesktopStyleApplicationLifetime.Windows` — it is empty even after `main.Show()` — and
+  `DialogService` has no owner window to parent to, so the show fails into a fire-and-forget task.
+  The **reason text** is gone by the time any later subscriber sees it: the shell's handler clears
+  `LastDisconnectReason` and puts `NotifyConnection` back *reentrantly*, from inside the same
+  `PropertyChanged` dispatch, and it subscribed at boot while the rig subscribes afterwards.
+- **`CONN-LOST`'s "no channel left subscribed" is backstopped, so it does not name the mechanism.**
+  Deleting `TearDownDroppedDevice`'s own unsubscribe loop leaves the row green, because
+  `DaqifiViewModel`'s `ConnectedDevices` handler sweeps orphaned subscriptions for exactly the
+  auto-removal paths this state drives. The row therefore says "no channel was left stranded", not
+  "the teardown released them". Same shape as the `CONN-DISC` trap below, one layer down.
+- **`CONN-LOST`'s "once, not repeatedly" cannot say which mechanism held.** Two do:
+  `ConnectionManager.Disconnect` detaches the drop handler (`UnsubscribeDeviceEvents`), so a later
+  report reaches nobody, and `OnDeviceConnectionLost`'s `ConnectedDevices.Contains` guard catches
+  the race where a second path arrives before that. Measured: removing either alone leaves the
+  check green; removing both raises a second notification and fails it.
+- **`CONN-LOST` says nothing about what happens to the session.** The teardown leaves
+  `shell.IsLogging` true — a session still running with no device behind it. The row reports that
+  in its evidence and does not judge it, because whether the app should stop the session is a
+  product question this rig has no standing to answer.
+- **`sd-empty` needs its one-file control, and it is not padding.** A binding that cannot resolve
+  leaves `IsVisible` at its **default**, which is `true` — so a typo'd `HasNoFiles` leaves the NO
+  FILES panel on screen for the wrong reason and an empty-card-only check reads green. Measured:
+  spelling it `HasNoFilez` in `DeviceLogsView.axaml` kept the row green until the second phase
+  existed. The control publishes one file and requires the panel to go away and the grid to appear.
 - **`EXPORT-FAIL`'s atomicity probe proves less than its name.** The exporter stages each CSV
   beside its destination and renames it into place, so the case worth catching is a staged file
   orphaned by a failed rename — and a read-only *directory* cannot produce one, because the same
@@ -266,7 +317,7 @@ exist — are tracked in #304.
   mode because it *"can choke a device with a blank/erased WINC"*. That is not something to
   run unattended against a shared bench board for the sake of a checkbox row.
 
-## Seven traps it encodes, for whoever edits it
+## Eight traps it encodes, for whoever edits it
 
 - **An optimistic local update is not a device read-back.** `SetFriendlyName` assigns
   `FriendlyName = name` itself, right after sending the SCPI write and without waiting for anything
@@ -318,6 +369,14 @@ exist — are tracked in #304.
   series a downsampled list and leaves `Points` empty, so a check on `Points` reads zero against a
   plot that is drawing correctly. The session list virtualises, so its realised container count is
   a handful, not 500 — assert `ItemCount` for the binding and `> 0` containers for the template.
+- **A control that is visible may be visible because its binding BROKE.** `IsVisible` defaults to
+  `true`, and a binding whose path does not resolve leaves the default in place rather than
+  throwing — so "the empty-state panel is on screen" is satisfied both by the app working and by
+  the binding that decides it having been typo'd away. Any row that asserts a control is SHOWN
+  needs a second phase in which the same control must be HIDDEN, or it is asserting Avalonia's
+  default. Measured on `sd-empty`: spelling `HasNoFiles` as `HasNoFilez` in `DeviceLogsView.axaml`
+  left the row green until the one-file control existed. The reverse direction is safe on its own —
+  `DeviceFilesList` must be hidden for an empty card, and a broken binding there would show it.
 - **A count you compute is not a count you asserted.** `LOGGED-LIST` had `withFrequency` in its
   evidence string and not in its pass condition, so dropping
   `LoadPersistedLoggingSessions`'s `.Include(session => session.DeviceMetadata)` printed
@@ -333,6 +392,39 @@ exist — are tracked in #304.
   `packages.lock.json` to hold that one RID, and CI's locked restore then fails `NU1004`
   (#85). The long note at the top of `Directory.Build.props` has the detail.
 
-CI compiles it (the `desktop` job in `.github/workflows/build.yml`) but never runs it —
-running needs a board. The compile is what stops the app's internals moving out from under
-it unnoticed.
+## What CI does with it
+
+The `desktop` job in `.github/workflows/build.yml` builds it, and then **runs all five
+`--scripted` states** — one process and one `--out` per state under `RUNNER_TEMP`, because
+`results.jsonl` is truncated at startup and a shared `--out` would discard the previous state's
+verdicts. The hardware rows are not run and cannot be: they drive a real board over serial.
+
+Two things about that step are deliberate:
+
+- **A `not-run` fails the step**, even though it does not fail the run. The rig emits `not-run`
+  when a check could not be attempted at all — `export-readonly` reports it when its `chmod 555`
+  destination turns out to still be writable, which is what running as root looks like — and a step
+  that accepted it would report green for a job that measured nothing. A healthy scripted run emits
+  none.
+- **Each state's own row and check are named in the step, and must appear exactly once with a
+  `pass`.** "The file is not empty" is *not* evidence that the state ran its row: `ReportPumpLatency`
+  files an `unexpected` record under the state's row on the way out of every run, so a state whose
+  `Step` stopped being reached would still leave a record behind and satisfy a non-emptiness test.
+  Same failure shape as the `Test` step reading its TRX counters back — a run that asserts nothing
+  exits 0 — and the same shape this rig exists to catch, one level up. **Add a state and you must
+  add its row to that list**, or CI will run it and check nothing about what it reported.
+  **The two halves are counted in that order — one record, then that record passing — and the order
+  is the point.** Counting the *passing* records alone answers the second question and silently drops
+  the first: `Emit` writes whatever status it is given and, unlike `Step`, never sets `_failed`, so a
+  `finding` record leaves the process exit 0. One `pass` plus a duplicate `finding` under the same
+  row/check would filter down to a single passing record and be accepted, against the contract this
+  bullet states. Nothing does that today — every `finding` is filed under the check name `unexpected`,
+  which no required pair uses — so it is a door closed rather than an escape found (Qodo round 3).
+- **It runs on `ubuntu-latest`, which had never rendered this app.** Headless Skia and font
+  availability there were open questions (the same ones the `Build` step's note raises about
+  `tools/parity-audit/AvaloniaCapture`, which is still compile-only for exactly that reason). The
+  run directories upload as an artifact on failure, because the PNG of the window the rig was
+  looking at is what says whether the app rendered at all.
+
+The compile on its own is still worth having: it is what stops the app's internals moving out from
+under the hardware rows unnoticed.
