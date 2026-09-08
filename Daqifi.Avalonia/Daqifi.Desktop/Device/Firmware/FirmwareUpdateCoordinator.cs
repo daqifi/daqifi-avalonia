@@ -100,6 +100,45 @@ public class FirmwareUpdateCoordinator
     /// <summary>Minimum supported WiFi module firmware version. A device below this — or whose WiFi
     /// chip info cannot be read — is flagged as needing a WiFi-only flash.</summary>
     public const string MinimumWifiFirmwareVersion = "19.7.7";
+
+    /// <summary>
+    /// Whether the WINC WiFi module can be flashed on the machine the app is running on. The single
+    /// answer both the firmware flow and the FLASH WIFI button ask, so they can never disagree
+    /// about whether the step is possible (issue #330).
+    /// </summary>
+    /// <remarks>
+    /// <para>
+    /// Microchip ships the WINC programmer only as the Windows batch file <c>winc_flash_tool.cmd</c>,
+    /// which <see cref="CreateWifiFirmwareUpdateService"/> launches through an external process
+    /// runner. Everywhere else that launch fails, and — on the auto path — it fails <em>after</em> the
+    /// PIC32 image has been written and CRC-verified, so a firmware update that actually worked was
+    /// reported as "Firmware update failed. Please try again."
+    /// </para>
+    /// <para>
+    /// Deliberately an OS test rather than Core's <c>WincFlashToolLocator.IsAvailable</c>, which was
+    /// the obvious candidate: that probe asks whether the tool <em>file</em> exists under a firmware
+    /// path, and the WiFi package this app downloads is the source zipball of
+    /// <c>daqifi/winc1500-Manual-UART-Firmware-Update</c>, which carries <c>winc_flash_tool.cmd</c>
+    /// inside it. The file is therefore present on macOS and Linux too, where it still cannot
+    /// execute — the probe answers "yes" on exactly the platforms this gate exists to stop. The
+    /// operating system, not the file, is the dividing line here.
+    /// </para>
+    /// </remarks>
+    public static bool CanFlashWifiModule => OperatingSystem.IsWindows();
+
+    /// <summary>
+    /// What the user is told wherever the WiFi module cannot be flashed. Stated as a limitation of
+    /// the machine rather than as a failure, because "try again" is advice that can never work here.
+    /// </summary>
+    public const string WifiFlashUnavailableMessage =
+        "WiFi module flashing requires Windows — Microchip ships the WINC flash tool as a Windows program.";
+
+    /// <summary>
+    /// This coordinator's answer to <see cref="CanFlashWifiModule"/>. Seeded from the static in
+    /// production; overridable so unit tests can exercise both platform branches on one machine,
+    /// the same way <see cref="_wifiUpdateModeSettleDelay"/> is overridable.
+    /// </summary>
+    private readonly bool _canFlashWifiModule;
     #endregion
 
     #region Constructor
@@ -127,6 +166,11 @@ public class FirmwareUpdateCoordinator
     /// App-global bootloader watcher whose discovery is suspended around the PIC32 flash so it doesn't
     /// grab the rebooting device. Null is tolerated (tests / no watcher).
     /// </param>
+    /// <param name="canFlashWifiModule">
+    /// Overrides whether this machine can flash the WINC module. Null uses
+    /// <see cref="CanFlashWifiModule"/>; tests pass both values so the platform decision is covered
+    /// on either side without needing two operating systems.
+    /// </param>
     public FirmwareUpdateCoordinator(
         IFirmwareUpdateHost host,
         IFirmwareUpdateService firmwareUpdateService,
@@ -136,7 +180,8 @@ public class FirmwareUpdateCoordinator
         string firmwareDataDirectory,
         Func<string, string, IFirmwareUpdateService>? wifiFirmwareUpdateServiceFactory = null,
         TimeSpan? wifiUpdateModeSettleDelay = null,
-        IBootloaderWatcher? watcher = null)
+        IBootloaderWatcher? watcher = null,
+        bool? canFlashWifiModule = null)
     {
         _host = host ?? throw new ArgumentNullException(nameof(host));
         _firmwareUpdateService = firmwareUpdateService ?? throw new ArgumentNullException(nameof(firmwareUpdateService));
@@ -147,6 +192,7 @@ public class FirmwareUpdateCoordinator
         _wifiFirmwareUpdateServiceFactory = wifiFirmwareUpdateServiceFactory ?? CreateWifiFirmwareUpdateService;
         _wifiUpdateModeSettleDelay = wifiUpdateModeSettleDelay ?? DefaultWifiUpdateModeSettleDelay;
         _watcher = watcher;
+        _canFlashWifiModule = canFlashWifiModule ?? CanFlashWifiModule;
     }
     #endregion
 
@@ -430,6 +476,21 @@ public class FirmwareUpdateCoordinator
         {
             _appLogger.Information(
                 $"{serialStreamingDevice.Name} has no separately-flashable WiFi module; skipping WiFi update.");
+            return;
+        }
+
+        // Pre-flight the one thing that cannot be recovered from mid-flash: whether this machine can
+        // run Microchip's WINC programmer at all (issue #330). Discovering it later is what turned a
+        // working update into a reported failure — by the time the external tool refuses to launch,
+        // the PIC32 image has been written and CRC-verified, the device has been put into LAN update
+        // mode and its managed connection dropped, and the launch exception reaches
+        // UploadFirmwareAsync's generic handler as "Firmware update failed. Please try again."
+        // Skipping here leaves the PIC32 half reported as what it is: a success.
+        if (!_canFlashWifiModule)
+        {
+            _host.FirmwareUpdateStatusText = WifiFlashUnavailableMessage;
+            _appLogger.Information(
+                $"Skipping the WiFi-module update for {serialStreamingDevice.Name}: {WifiFlashUnavailableMessage}");
             return;
         }
 
