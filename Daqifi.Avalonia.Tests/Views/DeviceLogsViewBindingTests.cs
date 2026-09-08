@@ -231,6 +231,12 @@ public class DeviceLogsViewBindingTests
     /// A tripwire, not a specification. Adding a binding here is fine — but it lands in one of six
     /// scopes and five of those are inferred, so the number is the prompt to say which.
     /// </para>
+    ///
+    /// <para>
+    /// Counting is only half the claim, which is why
+    /// <see cref="No_subtree_switches_compile_checking_back_off"/> sits beside it: a binding under a
+    /// subtree that opted out still counts here.
+    /// </para>
     /// </summary>
     [Fact]
     public void All_thirty_five_bindings_are_compile_checked()
@@ -240,5 +246,45 @@ public class DeviceLogsViewBindingTests
             .Count(attribute => attribute.Value.TrimStart().StartsWith("{Binding", StringComparison.Ordinal));
 
         Assert.Equal(35, bindings);
+    }
+
+    /// <summary>
+    /// The hole the two tests above leave between them, found by Qodo on this PR and confirmed by
+    /// measurement: <c>x:CompileBindings</c> is <b>inherited and overridable per subtree</b>, and
+    /// neither guard looks below the root. <see cref="The_view_declares_its_data_type"/> reads the
+    /// root attribute only, and <see cref="All_thirty_five_bindings_are_compile_checked"/> counts
+    /// binding text, which an opted-out binding still contributes to.
+    ///
+    /// <para>
+    /// Measured on this view: with <c>x:CompileBindings="False"</c> added to the <c>DataGrid</c> and
+    /// <c>{Binding CreatedDateDisplayZZZ}</c> — a member that does not exist — inside it, the build is
+    /// <c>0 Error(s)</c> and all 22 tests in this class pass. That is the same shape as the defect
+    /// this whole PR is about, one layer up: a guard that reads as protection while a dead binding
+    /// builds clean. The project sets <c>AvaloniaUseCompiledBindingsByDefault</c> to <c>false</c>, so
+    /// an opted-out subtree is not merely unchecked in the abstract — it is back on reflection.
+    /// </para>
+    ///
+    /// <para>
+    /// #327 does contemplate switching checking off <i>narrowly</i>, for a binding that is genuinely
+    /// inexpressible. This test is not a veto on that; it is the requirement that doing so be
+    /// deliberate. Turning it off means editing this test and saying which subtree and why, which is
+    /// exactly the conversation an escape hatch should cost.
+    /// </para>
+    /// </summary>
+    [Fact]
+    public void No_subtree_switches_compile_checking_back_off()
+    {
+        var offenders = Root().DescendantsAndSelf()
+            .Select(element => (element, attribute: element.Attribute(Xaml + "CompileBindings")))
+            .Where(pair => pair.attribute is not null
+                           && !string.Equals(pair.attribute!.Value, "True", StringComparison.OrdinalIgnoreCase))
+            .Select(pair => $"<{pair.element.Name.LocalName} x:CompileBindings=\"{pair.attribute!.Value}\">")
+            .ToList();
+
+        Assert.True(
+            offenders.Count == 0,
+            $"{View}: {string.Join(", ", offenders)} — x:CompileBindings is inherited and overridable "
+            + "per subtree, so this puts every binding below it back on reflection while the root "
+            + "declaration, the binding count and the build all stay green.");
     }
 }
