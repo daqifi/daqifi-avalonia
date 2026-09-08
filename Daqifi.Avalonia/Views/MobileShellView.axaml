@@ -3,11 +3,38 @@
              xmlns:views="clr-namespace:Daqifi.Avalonia.Views"
              xmlns:i="https://github.com/projektanker/icons.avalonia"
              x:Class="Daqifi.Avalonia.Views.MobileShellView"
-             x:DataType="views:MobileShellViewModel">
+             x:DataType="views:MobileShellViewModel"
+             x:CompileBindings="True">
 	<!-- Mobile shell (#221 five-platform goal): WiFi discovery + connect on
 	     the SAME ported stack the desktop uses. WiFi/TCP only (DIV-UI-003).
 	     Styled with the shared DesignTokens + FluentTheme (App.axaml) so it
 	     matches the desktop app and the projected panes — no bespoke palette. -->
+	<!--
+	    x:CompileBindings on the root is what makes the x:DataType above mean
+	    anything (issue #326). This view carried x:DataType alone for its whole
+	    life, and Daqifi.Avalonia.csproj sets
+	    AvaloniaUseCompiledBindingsByDefault=false, so every {Binding} below was
+	    still resolved by reflection at run time and no member name in the file
+	    was checked by anything. That is worse than declaring neither, because it
+	    reads to a maintainer as if the bindings were checked. Measured before
+	    this change: renaming the manual-IP box's path to a member that does not
+	    exist built with 0 Error(s), 175 Warning(s) — byte-identical to a clean
+	    build, and not one diagnostic named it.
+
+	    A broken binding does not blank the control, it leaves the target
+	    property at its DEFAULT — and IsVisible defaults to TRUE. Eleven of the
+	    29 bindings here feed IsVisible, including ShowChannelSelector,
+	    ShowDeviceList and IsUsbAvailable, so a typo in any of them would have
+	    shown a pane that is supposed to be hidden rather than hiding one that is
+	    supposed to show. "The shell still looks right" could never have caught
+	    that; the compiler now does.
+
+	    Each of the two DataTemplates already carried its own x:DataType, which
+	    is what a template needs: inside one the DataContext is the item, not
+	    this view model. Those declarations are now load-bearing rather than
+	    decorative. Nothing here needs x:CompileBindings="False" — every binding
+	    in the file resolves.
+	-->
 	<Border Background="{DynamicResource Surface}" Padding="20,48,20,24">
 		<!-- Scroll so the bottom-docked connect actions (IP row + USB-OTG button) stay
 		     reachable when the viewport is short — e.g. phone landscape, where an
