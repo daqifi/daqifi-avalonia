@@ -170,6 +170,56 @@ public class WifiFlashPlatformGateTests : IDisposable
     }
 
     /// <summary>
+    /// The half that survives the run. The status line is rendered only while the run is open
+    /// (issue #241) and the success dialog closes the flyout carrying it, so a message written only
+    /// there is gone by the time the user reads "Firmware update completed successfully". The
+    /// connect-time WiFi probe is no fallback: it is debug-gated, so an ordinary macOS or Linux user
+    /// has no standing outdated-WiFi notification to fall back on (Qodo round 1 on PR #337).
+    /// </summary>
+    [Fact]
+    public async Task The_skipped_wifi_step_leaves_a_notification_that_outlives_the_run()
+    {
+        var coordinator = CreateCoordinator(canFlashWifiModule: false);
+
+        await coordinator.UpdateWifiModuleOnlyAsync(WincDevice());
+
+        var notification = Assert.Single(_host.Notifications);
+        Assert.Contains(FirmwareUpdateCoordinator.WifiFlashUnavailableMessage, notification.Message);
+        Assert.True(_host.NotificationCountRefreshed, "the notification badge was not re-synced.");
+    }
+
+    /// <summary>
+    /// It is a standing limitation of the machine, not an event, so a second update must not stack a
+    /// second copy of it in the flyout.
+    /// </summary>
+    [Fact]
+    public async Task The_notification_is_not_stacked_by_a_second_run()
+    {
+        var coordinator = CreateCoordinator(canFlashWifiModule: false);
+        var device = WincDevice();
+
+        await coordinator.UpdateWifiModuleOnlyAsync(device);
+        await coordinator.UpdateWifiModuleOnlyAsync(device);
+
+        Assert.Single(_host.Notifications);
+    }
+
+    /// <summary>
+    /// The negative control: where the flash can run there is nothing to explain, so no notification
+    /// is raised.
+    /// </summary>
+    [Fact]
+    public async Task No_notification_is_raised_where_the_tool_can_run()
+    {
+        var coordinator = CreateCoordinator(canFlashWifiModule: true);
+
+        await Assert.ThrowsAsync<InvalidOperationException>(
+            () => coordinator.UpdateWifiModuleOnlyAsync(WincDevice()));
+
+        Assert.Empty(_host.Notifications);
+    }
+
+    /// <summary>
     /// The gate does not swallow the more specific answer. A device with no separately-flashable WINC
     /// module is skipped for that reason, not blamed on the platform — the ESP32 parts integrate WiFi
     /// into the SoC and would be described wrongly by a "requires Windows" message.
@@ -373,7 +423,10 @@ public class WifiFlashPlatformGateTests : IDisposable
 
         public DesktopStreamingDevice? DeviceBeingUpdated { get; set; }
 
-        public void RefreshNotificationCount() { }
+        /// <summary>The badge re-sync a notification the user is meant to see depends on.</summary>
+        public bool NotificationCountRefreshed { get; private set; }
+
+        public void RefreshNotificationCount() => NotificationCountRefreshed = true;
 
         public void ShowFirmwareError(string message) { }
 

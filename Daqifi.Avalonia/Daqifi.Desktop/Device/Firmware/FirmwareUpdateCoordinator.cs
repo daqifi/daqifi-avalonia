@@ -491,6 +491,7 @@ public class FirmwareUpdateCoordinator
             _host.FirmwareUpdateStatusText = WifiFlashUnavailableMessage;
             _appLogger.Information(
                 $"Skipping the WiFi-module update for {serialStreamingDevice.Name}: {WifiFlashUnavailableMessage}");
+            NotifyWifiModuleWasNotUpdated(serialStreamingDevice);
             return;
         }
 
@@ -1055,6 +1056,41 @@ public class FirmwareUpdateCoordinator
             });
         }
 
+        _host.RefreshNotificationCount();
+    }
+
+    /// <summary>
+    /// Leaves a record, outliving the run, that the WiFi half did not happen.
+    /// <para>
+    /// The status line is the only other place this is said, and it is rendered only while
+    /// <c>IsFirmwareUploading</c> is true (issue #241) — so by the time the user reads
+    /// "Firmware update completed successfully" the explanation is already off the screen, and the
+    /// flyout that carried it has been closed by the success dialog. The connect-time WiFi probe is
+    /// not a fallback either: it is debug-gated (<c>CheckWifiFirmwareCoreAsync</c>), so an ordinary
+    /// macOS or Linux user has no outdated-WiFi notification standing and would be left with a bare
+    /// success and no indication the module was skipped.
+    /// </para>
+    /// <para>
+    /// Message names the device and the field carries the serial, matching the "please connect
+    /// device" notification <see cref="UploadFirmwareAsync"/> already raises. Deduplicated on the
+    /// message so repeated updates on the same machine do not stack copies of a standing limitation.
+    /// </para>
+    /// </summary>
+    private void NotifyWifiModuleWasNotUpdated(SerialStreamingDevice serialStreamingDevice)
+    {
+        var message =
+            $"{serialStreamingDevice.Name}: the WiFi module firmware was not updated. {WifiFlashUnavailableMessage}";
+
+        if (_host.Notifications.Any(notification => notification.Message == message))
+        {
+            return;
+        }
+
+        _host.Notifications.Add(new Notifications
+        {
+            Message = message,
+            DeviceSerialNo = serialStreamingDevice.DeviceSerialNo
+        });
         _host.RefreshNotificationCount();
     }
 
