@@ -13,7 +13,7 @@
 	    x:CompileBindings on the root is what makes the x:DataType above mean
 	    anything (issue #326). This view carried x:DataType alone for its whole
 	    life, and Daqifi.Avalonia.csproj sets
-	    AvaloniaUseCompiledBindingsByDefault=false, so every {Binding} below was
+	    AvaloniaUseCompiledBindingsByDefault=false, so every binding below was
 	    still resolved by reflection at run time and no member name in the file
 	    was checked by anything. That is worse than declaring neither, because it
 	    reads to a maintainer as if the bindings were checked. Measured before
@@ -32,8 +32,8 @@
 	    Each of the two DataTemplates already carried its own x:DataType, which
 	    is what a template needs: inside one the DataContext is the item, not
 	    this view model. Those declarations are now load-bearing rather than
-	    decorative. Nothing here needs x:CompileBindings="False" — every binding
-	    in the file resolves.
+	    decorative. No subtree here needed checking switched back off — all 29
+	    bindings resolve, so the file needs no escape hatch.
 	-->
 	<Border Background="{DynamicResource Surface}" Padding="20,48,20,24">
 		<!-- Scroll so the bottom-docked connect actions (IP row + USB-OTG button) stay
