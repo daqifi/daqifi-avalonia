@@ -2,7 +2,10 @@
              xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml"
              xmlns:i="https://github.com/projektanker/icons.avalonia"
              xmlns:converters="using:Daqifi.Desktop.Converters"
-             x:Class="Daqifi.Desktop.View.DeviceLogsView">
+             xmlns:vm="using:Daqifi.Desktop.ViewModels"
+             x:Class="Daqifi.Desktop.View.DeviceLogsView"
+             x:DataType="vm:DeviceLogsViewModel"
+             x:CompileBindings="True">
     <!--
         Ported from Daqifi.Desktop/View/DeviceLogsView.xaml.
 
@@ -27,6 +30,69 @@
         - MahApps ProgressRing → indeterminate ProgressBar (MainWindow busy-overlay dialect).
         - ConnectionTypeToColorConverter registered locally (upstream parity).
     -->
+
+    <!--
+        x:DataType + x:CompileBindings: every {Binding} below is resolved by the XAML
+        compiler against the type named for its scope, not by reflection at run time
+        (part of issue #327). Daqifi.Avalonia.csproj sets
+        AvaloniaUseCompiledBindingsByDefault=false, so before this change a renamed,
+        moved or deleted member left the markup naming something that no longer
+        existed and the control simply rendered blank or stayed at its default —
+        with both heads building green and nothing in the build able to see it.
+        Measured on the parent commit: six deliberate typos, one per scope below,
+        each applied ALONE, every one of them building 0 Error(s) with the same
+        warning count the untouched tree produced, and not one diagnostic naming
+        this file. Each of those six is now AVLN2000.
+
+        The default matters more than it looks: a broken bool binding does not blank
+        the control, it leaves the property at its DEFAULT, and IsVisible defaults to
+        TRUE. Ten of the 35 bindings here feed IsVisible, and five of those pick which
+        of the five MUTUALLY EXCLUSIVE empty-state panels the user sees (NO FILES /
+        NO DEVICE / NO SD CARD / DEVICE BUSY / SD CARD ERROR) — they are siblings in
+        one Grid cell, so exactly one is supposed to be showing. A typo in any of the
+        five would have pinned that panel visible on top of whichever one is correct:
+        "NO SD CARD" over a working card, permanently. That is the failure mode a
+        "does the pane still look right?" pass cannot see, because it still looks
+        like a pane — just the wrong one.
+
+        SIX binding scopes get checked, resolving against THREE types, and exactly
+        ONE of them is declared — the two attributes above. The other five are
+        INFERRED by the XAML compiler, which is worth writing down because the
+        obvious way to write this change is to declare them all, and every extra
+        declaration was tried here and measured to change nothing:
+
+        - the four DataGrid cell templates resolve against Models.SdCardFile, taken
+          from the grid's own ItemsSource. Adding x:DataType="SdCardFile" to each
+          template moves nothing: with the four declarations and without them, the
+          same typo is the same AVLN2000 naming the same type. And the inferred
+          scope is AUTHORITATIVE, not a fallback the view model can win — a cell
+          template binding a VIEW-MODEL member (BusyMessage) is an error against
+          SdCardFile with or without the declaration. So a row template cannot
+          silently reach past its item, which is the failure the declarations
+          would have been there to prevent.
+        - the device ComboBox's DisplayMemberBinding resolves against the ITEM,
+          Device.IStreamingDevice, taken from the ComboBox's ItemsSource. There is
+          no element to hang an x:DataType on — it is a binding assigned to a
+          property — and a DataType= written on the binding is likewise redundant.
+        - the IMPORT button reaches back OUT of the row scope with
+          $parent[DataGrid] . DataContext . ImportFileCommand, and that resolves
+          against DeviceLogsViewModel: the compiler follows DataContext to the
+          ancestor scope on its own. An explicit ((vm:DeviceLogsViewModel)) cast
+          was written, measured to be unnecessary, and removed.
+
+        The consequence is that the ELEMENT TYPES of DeviceFiles and
+        ConnectedDevices are load-bearing markup here even though the markup never
+        names them; DeviceLogsViewBindingTests pins them for that reason.
+
+        The two ControlTemplates in Resources below need nothing: they contain only
+        TemplateBindings, which resolve against the templated control and were
+        never on reflection in the first place.
+
+        No subtree here needed checking switched back off — all 35 bindings
+        resolve, so the file needs no escape hatch, and not one binding had to be
+        rewritten to make them compile.
+    -->
+
     <UserControl.Resources>
 
         <converters:ConnectionTypeToColorConverter x:Key="ConnectionTypeToColorConverter"/>
