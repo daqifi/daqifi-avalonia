@@ -7,6 +7,7 @@ using System.Collections.ObjectModel;
 using System.ComponentModel;
 using CommunityToolkit.Mvvm.ComponentModel;
 using CommunityToolkit.Mvvm.Input;
+using Daqifi.Core.Logging.Export;
 using Daqifi.Desktop.Channel;
 using Daqifi.Desktop.Common.Loggers;
 using Daqifi.Desktop.Device;
@@ -181,7 +182,7 @@ public partial class ProfilesPaneViewModel : ObservableObject
 
         if (deviceItem.IsSelected)
         {
-            foreach (var ch in deviceItem.Device.DataChannels.NaturalOrderBy(c => c.Name))
+            foreach (var ch in deviceItem.Device.DataChannels.OrderBy(c => c.Name, ChannelNameComparer.Instance))
                 deviceItem.ChannelItems.Add(new NewProfileChannelItem { Channel = ch });
         }
         else

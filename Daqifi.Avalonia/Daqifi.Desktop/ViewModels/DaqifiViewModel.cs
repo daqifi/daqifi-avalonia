@@ -37,6 +37,7 @@ using Avalonia.Threading;
 using CommunityToolkit.Mvvm.ComponentModel;
 using CommunityToolkit.Mvvm.Input;
 using Daqifi.Core.Device.SdCard;
+using Daqifi.Core.Logging.Export;
 
 namespace Daqifi.Desktop.ViewModels;
 
@@ -2087,7 +2088,7 @@ public partial class DaqifiViewModel : ObservableObject, IFirmwareUpdateHost, IL
 
                 // Sort channels naturally by name before adding to collections
                 var sortedChannels = LoggingManager.Instance.SubscribedChannels
-                    .NaturalOrderBy(channel => channel.Name);
+                    .OrderBy(channel => channel.Name, ChannelNameComparer.Instance);
 
                 foreach (var channel in sortedChannels)
                 {

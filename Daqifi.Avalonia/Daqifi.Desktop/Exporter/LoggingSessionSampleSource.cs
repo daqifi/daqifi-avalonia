@@ -6,7 +6,6 @@
 using System.Runtime.CompilerServices;
 using Daqifi.Core.Logging.Export;
 using Daqifi.Desktop.Channel;
-using Daqifi.Desktop.Helpers;
 using Daqifi.Desktop.Logger;
 using Microsoft.EntityFrameworkCore;
 
@@ -111,25 +110,20 @@ public sealed class LoggingSessionSampleSource : ISampleSource
     /// channel name.
     /// </summary>
     /// <remarks>
+    /// The rule itself is Core's: <see cref="ChannelDescriptorComparer"/> is device name, then
+    /// serial number, then channel name, the first two ordinal and the last through
+    /// <see cref="ChannelNameComparer"/>. Core added it in 1.8.0 precisely because
+    /// <see cref="ISampleSource"/> is implemented once per application and each implementation
+    /// was choosing its own column order; this app restated the rule locally until then.
+    /// <para>
     /// Device name and serial number are compared ORDINALLY, matching the BINARY collation the
     /// DB path's rows are read under, so the two paths cannot disagree and a session's exported
-    /// bytes do not depend on the exporting machine's locale.
-    /// <para>
-    /// The channel name goes through <see cref="NaturalSortHelper"/> — the same rule the panes
-    /// and the plot legend order by — so <c>AI2</c> precedes <c>AI10</c>. Stating it here rather
-    /// than at each call site is the point of this method: the two paths above previously
-    /// ordered independently, and BOTH were wrong. The database path compared the channel name
-    /// as text, so a board with ten or more channels exported its columns as
-    /// <c>AI0, AI1, AI10, …, AI2</c> — every value correct, every value in the wrong column. The
-    /// in-memory path passed no comparer at all, so it also ordered device identity by the
-    /// current culture while the database path ordered it ordinally.
+    /// bytes do not depend on the exporting machine's locale. Both paths above route through
+    /// this method, which is what keeps them in step.
     /// </para>
     /// </remarks>
     private static List<ChannelDescriptor> InCsvColumnOrder(IEnumerable<ChannelDescriptor> channels) =>
-        [.. channels
-            .OrderBy(c => c.DeviceName, StringComparer.Ordinal)
-            .ThenBy(c => c.DeviceSerialNo, StringComparer.Ordinal)
-            .ThenBy(c => c.ChannelName, NaturalSortHelper.Comparer)];
+        [.. channels.Order(ChannelDescriptorComparer.Default)];
 
     /// <summary>
     /// Returns the total sample count for this session. Used by core's <see cref="CsvExporter"/>
