@@ -1,7 +1,13 @@
 <Window xmlns="https://github.com/avaloniaui"
         xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml"
         xmlns:dialogService="using:Daqifi.Desktop.DialogService"
+        xmlns:vm="using:Daqifi.Desktop.ViewModels"
+        xmlns:wifiDevice="using:Daqifi.Desktop.Device.WiFiDevice"
+        xmlns:serialDevice="using:Daqifi.Desktop.Device.SerialDevice"
+        xmlns:firmware="using:Daqifi.Desktop.Device.Firmware"
         x:Class="Daqifi.Desktop.View.ConnectionDialog"
+        x:DataType="vm:ConnectionDialogViewModel"
+        x:CompileBindings="True"
         dialogService:DialogService.IsRegisteredView="True"
         Title="CONNECT DEVICE" CanResize="False" Height="500" Width="560"
         Closing="MetroWindow_Closing"
@@ -15,6 +21,25 @@
         SelectionMode="Extended" → "Multiple"; UpdateSourceTrigger dropped
         (Avalonia default). BoolToVis/NotNullToVis Visibility bindings →
         IsVisible (NotNullToVis returns bool downstream).
+    -->
+
+    <!--
+        x:DataType + x:CompileBindings: every {Binding} below is resolved by the XAML
+        compiler against the type named for its scope, not by reflection at run time
+        (issue #323). Before this, a renamed / moved / deleted view-model member left the
+        markup naming something that no longer existed and the control simply rendered
+        blank or stayed at its default — with both heads building green and nothing in the
+        build able to see it. That is now a build error.
+
+        The default matters more than it looks: a broken bool binding does not blank the
+        control, it leaves the property at its DEFAULT, and IsVisible defaults to TRUE.
+        A typo in one of the five error-message IsVisible bindings below would therefore
+        have shown the error row permanently rather than hiding it — the failure mode a
+        "does the dialog still look right?" check cannot see.
+
+        Each of the three DataTemplates carries its OWN x:DataType, because inside a
+        template the DataContext is the item, not this view model. Without them the
+        compiler refuses the file rather than silently rebinding, which is the point.
     -->
 
     <Window.Resources>
@@ -209,7 +234,7 @@
                                  Classes="tileList"
                                  ItemContainerTheme="{StaticResource TileListBoxItem}">
                             <ListBox.ItemTemplate>
-                                <DataTemplate>
+                                <DataTemplate x:DataType="wifiDevice:DaqifiStreamingDevice">
                                     <Grid Height="74" ColumnDefinitions="3,*"
                                           AutomationProperties.AutomationId="{Binding Name}">
                                         <Rectangle Grid.Column="0" Fill="{StaticResource StripeWifi}"/>
@@ -327,7 +352,7 @@
                                  Classes="tileList"
                                  ItemContainerTheme="{StaticResource TileListBoxItem}">
                             <ListBox.ItemTemplate>
-                                <DataTemplate>
+                                <DataTemplate x:DataType="serialDevice:SerialStreamingDevice">
                                     <Grid Height="74" ColumnDefinitions="3,*"
                                           AutomationProperties.AutomationId="{Binding Name}">
                                         <Rectangle Grid.Column="0" Fill="{StaticResource StripeUsb}"/>
@@ -449,7 +474,7 @@
                                  Classes="tileList"
                                  ItemContainerTheme="{StaticResource TileListBoxItem}">
                             <ListBox.ItemTemplate>
-                                <DataTemplate>
+                                <DataTemplate x:DataType="firmware:HeldBootloader">
                                     <Grid Height="74" ColumnDefinitions="3,*">
                                         <Rectangle Grid.Column="0" Fill="{StaticResource StatusAmber}"/>
                                         <Grid Grid.Column="1" Margin="14,10,14,10" ColumnDefinitions="*,Auto">
