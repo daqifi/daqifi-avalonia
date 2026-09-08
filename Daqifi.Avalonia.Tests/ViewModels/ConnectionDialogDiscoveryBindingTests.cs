@@ -36,25 +36,47 @@ public class ConnectionDialogDiscoveryBindingTests
     private const string View = "Daqifi.Avalonia/Daqifi.Desktop/View/ConnectionDialog.axaml";
 
     /// <summary>
-    /// The declaration that makes every other binding in the view a compile-time fact.
+    /// The declarations that make every other binding in the view a compile-time fact.
     ///
     /// <para>
-    /// Asserted textually because there is nothing else to assert it with: removing
-    /// <c>x:CompileBindings="True"</c> silently downgrades all 37 bindings in the file back to
-    /// runtime reflection, and desktop, iOS and every test in this assembly still pass. The three
-    /// <c>DataTemplate</c> scopes are named too — a template that loses its own <c>x:DataType</c>
-    /// while the file still compiles has been given <c>x:CompileBindings="False"</c> or an inherited
-    /// scope, which is the escape hatch #323 exists to remove.
+    /// Removing <c>x:CompileBindings="True"</c> silently downgrades all 37 bindings in the file back
+    /// to runtime reflection, and desktop, iOS and every test in this assembly still pass — so this is
+    /// the only thing in the build that notices.
+    /// </para>
+    ///
+    /// <para>
+    /// Asserted by <b>parsing</b> the markup rather than searching it, because the substring form of
+    /// this guard does not hold. Measured on this view: delete <c>x:CompileBindings="True"</c> from the
+    /// <c>Window</c> tag while the same literal survives in the prose comment a few lines below that
+    /// explains the attribute, and a whole-file <c>Assert.Contains</c> still passes while a
+    /// deliberately dead binding builds with <c>0 Error(s)</c>. XML forbids commenting an attribute out
+    /// in place, but nothing stops the literal existing elsewhere in a file that discusses it at
+    /// length. <see cref="BindingFacts.AssertRootDeclares"/> asks the parsed root element for the
+    /// attribute, so only the real declaration counts (Qodo round 2 on PR #325).
     /// </para>
     /// </summary>
     [Theory]
-    [InlineData("x:DataType=\"vm:ConnectionDialogViewModel\"")]
-    [InlineData("x:CompileBindings=\"True\"")]
-    [InlineData("<DataTemplate x:DataType=\"wifiDevice:DaqifiStreamingDevice\">")]
-    [InlineData("<DataTemplate x:DataType=\"serialDevice:SerialStreamingDevice\">")]
-    [InlineData("<DataTemplate x:DataType=\"firmware:HeldBootloader\">")]
-    public void The_view_declares_its_data_type(string declaration) =>
-        BindingFacts.AssertBinds(View, declaration);
+    [InlineData("DataType", "vm:ConnectionDialogViewModel")]
+    [InlineData("CompileBindings", "True")]
+    public void The_view_declares_its_data_type(string attribute, string value) =>
+        BindingFacts.AssertRootDeclares(View, attribute, value);
+
+    /// <summary>
+    /// Each <c>DataTemplate</c>'s own item scope. Inside a template the <c>DataContext</c> is the item,
+    /// not the view model, so a template that loses its <c>x:DataType</c> resolves against an inherited
+    /// scope — the escape hatch #323 exists to remove.
+    ///
+    /// <para>
+    /// <see cref="BindingFacts.AssertTemplateScopedTo"/> also fails on any <i>unnamed</i> template, so a
+    /// fourth one added later without a scope is caught by a list that does not mention it.
+    /// </para>
+    /// </summary>
+    [Theory]
+    [InlineData("wifiDevice:DaqifiStreamingDevice")]
+    [InlineData("serialDevice:SerialStreamingDevice")]
+    [InlineData("firmware:HeldBootloader")]
+    public void Each_item_template_declares_its_own_scope(string itemType) =>
+        BindingFacts.AssertTemplateScopedTo(View, itemType);
 
     /// <summary>
     /// The three tabs' device lists, and the three members that gate each tab's animated
