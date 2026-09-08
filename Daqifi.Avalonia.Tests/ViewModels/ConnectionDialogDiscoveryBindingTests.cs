@@ -62,21 +62,25 @@ public class ConnectionDialogDiscoveryBindingTests
         BindingFacts.AssertRootDeclares(View, attribute, value);
 
     /// <summary>
-    /// Each <c>DataTemplate</c>'s own item scope. Inside a template the <c>DataContext</c> is the item,
-    /// not the view model, so a template that loses its <c>x:DataType</c> resolves against an inherited
-    /// scope — the escape hatch #323 exists to remove.
+    /// Each <c>DataTemplate</c>'s own item scope, pinned to <b>the list it belongs to</b>. Inside a
+    /// template the <c>DataContext</c> is the item, not the view model, so a template that loses its
+    /// <c>x:DataType</c> resolves against an inherited scope — the escape hatch #323 exists to remove.
     ///
     /// <para>
-    /// <see cref="BindingFacts.AssertTemplateScopedTo"/> also fails on any <i>unnamed</i> template, so a
-    /// fourth one added later without a scope is caught by a list that does not mention it.
+    /// The list is named rather than the type merely being looked for somewhere in the file: the three
+    /// scopes as a set survive exchanging any two of them, so an any-of assertion would pass a WiFi list
+    /// rendering itself as serial devices. The compiler happens to reject that swap today, but only
+    /// because these device types expose different members — see
+    /// <see cref="BindingFacts.AssertTemplateScopedTo"/> for the measurement and why it is not something
+    /// to lean on.
     /// </para>
     /// </summary>
     [Theory]
-    [InlineData("wifiDevice:DaqifiStreamingDevice")]
-    [InlineData("serialDevice:SerialStreamingDevice")]
-    [InlineData("firmware:HeldBootloader")]
-    public void Each_item_template_declares_its_own_scope(string itemType) =>
-        BindingFacts.AssertTemplateScopedTo(View, itemType);
+    [InlineData("DeviceList", "wifiDevice:DaqifiStreamingDevice")]
+    [InlineData("SerialList", "serialDevice:SerialStreamingDevice")]
+    [InlineData("HidList", "firmware:HeldBootloader")]
+    public void Each_item_template_declares_its_own_scope(string listName, string itemType) =>
+        BindingFacts.AssertTemplateScopedTo(View, listName, itemType);
 
     /// <summary>
     /// The three tabs' device lists, and the three members that gate each tab's animated

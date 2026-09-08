@@ -94,19 +94,36 @@ internal static class BindingFacts
     }
 
     /// <summary>
-    /// Asserts that some <c>DataTemplate</c> in the view scopes itself to the given item type, and that
-    /// <b>every</b> <c>DataTemplate</c> in it scopes itself to something.
+    /// Asserts that the <c>DataTemplate</c> inside the <b>named</b> list scopes itself to the given item
+    /// type, and that <b>every</b> <c>DataTemplate</c> in the view scopes itself to something.
     ///
     /// <para>
-    /// The second half is the one a per-template list cannot cover: a template added later with no
-    /// <c>x:DataType</c> of its own is precisely the inherited-scope escape hatch this view exists to
-    /// close, and naming the three that exist today would not notice a fourth.
+    /// Bound to the owning list by name rather than checking that the type appears somewhere among the
+    /// scopes, because set membership cannot tell two lists apart: exchanging the WiFi and USB
+    /// <c>x:DataType</c>s leaves the set of declared scopes identical and would satisfy an
+    /// any-of assertion for all three (Qodo round 3 on PR #325).
+    /// </para>
+    ///
+    /// <para>
+    /// The compiler does currently reject that particular swap — measured, <c>AVLN2000: Unable to
+    /// resolve ... 'PortName' on type 'DaqifiStreamingDevice'</c> — but only because these two device
+    /// types happen to expose different members today. That is a coincidence of the model, not a
+    /// property of the guard, and it stops holding the moment the two types converge on the names this
+    /// view binds. Naming the list costs one string and does not depend on that coincidence.
+    /// </para>
+    ///
+    /// <para>
+    /// The every-template half covers what a per-list check cannot: a template added later with no
+    /// <c>x:DataType</c> of its own is the inherited-scope escape hatch this view exists to close, and a
+    /// list naming the three that exist today would not notice a fourth.
     /// </para>
     /// </summary>
-    internal static void AssertTemplateScopedTo(string repoRelativeViewPath, string expectedItemType)
+    internal static void AssertTemplateScopedTo(
+        string repoRelativeViewPath, string listName, string expectedItemType)
     {
-        var templates = ViewRoot(repoRelativeViewPath)
-            .Descendants()
+        var root = ViewRoot(repoRelativeViewPath);
+
+        var templates = root.Descendants()
             .Where(element => element.Name.LocalName == "DataTemplate")
             .ToList();
 
@@ -116,8 +133,19 @@ internal static class BindingFacts
             $"{repoRelativeViewPath}: {unscoped} of {templates.Count} DataTemplates declare no "
             + "x:DataType, so their bindings resolve against an inherited scope rather than the item.");
 
-        var scopes = templates.Select(template => template.Attribute(XamlNamespace + "DataType")!.Value);
-        Assert.Contains(expectedItemType, scopes);
+        var list = root.Descendants()
+            .SingleOrDefault(element => element.Attribute(XamlNamespace + "Name")?.Value == listName);
+        Assert.True(list is not null, $"{repoRelativeViewPath}: no element is x:Named '{listName}'.");
+
+        var scoped = list!.Descendants()
+            .Where(element => element.Name.LocalName == "DataTemplate")
+            .Select(template => template.Attribute(XamlNamespace + "DataType")?.Value)
+            .ToList();
+
+        Assert.True(
+            scoped.Count == 1,
+            $"{repoRelativeViewPath}: '{listName}' holds {scoped.Count} DataTemplates, expected exactly one.");
+        Assert.Equal(expectedItemType, scoped[0]);
     }
 
     /// <summary>
