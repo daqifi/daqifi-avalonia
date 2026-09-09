@@ -100,6 +100,45 @@ public class FirmwareUpdateCoordinator
     /// <summary>Minimum supported WiFi module firmware version. A device below this — or whose WiFi
     /// chip info cannot be read — is flagged as needing a WiFi-only flash.</summary>
     public const string MinimumWifiFirmwareVersion = "19.7.7";
+
+    /// <summary>
+    /// Whether the WINC WiFi module can be flashed on the machine the app is running on. The single
+    /// answer both the firmware flow and the FLASH WIFI button ask, so they can never disagree
+    /// about whether the step is possible (issue #330).
+    /// </summary>
+    /// <remarks>
+    /// <para>
+    /// Microchip ships the WINC programmer only as the Windows batch file <c>winc_flash_tool.cmd</c>,
+    /// which <see cref="CreateWifiFirmwareUpdateService"/> launches through an external process
+    /// runner. Everywhere else that launch fails, and — on the auto path — it fails <em>after</em> the
+    /// PIC32 image has been written and CRC-verified, so a firmware update that actually worked was
+    /// reported as "Firmware update failed. Please try again."
+    /// </para>
+    /// <para>
+    /// Deliberately an OS test rather than Core's <c>WincFlashToolLocator.IsAvailable</c>, which was
+    /// the obvious candidate: that probe asks whether the tool <em>file</em> exists under a firmware
+    /// path, and the WiFi package this app downloads is the source zipball of
+    /// <c>daqifi/winc1500-Manual-UART-Firmware-Update</c>, which carries <c>winc_flash_tool.cmd</c>
+    /// inside it. The file is therefore present on macOS and Linux too, where it still cannot
+    /// execute — the probe answers "yes" on exactly the platforms this gate exists to stop. The
+    /// operating system, not the file, is the dividing line here.
+    /// </para>
+    /// </remarks>
+    public static bool CanFlashWifiModule => OperatingSystem.IsWindows();
+
+    /// <summary>
+    /// What the user is told wherever the WiFi module cannot be flashed. Stated as a limitation of
+    /// the machine rather than as a failure, because "try again" is advice that can never work here.
+    /// </summary>
+    public const string WifiFlashUnavailableMessage =
+        "WiFi module flashing requires Windows — Microchip ships the WINC flash tool as a Windows program.";
+
+    /// <summary>
+    /// This coordinator's answer to <see cref="CanFlashWifiModule"/>. Seeded from the static in
+    /// production; overridable so unit tests can exercise both platform branches on one machine,
+    /// the same way <see cref="_wifiUpdateModeSettleDelay"/> is overridable.
+    /// </summary>
+    private readonly bool _canFlashWifiModule;
     #endregion
 
     #region Constructor
@@ -127,6 +166,11 @@ public class FirmwareUpdateCoordinator
     /// App-global bootloader watcher whose discovery is suspended around the PIC32 flash so it doesn't
     /// grab the rebooting device. Null is tolerated (tests / no watcher).
     /// </param>
+    /// <param name="canFlashWifiModule">
+    /// Overrides whether this machine can flash the WINC module. Null uses
+    /// <see cref="CanFlashWifiModule"/>; tests pass both values so the platform decision is covered
+    /// on either side without needing two operating systems.
+    /// </param>
     public FirmwareUpdateCoordinator(
         IFirmwareUpdateHost host,
         IFirmwareUpdateService firmwareUpdateService,
@@ -136,7 +180,8 @@ public class FirmwareUpdateCoordinator
         string firmwareDataDirectory,
         Func<string, string, IFirmwareUpdateService>? wifiFirmwareUpdateServiceFactory = null,
         TimeSpan? wifiUpdateModeSettleDelay = null,
-        IBootloaderWatcher? watcher = null)
+        IBootloaderWatcher? watcher = null,
+        bool? canFlashWifiModule = null)
     {
         _host = host ?? throw new ArgumentNullException(nameof(host));
         _firmwareUpdateService = firmwareUpdateService ?? throw new ArgumentNullException(nameof(firmwareUpdateService));
@@ -147,6 +192,7 @@ public class FirmwareUpdateCoordinator
         _wifiFirmwareUpdateServiceFactory = wifiFirmwareUpdateServiceFactory ?? CreateWifiFirmwareUpdateService;
         _wifiUpdateModeSettleDelay = wifiUpdateModeSettleDelay ?? DefaultWifiUpdateModeSettleDelay;
         _watcher = watcher;
+        _canFlashWifiModule = canFlashWifiModule ?? CanFlashWifiModule;
     }
     #endregion
 
@@ -430,6 +476,22 @@ public class FirmwareUpdateCoordinator
         {
             _appLogger.Information(
                 $"{serialStreamingDevice.Name} has no separately-flashable WiFi module; skipping WiFi update.");
+            return;
+        }
+
+        // Pre-flight the one thing that cannot be recovered from mid-flash: whether this machine can
+        // run Microchip's WINC programmer at all (issue #330). Discovering it later is what turned a
+        // working update into a reported failure — by the time the external tool refuses to launch,
+        // the PIC32 image has been written and CRC-verified, the device has been put into LAN update
+        // mode and its managed connection dropped, and the launch exception reaches
+        // UploadFirmwareAsync's generic handler as "Firmware update failed. Please try again."
+        // Skipping here leaves the PIC32 half reported as what it is: a success.
+        if (!_canFlashWifiModule)
+        {
+            _host.FirmwareUpdateStatusText = WifiFlashUnavailableMessage;
+            _appLogger.Information(
+                $"Skipping the WiFi-module update for {serialStreamingDevice.Name}: {WifiFlashUnavailableMessage}");
+            NotifyWifiModuleWasNotUpdated(serialStreamingDevice);
             return;
         }
 
@@ -994,6 +1056,49 @@ public class FirmwareUpdateCoordinator
             });
         }
 
+        _host.RefreshNotificationCount();
+    }
+
+    /// <summary>
+    /// Leaves a record, outliving the run, that the WiFi half did not happen.
+    /// <para>
+    /// The status line is the only other place this is said, and it is rendered only while
+    /// <c>IsFirmwareUploading</c> is true (issue #241) — so by the time the user reads
+    /// "Firmware update completed successfully" the explanation is already off the screen, and the
+    /// flyout that carried it has been closed by the success dialog. The connect-time WiFi probe is
+    /// not a fallback either: it is debug-gated (<c>CheckWifiFirmwareCoreAsync</c>), so an ordinary
+    /// macOS or Linux user has no outdated-WiFi notification standing and would be left with a bare
+    /// success and no indication the module was skipped.
+    /// </para>
+    /// <para>
+    /// Message names the device and the field carries the serial, matching the "please connect
+    /// device" notification <see cref="UploadFirmwareAsync"/> already raises. Deduplicated so
+    /// repeated updates do not stack copies of what is a standing limitation of the machine, not an
+    /// event — but <b>per device</b>, on the serial the way <see cref="RemoveFirmwareNotification"/>
+    /// scopes its own match, and not on the rendered message alone. <c>Name</c> is the model name
+    /// Core's discovery reports, so two Nyquists on the same host carry the same one; deduplicating
+    /// on the message would have given the pair a single notice and left the second owner with a
+    /// bare "Firmware update completed successfully" (Qodo round 2 on PR #337). The message is kept
+    /// in the match as well, so this never swallows the other notifications a device can have.
+    /// </para>
+    /// </summary>
+    private void NotifyWifiModuleWasNotUpdated(SerialStreamingDevice serialStreamingDevice)
+    {
+        var message =
+            $"{serialStreamingDevice.Name}: the WiFi module firmware was not updated. {WifiFlashUnavailableMessage}";
+        var serial = serialStreamingDevice.DeviceSerialNo;
+
+        if (_host.Notifications.Any(notification =>
+                notification.Message == message && notification.DeviceSerialNo == serial))
+        {
+            return;
+        }
+
+        _host.Notifications.Add(new Notifications
+        {
+            Message = message,
+            DeviceSerialNo = serial
+        });
         _host.RefreshNotificationCount();
     }
 

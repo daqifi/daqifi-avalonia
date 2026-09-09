@@ -2623,10 +2623,30 @@ public partial class DaqifiViewModel : ObservableObject, IFirmwareUpdateHost, IL
         // Allowed on demand for any USB WINC1500 device — not gated on IsWifiFirmwareOutdated — so the
         // line can re-flash a module that reports as current (e.g. a prior flash that didn't take).
         // The command force-flashes regardless of the reported version.
+        //
+        // CanFlashWifiModule is the platform half: off Windows the flash cannot run at all, and this
+        // is the guard that keeps the command from starting one. It matters beyond greying the
+        // button — the body reports success on return, so a run that silently did nothing would be
+        // announced as "WiFi firmware update completed successfully" (issue #330). Same shape as the
+        // HasWincWifiModule term above, which the body likewise does not re-check.
         return !IsFirmwareUploading
             && SelectedDevice?.ConnectionType == Device.ConnectionType.Usb
-            && SelectedDevice.HasWincWifiModule;
+            && SelectedDevice.HasWincWifiModule
+            && FirmwareUpdateCoordinator.CanFlashWifiModule;
     }
+
+    /// <summary>
+    /// Whether this machine can flash the WINC module. Bound by the device panes so a disabled
+    /// FLASH WIFI button comes with the reason next to it rather than as an unexplained grey pill.
+    /// </summary>
+    public bool CanFlashWifiModule => FirmwareUpdateCoordinator.CanFlashWifiModule;
+
+    /// <summary>
+    /// The reason, for the panes to show when <see cref="CanFlashWifiModule"/> is false. Surfaced
+    /// from the coordinator rather than restated in each view, so the message the pane shows and the
+    /// message the firmware run logs cannot drift apart.
+    /// </summary>
+    public string WifiFlashUnavailableMessage => FirmwareUpdateCoordinator.WifiFlashUnavailableMessage;
 
     // @port: Daqifi.Desktop.ViewModels.DaqifiViewModel.AddWifiNotification
     private void AddWifiNotification(IStreamingDevice device, string reportedVersion)

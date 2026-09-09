@@ -40,6 +40,12 @@ public class FirmwareUpdateCancellationTests : IDisposable
     private readonly string _dataDirectory =
         Path.Combine(Path.GetTempPath(), "daqifi-firmware-cancel-tests", Guid.NewGuid().ToString("N"));
 
+    /// <summary>
+    /// <c>canFlashWifiModule: true</c> because these tests are about a WiFi flash that <em>runs</em>:
+    /// the platform gate added for issue #330 skips the WiFi step entirely where Microchip's
+    /// Windows-only WINC tool cannot launch, which off Windows would take every assertion below out
+    /// of reach. The gate itself is covered in <c>WifiFlashPlatformGateTests</c>.
+    /// </summary>
     private FirmwareUpdateCoordinator CreateCoordinator() =>
         new(_host,
             _updates,
@@ -47,7 +53,8 @@ public class FirmwareUpdateCancellationTests : IDisposable
             NullLogger<FirmwareUpdateService>.Instance,
             _logger,
             _dataDirectory,
-            wifiUpdateModeSettleDelay: TimeSpan.Zero);
+            wifiUpdateModeSettleDelay: TimeSpan.Zero,
+            canFlashWifiModule: true);
 
     public void Dispose()
     {

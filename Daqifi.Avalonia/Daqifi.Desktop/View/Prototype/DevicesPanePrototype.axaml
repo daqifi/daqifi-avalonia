@@ -827,6 +827,17 @@
                                                 Margin="8,0,0,0"
                                                 Command="{Binding Shell.UpdateWifiFirmwareOnlyCommand}"/>
                                     </Grid>
+
+                                    <!-- Off Windows the command's CanExecute is false (Microchip's WINC
+                                         programmer is a Windows .cmd), which greys the button above.
+                                         Say why, rather than leaving an unexplained dead control on a
+                                         module the device genuinely needs updated (issue #330). -->
+                                    <TextBlock Text="{Binding Shell.WifiFlashUnavailableMessage}"
+                                               IsVisible="{Binding !Shell.CanFlashWifiModule}"
+                                               FontSize="11"
+                                               Margin="0,6,0,0"
+                                               Foreground="{DynamicResource TextSecondary}"
+                                               TextWrapping="Wrap"/>
                                 </StackPanel>
 
                                 <!--
