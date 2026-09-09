@@ -64,11 +64,11 @@
 		<!-- Avalonia stack (replaces WPF + MahApps.Metro per the UI catalog decision log).
 		     Avalonia.Desktop (desktop windowing/startup) lives in the Desktop head, not here —
 		     this library is platform-neutral and shared with the Android/iOS heads. -->
-		<PackageReference Include="Avalonia" Version="12.1.1" />
-		<PackageReference Include="Avalonia.Themes.Fluent" Version="12.1.1" />
+		<PackageReference Include="Avalonia" Version="12.1.2" />
+		<PackageReference Include="Avalonia.Themes.Fluent" Version="12.1.2" />
 		<!-- WPF DataGrid ships in-box; Avalonia's lives in a separate package (DebugWindow) -->
 		<PackageReference Include="Avalonia.Controls.DataGrid" Version="12.1.2" />
-		<PackageReference Include="Avalonia.Fonts.Inter" Version="12.1.1" />
+		<PackageReference Include="Avalonia.Fonts.Inter" Version="12.1.2" />
 		<!-- OxyPlot.Avalonia replaces OxyPlot.Wpf; the PlotModel layer (OxyPlot.Core) ports verbatim.
 		     VENDORED as a ProjectReference: the NuGet 2.1.0 release targets Avalonia 0.10 and
 		     crashes at runtime under Avalonia 11 — see third_party/oxyplot-avalonia/VENDORED.md -->
@@ -93,7 +93,7 @@
 		<PackageReference Include="NCalcSync" Version="7.1.0" />
 		<PackageReference Include="Newtonsoft.Json" Version="13.0.4" />
 		<PackageReference Include="NLog" Version="6.2.0" />
-		<PackageReference Include="Sentry" Version="6.9.0" />
+		<PackageReference Include="Sentry" Version="6.10.0" />
 		<!-- AppLogger reads this back via AssemblyMetadata at startup (see ResolveSentryDsn).
 		     Overridable per build: -p:SentryDsn= disables reporting entirely, and either an
 		     App.config entry or DAQIFI_SENTRY_DSN takes precedence at run time. -->
