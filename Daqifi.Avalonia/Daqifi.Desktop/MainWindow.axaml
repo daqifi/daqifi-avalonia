@@ -27,6 +27,47 @@
         host (hal: flyout_host mechanism) — not independent slide-outs.
     -->
 
+    <!--
+        x:DataType + x:CompileBindings: all 32 bindings below are now resolved by the
+        XAML compiler against DaqifiViewModel instead of by reflection at run time
+        (issue #327). Both attributes are needed — AvaloniaUseCompiledBindingsByDefault
+        is false in Daqifi.Avalonia.csproj, so x:DataType on its own buys IntelliSense
+        and nothing else, which is the trap issue #326 was about.
+
+        Measured on origin/main, one deliberate typo at a time: ten of the bindings here
+        — the Window's own Height, a toolbar toggle, the notification badge's converter
+        binding, a <Binding Path=/> child of the SplitView MultiBinding, both halves of
+        an AppSettings.* path, the settings scrim's Command, the tab strip's
+        SelectedIndex, a flyout IsVisible and the busy overlay's FallbackValue binding —
+        each built with 0 Error(s) and no diagnostic naming this file. A bogus CLR
+        property in the same tag did error, so the file was genuinely being compiled.
+        On this branch each of the ten is AVLN2000 against DaqifiViewModel.
+
+        The default matters more than it looks: a broken bool binding does not blank the
+        control, it leaves the property at its DEFAULT, and IsVisible defaults to TRUE.
+        Eight of the 32 bindings feed IsVisible, and five of those gate a whole surface —
+        the settings drawer, the busy overlay and the three flyouts. A typo in any of the
+        five pinned that surface permanently open over the app, and every head still
+        built green.
+
+        The five DataTemplates below deliberately carry NO x:DataType. Measured on
+        Avalonia 12.1: a ContentControl.ContentTemplate infers no scope at all — its
+        bindings resolve against XamlX.TypeSystem.XamlPseudoType, on which nothing
+        resolves — and that holds even here, where Content="{Binding}" gives the
+        compiler the DataContext type statically. That is a build error, not a silent
+        re-scope, so an undeclared template cannot hide a broken binding. Since these
+        five hold a bare pane element and bind nothing, a declaration would be pure
+        decoration, and a stale one would be worse than none: an explicit x:DataType
+        OVERRIDES the scope, so it keeps compiling against the type it names after the
+        Content beside it has been repointed somewhere else.
+
+        Content="{Binding}" on each of the five is load-bearing and easy to mistake for
+        noise: it is what puts DaqifiViewModel into the pane's DataContext. LiveGraphPane
+        and LoggedDataPanePrototype have no view model of their own and read it straight
+        off the inherited DataContext, so deleting it blanks those two tabs. Pinned in
+        MainWindowBindingTests.
+    -->
+
     <Window.Resources>
 
         <converters:BoolOrConverter x:Key="BoolOr"/>

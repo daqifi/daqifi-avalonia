@@ -74,8 +74,16 @@ public class MobileShellViewBindingTests
 
     /// <summary>
     /// Gap 2: which item type each <c>DataTemplate</c> is scoped to. Inside a template the
-    /// <c>DataContext</c> is the item, not the view model, so a template that loses its
-    /// <c>x:DataType</c> falls back to the inherited scope — the escape hatch #326 exists to close.
+    /// <c>DataContext</c> is the item, not the view model.
+    ///
+    /// <para>
+    /// A template that loses its <c>x:DataType</c> does <b>not</b> fall back to the inherited scope —
+    /// that wording was wrong and is corrected here (issue #336). Measured on Avalonia 12.1, it
+    /// resolves against a scope inferred from the <c>ItemsSource</c> beside it, and both lists here
+    /// are the shape that infers, so losing the attribute is a no-op rather than a hole. What the
+    /// attribute buys is stated in the next gap: it is an <b>override</b>, so a wrong one is worse
+    /// than none. See <see cref="BindingFacts.AssertTemplateScopedTo"/> for the full rule.
+    /// </para>
     ///
     /// <para>
     /// Keyed by the <c>ItemsSource</c> the owning list is bound to rather than by looking for each
