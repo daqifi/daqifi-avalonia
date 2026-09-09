@@ -205,6 +205,26 @@ public class WifiFlashPlatformGateTests : IDisposable
     }
 
     /// <summary>
+    /// Deduplication is per device, not per sentence. <c>Name</c> is the model name Core's discovery
+    /// reports, so a bench with two Nyquists carries the same one twice — and collapsing them onto a
+    /// single notice would leave the second owner with nothing but "Firmware update completed
+    /// successfully" (Qodo round 2 on PR #337).
+    /// </summary>
+    [Fact]
+    public async Task Two_devices_with_the_same_name_each_get_their_own_notice()
+    {
+        var coordinator = CreateCoordinator(canFlashWifiModule: false);
+
+        await coordinator.UpdateWifiModuleOnlyAsync(WincDevice("COM-TEST-330-A", "Nq1", "SN-0001"));
+        await coordinator.UpdateWifiModuleOnlyAsync(WincDevice("COM-TEST-330-B", "Nq1", "SN-0002"));
+
+        Assert.Equal(2, _host.Notifications.Count);
+        Assert.Equal(
+            new[] { "SN-0001", "SN-0002" },
+            _host.Notifications.Select(notification => notification.DeviceSerialNo).Order());
+    }
+
+    /// <summary>
     /// The negative control: where the flash can run there is nothing to explain, so no notification
     /// is raised.
     /// </summary>
@@ -302,6 +322,17 @@ public class WifiFlashPlatformGateTests : IDisposable
     private static SerialStreamingDevice WincDevice()
     {
         var device = new SerialStreamingDevice("COM-TEST-330");
+        device.Metadata.Capabilities.HasWincWifiModule = true;
+        return device;
+    }
+
+    /// <summary>
+    /// The same, with the identity Core's discovery would have filled in — two boards of one model
+    /// share <c>Name</c> and differ only by serial.
+    /// </summary>
+    private static SerialStreamingDevice WincDevice(string portName, string deviceName, string serial)
+    {
+        var device = new SerialStreamingDevice(portName, deviceName, serial, firmwareVersion: "3.8.0");
         device.Metadata.Capabilities.HasWincWifiModule = true;
         return device;
     }

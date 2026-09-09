@@ -1072,16 +1072,24 @@ public class FirmwareUpdateCoordinator
     /// </para>
     /// <para>
     /// Message names the device and the field carries the serial, matching the "please connect
-    /// device" notification <see cref="UploadFirmwareAsync"/> already raises. Deduplicated on the
-    /// message so repeated updates on the same machine do not stack copies of a standing limitation.
+    /// device" notification <see cref="UploadFirmwareAsync"/> already raises. Deduplicated so
+    /// repeated updates do not stack copies of what is a standing limitation of the machine, not an
+    /// event — but <b>per device</b>, on the serial the way <see cref="RemoveFirmwareNotification"/>
+    /// scopes its own match, and not on the rendered message alone. <c>Name</c> is the model name
+    /// Core's discovery reports, so two Nyquists on the same host carry the same one; deduplicating
+    /// on the message would have given the pair a single notice and left the second owner with a
+    /// bare "Firmware update completed successfully" (Qodo round 2 on PR #337). The message is kept
+    /// in the match as well, so this never swallows the other notifications a device can have.
     /// </para>
     /// </summary>
     private void NotifyWifiModuleWasNotUpdated(SerialStreamingDevice serialStreamingDevice)
     {
         var message =
             $"{serialStreamingDevice.Name}: the WiFi module firmware was not updated. {WifiFlashUnavailableMessage}";
+        var serial = serialStreamingDevice.DeviceSerialNo;
 
-        if (_host.Notifications.Any(notification => notification.Message == message))
+        if (_host.Notifications.Any(notification =>
+                notification.Message == message && notification.DeviceSerialNo == serial))
         {
             return;
         }
@@ -1089,7 +1097,7 @@ public class FirmwareUpdateCoordinator
         _host.Notifications.Add(new Notifications
         {
             Message = message,
-            DeviceSerialNo = serialStreamingDevice.DeviceSerialNo
+            DeviceSerialNo = serial
         });
         _host.RefreshNotificationCount();
     }
