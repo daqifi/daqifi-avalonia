@@ -20,6 +20,13 @@ public partial class App : Application
     {
         if (ApplicationLifetime is IClassicDesktopStyleApplicationLifetime desktop)
         {
+            // macOS always draws an application menu, and the one Avalonia attaches for us
+            // titles its first item "About Avalonia". Naming the app there is the same
+            // identity concern as Name in App.axaml and the .app bundle (#108). Ordering
+            // against Initialize is not load-bearing — the exporter picks the edit up either
+            // way (checked both) — so this sits with the other identity wiring.
+            Services.MacApplicationMenu.Install(this);
+
             // Absorption seam: the ported Daqifi.Desktop.App startup host owns DI, database
             // migration, exception hooks, and MainWindow creation (upstream WPF OnStartup);
             // this bootstrap only hands it the desktop lifetime.
