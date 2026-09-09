@@ -78,11 +78,18 @@ public class MobileShellViewBindingTests
     ///
     /// <para>
     /// A template that loses its <c>x:DataType</c> does <b>not</b> fall back to the inherited scope —
-    /// that wording was wrong and is corrected here (issue #336). Measured on Avalonia 12.1, it
-    /// resolves against a scope inferred from the <c>ItemsSource</c> beside it, and both lists here
-    /// are the shape that infers, so losing the attribute is a no-op rather than a hole. What the
-    /// attribute buys is stated in the next gap: it is an <b>override</b>, so a wrong one is worse
-    /// than none. See <see cref="BindingFacts.AssertTemplateScopedTo"/> for the full rule.
+    /// that wording was wrong and is corrected here (issue #336). Measured on this view, on Avalonia
+    /// 12.1, with both declarations deleted: correct member names still build with <c>0 Error(s)</c>;
+    /// <c>{Binding IsSelectedZZZ}</c> in the channel template is <c>AVLN2000 … on type
+    /// 'Daqifi.Avalonia.Views.ChannelToggle'</c>, the same type the deleted attribute named; and
+    /// <c>{Binding ShowDeviceList}</c> — a <c>MobileShellViewModel</c> member — is <c>AVLN2000</c>
+    /// against <c>ChannelToggle</c> too, not a silent success and not a resolution against the view
+    /// model. Both lists here are <c>ItemsControl.ItemTemplate</c> over a bound <c>ItemsSource</c>,
+    /// the shape that infers its item type, so these two declarations are redundant rather than
+    /// load-bearing. They are kept because they are correct and churning them would reset a settled
+    /// review; what the attribute does buy is in the next gap. See
+    /// <see cref="BindingFacts.AssertTemplateScopedTo"/> for the full rule and the shapes that infer
+    /// nothing.
     /// </para>
     ///
     /// <para>
@@ -108,15 +115,18 @@ public class MobileShellViewBindingTests
     {
         var root = Root();
 
-        // The every-template half, which a per-list check cannot cover: a template added later with
-        // no x:DataType of its own resolves against whatever scope it inherits, and a fixed list of
-        // the two that exist today would not notice a third.
+        // The every-template half, which a per-list check cannot cover: a fixed list of the two
+        // templates that exist today would not notice a third added later. An undeclared template
+        // resolves against a scope inferred from the ItemsSource beside it, or — in a shape that
+        // infers nothing, such as a ContentControl.ContentTemplate — against XamlPseudoType, which
+        // is a build error. Never against an inherited scope (issue #336).
         var all = Templates(root).ToList();
         var unscoped = all.Count(template => template.Attribute(Xaml + "DataType") is null);
         Assert.True(
             unscoped == 0,
             $"{View}: {unscoped} of {all.Count} DataTemplates declare no x:DataType, so their "
-            + "bindings resolve against an inherited scope rather than against the item.");
+            + "bindings resolve against a scope inferred from the surrounding ItemsSource, or "
+            + "against nothing at all where the shape supports no such inference.");
 
         var list = root.Descendants()
             .SingleOrDefault(element => element.Attribute("ItemsSource")?.Value == itemsSource);

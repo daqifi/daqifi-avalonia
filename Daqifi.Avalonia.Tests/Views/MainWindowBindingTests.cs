@@ -40,9 +40,6 @@ public class MainWindowBindingTests
         XDocument.Parse(BindingFacts.Source(View)).Root
         ?? throw new InvalidOperationException($"{View} has no root element.");
 
-    private static IEnumerable<XElement> Templates(XElement root) =>
-        root.Descendants().Where(element => element.Name.LocalName == "DataTemplate");
-
     /// <summary>
     /// Gap 1: nothing else in the build notices either declaration being dropped. Delete
     /// <c>x:CompileBindings</c> and all 32 bindings go back on reflection while desktop, iOS and
@@ -54,6 +51,14 @@ public class MainWindowBindingTests
     /// its own counter-example to the substring form: the comment added beside the declarations
     /// spells out both literals several times, so an <c>Assert.Contains</c> over the raw markup
     /// passes with the real attributes deleted from the tag (Qodo round 2 on PR #325).
+    /// </para>
+    ///
+    /// <para>
+    /// Only the <c>CompileBindings</c> half is load-bearing. Measured: deleting
+    /// <c>x:CompileBindings</c> builds green and this test is the only thing that objects, while
+    /// deleting <c>x:DataType</c> is already an <c>AVLN2000</c> — <c>x:CompileBindings="True"</c>
+    /// with no scope to compile against cannot go quiet. The <c>DataType</c> row is kept because it
+    /// pins the <i>value</i>, not the presence, and the value is what the next test depends on.
     /// </para>
     /// </summary>
     [Theory]
@@ -97,9 +102,14 @@ public class MainWindowBindingTests
     {
         var root = Root();
 
-        Assert.Equal(
-            $"clr-namespace:{typeof(DaqifiViewModel).Namespace}",
-            root.Attribute(XNamespace.Xmlns + "vm")?.Value);
+        // Avalonia spells a CLR-namespace prefix either way; both are in use in this checkout.
+        var prefix = root.Attribute(XNamespace.Xmlns + "vm")?.Value;
+        Assert.True(
+            prefix == $"using:{typeof(DaqifiViewModel).Namespace}"
+            || prefix == $"clr-namespace:{typeof(DaqifiViewModel).Namespace}",
+            $"{View}: xmlns:vm is {prefix ?? "absent"}, so the x:DataType below does not name "
+            + $"{typeof(DaqifiViewModel).FullName}.");
+
         Assert.Equal($"vm:{nameof(DaqifiViewModel)}", root.Attribute(Xaml + "DataType")?.Value);
 
         BindingFacts.AssertBinds(
@@ -108,41 +118,45 @@ public class MainWindowBindingTests
     }
 
     /// <summary>
-    /// Gap 3: the five tab <c>DataTemplate</c>s carry no <c>x:DataType</c>, and that is deliberate
-    /// and measured rather than an oversight — but it only stays safe while they bind nothing.
+    /// Gap 3: compiled bindings type-check the <i>path</i>, never the target, so which property a
+    /// binding feeds is still nobody's business. This pins the one coupling in the view where
+    /// getting it wrong is invisible to both the compiler and a look at the screen.
     ///
     /// <para>
-    /// Measured on Avalonia 12.1: a <c>ContentControl.ContentTemplate</c> infers <b>no</b> scope. A
-    /// binding inside one resolves against <c>XamlX.TypeSystem.XamlPseudoType</c>, on which no member
-    /// resolves, so it is <c>AVLN2000</c> even with a correct member name. That holds here even
-    /// though <c>Content="{Binding}"</c> hands the compiler the <c>DataContext</c> type statically,
-    /// and it holds with <c>Content="{Binding AppSettings}"</c> too — the inference does not follow
-    /// the <c>Content</c> binding at all. Unlike a <c>ListBox.ItemTemplate</c>, which does infer its
-    /// item type from the <c>ItemsSource</c> beside it, this shape has nothing to infer from.
+    /// The three flyouts are not independent slide-outs — they are stacked in the pane of a single
+    /// <c>SplitView</c>, each shown by its own <c>IsVisible</c>, and the pane is opened by a
+    /// <c>MultiBinding</c> OR-ing the same three view-model booleans. The two lists have to stay the
+    /// same list. Drop one from the <c>MultiBinding</c> and that flyout becomes unreachable: its
+    /// <c>IsVisible</c> goes true inside a pane that never opens. Add one and the pane slides out
+    /// empty. Both compile, and both are states a "does the shell still look right?" pass sees only
+    /// if it happens to open that flyout.
     /// </para>
     ///
     /// <para>
-    /// So the invariant is not "every template declares a scope" — it is that a template either
-    /// declares one or binds nothing. Declaring one anyway would be worse than leaving it off: an
-    /// explicit <c>x:DataType</c> <b>overrides</b>, so it goes on compiling against the type it names
-    /// after the <c>Content</c> beside it has been repointed, which is exactly the reads-as-protection
-    /// failure this issue is about. Leaving it off keeps the failure loud.
+    /// Compared by set rather than in order — the OR is commutative, so the order genuinely does not
+    /// matter and pinning it would only manufacture failures.
     /// </para>
     /// </summary>
     [Fact]
-    public void Every_template_that_binds_anything_declares_the_scope_it_binds_against()
+    public void The_pane_opens_for_exactly_the_flyouts_it_holds()
     {
-        var offenders = Templates(Root())
-            .Where(template => template.Attribute(Xaml + "DataType") is null)
-            .Where(template => template.DescendantsAndSelf().Any(HasBinding))
-            .ToList();
+        var root = Root();
 
-        Assert.True(
-            offenders.Count == 0,
-            $"{View}: {offenders.Count} DataTemplate(s) bind something while declaring no "
-            + "x:DataType. A ContentControl.ContentTemplate infers no scope, so those bindings "
-            + "resolve against XamlPseudoType and the build fails with a message that does not "
-            + "explain itself. Give the template an x:DataType matching the Content beside it.");
+        var paneOpen = root.Descendants()
+            .Single(element => element.Name.LocalName == "SplitView.IsPaneOpen")
+            .Descendants()
+            .Where(element => element.Name.LocalName == "Binding")
+            .Select(element => element.Attribute("Path")?.Value)
+            .ToHashSet();
+
+        var flyouts = root.Descendants()
+            .Where(element => element.Name.LocalName.EndsWith("Flyout", StringComparison.Ordinal))
+            .Select(element => element.Attribute("IsVisible")?.Value)
+            .Select(value => value?.Replace("{Binding ", string.Empty).TrimEnd('}'))
+            .ToHashSet();
+
+        Assert.Equal(3, flyouts.Count);
+        Assert.Equal(flyouts, paneOpen);
     }
 
     /// <summary>
@@ -159,7 +173,17 @@ public class MainWindowBindingTests
     ///
     /// <para>
     /// It is also the markup that decides what a future <c>x:DataType</c> on these templates would
-    /// have to say, per the test above. Pinning the pairing keeps the two facts from drifting apart.
+    /// have to say. The five <c>DataTemplate</c>s deliberately declare none, and there is no test
+    /// demanding one, because measured on Avalonia 12.1 a <c>ContentControl.ContentTemplate</c>
+    /// infers <b>no</b> scope: a binding inside one resolves against
+    /// <c>XamlX.TypeSystem.XamlPseudoType</c> and is <c>AVLN2000</c> even with a correct member name.
+    /// That holds here even though <c>Content="{Binding}"</c> hands the compiler the
+    /// <c>DataContext</c> type statically, and with <c>Content="{Binding AppSettings}"</c> too — the
+    /// inference does not follow the <c>Content</c> binding at all. So a template here that binds
+    /// something already fails the build, and a test asserting the same thing could never fail;
+    /// worse, it would fire wrongly on a <c>ListBox.ItemTemplate</c> added later, which <i>does</i>
+    /// infer its item type and correctly needs no declaration. Whoever adds the first binding to one
+    /// of these five wants <c>x:DataType="vm:DaqifiViewModel"</c> and the comment in the view says so.
     /// </para>
     /// </summary>
     [Fact]
@@ -193,8 +217,4 @@ public class MainWindowBindingTests
     [InlineData("ReflectionBinding")]
     public void The_view_opens_no_escape_hatch(string hatch) =>
         Assert.DoesNotContain(hatch, BindingFacts.Source(View), StringComparison.Ordinal);
-
-    private static bool HasBinding(XElement element) =>
-        element.Attributes().Any(a => a.Value.TrimStart().StartsWith("{Binding", StringComparison.Ordinal))
-        || element.Name.LocalName == "Binding";
 }
