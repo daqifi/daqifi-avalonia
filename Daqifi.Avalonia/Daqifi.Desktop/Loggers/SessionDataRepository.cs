@@ -3,6 +3,7 @@
 // DO NOT manually delete the `// @port:` markers — they link symbols back to
 // the correspondence map.
 
+using Daqifi.Core.Logging.Export;
 using Daqifi.Desktop.Channel;
 using Daqifi.Desktop.Common.Loggers;
 using Daqifi.Desktop.Helpers;
@@ -297,7 +298,7 @@ public sealed class SessionDataRepository
     {
         return rows
             .DistinctBy(r => (r.DeviceSerialNo, r.ChannelName))
-            .NaturalOrderBy(r => r.ChannelName)
+            .OrderBy(r => r.ChannelName, ChannelNameComparer.Instance)
             .ToList();
     }
     #endregion

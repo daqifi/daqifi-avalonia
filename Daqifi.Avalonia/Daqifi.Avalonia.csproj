@@ -80,7 +80,7 @@
 
 		<!-- Platform-neutral stack carried over from upstream Daqifi.Desktop + Daqifi.Desktop.Common -->
 		<PackageReference Include="CommunityToolkit.Mvvm" Version="8.4.2" />
-		<PackageReference Include="Daqifi.Core" Version="1.7.0" />
+		<PackageReference Include="Daqifi.Core" Version="1.8.0" />
 		<PackageReference Include="EFCore.BulkExtensions.Sqlite" Version="10.0.1" />
 		<PackageReference Include="Microsoft.Data.Sqlite" Version="10.0.11" />
 		<PackageReference Include="Microsoft.EntityFrameworkCore" Version="10.0.11" />

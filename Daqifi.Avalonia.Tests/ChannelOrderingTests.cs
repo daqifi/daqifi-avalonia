@@ -20,12 +20,13 @@ namespace Daqifi.Avalonia.Tests;
 /// </para>
 ///
 /// <para>
-/// These tests exist because the app stated that rule three separate times — <c>NaturalSortHelper</c>
-/// for the panes and the plot, <see cref="StringComparer.Ordinal"/> on the exporter's database
-/// path, and no comparer at all on its in-memory path — and only the first of the three was right.
-/// They assert the ORDER, never which comparer produced it, so they went on holding when the three
-/// were collapsed onto the one, and will go on holding when that one is eventually replaced by
-/// Daqifi.Core's <c>ChannelNameComparer</c> (not in Core 1.7.0, the pinned version).
+/// These tests exist because the app stated that rule three separate times — a local
+/// <c>NaturalSortHelper</c> for the panes and the plot, <see cref="StringComparer.Ordinal"/> on the
+/// exporter's database path, and no comparer at all on its in-memory path — and only the first of
+/// the three was right. They assert the ORDER, never which comparer produced it, which is what let
+/// them go on holding when the three were collapsed onto one, and again when that one was deleted
+/// in favour of Daqifi.Core's <c>ChannelNameComparer</c> / <c>ChannelDescriptorComparer</c> (Core
+/// 1.8.0). The rule now lives in Core; these tests pin that this app still gets that rule's answer.
 /// </para>
 /// </summary>
 public class ChannelOrderingTests
@@ -139,6 +140,30 @@ public class ChannelOrderingTests
             Sample("AI0", device: "Bison", serial: Serial));
 
         Assert.Equal(["Bison", "aardvark"], source.GetChannels().Select(c => c.DeviceName));
+    }
+
+    /// <summary>
+    /// The CHANNEL name is compared ordinally too, not just the device identity above.
+    ///
+    /// <para>
+    /// This is the one property the move to Core's comparer actually changed. The local helper
+    /// compared a name's non-numeric part with
+    /// <see cref="StringComparison.InvariantCultureIgnoreCase"/>, so it called <c>AI0</c> and
+    /// <c>ai0</c> equal — two distinct columns collapsing to "same", which leaves their relative
+    /// order down to whatever order the input arrived in. It also disagreed with the BINARY
+    /// collation the database path reads its rows under, the very agreement
+    /// <c>LoggingSessionSampleSource</c> exists to guarantee. Core's comparer is ordinal on the
+    /// prefix, so the two paths now genuinely match.
+    /// </para>
+    /// </summary>
+    [Fact]
+    public void GetChannels_compares_the_channel_name_ordinally_not_case_insensitively()
+    {
+        var source = InMemorySource(Sample("ai0"), Sample("AI0"));
+
+        // Ordinal: 'A' is 0x41, 'a' is 0x61, so the uppercase name sorts first — and, crucially,
+        // the two are ordered at all rather than compared equal.
+        Assert.Equal(["AI0", "ai0"], source.GetChannels().Select(c => c.ChannelName));
     }
 
     [Fact]

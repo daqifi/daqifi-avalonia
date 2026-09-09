@@ -8,6 +8,7 @@ using System.ComponentModel;
 using Avalonia.Threading;
 using CommunityToolkit.Mvvm.ComponentModel;
 using CommunityToolkit.Mvvm.Input;
+using Daqifi.Core.Logging.Export;
 using Daqifi.Desktop.Channel;
 using Daqifi.Desktop.Helpers;
 using Daqifi.Desktop.Logger;
@@ -250,7 +251,7 @@ public partial class ChannelsPaneViewModel : ObservableObject, IDisposable
 
         foreach (var device in devices)
         {
-            foreach (var channel in device.DataChannels.NaturalOrderBy(c => c.Name))
+            foreach (var channel in device.DataChannels.OrderBy(c => c.Name, ChannelNameComparer.Instance))
             {
                 _channelOwners[channel] = device;
                 var tile = new ChannelTileViewModel(channel, this, device.Name, HasMultipleDevices);
