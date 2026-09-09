@@ -52,8 +52,10 @@ but the map they index is not in this repository.
   Windows-only application. This repository is a port of it, and deliberately keeps the
   upstream `Daqifi.Desktop.*` namespaces so the two stay diffable.
 - **[daqifi-core](https://github.com/daqifi/daqifi-core)** — device discovery,
-  transport, protobuf, and firmware-update logic all come from this NuGet package
-  (currently pinned to `1.7.0`). That logic is *referenced, not ported*; bugs in device
+  transport, protobuf, and firmware-update logic all come from this NuGet package.
+  The pinned version lives in one place, `Daqifi.Avalonia/Daqifi.Avalonia.csproj`; it is
+  deliberately not repeated here, because a version restated in prose is a version that
+  goes stale on the next bump. That logic is *referenced, not ported*; bugs in device
   communication usually belong there rather than here.
 
 ## Building

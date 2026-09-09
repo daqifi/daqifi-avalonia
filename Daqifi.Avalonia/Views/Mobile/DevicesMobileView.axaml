@@ -359,6 +359,15 @@
               <Button Theme="{StaticResource AccentPillButton}" HorizontalAlignment="Stretch" MinHeight="44"
                       Content="FLASH WIFI"
                       Command="{Binding Shell.UpdateWifiFirmwareOnlyCommand}" />
+              <!-- Off Windows the command's CanExecute is false (Microchip's WINC programmer is a
+                   Windows .cmd), which greys the button above. Say why rather than leaving an
+                   unexplained dead control (issue #330). Always shown on the mobile heads, which are
+                   never Windows. -->
+              <TextBlock Text="{Binding Shell.WifiFlashUnavailableMessage}"
+                         IsVisible="{Binding !Shell.CanFlashWifiModule}"
+                         FontSize="{DynamicResource FontSizeCaption}"
+                         Foreground="{DynamicResource TextSecondary}"
+                         TextWrapping="Wrap" />
             </StackPanel>
 
             <!-- Live status + cancel for BOTH firmware paths above; see the matching block in

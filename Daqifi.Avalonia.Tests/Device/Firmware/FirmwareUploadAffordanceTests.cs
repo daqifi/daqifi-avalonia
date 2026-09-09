@@ -61,6 +61,12 @@ public class FirmwareUploadAffordanceTests : IDisposable
     private readonly string _dataDirectory =
         Path.Combine(Path.GetTempPath(), "daqifi-firmware-affordance-tests", Guid.NewGuid().ToString("N"));
 
+    /// <summary>
+    /// <c>canFlashWifiModule: true</c> because the status-line facts below describe a WiFi flash that
+    /// <em>runs</em>. The platform gate added for issue #330 skips the WiFi step where Microchip's
+    /// Windows-only WINC tool cannot launch, which off Windows would leave those writes unmade. The
+    /// gate itself is covered in <c>WifiFlashPlatformGateTests</c>.
+    /// </summary>
     private FirmwareUpdateCoordinator CreateCoordinator() =>
         new(_host,
             _updates,
@@ -68,7 +74,8 @@ public class FirmwareUploadAffordanceTests : IDisposable
             NullLogger<FirmwareUpdateService>.Instance,
             _logger,
             _dataDirectory,
-            wifiUpdateModeSettleDelay: TimeSpan.Zero);
+            wifiUpdateModeSettleDelay: TimeSpan.Zero,
+            canFlashWifiModule: true);
 
     public void Dispose()
     {

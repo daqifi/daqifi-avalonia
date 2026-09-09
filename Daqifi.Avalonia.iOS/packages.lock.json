@@ -96,10 +96,10 @@
       },
       "Daqifi.Core": {
         "type": "Transitive",
-        "resolved": "1.7.0",
-        "contentHash": "Qv/l88xnXvks2igaUqc3AUpJ62xlTcLPrkfmnjr7oOjQpSyCTXJOwj3hClvrrBmTYqGnPagWPpL8MBEodI+acw==",
+        "resolved": "1.8.0",
+        "contentHash": "mLWouv9bxSk+JpSnmj1QfwdYtScWqnn6xT53e5BN7x9DJSemHnaJuSSnStIS7tbY9j9f6gLgFRkhxbizQeGgMg==",
         "dependencies": {
-          "Google.Protobuf": "3.35.1",
+          "Google.Protobuf": "3.36.1",
           "HidSharp": "2.6.4",
           "Microsoft.Extensions.Logging.Abstractions": "10.0.11",
           "System.IO.Ports": "10.0.11",
@@ -133,8 +133,8 @@
       },
       "Google.Protobuf": {
         "type": "Transitive",
-        "resolved": "3.35.1",
-        "contentHash": "pxtkuXhR8svkvDTQrYew9GZQt6eWhblz/V/WKUFrQgkHYlQPsumJTeF6ppHRJpe6j9ffukkd5lQULiiKaek4xA=="
+        "resolved": "3.36.1",
+        "contentHash": "77AqPEoaY1ODE+syYBHti0jXiwQq0J/fUr/fRyYhNlc9oKtH5dZZEr/OLKtdKNVG83PRnCYB2r8B80ZrObzOGQ=="
       },
       "HarfBuzzSharp": {
         "type": "Transitive",
@@ -783,7 +783,7 @@
           "Avalonia.Fonts.Inter": "[12.1.1, )",
           "Avalonia.Themes.Fluent": "[12.1.1, )",
           "CommunityToolkit.Mvvm": "[8.4.2, )",
-          "Daqifi.Core": "[1.7.0, )",
+          "Daqifi.Core": "[1.8.0, )",
           "EFCore.BulkExtensions.Sqlite": "[10.0.1, )",
           "Microsoft.Data.Sqlite": "[10.0.11, )",
           "Microsoft.EntityFrameworkCore": "[10.0.11, )",
