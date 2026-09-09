@@ -136,6 +136,14 @@ public class MainWindowBindingTests
     /// Compared by set rather than in order — the OR is commutative, so the order genuinely does not
     /// matter and pinning it would only manufacture failures.
     /// </para>
+    ///
+    /// <para>
+    /// The flyout side is read out of the <c>SplitView.Pane</c> subtree, not out of the window, and
+    /// any flyout found outside the pane fails first. Collecting them window-wide let a flyout be
+    /// moved out of the pane with both sets unchanged — the pane's boolean would still name it while
+    /// the pane no longer displayed it, which is precisely the drift this test exists to catch
+    /// (Qodo round 2).
+    /// </para>
     /// </summary>
     [Fact]
     public void The_pane_opens_for_exactly_the_flyouts_it_holds()
@@ -146,17 +154,50 @@ public class MainWindowBindingTests
             .Single(element => element.Name.LocalName == "SplitView.IsPaneOpen")
             .Descendants()
             .Where(element => element.Name.LocalName == "Binding")
-            .Select(element => element.Attribute("Path")?.Value)
+            .Select(element => element.Attribute("Path")?.Value ?? string.Empty)
             .ToHashSet();
 
-        var flyouts = root.Descendants()
-            .Where(element => element.Name.LocalName.EndsWith("Flyout", StringComparison.Ordinal))
-            .Select(element => element.Attribute("IsVisible")?.Value)
-            .Select(value => value?.Replace("{Binding ", string.Empty).TrimEnd('}'))
-            .ToHashSet();
+        Assert.DoesNotContain(paneOpen, path => path.Length == 0);
 
-        Assert.Equal(3, flyouts.Count);
-        Assert.Equal(flyouts, paneOpen);
+        var pane = root.Descendants()
+            .Single(element => element.Name.LocalName == "SplitView.Pane");
+
+        var inPane = pane.Descendants().Where(IsFlyout).ToList();
+        var stray = root.Descendants().Where(IsFlyout).Except(inPane).ToList();
+
+        Assert.True(
+            stray.Count == 0,
+            $"{View}: {stray.Count} flyout(s) sit outside SplitView.Pane "
+            + $"({string.Join(", ", stray.Select(element => element.Name.LocalName))}). The pane's "
+            + "IsPaneOpen still ORs their booleans, so the pane would slide out for a flyout it no "
+            + "longer holds.");
+
+        Assert.Equal(3, inPane.Count);
+        Assert.Equal(inPane.Select(BoundVisibilityPath).ToHashSet(), paneOpen);
+    }
+
+    private static bool IsFlyout(XElement element) =>
+        element.Name.LocalName.EndsWith("Flyout", StringComparison.Ordinal);
+
+    /// <summary>
+    /// The view-model member a flyout's <c>IsVisible</c> is bound to. Trailing binding options
+    /// (<c>Mode=</c>, <c>FallbackValue=</c>, a converter) are allowed and ignored — they do not
+    /// change which member gates the flyout. Anything the path cannot be read out of fails here and
+    /// says so, rather than being quietly reshaped into a string that fails the set comparison for
+    /// the wrong reason.
+    /// </summary>
+    private static string BoundVisibilityPath(XElement flyout)
+    {
+        var value = flyout.Attribute("IsVisible")?.Value;
+        var match = System.Text.RegularExpressions.Regex.Match(
+            value ?? string.Empty, @"^\{Binding (?<path>[A-Za-z_][A-Za-z0-9_.]*)\s*(,.*)?\}$");
+
+        Assert.True(
+            match.Success,
+            $"{View}: <{flyout.Name.LocalName}> has IsVisible={value ?? "(absent)"}, which is not a "
+            + "plain {Binding Member}. The pane's IsPaneOpen MultiBinding cannot be checked against "
+            + "it.");
+        return match.Groups["path"].Value;
     }
 
     /// <summary>
