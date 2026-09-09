@@ -65,7 +65,12 @@ internal static class MacApplicationMenu
         }
 
         var about = new NativeMenuItem($"About {appName}");
-        about.Click += (_, _) => ShowAbout(appName);
+
+        // Fire-and-forget is forced: Click is a void-returning event and there is no result to
+        // consume. It is safe because ShowAboutAsync cannot fault — its whole body is inside a
+        // catch — so this discards a task that is always completed-or-logged, never an
+        // unobserved exception.
+        about.Click += (_, _) => _ = ShowAboutAsync(appName);
 
         // macOS puts About first, and so does the default menu being repaired. Matched on the
         // "About" prefix rather than the exact "About Avalonia": the point is to own whatever
@@ -84,7 +89,7 @@ internal static class MacApplicationMenu
         }
     }
 
-    private static void ShowAbout(string appName)
+    private static async Task ShowAboutAsync(string appName)
     {
         try
         {
@@ -100,10 +105,12 @@ internal static class MacApplicationMenu
             var build = string.Empty;
 #endif
 
-            // Fire-and-forget by design: a modal acknowledgement with no result to consume, from
-            // a click handler that cannot await. The service finds its own owner window and
-            // returns MessageBoxResult.None rather than throwing when there is none.
-            _ = new AvaloniaMessageBoxService().ShowAsync(
+            // Awaited inside the try so a fault raised while the dialog is open — an owner
+            // window closing under it, say — is logged like any other. Discarding the task at
+            // the call site instead would leave that as an unobserved exception. The service
+            // finds its own owner window and returns MessageBoxResult.None, rather than
+            // throwing, when there is none.
+            await new AvaloniaMessageBoxService().ShowAsync(
                 $"{appName}\nVersion {version}{build}",
                 $"About {appName}",
                 MessageBoxButton.OK,
