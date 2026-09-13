@@ -26,7 +26,9 @@ sdkmanager --licenses          # accept all
 sdkmanager --install "platform-tools" "platforms;android-36" "build-tools;36.1.0"
 ```
 
-Put these in your shell profile:
+`sdkmanager` works straight after the cask install — the cask symlinks it into
+`/opt/homebrew/bin`, which is already on your PATH. `adb` is **not** symlinked,
+so put these in your shell profile:
 
 ```bash
 export ANDROID_HOME=/opt/homebrew/share/android-commandlinetools
