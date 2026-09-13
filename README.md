@@ -73,6 +73,12 @@ Android and iOS need their respective workloads (`dotnet workload install androi
 and iOS needs macOS with Xcode. See [docs/RUNBOOK-macos-ios.md](docs/RUNBOOK-macos-ios.md)
 for the macOS and iOS specifics, including what device deployment requires.
 
+Building the Android head additionally needs an Android SDK, which the workload does not
+supply. [docs/RUNBOOK-android.md](docs/RUNBOOK-android.md) covers that, plus installing
+the app on a phone and driving it over `adb`. When the hardware rather than the app is
+the suspect, [docs/nyquist-bench-notes.md](docs/nyquist-bench-notes.md) is the faster
+place to start.
+
 Every project commits a `packages.lock.json`, and CI restores in **locked mode** — a
 lock file that has drifted from its project's dependencies fails the build rather than
 being silently regenerated. If you change a `PackageReference`, refresh the lock file in
