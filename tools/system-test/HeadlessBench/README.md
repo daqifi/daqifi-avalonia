@@ -299,9 +299,10 @@ These are real limits of the current rig, not of the app.
   swallows a failed command rather than returning one, so that read-back is as far as the rig
   can see without changing the app for the benefit of its own test harness.
 - **`DEV-NAME` skips a board that has no name.** The app can set a friendly name but cannot clear
-  one — `IsFriendlyNameValid` rejects the empty string, so `SetFriendlyNameCommand` has no way to
-  put a nameless board back to nameless. Rather than strand a shared board named after the rig with
-  no undo, the row emits `not-run` and says so. A factory-fresh board reaches this.
+  one — `ScpiMessageProducer.IsFriendlyNameValid` rejects the empty string, so
+  `SetFriendlyNameCommand` has no way to put a nameless board back to nameless. Rather than strand a
+  shared board named after the rig with no undo, the row emits `not-run` and says so. A
+  factory-fresh board reaches this.
 - **`DEV-NAME` does not cover the WiFi-connected case, and cannot see a partial write.** It runs
   against the USB board `--port` names. `SetFriendlyName` sends two SCPI writes,
   `SYSTem:DEVice:NAME` then `…:NAME:SAVE`, and neither is acknowledged; a board that took the first

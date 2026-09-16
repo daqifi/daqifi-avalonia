@@ -783,12 +783,14 @@ internal static class HeadlessBench
         if (string.IsNullOrWhiteSpace(originalName))
         {
             // Refusing rather than renaming: the app can set a name but cannot clear one —
-            // IsFriendlyNameValid rejects the empty string, so SetFriendlyNameCommand has no way to
-            // put a nameless board back to nameless, and this row would strand a shared bench board
-            // named after the rig with no undo. Reachable in practice: a factory-fresh board.
+            // ScpiMessageProducer.IsFriendlyNameValid rejects the empty string, so
+            // SetFriendlyNameCommand has no way to put a nameless board back to nameless, and this
+            // row would strand a shared bench board named after the rig with no undo. Reachable in
+            // practice: a factory-fresh board.
             Emit(2, "DEV-NAME", "works", "not-run",
                  $"board '{device.DeviceSerialNo}' reports no friendly name, and the app cannot clear one " +
-                 "(IsFriendlyNameValid rejects the empty string), so this row has no way to undo itself");
+                 "(ScpiMessageProducer.IsFriendlyNameValid rejects the empty string), so this row has no " +
+                 "way to undo itself");
             DisconnectQuiet(shell, device);
             return;
         }
@@ -849,7 +851,7 @@ internal static class HeadlessBench
                  Capture(main, "t2-13-name-persisted"), bounceSeconds);
 
             // DEV-NAME/limits — firmware takes 1-31 printable ASCII with no '"' or '\', and
-            // AbstractStreamingDevice.IsFriendlyNameValid mirrors daqifi_settings_FriendlyNameIsValid
+            // ScpiMessageProducer.IsFriendlyNameValid mirrors daqifi_settings_FriendlyNameIsValid
             // exactly so that a name the app accepts is one the board will. The TextBox caps length
             // at 31, but the property is what a binding writes, and an empty box and an embedded
             // quote are both reachable by typing. Each has to surface in the drawer's inline error
