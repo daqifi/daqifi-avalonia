@@ -161,19 +161,17 @@ public class SdCardFailureClassifierTests
     }
 
     [Fact]
-    public void A_read_error_reports_how_much_of_the_file_was_genuinely_read()
+    public void A_read_error_gets_a_status_line_this_app_owns_rather_than_Core_prose()
     {
-        // Core states the bytes before the marker are real file content already written to the
-        // destination stream (unlike a truncated transfer, where they stand in for the file).
-        // Nothing imports them — but the count is the one thing that says how much of the file
-        // the card could still read, so the status line must not throw it away.
-        const long bytesReceived = 1234;
-        var failure = SdCardFailureClassifier.Classify(
-            new SdCardTransferErrorException("log.bin", bytesReceived));
+        // The base arm's StatusMessage is `LastScpiError ?? Message`, and Core builds this
+        // exception with no SCPI error — so without an arm the status line is Core's own
+        // paragraph, which carries its own advice and would read alongside the app's.
+        var ex = new SdCardTransferErrorException("log.bin", bytesReceived: 4096);
 
-        // Grouped in the running culture, as the status line formats it — asserting the literal
-        // "1,234" would fail on a machine whose culture groups with a period.
-        Assert.Contains(bytesReceived.ToString("N0"), failure.StatusMessage, StringComparison.Ordinal);
+        var failure = SdCardFailureClassifier.Classify(ex);
+
+        Assert.Contains("could not read all of this file", failure.StatusMessage, StringComparison.Ordinal);
+        Assert.NotEqual(ex.Message, failure.StatusMessage);
     }
 
     [Fact]

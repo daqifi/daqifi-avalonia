@@ -276,21 +276,24 @@ public static class SdCardFailureClassifier
             // an arm placed underneath would never execute and the base arm would hand a single
             // unreadable file the reformat-flavoured GENERIC_CARD_GUIDANCE.
             //
-            // BytesReceived is reported because those bytes are real: Core states they are genuine
-            // file content already written to the destination stream, unlike
-            // SdCardTruncatedTransferException where the bytes are a short reply standing in for
-            // the file. The classifier surfaces the number and stops there. Keeping a partial log —
-            // importing it as a session, marking it incomplete — is a product decision about the
-            // import pipeline, not a classification, and nothing downstream is built to label a
-            // session as partial.
+            // BytesReceived is deliberately NOT surfaced here, though Core states those bytes are
+            // genuine file content already written to the destination stream (unlike
+            // SdCardTruncatedTransferException, where they are a short reply standing in for the
+            // file). There is nowhere for a per-file number to go that a user would read: this
+            // record's StatusMessage reaches the UI only through ApplyFailureState, which a
+            // per-file failure does not trigger, and Guidance is deduplicated across skipped files
+            // by BuildImportAllSummary — a count baked into it would print one paragraph per
+            // failing file instead of one per distinct reason. Using the partial bytes at all —
+            // importing them as a session flagged incomplete — is a product decision about the
+            // import pipeline rather than a classification, and nothing downstream can label a
+            // session partial today. So this arm reports the fault and leaves the bytes alone.
             //
             // Per-file, not card-wide: a read error names one file or one bad region, and the
             // device is still answering. Setting IsCardUnavailable here would abandon every file
             // listed after it in a batch import over one damaged log.
-            SdCardTransferErrorException transferError => new SdCardFailure(
+            SdCardTransferErrorException => new SdCardFailure(
                 State: SdCardState.Error,
-                StatusMessage:
-                    $"The device could not read all of this file; it stopped after {transferError.BytesReceived:N0} bytes.",
+                StatusMessage: "The device could not read all of this file.",
                 Guidance: TRANSFER_READ_ERROR_GUIDANCE,
                 IsExpectedDeviceCondition: true,
                 IsCardUnavailable: false),
