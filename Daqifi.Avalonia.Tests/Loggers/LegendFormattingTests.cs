@@ -166,5 +166,39 @@ public class LegendFormattingTests
         Assert.Same(channel, item.ChannelName);
     }
 
+    /// <summary>
+    /// Reading a generated <c>[ObservableProperty]</c> getter is a plain field read: it returns the
+    /// same instance every time and raises nothing. That is the whole basis for reading these
+    /// properties instead of their backing fields, so it is asserted here rather than assumed from
+    /// what the source generator is believed to emit — <c>[ObservableProperty]</c>'s partial hooks
+    /// (<c>On…Changing</c>, <c>On…Changed</c>) hang off the SETTER, and a getter that gained a side
+    /// effect would make the substitution unsound without changing a single line of this file.
+    /// </summary>
+    [Fact]
+    public void Reading_a_generated_property_is_a_plain_field_read()
+    {
+        var item = LegendItem("1234104");
+        var raised = new List<string?>();
+        item.PropertyChanged += (_, e) => raised.Add(e.PropertyName);
+
+        var first = item.DeviceSerialNo;
+        var second = item.DeviceSerialNo;
+        var channelFirst = item.ChannelName;
+        var channelSecond = item.ChannelName;
+        var truncatedFirst = item.TruncatedSerialNo;
+        var truncatedSecond = item.TruncatedSerialNo;
+
+        Assert.Same(first, second);
+        Assert.Same(channelFirst, channelSecond);
+        Assert.Equal(truncatedFirst, truncatedSecond);
+        Assert.Empty(raised);
+
+        // Self-control: six reads raising nothing only means something if this subscription can
+        // see a raise at all. A WRITE goes through the generated setter and must be observed —
+        // which is also the asymmetry that makes reads safe to substitute and writes not.
+        item.DeviceSerialNo = "9999999";
+        Assert.Equal([nameof(LoggedSeriesLegendItem.DeviceSerialNo)], raised);
+    }
+
     #endregion
 }
