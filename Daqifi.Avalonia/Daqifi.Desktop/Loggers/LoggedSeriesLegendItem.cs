@@ -34,9 +34,9 @@ public partial class LoggedSeriesLegendItem : ObservableObject
     /// Truncated serial number for compact legend display (e.g., "...4104").
     /// </summary>
     // @port: Daqifi.Desktop.Logger.LoggedSeriesLegendItem.TruncatedSerialNo
-    public string TruncatedSerialNo => _deviceSerialNo?.Length > 4
-        ? $"...{_deviceSerialNo[^4..]}"
-        : _deviceSerialNo ?? string.Empty;
+    public string TruncatedSerialNo => DeviceSerialNo?.Length > 4
+        ? $"...{DeviceSerialNo[^4..]}"
+        : DeviceSerialNo ?? string.Empty;
 
     [ObservableProperty]
     private OxyColor _seriesColor;
@@ -55,7 +55,7 @@ public partial class LoggedSeriesLegendItem : ObservableObject
                 void ApplyVisibility()
                 {
                     _plotModel?.InvalidatePlot(true);
-                    _databaseLogger?.SetMinimapSeriesVisibility(_deviceSerialNo, _channelName, _isVisible);
+                    _databaseLogger?.SetMinimapSeriesVisibility(DeviceSerialNo, ChannelName, _isVisible);
                 }
 
                 // In the live app this is a UI-thread dispatch as before. In a headless/unit-test
