@@ -193,7 +193,7 @@ internal static class BindingFacts
     }
 
     /// <summary>Walks up from the test binary to the checkout, identified by the solution file.</summary>
-    private static string RepoRoot()
+    internal static string RepoRoot()
     {
         var directory = new DirectoryInfo(AppContext.BaseDirectory);
         while (directory != null && !File.Exists(Path.Combine(directory.FullName, "Daqifi.Avalonia.slnx")))
