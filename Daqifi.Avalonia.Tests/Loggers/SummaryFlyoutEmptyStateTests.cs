@@ -10,12 +10,14 @@ namespace Daqifi.Avalonia.Tests.Loggers;
 /// bare panel. The pane now swaps between the per-device sections and a named empty state on
 /// <see cref="SummaryLogger.HasDevices"/>.
 ///
-/// <para>The swap itself is XAML and is verified by the parity-audit capture, not here — views in
-/// this repo carry no <c>x:DataType</c>, so an <c>IsVisible</c> binding resolves by reflection at
-/// run time and no test in this project can see it. What IS testable, and what these tests pin, is
+/// <para>The swap itself is XAML and is verified by the parity-audit capture, not here. When this
+/// class was written the view carried no <c>x:DataType</c>, so its <c>IsVisible</c> binding resolved
+/// by reflection and no test in this project could see the member name at all; it now declares one
+/// (issue #327), and which member each half is gated on is pinned by
+/// <c>SummaryFlyoutBindingTests</c>. What was always testable here, and is what these tests pin, is
 /// the contract that binding depends on: that the property exists under the exact name the XAML
 /// binds, that it agrees with the collection rendered beside it, and above all that it
-/// change-notifies on every transition.</para>
+/// change-notifies on every transition — the last of which no compiler will ever check.</para>
 ///
 /// <para>That last point is the one with teeth. <see cref="SummaryLogger.Devices"/> is an
 /// <c>IEnumerable</c> over a list replaced wholesale on each publish rather than an observable
