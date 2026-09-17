@@ -216,4 +216,14 @@ public class MobileShellViewBindingTests
     [InlineData("IsVisible=\"{Binding IsConnected}\"")]
     public void The_bindings_feed_the_attributes_they_are_supposed_to(string binding) =>
         BindingFacts.AssertBinds(View, binding);
+
+    /// <summary>
+    /// The two escape hatches, which nothing in this class checked before issue #374:
+    /// <c>x:CompileBindings="False"</c> on a subtree and <c>{ReflectionBinding}</c> on one binding.
+    /// The root declaration asserted above says nothing about either — <c>x:CompileBindings</c> is
+    /// inherited and overridable per subtree — so without this, part of the view could go back on
+    /// reflection with every guard here and the build all still green.
+    /// </summary>
+    [Fact]
+    public void The_view_opens_no_escape_hatch() => BindingFacts.AssertNoEscapeHatch(View);
 }

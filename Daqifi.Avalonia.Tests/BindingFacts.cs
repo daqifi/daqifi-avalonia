@@ -94,6 +94,90 @@ internal static class BindingFacts
     }
 
     /// <summary>
+    /// Asserts that the view opens neither escape hatch — <c>x:CompileBindings="False"</c> on a
+    /// subtree, which is inherited and overridable, and <c>{ReflectionBinding}</c> on an individual
+    /// binding — the latter in <b>both</b> its spellings, the markup extension and the
+    /// <c>&lt;ReflectionBinding/&gt;</c> object element. Any of them puts markup back on reflection
+    /// with the root declaration still in place,
+    /// the binding count unchanged and the build still green, so every other guard on the view would
+    /// be measuring less than it claims.
+    ///
+    /// <para>
+    /// Both halves read the <b>parsed</b> markup, never the raw text. This is the same lesson as
+    /// <see cref="AssertRootDeclares"/> applied to the hatches instead of the declarations, and here
+    /// the substring form was a hole rather than a nuisance: XML permits
+    /// <c>x:CompileBindings = 'False'</c>, and whitespace around the <c>=</c> and single quotes are
+    /// the same attribute to every parser while not being the literal a search looks for. Measured on
+    /// <c>MainWindow.axaml</c> at <c>7921989</c> (issue #374): that spelling on the app-settings
+    /// drawer with <c>{Binding AppSettings.RecoveryNoticeZZZ}</c> inside it — a member that does not
+    /// exist — was a forced, non-incremental <c>Build succeeded</c> with <b>zero</b> <c>AVLN2000</c>,
+    /// and all seven of that view's guards passed; the same dead binding <i>without</i> the opt-out is
+    /// <c>AVLN2000 … 'RecoveryNoticeZZZ' on type 'SettingsViewModel'</c> at line 514. A guard reading
+    /// as protection while a dead binding builds clean is the defect #327 exists to remove, one layer
+    /// up. Parsing also fires on no comment, which the substring form did.
+    /// </para>
+    ///
+    /// <para>
+    /// Anything other than <c>True</c> is an opt-out, <b>including a value that is not a boolean at
+    /// all</b>. Deliberately not <c>bool.TryParse</c>: that returns false on a value it cannot read,
+    /// which would skip the element while the guard still reported a pass — the silent-omission
+    /// failure this family keeps producing (Qodo round 1 on PR #372, on a different guard in the same
+    /// file). Whitespace is trimmed, because XAML trims it too and flagging <c>" True "</c> would be a
+    /// false alarm rather than a catch.
+    /// </para>
+    ///
+    /// <para>
+    /// No view opens either hatch today, and this exists so that the first one has to be deliberate
+    /// and explained rather than quietly absorbed. If a binding genuinely cannot be expressed, narrow
+    /// the opt-out to that binding, say why in the markup, and teach this helper to allow exactly it.
+    /// </para>
+    /// </summary>
+    internal static void AssertNoEscapeHatch(string repoRelativeViewPath)
+    {
+        var root = ViewRoot(repoRelativeViewPath);
+
+        var opted = root.DescendantsAndSelf()
+            .Select(element => (element, attribute: element.Attribute(XamlNamespace + "CompileBindings")))
+            .Where(pair => pair.attribute is not null
+                           && !string.Equals(
+                               pair.attribute!.Value.Trim(), "True", StringComparison.OrdinalIgnoreCase))
+            .Select(pair => $"<{pair.element.Name.LocalName} x:CompileBindings=\"{pair.attribute!.Value}\">")
+            .ToList();
+
+        Assert.True(
+            opted.Count == 0,
+            $"{repoRelativeViewPath}: {string.Join(", ", opted)} — x:CompileBindings is inherited and "
+            + "overridable per subtree, so this puts every binding below it back on reflection while "
+            + "the root declaration, the binding count and the build all stay green.");
+
+        // Attribute values and text nodes of the parsed tree, so the word appearing in a comment —
+        // and every view here has a comment that discusses these hatches — is not read as a binding.
+        var reflection = root.DescendantsAndSelf()
+            .SelectMany(element => element.Attributes()
+                .Select(attribute => (owner: element.Name.LocalName, on: attribute.Name.LocalName, text: attribute.Value))
+                .Concat(element.Nodes().OfType<XText>()
+                    .Select(node => (owner: element.Name.LocalName, on: "(content)", text: node.Value))))
+            .Where(candidate => candidate.text.Contains("{ReflectionBinding", StringComparison.Ordinal))
+            .Select(candidate => $"{candidate.owner}.{candidate.on}")
+            // …and the OBJECT-ELEMENT spelling, <ReflectionBinding Path="…"/>, which is the same
+            // markup extension written as an element and so never appears in an attribute value at
+            // all. Measured on MainWindow.axaml: that form on a member that does not exist builds
+            // Build succeeded with zero AVLN2000 and passed every guard in the class, so scanning
+            // only attributes and text left exactly the hole this PR exists to close, one spelling
+            // over. Found by Qodo on this PR.
+            .Concat(root.DescendantsAndSelf()
+                .Where(element => element.Name.LocalName == "ReflectionBinding")
+                .Select(element => $"<ReflectionBinding> under {element.Parent?.Name.LocalName ?? "(root)"}"))
+            .ToList();
+
+        Assert.True(
+            reflection.Count == 0,
+            $"{repoRelativeViewPath}: {reflection.Count} binding(s) use {{ReflectionBinding}} "
+            + $"({string.Join(", ", reflection)}), which opts that one binding out of compile checking "
+            + "with the root declaration still in place.");
+    }
+
+    /// <summary>
     /// Asserts that the <c>DataTemplate</c> inside the <b>named</b> list scopes itself to the given item
     /// type, and that <b>every</b> <c>DataTemplate</c> in the view scopes itself to something.
     ///

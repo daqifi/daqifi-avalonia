@@ -230,14 +230,31 @@ public class MainWindowBindingTests
     [Fact]
     public void Each_tab_host_passes_the_view_model_down_to_its_pane()
     {
-        var hosts = Root().Descendants()
-            .Where(element => element.Name.LocalName == "ContentControl")
-            .Where(element => element.Elements().Any(
-                child => child.Name.LocalName == "ContentControl.ContentTemplate"))
+        // Counted off the TAB STRIP rather than off the hosts. Selecting the population by the shape
+        // this test then asserts — ContentControls that happen to carry a ContentTemplate — made the
+        // denominator follow the numerator: a sixth tab written in any other shape left the count at
+        // five and sat silently outside the guard, which is the same silent-skip family as #374's
+        // second finding. The tab strip is the population that can actually grow.
+        var tabs = Root().Descendants()
+            .Single(element => element.Name.LocalName == "TabControl")
+            .Elements()
+            .Where(element => element.Name.LocalName == "TabItem")
             .ToList();
 
-        Assert.Equal(5, hosts.Count);
-        Assert.All(hosts, host => Assert.Equal("{Binding}", host.Attribute("Content")?.Value));
+        Assert.Equal(5, tabs.Count);
+
+        foreach (var tab in tabs)
+        {
+            var hosts = tab.Elements()
+                .Where(child => child.Name.LocalName == "ContentControl")
+                .ToList();
+
+            Assert.True(
+                hosts.Count == 1,
+                $"{View}: a TabItem holds {hosts.Count} ContentControls, expected exactly one — the "
+                + "pane's DataContext comes from that host's Content binding and from nothing else.");
+            Assert.Equal("{Binding}", hosts[0].Attribute("Content")?.Value);
+        }
     }
 
     /// <summary>
@@ -248,14 +265,21 @@ public class MainWindowBindingTests
     /// guard above would both be measuring less than they claim.
     ///
     /// <para>
+    /// This searched the raw file for the literal <c>x:CompileBindings="False"</c> until issue #374 —
+    /// the mistake <see cref="The_window_declares_its_data_type"/> warns against two screens up,
+    /// applied to the hatches instead of the declarations, and here a hole rather than a nuisance.
+    /// Measured on this view: <c>x:CompileBindings = 'False'</c> on the app-settings drawer, with a
+    /// dead binding inside it, passed all seven guards in this class while the desktop head built
+    /// <c>0 Error(s)</c>. <see cref="BindingFacts.AssertNoEscapeHatch"/> reads the parsed markup and
+    /// carries that measurement.
+    /// </para>
+    ///
+    /// <para>
     /// There are none today; this is here so that adding one has to be deliberate and explained
     /// rather than quietly absorbed. If a binding genuinely cannot be expressed, narrow the opt-out
-    /// to that binding and say why in the markup — then update this test to allow exactly it.
+    /// to that binding and say why in the markup — then update the helper to allow exactly it.
     /// </para>
     /// </summary>
-    [Theory]
-    [InlineData("x:CompileBindings=\"False\"")]
-    [InlineData("ReflectionBinding")]
-    public void The_view_opens_no_escape_hatch(string hatch) =>
-        Assert.DoesNotContain(hatch, BindingFacts.Source(View), StringComparison.Ordinal);
+    [Fact]
+    public void The_view_opens_no_escape_hatch() => BindingFacts.AssertNoEscapeHatch(View);
 }

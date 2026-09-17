@@ -304,44 +304,17 @@ public class ExportDialogBindingTests
     /// <para>
     /// There are none today; this is here so that adding one has to be deliberate and explained rather
     /// than quietly absorbed. If a binding genuinely cannot be expressed, narrow the opt-out to that
-    /// binding and say why in the markup — then update this test to allow exactly it.
+    /// binding and say why in the markup — then update the helper to allow exactly it.
+    /// </para>
+    ///
+    /// <para>
+    /// Extracted to <see cref="BindingFacts.AssertNoEscapeHatch"/> by issue #374, which found the
+    /// unfixed, substring copy of this guard still on <c>MainWindow</c>. The version that lived here
+    /// classified with <c>bool.TryParse</c>, which returns false on a value it cannot read and so
+    /// <b>skipped</b> the element rather than flagging it; the shared one treats anything but
+    /// <c>True</c> as an opt-out.
     /// </para>
     /// </summary>
     [Fact]
-    public void The_view_opens_no_escape_hatch()
-    {
-        var root = Root();
-
-        // Any element — the root or any descendant — that explicitly turns compile-checking off.
-        var opted = root.DescendantsAndSelf()
-            .Select(element => new { element, value = element.Attribute(Xaml + "CompileBindings")?.Value })
-            .Where(x => x.value is not null
-                        && bool.TryParse(x.value.Trim(), out var on)
-                        && !on)
-            .Select(x => x.element.Name.LocalName)
-            .ToList();
-
-        Assert.True(
-            opted.Count == 0,
-            $"{View}: {opted.Count} element(s) declare x:CompileBindings=\"False\" "
-            + $"({string.Join(", ", opted)}), putting that subtree back on reflection while the root "
-            + "declaration and the build both still look fine.");
-
-        // And the per-binding hatch, found by scanning parsed attribute values and text rather than
-        // the file, so the word appearing in a comment is not mistaken for a binding.
-        var reflection = root.DescendantsAndSelf()
-            .SelectMany(element => element.Attributes()
-                .Select(attribute => (owner: element.Name.LocalName, name: attribute.Name.LocalName, text: attribute.Value))
-                .Concat(element.Nodes().OfType<XText>()
-                    .Select(node => (owner: element.Name.LocalName, name: "(content)", text: node.Value))))
-            .Where(candidate => candidate.text.Contains("{ReflectionBinding", StringComparison.Ordinal))
-            .Select(candidate => $"{candidate.owner}.{candidate.name}")
-            .ToList();
-
-        Assert.True(
-            reflection.Count == 0,
-            $"{View}: {reflection.Count} binding(s) use {{ReflectionBinding}} "
-            + $"({string.Join(", ", reflection)}), which opts that one binding out of compile checking "
-            + "with the root declaration still in place.");
-    }
+    public void The_view_opens_no_escape_hatch() => BindingFacts.AssertNoEscapeHatch(View);
 }
