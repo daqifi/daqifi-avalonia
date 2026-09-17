@@ -96,7 +96,9 @@ internal static class BindingFacts
     /// <summary>
     /// Asserts that the view opens neither escape hatch — <c>x:CompileBindings="False"</c> on a
     /// subtree, which is inherited and overridable, and <c>{ReflectionBinding}</c> on an individual
-    /// binding. Either one puts markup back on reflection with the root declaration still in place,
+    /// binding — the latter in <b>both</b> its spellings, the markup extension and the
+    /// <c>&lt;ReflectionBinding/&gt;</c> object element. Any of them puts markup back on reflection
+    /// with the root declaration still in place,
     /// the binding count unchanged and the build still green, so every other guard on the view would
     /// be measuring less than it claims.
     ///
@@ -157,6 +159,15 @@ internal static class BindingFacts
                     .Select(node => (owner: element.Name.LocalName, on: "(content)", text: node.Value))))
             .Where(candidate => candidate.text.Contains("{ReflectionBinding", StringComparison.Ordinal))
             .Select(candidate => $"{candidate.owner}.{candidate.on}")
+            // …and the OBJECT-ELEMENT spelling, <ReflectionBinding Path="…"/>, which is the same
+            // markup extension written as an element and so never appears in an attribute value at
+            // all. Measured on MainWindow.axaml: that form on a member that does not exist builds
+            // Build succeeded with zero AVLN2000 and passed every guard in the class, so scanning
+            // only attributes and text left exactly the hole this PR exists to close, one spelling
+            // over. Found by Qodo on this PR.
+            .Concat(root.DescendantsAndSelf()
+                .Where(element => element.Name.LocalName == "ReflectionBinding")
+                .Select(element => $"<ReflectionBinding> under {element.Parent?.Name.LocalName ?? "(root)"}"))
             .ToList();
 
         Assert.True(
