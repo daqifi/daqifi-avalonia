@@ -115,6 +115,113 @@ public class SdCardFailureClassifierTests
 
     #endregion
 
+    #region A read error the device reported is not a transport stall
+
+    [Fact]
+    public void A_read_error_the_device_reported_gets_its_own_advice_not_the_reformat_sentence()
+    {
+        // Core 1.8.0 types the __TRANSFER_ERROR__ marker. Because the new exception derives from
+        // SdCardOperationException, an arm placed below that base arm would never execute — this
+        // assertion is what catches that: with the arms in the wrong order the guidance is
+        // GENERIC_CARD_GUIDANCE ("try a different card or reformat"), which is the wrong advice
+        // for one unreadable file on an otherwise healthy card.
+        var failure = SdCardFailureClassifier.Classify(
+            new SdCardTransferErrorException("log.bin", bytesReceived: 4096));
+
+        Assert.Equal(SdCardFailureClassifier.TRANSFER_READ_ERROR_GUIDANCE, failure.Guidance);
+        Assert.NotEqual(SdCardFailureClassifier.GENERIC_CARD_GUIDANCE, failure.Guidance);
+    }
+
+    [Fact]
+    public void A_read_error_reads_differently_from_a_stall_and_from_an_empty_transfer()
+    {
+        // The whole point of the new type upstream: before it, a card read error arrived as a
+        // stall with NoDataReceived and the app blamed the transport. If this arm ever collapses
+        // back onto either neighbour, the distinction is gone again.
+        var readError = SdCardFailureClassifier.Classify(
+            new SdCardTransferErrorException("log.bin", bytesReceived: 4096)).Guidance;
+        var stall = SdCardFailureClassifier.Classify(
+            Stalled(SdCardTransferStallReason.NoDataReceived)).Guidance;
+        var empty = SdCardFailureClassifier.Classify(new SdCardEmptyTransferException("log.bin")).Guidance;
+
+        Assert.Equal(3, new[] { readError, stall, empty }.Distinct(StringComparer.Ordinal).Count());
+    }
+
+    [Fact]
+    public void A_read_error_does_not_send_the_user_to_the_power_cycle()
+    {
+        // The device answered — it reported the error rather than falling silent — so the SD
+        // subsystem is demonstrably alive and a power cycle fixes nothing.
+        var failure = SdCardFailureClassifier.Classify(
+            new SdCardTransferErrorException("log.bin", bytesReceived: 4096));
+
+        Assert.NotEqual(SdCardFailureClassifier.POWER_CYCLE_GUIDANCE, failure.Guidance);
+    }
+
+    [Fact]
+    public void A_read_error_is_an_expected_device_condition_rather_than_an_app_defect()
+    {
+        // Keeps it off the Error/Sentry path: a damaged file on a user's card is not a bug here.
+        var failure = SdCardFailureClassifier.Classify(
+            new SdCardTransferErrorException("log.bin", bytesReceived: 4096));
+
+        Assert.True(failure.IsExpectedDeviceCondition);
+        Assert.Equal(SdCardState.Error, failure.State);
+    }
+
+    [Fact]
+    public void A_read_error_does_not_abandon_the_rest_of_the_batch()
+    {
+        // One file or one bad region of the card. Because the device lists files in the same
+        // order every time, aborting here makes every later healthy file unreachable through
+        // Import All.
+        var failure = SdCardFailureClassifier.Classify(
+            new SdCardTransferErrorException("log.bin", bytesReceived: 4096));
+
+        Assert.False(failure.IsCardUnavailable);
+    }
+
+    [Fact]
+    public void A_read_error_reports_how_much_of_the_file_was_genuinely_read()
+    {
+        // Core states the bytes before the marker are real file content already written to the
+        // destination stream (unlike a truncated transfer, where they stand in for the file).
+        // Nothing imports them — but the count is the one thing that says how much of the file
+        // the card could still read, so the status line must not throw it away.
+        const long bytesReceived = 1234;
+        var failure = SdCardFailureClassifier.Classify(
+            new SdCardTransferErrorException("log.bin", bytesReceived));
+
+        // Grouped in the running culture, as the status line formats it — asserting the literal
+        // "1,234" would fail on a machine whose culture groups with a period.
+        Assert.Contains(bytesReceived.ToString("N0"), failure.StatusMessage, StringComparison.Ordinal);
+    }
+
+    [Fact]
+    public void The_read_error_type_still_derives_from_the_base_operation_type()
+    {
+        // The premise the arm's ORDER rests on, pinned against the Daqifi.Core the app actually
+        // compiles against. If Core ever reparents this exception, "must sit above the base arm"
+        // stops being true and this test is where that shows up.
+        Assert.True(typeof(SdCardOperationException)
+            .IsAssignableFrom(typeof(SdCardTransferErrorException)));
+    }
+
+    [Fact]
+    public void The_read_error_carries_no_scpi_error_line_for_the_base_arm_to_have_shown()
+    {
+        // The second half of the premise: Core constructs this exception with an empty response
+        // and no SCPI error, so the base arm's StatusMessage (LastScpiError ?? Message) could
+        // only ever have echoed Core's own prose. The arm replaces it with a status line the app
+        // owns, so this is worth pinning rather than assuming.
+        var ex = new SdCardTransferErrorException("log.bin", bytesReceived: 4096);
+
+        Assert.Null(ex.LastScpiError);
+        Assert.Empty(ex.RawDeviceResponse);
+    }
+
+    #endregion
+
     #region The arms this port carries that upstream does not
 
     [Fact]
