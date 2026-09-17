@@ -217,6 +217,30 @@ public class SentryAccountNameRedactionTests
         Assert.Equal(expected, AppLogger.RedactAccountNames(message, profileDirectory));
     }
 
+    /// <summary>
+    /// The profile directory has to match at a path boundary, not as a bare substring. An account
+    /// called <c>octocat</c> shares a prefix with <c>octocat2</c>, and replacing blind turned
+    /// <c>/Users/octocat2/logs/run.csv</c> into <c>~2/logs/run.csv</c> — another account's path
+    /// corrupted rather than redacted, which is worse than either outcome on its own.
+    ///
+    /// <para>The sibling path is still scrubbed; it just falls through to the general rule and
+    /// keeps its shape.</para>
+    /// </summary>
+    [Theory]
+    // The sibling: NOT the profile, so it takes the general path and stays intact.
+    [InlineData("/Users/octocat", "/Users/octocat2/logs/run.csv", "/Users/<account>/logs/run.csv")]
+    // The profile itself, with nothing after it — end-of-string is a boundary too.
+    [InlineData("/Users/octocat", "Wrote to /Users/octocat", "Wrote to ~")]
+    // Windows separators, which the boundary has to accept as readily as '/'.
+    [InlineData(@"C:\Users\octocat", @"C:\Users\octocat\Documents\run.csv", @"~\Documents\run.csv")]
+    // A profile holding regex metacharacters: this is a pattern now, so it must be escaped.
+    [InlineData("/Users/o+c(at", "/Users/o+c(at/logs/run.csv", "~/logs/run.csv")]
+    public void A_sibling_of_the_profile_directory_is_not_truncated(
+        string profileDirectory, string message, string expected)
+    {
+        Assert.Equal(expected, AppLogger.RedactAccountNames(message, profileDirectory));
+    }
+
     #endregion
 
     #region Positive control

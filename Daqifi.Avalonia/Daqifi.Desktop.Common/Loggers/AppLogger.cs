@@ -423,9 +423,20 @@ public class AppLogger : IAppLogger
 
         // The exact profile directory first: it is the longest and least ambiguous form, and the
         // only one that copes with a profile more than one segment below the home root.
+        //
+        // Anchored on a path boundary, not a bare substring: a profile of /Users/sam would
+        // otherwise eat the front of /Users/sam2/run.csv and leave "~2/run.csv", corrupting
+        // another account's path instead of redacting it. With the boundary, that path falls
+        // through to the general rule below and comes out intact as /Users/<account>/run.csv.
+        // Regex.Escape because a home directory may contain regex metacharacters, and the static
+        // Regex.Replace because it caches by pattern — in production this pattern never varies.
         var redacted = string.IsNullOrEmpty(profileDirectory)
             ? message
-            : message.Replace(profileDirectory, "~", StringComparison.OrdinalIgnoreCase);
+            : Regex.Replace(
+                message,
+                Regex.Escape(profileDirectory) + @"(?=[/\\]|$)",
+                "~",
+                RegexOptions.IgnoreCase | RegexOptions.CultureInvariant);
 
         // Then the general case, which still has to run: it catches any OTHER account's home path
         // — another user on this machine, or a path that arrived from somewhere else entirely.
