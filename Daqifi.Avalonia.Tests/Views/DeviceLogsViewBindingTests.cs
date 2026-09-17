@@ -40,9 +40,6 @@ public class DeviceLogsViewBindingTests
 {
     private const string View = "Daqifi.Avalonia/Daqifi.Desktop/View/DeviceLogsView.axaml";
 
-    /// <summary>The XAML language namespace, where <c>x:DataType</c> and friends live.</summary>
-    private static readonly XNamespace Xaml = "http://schemas.microsoft.com/winfx/2006/xaml";
-
     private static XElement Root() =>
         XDocument.Parse(BindingFacts.Source(View)).Root
         ?? throw new InvalidOperationException($"{View} has no root element.");
@@ -272,19 +269,6 @@ public class DeviceLogsViewBindingTests
     /// </para>
     /// </summary>
     [Fact]
-    public void No_subtree_switches_compile_checking_back_off()
-    {
-        var offenders = Root().DescendantsAndSelf()
-            .Select(element => (element, attribute: element.Attribute(Xaml + "CompileBindings")))
-            .Where(pair => pair.attribute is not null
-                           && !string.Equals(pair.attribute!.Value, "True", StringComparison.OrdinalIgnoreCase))
-            .Select(pair => $"<{pair.element.Name.LocalName} x:CompileBindings=\"{pair.attribute!.Value}\">")
-            .ToList();
-
-        Assert.True(
-            offenders.Count == 0,
-            $"{View}: {string.Join(", ", offenders)} — x:CompileBindings is inherited and overridable "
-            + "per subtree, so this puts every binding below it back on reflection while the root "
-            + "declaration, the binding count and the build all stay green.");
-    }
+    public void No_subtree_switches_compile_checking_back_off() =>
+        BindingFacts.AssertNoEscapeHatch(View);
 }
