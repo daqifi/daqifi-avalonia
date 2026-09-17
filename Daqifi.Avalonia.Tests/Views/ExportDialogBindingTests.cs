@@ -121,31 +121,73 @@ public class ExportDialogBindingTests
 
         Assert.Equal($"vm:{nameof(ExportDialogViewModel)}", root.Attribute(Xaml + "DataType")?.Value);
 
-        var host = BindingFacts.Source(Host);
+        // Every C# file in the app project, not just the host that happens to hold the call sites
+        // today: a call added anywhere else would otherwise be outside this guard entirely.
+        var sources = Directory
+            .EnumerateFiles(
+                Path.Combine(BindingFacts.RepoRoot(), "Daqifi.Avalonia"), "*.cs", SearchOption.AllDirectories)
+            .Where(path => !path.Contains($"{Path.DirectorySeparatorChar}obj{Path.DirectorySeparatorChar}")
+                           && !path.Contains($"{Path.DirectorySeparatorChar}bin{Path.DirectorySeparatorChar}"))
+            .ToList();
 
-        var callSites = Regex.Matches(
-            host, @"ShowDialogAsync<ExportDialog>\(\s*[A-Za-z_][A-Za-z0-9_]*\s*,\s*(?<arg>[A-Za-z_][A-Za-z0-9_]*)\s*\)");
+        var mentions = 0;
+        var understood = 0;
+        var unsupported = new List<string>();
+
+        foreach (var path in sources)
+        {
+            var source = File.ReadAllText(path);
+            var present = Regex.Matches(source, @"ShowDialogAsync\s*<\s*ExportDialog\s*>");
+            if (present.Count == 0) { continue; }
+
+            mentions += present.Count;
+
+            var parsed = Regex.Matches(
+                source,
+                @"ShowDialogAsync\s*<\s*ExportDialog\s*>\(\s*[A-Za-z_][A-Za-z0-9_]*\s*,\s*(?<arg>[A-Za-z_][A-Za-z0-9_]*)\s*\)");
+            understood += parsed.Count;
+
+            foreach (Match site in parsed)
+            {
+                var local = site.Groups["arg"].Value;
+                var constructed = Regex.IsMatch(
+                    source,
+                    $@"\b(var|{nameof(ExportDialogViewModel)})\s+{Regex.Escape(local)}\s*=\s*new\s+{nameof(ExportDialogViewModel)}\s*\(");
+
+                Assert.True(
+                    constructed,
+                    $"{Path.GetFileName(path)}: ShowDialogAsync<ExportDialog> is handed '{local}', which "
+                    + $"is not constructed as a {nameof(ExportDialogViewModel)} in that file. That "
+                    + $"parameter is typed object, so the compiler accepts anything, and {View} claims "
+                    + $"x:DataType=\"vm:{nameof(ExportDialogViewModel)}\" — the dialog would compile and "
+                    + "render blank.");
+            }
+
+            if (parsed.Count < present.Count)
+            {
+                unsupported.Add($"{Path.GetFileName(path)} ({present.Count - parsed.Count})");
+            }
+        }
 
         Assert.True(
-            callSites.Count > 0,
-            $"{Host}: no ShowDialogAsync<ExportDialog>(owner, viewModel) call site found. If the "
+            mentions > 0,
+            "no ShowDialogAsync<ExportDialog> call site exists anywhere in Daqifi.Avalonia. If the "
             + "dialog is now presented some other way, this guard has to follow it — the x:DataType "
             + "claim is unchecked until something pins it to the object the dialog is given.");
 
-        Assert.All(callSites, site =>
-        {
-            var local = site.Groups["arg"].Value;
-            var constructed = Regex.IsMatch(
-                host, $@"\b(var|{nameof(ExportDialogViewModel)})\s+{Regex.Escape(local)}\s*=\s*new\s+{nameof(ExportDialogViewModel)}\s*\(");
-
-            Assert.True(
-                constructed,
-                $"{Host}: ShowDialogAsync<ExportDialog> is handed '{local}', which is not constructed "
-                + $"as a {nameof(ExportDialogViewModel)} in this file. That parameter is typed object, "
-                + $"so the compiler accepts anything, and {View} claims "
-                + $"x:DataType=\"vm:{nameof(ExportDialogViewModel)}\" — the dialog would compile and "
-                + "render blank.");
-        });
+        // The half that makes the rest mean something. A call written in a shape the regex above
+        // does not parse — a named argument, an inline `new`, a property or method result — used to
+        // be silently skipped while the two it did understand kept the count positive, so the guard
+        // reported coverage it did not have (Qodo round 1). Now an unparsed call FAILS here and says
+        // so, and whoever adds it either teaches this test the shape or reverts to a local.
+        Assert.True(
+            unsupported.Count == 0,
+            $"ShowDialogAsync<ExportDialog> is called in {mentions} place(s) but only {understood} are "
+            + $"in the (owner, local) shape this guard can follow: {string.Join(", ", unsupported)}. An "
+            + "unrecognised call is NOT covered, and silently skipping it is the failure this assertion "
+            + "exists to prevent. Deliberately not a Roslyn semantic model: the test project references "
+            + "no compiler API, and failing loudly on an unknown shape gives the same protection at a "
+            + "fraction of the machinery.");
     }
 
     /// <summary>
@@ -251,14 +293,55 @@ public class ExportDialogBindingTests
     /// above would both be measuring less than they claim.
     ///
     /// <para>
+    /// Both halves work on the <b>parsed</b> markup, never on the raw text, and this is the same
+    /// lesson as Qodo round 2 on PR #325 applied to the hatches instead of the declarations. A
+    /// substring search for <c>x:CompileBindings="False"</c> is wrong in both directions: XML permits
+    /// <c>x:CompileBindings = 'False'</c>, and single quotes and whitespace around the <c>=</c> do not
+    /// change what the attribute means — so the hatch could be opened with the guard still green — and
+    /// a comment explaining the hatch would fail the guard while the file was entirely clean.
+    /// </para>
+    ///
+    /// <para>
     /// There are none today; this is here so that adding one has to be deliberate and explained rather
     /// than quietly absorbed. If a binding genuinely cannot be expressed, narrow the opt-out to that
     /// binding and say why in the markup — then update this test to allow exactly it.
     /// </para>
     /// </summary>
-    [Theory]
-    [InlineData("x:CompileBindings=\"False\"")]
-    [InlineData("ReflectionBinding")]
-    public void The_view_opens_no_escape_hatch(string hatch) =>
-        Assert.DoesNotContain(hatch, BindingFacts.Source(View), StringComparison.Ordinal);
+    [Fact]
+    public void The_view_opens_no_escape_hatch()
+    {
+        var root = Root();
+
+        // Any element — the root or any descendant — that explicitly turns compile-checking off.
+        var opted = root.DescendantsAndSelf()
+            .Select(element => new { element, value = element.Attribute(Xaml + "CompileBindings")?.Value })
+            .Where(x => x.value is not null
+                        && bool.TryParse(x.value.Trim(), out var on)
+                        && !on)
+            .Select(x => x.element.Name.LocalName)
+            .ToList();
+
+        Assert.True(
+            opted.Count == 0,
+            $"{View}: {opted.Count} element(s) declare x:CompileBindings=\"False\" "
+            + $"({string.Join(", ", opted)}), putting that subtree back on reflection while the root "
+            + "declaration and the build both still look fine.");
+
+        // And the per-binding hatch, found by scanning parsed attribute values and text rather than
+        // the file, so the word appearing in a comment is not mistaken for a binding.
+        var reflection = root.DescendantsAndSelf()
+            .SelectMany(element => element.Attributes()
+                .Select(attribute => (owner: element.Name.LocalName, name: attribute.Name.LocalName, text: attribute.Value))
+                .Concat(element.Nodes().OfType<XText>()
+                    .Select(node => (owner: element.Name.LocalName, name: "(content)", text: node.Value))))
+            .Where(candidate => candidate.text.Contains("{ReflectionBinding", StringComparison.Ordinal))
+            .Select(candidate => $"{candidate.owner}.{candidate.name}")
+            .ToList();
+
+        Assert.True(
+            reflection.Count == 0,
+            $"{View}: {reflection.Count} binding(s) use {{ReflectionBinding}} "
+            + $"({string.Join(", ", reflection)}), which opts that one binding out of compile checking "
+            + "with the root declaration still in place.");
+    }
 }
