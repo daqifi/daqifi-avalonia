@@ -416,11 +416,28 @@ public sealed class ExportResultHonestyTests : IDisposable
     // ──────────────────────────────── the markup half ────────────────────────────────
 
     /// <summary>
-    /// <c>ExportDialog.axaml</c> declares no <c>x:DataType</c>, so both halves of this fix resolve by
-    /// reflection: the box the user types in, and the message saying why Export is greyed out. A
-    /// rename would break either silently — a disabled button with no reason beside it is the exact
-    /// "the app won't say why" failure this fix exists to remove, and a dead box would be worse.
-    /// Asserted in pairs, per <see cref="BindingFacts"/>.
+    /// The two bindings this fix rides on: the box the user types in, and the message saying why
+    /// Export is greyed out. A disabled button with no reason beside it is the exact "the app won't
+    /// say why" failure this fix exists to remove, and a dead box would be worse.
+    ///
+    /// <para>
+    /// Written as pairs — the binding exists, and the member it names is readable — because
+    /// <c>ExportDialog.axaml</c> declared no <c>x:DataType</c> and both bindings resolved by
+    /// reflection, so a rename broke either one silently. Since #327 the view declares
+    /// <c>x:DataType</c> and <c>x:CompileBindings="True"</c>, and the member-name half is the
+    /// compiler's: renaming <c>AverageQuantityText</c> or <c>IsAverageQuantityValid</c> is now an
+    /// <c>AVLN2000</c> naming this file and the line. The <c>AssertExposes</c> calls were dropped
+    /// rather than left in place, because an assertion the build can no longer let fail reads as
+    /// coverage and is none — see <see cref="Views.ExportDialogBindingTests"/> for what is still
+    /// unchecked.
+    /// </para>
+    ///
+    /// <para>
+    /// What stays is the half compiled bindings do not do: they type-check the <i>path</i>, never the
+    /// target, so which attribute each binding feeds is still nobody's business. Move the
+    /// <c>!IsAverageQuantityValid</c> gate from <c>IsVisible</c> to <c>IsEnabled</c> and the reason
+    /// line is permanently on screen; both compile.
+    /// </para>
     /// </summary>
     [Fact]
     public void The_dialog_binds_the_average_box_and_the_reason_the_export_is_disabled()
@@ -428,10 +445,7 @@ public sealed class ExportResultHonestyTests : IDisposable
         const string view = "Daqifi.Avalonia/Daqifi.Desktop/View/ExportDialog.axaml";
 
         BindingFacts.AssertBinds(view, "Text=\"{Binding AverageQuantityText, Mode=TwoWay}\"");
-        BindingFacts.AssertExposes(typeof(ExportDialogViewModel), nameof(ExportDialogViewModel.AverageQuantityText));
-
         BindingFacts.AssertBinds(view, "IsVisible=\"{Binding !IsAverageQuantityValid}\"");
-        BindingFacts.AssertExposes(typeof(ExportDialogViewModel), nameof(ExportDialogViewModel.IsAverageQuantityValid));
     }
 
     // ──────────────────────────────────── helpers ────────────────────────────────────

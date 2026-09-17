@@ -146,8 +146,10 @@ public partial class ExportDialogViewModel : ObservableObject, IDisposable
     /// Disables Export and shows the reason under the box, so an export that could only do nothing is
     /// never started (issue #312) — the box is a bare <c>TextBox</c> with no minimum and no spinner,
     /// so clearing it and typing a digit passes through <c>0</c> on the way to <c>10</c>, and holds
-    /// whatever else is typed in the meantime. Bound by <c>ExportDialog.axaml</c> by reflection; see
-    /// the binding facts test.
+    /// whatever else is typed in the meantime. Bound by <c>ExportDialog.axaml</c>, which since #327
+    /// declares <c>x:DataType</c> and <c>x:CompileBindings="True"</c> — so renaming this member is an
+    /// <c>AVLN2000</c> at build time rather than a silently blank warning line at run time. Which
+    /// <i>attribute</i> the binding feeds is still nobody's business but the binding facts test's.
     /// </summary>
     public bool IsAverageQuantityValid => !ExportAverageSelected || AverageWindow >= MINIMUM_AVERAGE_WINDOW;
     #endregion
