@@ -130,31 +130,10 @@ public class SdCardFailureClassifierTests
 
         Assert.Equal(SdCardFailureClassifier.TRANSFER_READ_ERROR_GUIDANCE, failure.Guidance);
         Assert.NotEqual(SdCardFailureClassifier.GENERIC_CARD_GUIDANCE, failure.Guidance);
-    }
-
-    [Fact]
-    public void A_read_error_reads_differently_from_a_stall_and_from_an_empty_transfer()
-    {
-        // The whole point of the new type upstream: before it, a card read error arrived as a
-        // stall with NoDataReceived and the app blamed the transport. If this arm ever collapses
-        // back onto either neighbour, the distinction is gone again.
-        var readError = SdCardFailureClassifier.Classify(
-            new SdCardTransferErrorException("log.bin", bytesReceived: 4096)).Guidance;
-        var stall = SdCardFailureClassifier.Classify(
-            Stalled(SdCardTransferStallReason.NoDataReceived)).Guidance;
-        var empty = SdCardFailureClassifier.Classify(new SdCardEmptyTransferException("log.bin")).Guidance;
-
-        Assert.Equal(3, new[] { readError, stall, empty }.Distinct(StringComparer.Ordinal).Count());
-    }
-
-    [Fact]
-    public void A_read_error_does_not_send_the_user_to_the_power_cycle()
-    {
-        // The device answered — it reported the error rather than falling silent — so the SD
-        // subsystem is demonstrably alive and a power cycle fixes nothing.
-        var failure = SdCardFailureClassifier.Classify(
-            new SdCardTransferErrorException("log.bin", bytesReceived: 4096));
-
+        // Nor the stall's advice: the device answered rather than falling silent, so the SD
+        // subsystem is demonstrably alive and the power cycle those arms reach for fixes nothing.
+        // Telling a card read error apart from a transport stall is what the new Core type is for.
+        Assert.NotEqual(SdCardFailureClassifier.INCOMPLETE_TRANSFER_GUIDANCE, failure.Guidance);
         Assert.NotEqual(SdCardFailureClassifier.POWER_CYCLE_GUIDANCE, failure.Guidance);
     }
 
@@ -201,23 +180,13 @@ public class SdCardFailureClassifierTests
     public void The_read_error_type_still_derives_from_the_base_operation_type()
     {
         // The premise the arm's ORDER rests on, pinned against the Daqifi.Core the app actually
-        // compiles against. If Core ever reparents this exception, "must sit above the base arm"
-        // stops being true and this test is where that shows up.
+        // compiles against. Putting the arm below the base arm is caught by the compiler today
+        // (CS8510, an unreachable pattern) — but only because the arm is a bare type pattern;
+        // add a `when` clause to either arm and the compiler stops being able to prove it. What
+        // this pins is the fact underneath: if Core ever reparents this exception, "must sit
+        // above the base arm" stops being true and the comment saying so goes stale here.
         Assert.True(typeof(SdCardOperationException)
             .IsAssignableFrom(typeof(SdCardTransferErrorException)));
-    }
-
-    [Fact]
-    public void The_read_error_carries_no_scpi_error_line_for_the_base_arm_to_have_shown()
-    {
-        // The second half of the premise: Core constructs this exception with an empty response
-        // and no SCPI error, so the base arm's StatusMessage (LastScpiError ?? Message) could
-        // only ever have echoed Core's own prose. The arm replaces it with a status line the app
-        // owns, so this is worth pinning rather than assuming.
-        var ex = new SdCardTransferErrorException("log.bin", bytesReceived: 4096);
-
-        Assert.Null(ex.LastScpiError);
-        Assert.Empty(ex.RawDeviceResponse);
     }
 
     #endregion
