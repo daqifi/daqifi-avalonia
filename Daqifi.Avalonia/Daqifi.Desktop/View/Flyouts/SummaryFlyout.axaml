@@ -2,6 +2,9 @@
              xmlns="https://github.com/avaloniaui"
              xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml"
              xmlns:i="https://github.com/projektanker/icons.avalonia"
+             xmlns:vm="using:Daqifi.Desktop.ViewModels"
+             x:DataType="vm:DaqifiViewModel"
+             x:CompileBindings="True"
              Background="{DynamicResource SurfaceRaised}"
              Foreground="{DynamicResource TextPrimary}">
 
