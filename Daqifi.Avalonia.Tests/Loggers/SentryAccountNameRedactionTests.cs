@@ -187,6 +187,36 @@ public class SentryAccountNameRedactionTests
             captured.Extra("message"));
     }
 
+    /// <summary>
+    /// A profile directory more than one segment below the home root — what a domain-joined Linux
+    /// box gives you — has to go WHOLE. The regex only ever eats one segment, so with the two
+    /// substitutions in the other order it rewrote <c>/home/corp-eu</c> and left <c>octocat</c>,
+    /// the actual account name, standing in every field the hooks now cover.
+    ///
+    /// <para>Against the helper rather than an envelope, because the profile directory is the
+    /// input under test and no machine this suite runs on has a nested one — macOS and the CI
+    /// runners are all flat. The wiring that carries this result into every field is what the
+    /// envelope tests above establish.</para>
+    /// </summary>
+    [Theory]
+    // A nested profile: BOTH segments must go, and the path tail must survive.
+    [InlineData("/home/corp-eu/octocat", "/home/corp-eu/octocat/logs/run.csv", "~/logs/run.csv")]
+    // The flat case, which the exact replacement also owns now that it runs first.
+    [InlineData("/Users/octocat", "/Users/octocat/logs/run.csv", "~/logs/run.csv")]
+    // Another account under the same nested root: the regex catches the root it can see. The
+    // remaining segment is somebody else's name and not what #366 is about — pinned so a change
+    // to it is deliberate rather than accidental.
+    [InlineData("/home/corp-eu/octocat", "/home/corp-eu/hubot/logs/run.csv", "/home/<account>/hubot/logs/run.csv")]
+    // No profile resolvable (GetFolderPath can fail): the regex still covers the usual shape.
+    [InlineData("", "/Users/octocat/logs/run.csv", "/Users/<account>/logs/run.csv")]
+    // Neither substitution applies.
+    [InlineData("/Users/octocat", "There was a problem adding channel: AI0.", "There was a problem adding channel: AI0.")]
+    public void A_profile_directory_is_redacted_whole_however_deep_it_sits(
+        string profileDirectory, string message, string expected)
+    {
+        Assert.Equal(expected, AppLogger.RedactAccountNames(message, profileDirectory));
+    }
+
     #endregion
 
     #region Positive control
@@ -299,7 +329,9 @@ public class SentryAccountNameRedactionTests
             var header = Array.FindIndex(lines, line => line.Contains("\"type\":\"event\"", StringComparison.Ordinal));
             Assert.InRange(header, 0, lines.Length - 2);
 
-            _event = JsonDocument.Parse(lines[header + 1]).RootElement;
+            // Cloned, so the element outlives the document's pooled buffers.
+            using var document = JsonDocument.Parse(lines[header + 1]);
+            _event = document.RootElement.Clone();
         }
 
         /// <summary>The whole envelope as text — for "this string appears nowhere" assertions.</summary>

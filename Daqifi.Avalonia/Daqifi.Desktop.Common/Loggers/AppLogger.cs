@@ -390,6 +390,14 @@ public class AppLogger : IAppLogger
     /// full profile directory, which is long enough to be unambiguous.
     /// </para>
     /// <para>
+    /// Order matters, and it used to be the other way round. The regex only ever eats ONE segment
+    /// below the home root, so where a profile sits deeper — a domain-joined Linux box puts it at
+    /// <c>/home/&lt;domain&gt;/&lt;account&gt;</c> — running it first rewrote <c>/home/&lt;domain&gt;</c>
+    /// and left the account name standing, with nothing left for the exact replacement to find.
+    /// That also made the exact replacement almost unreachable: for a profile anywhere under
+    /// <c>/Users</c> or <c>/home</c>, the regex had already destroyed the string it searches for.
+    /// </para>
+    /// <para>
     /// Deliberately narrow. This removes account names from paths; it is not a general PII
     /// scrubber and does not try to be one, because free-text log messages cannot be reliably
     /// classified. Other user-supplied strings — a device's friendly name, an IP address — are
@@ -398,18 +406,30 @@ public class AppLogger : IAppLogger
     /// </para>
     /// </remarks>
     [return: NotNullIfNotNull(nameof(message))]
-    private static string? RedactAccountNames(string? message)
+    private static string? RedactAccountNames(string? message) =>
+        RedactAccountNames(message, UserProfileDirectory);
+
+    /// <inheritdoc cref="RedactAccountNames(string?)"/>
+    /// <param name="message">The text to redact.</param>
+    /// <param name="profileDirectory">
+    /// This machine's profile directory, normally <see cref="UserProfileDirectory"/>. A parameter
+    /// only so a test can pin a nested profile — <c>/home/&lt;domain&gt;/&lt;account&gt;</c>, the case
+    /// the ordering above exists for — which no machine this suite runs on actually has.
+    /// </param>
+    [return: NotNullIfNotNull(nameof(message))]
+    internal static string? RedactAccountNames(string? message, string profileDirectory)
     {
         if (string.IsNullOrEmpty(message)) { return message; }
 
-        var redacted = HomeDirectoryAccount.Replace(message, "${prefix}<account>");
+        // The exact profile directory first: it is the longest and least ambiguous form, and the
+        // only one that copes with a profile more than one segment below the home root.
+        var redacted = string.IsNullOrEmpty(profileDirectory)
+            ? message
+            : message.Replace(profileDirectory, "~", StringComparison.OrdinalIgnoreCase);
 
-        if (!string.IsNullOrEmpty(UserProfileDirectory))
-        {
-            redacted = redacted.Replace(UserProfileDirectory, "~", StringComparison.OrdinalIgnoreCase);
-        }
-
-        return redacted;
+        // Then the general case, which still has to run: it catches any OTHER account's home path
+        // — another user on this machine, or a path that arrived from somewhere else entirely.
+        return HomeDirectoryAccount.Replace(redacted, "${prefix}<account>");
     }
 
     /// <summary>
