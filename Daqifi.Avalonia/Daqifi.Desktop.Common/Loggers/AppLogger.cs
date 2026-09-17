@@ -7,6 +7,7 @@ using NLog;
 using NLog.Config;
 using NLog.Targets;
 using System.Configuration;
+using System.Diagnostics.CodeAnalysis;
 using System.IO;
 using System.Reflection;
 using System.Text.RegularExpressions;
@@ -218,44 +219,60 @@ public class AppLogger : IAppLogger
     }
 
     private static IDisposable InitializeSentry(string dsn, string? version) =>
-        SentrySdk.Init(options =>
-        {
-            options.Dsn = dsn;
-            // Left unset when the version cannot be resolved rather than sent as a placeholder.
-            // An unset Release lets the SDK apply its own detection; a stand-in like "0.0.0" is
-            // indistinguishable in Sentry from a release that genuinely is 0.0.0, which is
-            // precisely how #126 stayed invisible until someone read a crash report closely.
-            if (!string.IsNullOrWhiteSpace(version)) { options.Release = version; }
-            options.AutoSessionTracking = true;
-            options.IsGlobalModeEnabled = true;
-            options.Environment = ResolveEnvironment();
-            // Explicit, not relying on the SDK default: this app ships to app stores, where
-            // "what is collected" is a declaration we have to make and stand behind. No
-            // usernames, no email, no IP address attached to events. Sentry's server-side
-            // setting scrubs IPs as well; both belt and braces.
-            options.SendDefaultPii = false;
-            // Persist envelopes to disk so an event survives having nowhere to send it.
-            //
-            // This is not a nicety on mobile: a DAQiFi is usually reached over its own soft-AP
-            // (SSID "DAQiFi-xxxx", 192.168.1.1), and joining it takes the phone OFF the internet
-            // for the whole session. Measured on a Galaxy A16 mid-stream: 100% packet loss to
-            // 8.8.8.8. Without a cache directory the SDK holds events in memory only, so they
-            // die with the process — a probe captured mid-stream never reached Sentry at all,
-            // taking its breadcrumb trail with it, which is precisely the activity this app
-            // exists for. With one, the same probe landed on disk and was delivered on the next
-            // run once the phone was back on a routable network.
-            options.CacheDirectoryPath = AppDataPaths.SentryCacheDirectory;
-            // Zero, not the SDK's 1s default: any positive value makes Init block the calling
-            // thread on a flush attempt, and it waits out the FULL timeout when there is no
-            // route — which is exactly the state of a phone still on the soft-AP with a backlog
-            // pending. That is the UI thread during cold start, so the cost lands on precisely
-            // the sessions this cache exists to serve, on every launch. Zero skips the wait and
-            // leaves delivery to the background worker; the envelopes are already durable on
-            // disk, so nothing is lost by not waiting for them.
-            options.InitCacheFlushTimeout = TimeSpan.Zero;
-            // The cache is bounded by MaxCacheItems (measured: 30 by default), so a phone that
-            // stays offline discards oldest-first rather than growing without limit.
-        });
+        SentrySdk.Init(options => ConfigureSentryOptions(options, dsn, version));
+
+    /// <summary>
+    /// Applies this app's Sentry configuration to <paramref name="options"/>.
+    /// </summary>
+    /// <remarks>
+    /// Named rather than inlined into <see cref="InitializeSentry"/> so a test can drive a
+    /// throwaway client through the SAME configuration the app ships. Asserting against a
+    /// hand-built options object would prove only that the scrubbers work — which is precisely
+    /// the gap #366 was: <see cref="RedactAccountNames"/> was correct and simply never called
+    /// on the event path.
+    /// </remarks>
+    internal static void ConfigureSentryOptions(SentryOptions options, string dsn, string? version)
+    {
+        options.Dsn = dsn;
+        // Left unset when the version cannot be resolved rather than sent as a placeholder.
+        // An unset Release lets the SDK apply its own detection; a stand-in like "0.0.0" is
+        // indistinguishable in Sentry from a release that genuinely is 0.0.0, which is
+        // precisely how #126 stayed invisible until someone read a crash report closely.
+        if (!string.IsNullOrWhiteSpace(version)) { options.Release = version; }
+        options.AutoSessionTracking = true;
+        options.IsGlobalModeEnabled = true;
+        options.Environment = ResolveEnvironment();
+        // Explicit, not relying on the SDK default: this app ships to app stores, where
+        // "what is collected" is a declaration we have to make and stand behind. No
+        // usernames, no email, no IP address attached to events. Sentry's server-side
+        // setting scrubs IPs as well; both belt and braces.
+        options.SendDefaultPii = false;
+        // The last thing every event and every breadcrumb passes through, so no call site has
+        // to remember (#366). See ScrubAccountNames for what each hook can and cannot reach.
+        options.SetBeforeSend(ScrubAccountNames);
+        options.SetBeforeBreadcrumb(ScrubAccountNames);
+        // Persist envelopes to disk so an event survives having nowhere to send it.
+        //
+        // This is not a nicety on mobile: a DAQiFi is usually reached over its own soft-AP
+        // (SSID "DAQiFi-xxxx", 192.168.1.1), and joining it takes the phone OFF the internet
+        // for the whole session. Measured on a Galaxy A16 mid-stream: 100% packet loss to
+        // 8.8.8.8. Without a cache directory the SDK holds events in memory only, so they
+        // die with the process — a probe captured mid-stream never reached Sentry at all,
+        // taking its breadcrumb trail with it, which is precisely the activity this app
+        // exists for. With one, the same probe landed on disk and was delivered on the next
+        // run once the phone was back on a routable network.
+        options.CacheDirectoryPath = AppDataPaths.SentryCacheDirectory;
+        // Zero, not the SDK's 1s default: any positive value makes Init block the calling
+        // thread on a flush attempt, and it waits out the FULL timeout when there is no
+        // route — which is exactly the state of a phone still on the soft-AP with a backlog
+        // pending. That is the UI thread during cold start, so the cost lands on precisely
+        // the sessions this cache exists to serve, on every launch. Zero skips the wait and
+        // leaves delivery to the background worker; the envelopes are already durable on
+        // disk, so nothing is lost by not waiting for them.
+        options.InitCacheFlushTimeout = TimeSpan.Zero;
+        // The cache is bounded by MaxCacheItems (measured: 30 by default), so a phone that
+        // stays offline discards oldest-first rather than growing without limit.
+    }
 
     #region Logger Methods
     // @port: Daqifi.Desktop.Common.Loggers.AppLogger.Information
@@ -328,9 +345,14 @@ public class AppLogger : IAppLogger
     /// condition — a refused SD operation, a dropped connection, a retry — that explains the
     /// crash that follows it.
     /// </para>
+    /// <para>
+    /// No redaction here any more: the <c>BeforeBreadcrumb</c> hook does it for every breadcrumb,
+    /// from this method, from <see cref="AddBreadcrumb"/> and from the SDK itself. See the
+    /// <c>Breadcrumb</c> overload of <see cref="ScrubAccountNames(Breadcrumb)"/>.
+    /// </para>
     /// </remarks>
     private static void LeaveBreadcrumb(string message, Sentry.BreadcrumbLevel level) =>
-        SentrySdk.AddBreadcrumb(message: RedactAccountNames(message), category: "log", level: level);
+        SentrySdk.AddBreadcrumb(message: message, category: "log", level: level);
 
     private static string ResolveUserProfileDirectory()
     {
@@ -349,16 +371,23 @@ public class AppLogger : IAppLogger
     /// Removes the account name from any home-directory path in text bound for Sentry.
     /// </summary>
     /// <remarks>
-    /// Warning messages are written by call sites that reasonably assume they stay on the
-    /// machine, and two of them interpolate a path the user chose — an export destination, a
-    /// temp file. A home directory contains the account name, so uploading one verbatim would
-    /// send a username, which is the specific thing <c>SendDefaultPii = false</c> and the app
-    /// store data declaration say we do not do. That option only governs what the SDK attaches
-    /// on its own; it does not touch content the application supplies.
+    /// Log messages are written by call sites that reasonably assume they stay on the machine,
+    /// and several of them interpolate a path the user chose — an export destination, a temp
+    /// file, the app-data directory. A home directory contains the account name, so uploading
+    /// one verbatim would send a username, which is the specific thing
+    /// <c>SendDefaultPii = false</c> and the app store data declaration say we do not do. That
+    /// option only governs what the SDK attaches on its own; it does not touch content the
+    /// application supplies.
     /// <para>
     /// The account segment goes, the rest of the path stays: <c>/Users/jane/Documents/run.csv</c>
     /// becomes <c>/Users/&lt;account&gt;/Documents/run.csv</c>. Which folder and which file is the
     /// half that explains a failure, and only the name identifies anybody.
+    /// </para>
+    /// <para>
+    /// Anchored on the <c>/Users/</c>, <c>\Users\</c> or <c>/home/</c> prefix, not on the account
+    /// name as a bare word, so an account called <c>sam</c> does not turn every "same" and
+    /// "sample" in a message into <c>&lt;account&gt;</c>. The one unanchored substitution is the
+    /// full profile directory, which is long enough to be unambiguous.
     /// </para>
     /// <para>
     /// Deliberately narrow. This removes account names from paths; it is not a general PII
@@ -368,7 +397,8 @@ public class AppLogger : IAppLogger
     /// calls and through <c>Error</c>'s messages, so this is not a surface the change opens.
     /// </para>
     /// </remarks>
-    private static string RedactAccountNames(string message)
+    [return: NotNullIfNotNull(nameof(message))]
+    private static string? RedactAccountNames(string? message)
     {
         if (string.IsNullOrEmpty(message)) { return message; }
 
@@ -380,6 +410,106 @@ public class AppLogger : IAppLogger
         }
 
         return redacted;
+    }
+
+    /// <summary>
+    /// <c>BeforeSend</c> hook: removes account names from an assembled event, at the last point
+    /// before it leaves the process.
+    /// </summary>
+    /// <remarks>
+    /// Here rather than at the ~89 <see cref="Error(Exception, string)"/> call sites, because
+    /// per-call-site redaction cannot close this. The account name does not only arrive in a
+    /// message we wrote: .NET builds <c>UnauthorizedAccessException</c>'s own text from the path,
+    /// so an event whose message contains no path at all still ships one (#366 observed exactly
+    /// that). A call site cannot redact a string it never sees, and a new call site added next
+    /// year cannot forget a hook it never has to call.
+    /// <para>
+    /// Covered here: <see cref="SentryEvent.Message"/> (both the template and the formatted
+    /// form), every <c>SentryException.Value</c> — the exception text, and the half the call
+    /// sites cannot reach — every stack frame's <c>FileName</c> and <c>AbsolutePath</c>, which
+    /// on a local build are the compiling machine's home directory, the string values in
+    /// <see cref="SentryEvent.Extra"/>, where <c>Error</c>'s own message travels, and
+    /// <c>ServerName</c>, which <c>SendDefaultPii = false</c> should already leave unset.
+    /// </para>
+    /// <para>
+    /// NOT covered here, deliberately: breadcrumbs, because <c>IEventLike.Breadcrumbs</c> is
+    /// read-only and a hook handed the assembled event cannot rewrite them. They are scrubbed a
+    /// step earlier instead — see the <c>Breadcrumb</c> overload. Also untouched are tags
+    /// (<see cref="SetDeviceContext"/> sends a device friendly name and an IP address, which is
+    /// a stated, separate decision) and non-string <c>Extra</c> values, which no call site
+    /// populates with a path.
+    /// </para>
+    /// </remarks>
+    internal static SentryEvent ScrubAccountNames(SentryEvent @event)
+    {
+        if (@event.Message is { } message)
+        {
+            @event.Message = new SentryMessage
+            {
+                Message = RedactAccountNames(message.Message),
+                Formatted = RedactAccountNames(message.Formatted),
+                Params = message.Params
+            };
+        }
+
+        foreach (var exception in @event.SentryExceptions ?? [])
+        {
+            exception.Value = RedactAccountNames(exception.Value);
+
+            foreach (var frame in exception.Stacktrace?.Frames ?? [])
+            {
+                frame.FileName = RedactAccountNames(frame.FileName);
+                frame.AbsolutePath = RedactAccountNames(frame.AbsolutePath);
+            }
+        }
+
+        // Materialised first: SetExtra writes back into the dictionary being read.
+        foreach (var (key, value) in @event.Extra.ToList())
+        {
+            if (value is string text) { @event.SetExtra(key, RedactAccountNames(text)); }
+        }
+
+        @event.ServerName = RedactAccountNames(@event.ServerName);
+
+        return @event;
+    }
+
+    /// <summary>
+    /// <c>BeforeBreadcrumb</c> hook: removes account names from a breadcrumb before it joins
+    /// the ring.
+    /// </summary>
+    /// <remarks>
+    /// A second hook rather than one, because a breadcrumb is frozen by the time an event
+    /// carries it: <c>Breadcrumb</c> exposes no setters and <c>IEventLike.Breadcrumbs</c> no
+    /// way to replace the collection, so the only place a breadcrumb can still be rewritten is
+    /// on its way in.
+    /// <para>
+    /// This reaches strictly more than the <see cref="LeaveBreadcrumb"/> call it replaces. The
+    /// SDK writes its own breadcrumb for every captured exception, carrying that exception's
+    /// message — the same text, and the same account name, that the <c>BeforeSend</c> hook
+    /// above scrubs off the event itself. Nothing in this app could reach that one; this does.
+    /// </para>
+    /// </remarks>
+    internal static Breadcrumb ScrubAccountNames(Breadcrumb breadcrumb)
+    {
+        var message = RedactAccountNames(breadcrumb.Message);
+        var data = breadcrumb.Data?.ToDictionary(entry => entry.Key, entry => RedactAccountNames(entry.Value));
+
+        // The original when nothing needed redacting, which is nearly every breadcrumb — and it
+        // is the original that keeps its own timestamp. Breadcrumb's public constructor takes
+        // none, so a rebuilt one is stamped "now"; on the rare path that does redact, "now" is
+        // microseconds later, because this hook runs as the breadcrumb is added.
+        if (message == breadcrumb.Message
+            && (data is null || data.All(entry => entry.Value == breadcrumb.Data![entry.Key])))
+        {
+            return breadcrumb;
+        }
+
+        // Suppressed, not defaulted: Breadcrumb's own Message and Type properties are nullable
+        // and the SDK serialises either as absent, but its public constructor annotates both
+        // parameters as non-null. Passing the breadcrumb's real values through is the faithful
+        // copy; substituting "" would invent content the original did not have.
+        return new Breadcrumb(message!, breadcrumb.Type!, data, breadcrumb.Category, breadcrumb.Level);
     }
 
     /// <inheritdoc />
