@@ -243,9 +243,16 @@ public class DuplicateDeviceDialogBindingTests
     /// </summary>
     private static IEnumerable<int> Writes(string code, string local)
     {
+        // ref/out with any amount of whitespace between keyword and name — CodeOnly turns a comment
+        // there into whitespace of the comment's length, so a fixed look-back window was defeated by a
+        // long enough comment (Qodo round 4).
+        var byReference = Regex.Matches(code, $@"\b(?:ref|out)\s+(?:var\s+)?(?<name>{Regex.Escape(local)})(?!\w)")
+            .Select(match => match.Groups["name"].Index)
+            .ToHashSet();
+
         foreach (Match use in Regex.Matches(code, $@"(?<![\w.]){Regex.Escape(local)}(?!\w)"))
         {
-            if (Regex.IsMatch(code[Math.Max(0, use.Index - 40)..use.Index], @"\b(?:ref|out)\s+(?:var\s+)?$"))
+            if (byReference.Contains(use.Index))
             {
                 yield return use.Index;
                 continue;
