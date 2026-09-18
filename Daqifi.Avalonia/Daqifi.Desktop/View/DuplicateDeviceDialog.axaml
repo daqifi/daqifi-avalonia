@@ -1,7 +1,10 @@
 <Window xmlns="https://github.com/avaloniaui"
         xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml"
         xmlns:i="https://github.com/projektanker/icons.avalonia"
+        xmlns:vm="using:Daqifi.Desktop.ViewModels"
         x:Class="Daqifi.Desktop.View.DuplicateDeviceDialog"
+        x:DataType="vm:DuplicateDeviceDialogViewModel"
+        x:CompileBindings="True"
         Title="Device Already Connected" CanResize="False"
         SizeToContent="WidthAndHeight"
         MinWidth="480" MinHeight="280" MaxWidth="620" MaxHeight="520"
@@ -10,7 +13,13 @@
     <!-- Ported from the MahApps MetroWindow original: GlowBrush/ResizeMode/DarkDialog styles
          have no direct analog; DesignTokens brushes replace the DarkDialog dictionary.
          Autosizes to content within bounds (DAQiFi#576); MinWidth/MinHeight hold the prior
-         480x280 footprint for the common case. -->
+         480x280 footprint for the common case.
+
+         Compiled bindings (issue #327): the DataType/CompileBindings pair on the root makes the three
+         member names below the XAML compiler's business. AvaloniaUseCompiledBindingsByDefault is
+         false in this project, so the DataType alone would change nothing. The only DataContext this
+         dialog is ever given is the DuplicateDeviceDialogViewModel that
+         ConnectionDialogViewModel.HandleDuplicateDevice constructs. -->
     <Grid Margin="20" Background="{StaticResource Surface}" RowDefinitions="Auto,Auto,*,Auto" ColumnDefinitions="Auto,*">
 
         <!-- Icon -->
