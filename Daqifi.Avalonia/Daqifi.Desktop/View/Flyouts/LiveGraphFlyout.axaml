@@ -2,6 +2,9 @@
              xmlns="https://github.com/avaloniaui"
              xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml"
              xmlns:i="https://github.com/projektanker/icons.avalonia"
+             xmlns:vm="using:Daqifi.Desktop.ViewModels"
+             x:DataType="vm:DaqifiViewModel"
+             x:CompileBindings="True"
              Background="{DynamicResource SurfaceRaised}"
              Foreground="{DynamicResource TextPrimary}">
 
@@ -9,6 +12,10 @@
         Pane content for the single SplitView flyout host in MainWindow
         (hal: flyout_host). MahApps Flyout chrome lives on the host.
         Brushes come from /Daqifi.Desktop/Resources/DesignTokens.axaml via App.axaml.
+
+        Compiled bindings (issue #327): AvaloniaUseCompiledBindingsByDefault is false in this
+        project, so the DataType needs the CompileBindings beside it. The one host is MainWindow's
+        SplitView pane, which inherits the window's DaqifiViewModel. One scope, no templates.
     -->
 
     <UserControl.Styles>
