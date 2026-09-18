@@ -21,8 +21,9 @@
          frequency captions that carried explanatory copy are shown as visible
          captions instead.
        - Section-visibility bound to the count int through the same IntToVisibility
-         converter the desktop uses (count>0 => visible). AND-gated visibility (desktop MultiBinding) is
-         expressed by nesting one IsVisible container inside another.
+         converter the desktop uses (count>0 => visible). AND-gated visibility
+         (desktop MultiBinding) is expressed by nesting one IsVisible container
+         inside another.
 
        Compiled bindings (issue #327): AvaloniaUseCompiledBindingsByDefault is false in this
        project, so the DataType needs the CompileBindings beside it. The one construction site,
@@ -33,9 +34,12 @@
          DigitalOutputs) are ObservableCollection<ChannelTileViewModel>. Its three hops back to
          the pane cast DataContext, because from a resource the compiler cannot see which
          ItemsControl the template will land in and types DataContext as System.Object;
-       - the device-name and palette ItemTemplates, left undeclared: they infer string and
-         Brush from their ItemsSource, and the palette's $parent[ItemsControl].DataContext
-         resolves against the root scope on its own. -->
+       - the device-name ItemTemplate, left undeclared: it infers string from
+         ConnectedDeviceNames;
+       - the palette ItemTemplate, declared IBrush: Palette is an IBrush[], and an array
+         ItemsSource infers nothing (a member path there is AVLN2000 on XamlPseudoType,
+         measured). Its $parent[ItemsControl].DataContext resolves against the root scope
+         on its own. -->
 
   <UserControl.Styles>
     <!-- sectionLabel / sectionCount / chip / mono / rowAction / emptyBadge / emptyTitle
@@ -400,7 +404,7 @@
                   </ItemsPanelTemplate>
                 </ItemsControl.ItemsPanel>
                 <ItemsControl.ItemTemplate>
-                  <DataTemplate>
+                  <DataTemplate x:DataType="IBrush">
                     <Button Width="44"
                             Height="44"
                             Margin="0,0,8,8"
