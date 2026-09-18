@@ -148,6 +148,60 @@ public sealed class MobileShellSilentStreamWatchdogTests : IDisposable
         AssertStreamStoppedForNoEnabledChannels();
     }
 
+    /// <summary>
+    /// Silence banked while nothing was enabled is explained silence, and must not count toward
+    /// declaring the transport dead once a channel comes back. Without this, a channel re-enabled
+    /// late in the window tore the connection down on the very next poll, before the device had
+    /// had a chance to send a single sample for it.
+    /// </summary>
+    [Fact]
+    public void Silence_banked_with_no_channels_enabled_does_not_drop_the_connection_when_one_comes_back()
+    {
+        StartStreaming();
+        var channels = ActiveAnalogChannels();
+        foreach (var channel in channels)
+        {
+            _device.RemoveChannel(channel);
+        }
+
+        Poll(WatchdogPolls - 1);
+        _device.AddChannel(channels[0]);
+        Poll(1);
+
+        Assert.True(_shell.IsConnected, "Silence banked while nothing was enabled dropped the connection.");
+        Assert.True(_shell.IsStreaming);
+
+        // The re-enabled channel still gets a full window of its own, and a device that really is
+        // silent for all of it is still dropped.
+        Poll(WatchdogPolls - 2);
+        Assert.True(_shell.IsConnected, "The watchdog tripped before the re-enabled channel's window had elapsed.");
+        Poll(1);
+        Assert.False(_shell.IsConnected);
+        Assert.StartsWith("Lost connection to", _shell.Status, StringComparison.Ordinal);
+    }
+
+    /// <summary>
+    /// After the no-channels trip stops the stream, the user can start again on the same
+    /// connection and gets a live, fully armed stream.
+    /// </summary>
+    [Fact]
+    public void Streaming_restarts_cleanly_after_the_no_channels_trip()
+    {
+        StartStreaming();
+        foreach (var channel in ActiveAnalogChannels())
+        {
+            _device.RemoveChannel(channel);
+        }
+
+        AssertStreamStoppedForNoEnabledChannels();
+
+        StartStreaming();
+        Assert.StartsWith($"Streaming {AnalogPorts} channel(s)", _shell.Status, StringComparison.Ordinal);
+
+        Poll(WatchdogPolls);
+        Assert.False(_shell.IsConnected, "The restarted stream's watchdog was not re-armed.");
+    }
+
     private void AssertStreamStoppedForNoEnabledChannels()
     {
         Assert.True(_shell.IsStreaming);

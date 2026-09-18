@@ -42,6 +42,9 @@ public partial class MobileShellViewModel : ObservableObject, IDisposable
     // one arrived during the few microseconds the poll body takes — almost never, so the
     // watchdog would tear a perfectly healthy connection down within seconds.
     private long _samplesAtLastPoll;
+    // Whether the previous poll found any active analog channel. A channel coming back after a
+    // stretch with none enabled starts a fresh window — see PollActiveSamples.
+    private bool _monitoredAtLastPoll;
 
     public ObservableCollection<MobileDeviceItem> Devices { get; } = [];
 
@@ -390,6 +393,7 @@ public partial class MobileShellViewModel : ObservableObject, IDisposable
         Interlocked.Exchange(ref _totalSamples, 0);
         _samplesAtLastPoll = 0;
         _silentPolls = 0;
+        _monitoredAtLastPoll = false;
         BeginCountingSamples();
 
         // Everything that arms the device is inside one try, so a failure anywhere in it lands on
@@ -521,6 +525,17 @@ public partial class MobileShellViewModel : ObservableObject, IDisposable
         // every analog channel's IsEnabled in place (Core 1.8.0), and the Channels and Profiles panes
         // can deactivate them too. What the original gate protected against — tearing down a
         // healthy connection — is handled at the trip instead: see CheckForSilentStream.
+        //
+        // One piece of the old gate is kept: silence banked while nothing was enabled is explained
+        // silence, and must not count toward declaring the transport dead. So when a channel comes
+        // back after a stretch with none active, it starts a fresh window of its own. Without this,
+        // a channel re-enabled late in the window dropped the connection on the next poll, before
+        // the device could send a single sample for it.
+        if (monitored > 0 && !_monitoredAtLastPoll)
+        {
+            _silentPolls = 0;
+        }
+        _monitoredAtLastPoll = monitored > 0;
         CheckForSilentStream(monitored);
     }
 
