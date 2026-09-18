@@ -2,12 +2,27 @@
              xmlns="https://github.com/avaloniaui"
              xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml"
              xmlns:i="https://github.com/projektanker/icons.avalonia"
+             xmlns:vm="using:Daqifi.Desktop.ViewModels"
+             x:DataType="vm:DaqifiViewModel"
+             x:CompileBindings="True"
              Background="{DynamicResource SurfaceRaised}"
              Foreground="{DynamicResource TextPrimary}">
 
     <!--
         Pane content for the single SplitView flyout host in MainWindow
         (hal: flyout_host). MahApps Flyout chrome lives on the host.
+
+        Compiled bindings (#327). The root declares x:DataType + x:CompileBindings, which puts
+        all 29 bindings in front of the XAML compiler; before that they resolved by reflection,
+        so a renamed member rendered blank and every head still built green. The declared type
+        is DaqifiViewModel because this pane has no DataContext of its own — MainWindow hosts it
+        in the shared SplitView pane and it meets whatever the window is bound to.
+
+        Neither DataTemplate below declares a scope, deliberately: the compiler infers the
+        device sections from SummaryLogger.Devices and the channel rows from
+        DeviceSummary.Channels, two levels down, and an explicit x:DataType OVERRIDES that
+        inference rather than confirming it — a plausible-but-wrong one would re-scope a
+        template silently. Measured, not assumed; see SummaryFlyoutBindingTests.
 
         Section chrome (#249). This pane used to reproduce the MahApps GroupBox literally, through
         a local ControlTheme that drew a filled Accent bar with bold white text over an inset,
