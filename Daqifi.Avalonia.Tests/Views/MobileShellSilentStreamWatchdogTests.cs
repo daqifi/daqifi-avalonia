@@ -26,7 +26,12 @@ namespace Daqifi.Avalonia.Tests.Views;
 /// exactly what a silent device looks like from the app's side), and channels populated by Core's
 /// own status handling. The render timer is the one piece replaced — the tests call
 /// <see cref="MobileShellViewModel.PollActiveSamples"/> directly, once per simulated 50 ms tick.
+/// <para>
+/// In the <c>ConnectionManager</c> singleton collection because the shell's adopt step registers
+/// the device with <c>ConnectionManager.Instance</c>, and its teardown unregisters it.
+/// </para>
 /// </remarks>
+[Collection(ConnectionManagerSingletonCollection.Name)]
 public sealed class MobileShellSilentStreamWatchdogTests : IDisposable
 {
     /// <summary>Mirrors <c>MobileShellViewModel.SilentPollsBeforeStreamDeclaredDead</c>.</summary>
