@@ -1,5 +1,4 @@
 using System.Collections.ObjectModel;
-using Daqifi.Desktop.Common.Loggers;
 using Daqifi.Desktop.Logger;
 using Daqifi.Desktop.Models;
 using Daqifi.Desktop.ViewModels;
@@ -187,7 +186,7 @@ public class DeleteAllSessionsRecoveryTests : IDisposable
         SeedDatabaseWithOneSession(factory, DatabasePath);
 
         var host = new FakeHost(new LoggingSession(0, "Session_0"));
-        var listViewModel = new LoggingSessionListViewModel(host, () => factory, DatabasePath, new SilentLogger());
+        var listViewModel = new LoggingSessionListViewModel(host, () => factory, DatabasePath, new RecordingAppLogger());
 
         factory.FailNextCreate = true;
         await listViewModel.DeleteAllSessionsAsync();
@@ -213,7 +212,7 @@ public class DeleteAllSessionsRecoveryTests : IDisposable
         SeedDatabaseWithOneSession(factory, DatabasePath);
 
         var host = new FakeHost(new LoggingSession(0, "Session_0"));
-        var listViewModel = new LoggingSessionListViewModel(host, () => factory, DatabasePath, new SilentLogger());
+        var listViewModel = new LoggingSessionListViewModel(host, () => factory, DatabasePath, new RecordingAppLogger());
 
         factory.FailNextCreate = true;
         await listViewModel.DeleteAllSessionsAsync();
@@ -230,7 +229,7 @@ public class DeleteAllSessionsRecoveryTests : IDisposable
         SeedDatabaseWithOneSession(factory, DatabasePath);
 
         var host = new FakeHost(new LoggingSession(0, "Session_0"));
-        var listViewModel = new LoggingSessionListViewModel(host, () => factory, DatabasePath, new SilentLogger());
+        var listViewModel = new LoggingSessionListViewModel(host, () => factory, DatabasePath, new RecordingAppLogger());
 
         await listViewModel.DeleteAllSessionsAsync();
 
@@ -259,7 +258,7 @@ public class DeleteAllSessionsRecoveryTests : IDisposable
         File.WriteAllText(DatabasePath + "-journal", "stale rollback journal");
 
         var host = new FakeHost(new LoggingSession(0, "Session_0"));
-        var listViewModel = new LoggingSessionListViewModel(host, () => factory, DatabasePath, new SilentLogger());
+        var listViewModel = new LoggingSessionListViewModel(host, () => factory, DatabasePath, new RecordingAppLogger());
 
         await listViewModel.DeleteAllSessionsAsync();
 
@@ -298,7 +297,7 @@ public class DeleteAllSessionsRecoveryTests : IDisposable
         factory.BeforeNextCreate = () => undeletable = MakeTheRelocatedDatabaseUndeletable();
 
         var host = new FakeHost(new LoggingSession(0, "Session_0"));
-        var listViewModel = new LoggingSessionListViewModel(host, () => factory, DatabasePath, new SilentLogger());
+        var listViewModel = new LoggingSessionListViewModel(host, () => factory, DatabasePath, new RecordingAppLogger());
 
         await listViewModel.DeleteAllSessionsAsync();
 
@@ -496,27 +495,5 @@ public class DeleteAllSessionsRecoveryTests : IDisposable
             MessagesShown.Add($"{title}: {message}");
             return Task.CompletedTask;
         }
-    }
-
-    /// <summary>Swallows the diagnostics so a deliberate failure does not write to the real log.</summary>
-    private sealed class SilentLogger : IAppLogger
-    {
-        public void Information(string message) { }
-
-        public void Warning(string message) { }
-
-        public void Warning(Exception ex, string message) { }
-
-        public void Error(string message) { }
-
-        public void Error(Exception ex, string message) { }
-
-        public void AddBreadcrumb(string category, string message, Daqifi.Desktop.Common.Loggers.BreadcrumbLevel level = Daqifi.Desktop.Common.Loggers.BreadcrumbLevel.Info) { }
-
-        public void SetDeviceContext(string model, string serialNumber, string firmwareVersion, string connectionType, int activeChannels) { }
-
-        public void ClearDeviceContext() { }
-
-        public void Shutdown() { }
     }
 }

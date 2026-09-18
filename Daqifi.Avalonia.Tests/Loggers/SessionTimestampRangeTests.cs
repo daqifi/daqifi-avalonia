@@ -1,4 +1,3 @@
-using Daqifi.Desktop.Common.Loggers;
 using Daqifi.Desktop.Logger;
 using Microsoft.Data.Sqlite;
 using Microsoft.EntityFrameworkCore;
@@ -61,7 +60,7 @@ public sealed class SessionTimestampRangeTests : IDisposable
     private readonly string _directory =
         Path.Combine(Path.GetTempPath(), "daqifi-avalonia-tests", "ticks-" + Guid.NewGuid().ToString("N"));
 
-    private readonly RecordingLogger _logger = new();
+    private readonly RecordingAppLogger _logger = new();
 
     private string DatabasePath => Path.Combine(_directory, "DAQiFiDatabase.db");
 
@@ -440,33 +439,6 @@ public sealed class SessionTimestampRangeTests : IDisposable
         using var command = connection.CreateCommand();
         command.CommandText = sql;
         return Convert.ToInt64(command.ExecuteScalar());
-    }
-
-    /// <summary>Keeps the warnings so a test can assert on them, and off the real application log.</summary>
-    private sealed class RecordingLogger : IAppLogger
-    {
-        internal List<string> Warnings { get; } = [];
-
-        public void Information(string message) { }
-
-        public void Warning(string message) => Warnings.Add(message);
-
-        public void Warning(Exception ex, string message) => Warnings.Add(message);
-
-        public void Error(string message) { }
-
-        public void Error(Exception ex, string message) { }
-
-        public void AddBreadcrumb(
-            string category,
-            string message,
-            Daqifi.Desktop.Common.Loggers.BreadcrumbLevel level = Daqifi.Desktop.Common.Loggers.BreadcrumbLevel.Info) { }
-
-        public void SetDeviceContext(string model, string serialNumber, string firmwareVersion, string connectionType, int activeChannels) { }
-
-        public void ClearDeviceContext() { }
-
-        public void Shutdown() { }
     }
 
     #endregion

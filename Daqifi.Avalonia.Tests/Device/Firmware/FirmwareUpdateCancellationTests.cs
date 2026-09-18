@@ -1,6 +1,5 @@
 using System.Collections.ObjectModel;
 using Daqifi.Core.Firmware;
-using Daqifi.Desktop.Common.Loggers;
 using Daqifi.Desktop.Device.Firmware;
 using Daqifi.Desktop.Device.SerialDevice;
 using Daqifi.Desktop.Models;
@@ -36,7 +35,7 @@ public class FirmwareUpdateCancellationTests : IDisposable
     private readonly FakeHost _host = new();
     private readonly ParkingDownloadService _downloads = new();
     private readonly StubUpdateService _updates = new();
-    private readonly SilentLogger _logger = new();
+    private readonly RecordingAppLogger _logger = new();
     private readonly string _dataDirectory =
         Path.Combine(Path.GetTempPath(), "daqifi-firmware-cancel-tests", Guid.NewGuid().ToString("N"));
 
@@ -333,32 +332,6 @@ public class FirmwareUpdateCancellationTests : IDisposable
             await Task.Delay(Timeout.InfiniteTimeSpan, linked.Token);
             cancellationToken.ThrowIfCancellationRequested();
         }
-    }
-
-    private sealed class SilentLogger : IAppLogger
-    {
-        public void Information(string message) { }
-
-        public void Warning(string message) { }
-
-        public void Warning(Exception ex, string message) { }
-
-        public void Error(string message) { }
-
-        public void Error(Exception ex, string message) { }
-
-        public void AddBreadcrumb(
-            string category,
-            string message,
-            Daqifi.Desktop.Common.Loggers.BreadcrumbLevel level = Daqifi.Desktop.Common.Loggers.BreadcrumbLevel.Info)
-        { }
-
-        public void SetDeviceContext(
-            string model, string serialNumber, string firmwareVersion, string connectionType, int activeChannels) { }
-
-        public void ClearDeviceContext() { }
-
-        public void Shutdown() { }
     }
     #endregion
 }
