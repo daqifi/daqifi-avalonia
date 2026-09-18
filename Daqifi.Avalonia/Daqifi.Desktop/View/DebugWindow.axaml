@@ -1,7 +1,10 @@
 <Window xmlns="https://github.com/avaloniaui"
         xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml"
         xmlns:i="https://github.com/projektanker/icons.avalonia"
+        xmlns:vm="using:Daqifi.Desktop.ViewModels"
         x:Class="Daqifi.Desktop.View.DebugWindow"
+        x:DataType="vm:DaqifiViewModel"
+        x:CompileBindings="True"
         Title="DAQiFi Debug Console"
         Height="600"
         Width="1000"
@@ -22,6 +25,13 @@
         a 1200-wide window opens with its right edge, Close button included, off-screen.
         Auto widths plus the horizontal scrollbar mean nothing is lost at 1000, so the
         convenience was not worth buying that.
+
+        Compiled bindings (issue #327): AvaloniaUseCompiledBindingsByDefault is false in this
+        project, so the DataType needs the CompileBindings beside it. The one construction site is
+        DaqifiViewModel.OpenDebugWindow, which passes itself to the constructor as the DataContext.
+        That is the only declaration: the LatestEntry panel's scope is inferred from its
+        DataContext binding (DebugDataModel), and the two item templates and the DataGrid columns
+        from their ItemsSource. A declaration on any of them would override that inference.
     -->
     <Grid RowDefinitions="Auto,*,Auto">
 

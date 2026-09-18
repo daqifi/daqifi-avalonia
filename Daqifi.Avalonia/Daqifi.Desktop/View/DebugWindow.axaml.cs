@@ -16,9 +16,19 @@ namespace Daqifi.Desktop.View;
 // @port: Daqifi.Desktop.View.DebugWindow
 public partial class DebugWindow : Window
 {
-    public DebugWindow(DaqifiViewModel viewModel)
+    /// <summary>
+    /// Required by compiled bindings, not called by the app: with <c>x:CompileBindings="True"</c> on
+    /// the root, a view with no public parameterless constructor is <c>AVLN3000</c>, a build error
+    /// (issue #327). The one real construction site is <see cref="DaqifiViewModel"/>'s
+    /// <c>OpenDebugWindow</c>, through the overload below.
+    /// </summary>
+    public DebugWindow()
     {
         InitializeComponent();
+    }
+
+    public DebugWindow(DaqifiViewModel viewModel) : this()
+    {
         DataContext = viewModel;
     }
 
