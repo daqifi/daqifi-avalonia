@@ -2,12 +2,26 @@
              xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml"
              xmlns:i="https://github.com/projektanker/icons.avalonia"
              xmlns:v="clr-namespace:Daqifi.Avalonia.Views"
-             x:Class="Daqifi.Avalonia.Views.MobileMainView">
+             xmlns:mobile="using:Daqifi.Avalonia.Views.Mobile"
+             xmlns:vm="using:Daqifi.Desktop.ViewModels"
+             x:Class="Daqifi.Avalonia.Views.MobileMainView"
+             x:CompileBindings="True">
   <!-- Orientation-adaptive shell (#221): LANDSCAPE renders the desktop's left
        nav rail + content (~1:1 with the desktop app); PORTRAIT falls back to the
        bottom-nav single-column. The content area is SHARED (col 1, row 0) between
        both — only the nav chrome swaps by orientation (code-behind toggles the
-       rail vs the bottom bar). Rail styling mirrors the shared NavTabItem theme. -->
+       rail vs the bottom bar). Rail styling mirrors the shared NavTabItem theme.
+
+       Compiled bindings (issue #327): this view has no view model of its own. The root's
+       DataContext is never set; every binding sits in one of three subtrees whose DataContext
+       the code-behind assigns, so each of those declares its own scope and the root declares
+       none. AvaloniaUseCompiledBindingsByDefault is false in this project, so the root's
+       CompileBindings is what makes all three scopes the compiler's business:
+         TopCommandBar, NotificationsOverlay → MobileNotificationsViewModel (ctor, one instance)
+         SettingsOverlay                     → SettingsViewModel (OnSettings, ??=)
+       A binding added outside those subtrees has no scope and is a build error, not a
+       silent reflection lookup. The notification list's item template is inferred from
+       NotificationList's element type, so it declares nothing. -->
   <UserControl.Styles>
     <!-- Portrait bottom-nav button -->
     <Style Selector="Button.nav">
@@ -84,7 +98,8 @@
     <Border Grid.Row="0" Grid.ColumnSpan="2"
             Background="{DynamicResource Surface}"
             BorderBrush="{DynamicResource BorderDim}" BorderThickness="0,0,0,1">
-      <StackPanel x:Name="TopCommandBar" Orientation="Horizontal"
+      <StackPanel x:Name="TopCommandBar" x:DataType="mobile:MobileNotificationsViewModel"
+                  Orientation="Horizontal"
                   HorizontalAlignment="Right" Margin="0,4">
         <Button Classes="topCommand" Click="OnNotifications" ToolTip.Tip="Notifications">
           <Panel>
@@ -170,7 +185,8 @@
     <!-- Settings overlay (#11) — mirrors the desktop settings drawer's EXPORT /
          CSV DELIMITER preference. Right-anchored drawer over a scrim; hidden
          until the top-bar gear opens it. -->
-    <Grid x:Name="SettingsOverlay" Grid.ColumnSpan="2" Grid.RowSpan="3"
+    <Grid x:Name="SettingsOverlay" x:DataType="vm:SettingsViewModel"
+          Grid.ColumnSpan="2" Grid.RowSpan="3"
           IsVisible="False" ZIndex="30">
       <Button Background="{DynamicResource Scrim}" HorizontalAlignment="Stretch"
               VerticalAlignment="Stretch" BorderThickness="0" Click="OnCloseSettings" />
@@ -232,7 +248,8 @@
          the bell badge and set once in code-behind. Starts empty — the desktop notification
          producers (firmware coordinator / DaqifiViewModel) don't run on mobile, so a mobile
          source is a follow-up; the VM's producer API is ready for it. -->
-    <Grid x:Name="NotificationsOverlay" Grid.ColumnSpan="2" Grid.RowSpan="3"
+    <Grid x:Name="NotificationsOverlay" x:DataType="mobile:MobileNotificationsViewModel"
+          Grid.ColumnSpan="2" Grid.RowSpan="3"
           IsVisible="False" ZIndex="30">
       <Button Background="{DynamicResource Scrim}" HorizontalAlignment="Stretch"
               VerticalAlignment="Stretch" BorderThickness="0" Click="OnCloseNotifications" />
