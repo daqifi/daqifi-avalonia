@@ -1,7 +1,10 @@
 <Window xmlns="https://github.com/avaloniaui"
         xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml"
         xmlns:i="https://github.com/projektanker/icons.avalonia"
+        xmlns:vm="using:Daqifi.Desktop.ViewModels"
         x:Class="Daqifi.Desktop.View.ErrorDialog"
+        x:DataType="vm:ErrorDialogViewModel"
+        x:CompileBindings="True"
         Title="Error" CanResize="False"
         SizeToContent="WidthAndHeight"
         MinWidth="320" MinHeight="150" MaxWidth="520"
@@ -15,6 +18,10 @@
         than stretch the window wide, and its MaxHeight + Auto vertical scrollbar guarantee an
         over-long message scrolls instead of clipping off-screen. The message is a read-only
         (not disabled) TextBox so firmware error + recovery text stays selectable/copyable.
+
+        Compiled bindings (issue #327): AvaloniaUseCompiledBindingsByDefault is false in this
+        project, so the DataType needs the CompileBindings beside it. Every caller hands the dialog
+        an ErrorDialogViewModel through DialogService.ShowDialogAsync<ErrorDialog>.
     -->
     <Grid Margin="20" Background="{StaticResource Surface}"
           RowDefinitions="Auto,Auto" ColumnDefinitions="Auto,*">
