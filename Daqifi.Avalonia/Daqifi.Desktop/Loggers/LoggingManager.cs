@@ -751,7 +751,6 @@ public partial class LoggingManager : ObservableObject
     {
         await versionNotification.CheckForUpdatesAsync();
         OnPropertyChanged("NotificationCount");
-        OnPropertyChanged("VersionNumber");
     }
 
     // @port: Daqifi.Desktop.Logger.LoggingManager.LoadPersistedLoggingSessions
