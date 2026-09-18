@@ -187,31 +187,41 @@ internal static class BindingFacts
     /// <para>
     /// <c>x:DataType</c> is a <i>claim</i>: the compiler checks the bindings against the claim, never
     /// against the object the dialog will actually meet. Nothing in the type system ties the two
-    /// together for these dialogs, because they have no <c>DataContext</c> of their own and are handed
-    /// one by <c>IDialogService.ShowDialogAsync&lt;T&gt;(object ownerViewModel, object viewModel)</c> —
-    /// whose view-model parameter is typed <c>object</c>. A call handing the wrong object compiles,
-    /// and so does an <c>x:DataType</c> pointed at a type that shares the member names; either renders
-    /// blank at run time, which is the failure #327 exists to remove, arriving one level up.
+    /// together, because the dialog is handed its view model through a parameter typed <c>object</c>
+    /// — <c>IDialogService.ShowDialogAsync&lt;T&gt;(object ownerViewModel, object viewModel)</c>, or
+    /// <c>Window.DataContext</c> after a direct construction. Handing the wrong object compiles, and so
+    /// does an <c>x:DataType</c> pointed at a type that shares the member names; either renders blank
+    /// at run time, which is the failure #327 exists to remove, arriving one level up.
     /// </para>
     ///
     /// <para>
-    /// So this reads the call sites out of <b>every</b> C# file in <c>Daqifi.Avalonia</c> — not only
-    /// the file that holds them today — and requires each to pass a local constructed as
-    /// <paramref name="viewModelType"/> in a scope that encloses the call — a same-named local in another
-    /// method does not count (see <see cref="BlockStillOpen"/>). The dialog's class name is taken from its own
-    /// <c>x:Class</c>, so the call-site search cannot drift from the view it is guarding. A call in a
-    /// shape the parser does not follow (a named argument, an inline <c>new</c>, a property result)
-    /// <b>fails</b> rather than being skipped, and so does a direct <c>new Dialog(</c>, which would
-    /// present the dialog by a route this guard cannot see: silently checking the subset it happened
-    /// to understand is the defect Qodo found in the first version of this guard (round 1 on PR #372).
-    /// Deliberately not a Roslyn semantic model — the test project references no compiler API, and
-    /// failing loudly on an unknown shape gives the same protection for far less machinery.
+    /// So this reads <b>every</b> C# file in <c>Daqifi.Avalonia</c> for the two routes the app uses —
+    /// <c>ShowDialogAsync&lt;Dialog&gt;(owner, local)</c>, and
+    /// <c>var d = new Dialog(); d.DataContext = local;</c> — and requires <c>local</c> to be a
+    /// <c>var</c> constructed as <paramref name="viewModelType"/> in a block that encloses the use (see
+    /// <see cref="BlockStillOpen"/>), and never named again in that block except to reach a member.
+    /// <c>var</c> only, because a field cannot be one: an initialized field reads as an enclosing
+    /// declaration and any method can reassign it (Qodo round 1 on PR #378). The "never named again"
+    /// rule is what an assignment, compound assignment, tuple element or <c>ref</c>/<c>out</c> write
+    /// has in common, so it fails all of them without telling them apart (Qodo rounds 3–4 on #378),
+    /// and it also fails a closer same-named declaration that would shadow the construction.
     /// </para>
     ///
     /// <para>
-    /// Read off the source rather than by constructing anything: these view models resolve
-    /// <c>App.ServiceProvider</c> and their hosts open the application database, configuration and
-    /// logs — under a test run, the developer's real <c>~/Library/Application Support/DAQiFi</c>.
+    /// The dialog's class name is taken from its own <c>x:Class</c>. Any qualification of it counts as
+    /// a use, but only the bare name or its own namespace satisfies the guard, and the same holds for
+    /// the view model. A same-named type from another namespace therefore fails. What <i>counts</i> as a use — either route, any construction
+    /// including the target-typed <c>Dialog? d = new()</c>, and any <c>using</c> alias for the dialog —
+    /// is read off the raw text as well as the code, so one inside a comment, string or interpolation
+    /// hole counts and then fails as unparsed rather than vanishing (Qodo, third shepherd round on PR
+    /// #376), and so does one whose tokens a comment splits (Qodo round 1 on PR #387). What
+    /// <i>satisfies</i> the guard is read off <see cref="CodeOnly"/>, so a commented-out construction
+    /// cannot. A use in any other shape (a named argument, an inline <c>new</c>, an object initializer)
+    /// <b>fails</b>: silently checking the subset it understood is the defect Qodo found in the first
+    /// version of this guard (round 1 on PR #372). Deliberately not a Roslyn semantic model — the test
+    /// project references no compiler API, and failing loudly on an unknown shape gives the same
+    /// protection for far less machinery. Read off the source rather than by constructing anything:
+    /// these view models' hosts open the application database, configuration and logs.
     /// </para>
     /// </summary>
     internal static void AssertDialogIsHandedItsDeclaredViewModel(string repoRelativeViewPath, Type viewModelType)
@@ -237,90 +247,117 @@ internal static class BindingFacts
             $"{repoRelativeViewPath}: xmlns:{parts[0]} is {prefix ?? "absent"}, so x:DataType=\"{declared}\" "
             + $"does not name {viewModelType.FullName}.");
 
+        const string id = @"[A-Za-z_][A-Za-z0-9_]*";
+        // Any qualifier COUNTS as a use; only the bare name or the full namespace SATISFIES, so a
+        // same-named type in another namespace fails rather than passing (Qodo round 2 on PR #387).
+        var type = $@"(?:global\s*::\s*)?(?:{id}\s*\.\s*)*{Regex.Escape(dialog)}";
+        var exact = Qualified(dialogClass!);
+        var viewModel = Qualified(viewModelType.FullName!);
+
+        // Counted: every call, every construction (`new T(`, `new T {`, `T x = new(`, `T? x = new(`),
+        // every alias — found in the raw text OR in the code-only text, so neither a use inside a
+        // comment, string or hole nor one whose tokens a comment splits (`new /* c */ T(`, found by
+        // Qodo round 1 on PR #387) goes uncounted. Understood on code only: the two routes, one shape each.
+        var counted = new Regex(
+            $@"ShowDialogAsync\s*<\s*{type}\s*>|\bnew\s+{type}\s*[({{]|(?<![\w.]){type}\s*\??\s+{id}\s*=\s*new\s*\("
+            + $@"|\busing\s+{id}\s*=\s*{type}\s*;");
+        var understood = new Regex(
+            $@"ShowDialogAsync\s*<\s*{exact}\s*>\(\s*{id}\s*,\s*(?<arg>{id})\s*\)"
+            + $@"|\bvar\s+(?<d>{id})\s*=\s*new\s+{exact}\s*\(\s*\)\s*;\s*\k<d>\s*\.\s*DataContext\s*=\s*(?<arg>{id})\s*;");
+
         var sources = Directory
             .EnumerateFiles(Path.Combine(RepoRoot(), "Daqifi.Avalonia"), "*.cs", SearchOption.AllDirectories)
             .Where(path => !path.Contains($"{Path.DirectorySeparatorChar}obj{Path.DirectorySeparatorChar}")
-                           && !path.Contains($"{Path.DirectorySeparatorChar}bin{Path.DirectorySeparatorChar}"))
-            .ToList();
+                           && !path.Contains($"{Path.DirectorySeparatorChar}bin{Path.DirectorySeparatorChar}"));
 
-        var escaped = Regex.Escape(dialog);
         var mentions = 0;
-        var understood = 0;
         var unsupported = new List<string>();
 
         foreach (var path in sources)
         {
-            // Two views of the file, same offsets. What COUNTS as a call or a construction is read off
-            // the raw text, so a mention CodeOnly blanks — inside an interpolation hole, a comment or a
-            // string — still counts and then fails as unparsed rather than vanishing (Qodo, third
-            // shepherd round on PR #376). What SATISFIES the guard is read off code only, so a
-            // commented-out or string-borne construction cannot.
             var raw = File.ReadAllText(path);
             var source = CodeOnly(raw);
+            var present = counted.Matches(raw).Concat(counted.Matches(source)).Select(use => use.Index).Distinct().Count();
+            if (present == 0) { continue; }
+
+            mentions += present;
             var file = Path.GetFileName(path);
-
-            Assert.False(
-                Regex.IsMatch(raw, $@"\bnew\s+{escaped}\s*[({{]"),
-                $"{file}: constructs {dialog} directly. This guard follows ShowDialogAsync<{dialog}> call "
-                + "sites only, so a dialog presented another way is handed a DataContext nothing here "
-                + $"checks against x:DataType=\"{declared}\". Teach this helper the new route.");
-
-            var present = Regex.Matches(raw, $@"ShowDialogAsync\s*<\s*{escaped}\s*>");
-            if (present.Count == 0) { continue; }
-
-            mentions += present.Count;
-
-            var parsed = Regex.Matches(
-                source,
-                $@"ShowDialogAsync\s*<\s*{escaped}\s*>\(\s*[A-Za-z_][A-Za-z0-9_]*\s*,\s*(?<arg>[A-Za-z_][A-Za-z0-9_]*)\s*\)");
-            understood += parsed.Count;
+            var parsed = understood.Matches(source);
 
             foreach (Match site in parsed)
             {
-                var local = site.Groups["arg"].Value;
+                var arg = site.Groups["arg"];
+                var name = Regex.Escape(arg.Value);
 
-                // The constructing declaration has to be the one the argument REFERS TO, not merely one
-                // with the same spelling somewhere in the file (Qodo, shepherd round on PR #376):
-                // DaqifiViewModel.cs declares `exportDialogViewModel` in two methods, so a call handing
-                // some other object under that name in one method passed on the other's construction.
-                // Only declarations that precede the call and whose block still encloses it count, and
-                // none with a conditional-compilation directive between it and the call: under
-                // `#if false` a construction is text the compiler never sees, and telling an active
-                // branch from an inactive one needs the build's symbols. Failing closed there costs a
-                // false alarm on code this checkout does not contain.
-                var constructed = Regex.Matches(
-                        source[..site.Index],
-                        $@"\b(var|{Regex.Escape(viewModelType.Name)})\s+{Regex.Escape(local)}\s*=\s*new\s+{Regex.Escape(viewModelType.Name)}\s*\(")
-                    .Any(declaration => BlockStillOpen(source, declaration.Index, site.Index)
-                                        && !ConditionalDirective.IsMatch(source[declaration.Index..site.Index]));
+                // The construction the argument refers to: a `var` whose block still encloses the use,
+                // with no conditional-compilation directive between the two — under `#if false` a
+                // construction is text the compiler never sees, and telling an active branch from an
+                // inactive one needs the build's symbols, so that fails closed.
+                var construction = Regex.Matches(source[..arg.Index], $@"\bvar\s+{name}\s*=\s*new\s+{viewModel}\s*\(")
+                    .LastOrDefault(declaration => BlockStillOpen(source, declaration.Index, arg.Index)
+                                                  && !ConditionalDirective.IsMatch(source[declaration.Index..arg.Index]));
+
+                // …and nothing else in that block names it except to reach a member. Scanned on the raw
+                // text to the block's end, so a write inside an interpolation hole, or in a loop body
+                // after the use, is seen too. The price, taken deliberately: a comment naming the local
+                // fails too. That is a loud false alarm cured by rewording, where masking comments here
+                // would hide the hole, since CodeOnly cannot tell a hole from the literal around it.
+                var others = construction is null
+                    ? 0
+                    : Regex.Matches(raw[..BlockEnd(source, construction.Index)], $@"(?<![\w.]){name}(?!\w)(?!\s*\??\.(?!\.))")
+                        .Count(use => use.Index >= construction.Index + construction.Length && use.Index != arg.Index);
 
                 Assert.True(
-                    constructed,
-                    $"{file}: ShowDialogAsync<{dialog}> is handed '{local}', which is not a local constructed "
-                    + $"as a {viewModelType.Name} in a scope enclosing that call. That parameter is typed "
-                    + $"object, so the compiler accepts anything, and {repoRelativeViewPath} claims "
-                    + $"x:DataType=\"{declared}\" — the dialog would compile and render blank.");
+                    construction is not null && others == 0,
+                    $"{file}: {dialog} is handed '{arg.Value}', which is not a `var` constructed as a "
+                    + $"{viewModelType.Name} in a block enclosing that use and left alone after"
+                    + (construction is null ? "" : $" (named {others} more time(s) other than to reach a member, "
+                                                    + "comments and strings included)")
+                    + $". That parameter is typed object, so the compiler accepts anything, and "
+                    + $"{repoRelativeViewPath} claims x:DataType=\"{declared}\" — the dialog would compile and render blank.");
             }
 
-            if (parsed.Count < present.Count)
+            if (parsed.Count < present)
             {
-                unsupported.Add($"{file} ({present.Count - parsed.Count})");
+                unsupported.Add($"{file} ({present - parsed.Count})");
             }
         }
 
         Assert.True(
             mentions > 0,
-            $"no ShowDialogAsync<{dialog}> call site exists anywhere in Daqifi.Avalonia. If the dialog is "
-            + "now presented some other way, this guard has to follow it — the x:DataType claim is "
-            + "unchecked until something pins it to the object the dialog is given.");
+            $"{dialog} is presented nowhere in Daqifi.Avalonia. If it is now presented some other way, this "
+            + "guard has to follow it — the x:DataType claim is unchecked until something pins it to the "
+            + "object the dialog is given.");
 
         Assert.True(
             unsupported.Count == 0,
-            $"ShowDialogAsync<{dialog}> is called in {mentions} place(s) but only {understood} are in the "
-            + $"(owner, local) shape this guard can follow: {string.Join(", ", unsupported)}. An "
-            + "unrecognised call is NOT covered, and silently skipping it is the failure this assertion "
-            + "exists to prevent. A mention inside a comment, string or interpolation hole counts here "
-            + "and is never parsed, so it fails too.");
+            $"{dialog} is named in {mentions} place(s) that present or construct it, and not all are in a "
+            + $"shape this guard can follow: {string.Join(", ", unsupported)}. An unrecognised use is NOT "
+            + "covered, and silently skipping it is the failure this assertion exists to prevent. One "
+            + "inside a comment, string or interpolation hole counts here and is never parsed, so it fails "
+            + "too; so does a `using` alias for the dialog.");
+    }
+
+    /// <summary>A regex for a type written bare, or qualified by exactly its own namespace.</summary>
+    private static string Qualified(string fullName)
+    {
+        var parts = fullName.Split('.');
+        var ns = string.Join(@"\s*\.\s*", parts[..^1].Select(Regex.Escape));
+        return $@"(?:(?:global\s*::\s*)?{ns}\s*\.\s*)?{Regex.Escape(parts[^1])}";
+    }
+
+    /// <summary>The index of the <c>}</c> that closes the block holding <paramref name="from"/>, in
+    /// <see cref="CodeOnly"/> text; the end of the source if it never closes.</summary>
+    private static int BlockEnd(string source, int from)
+    {
+        var depth = 0;
+        for (var i = from; i < source.Length; i++)
+        {
+            if (source[i] == '{') { depth++; }
+            else if (source[i] == '}' && --depth < 0) { return i; }
+        }
+
+        return source.Length;
     }
 
     /// <summary>A conditional-compilation directive at the start of a line.</summary>
