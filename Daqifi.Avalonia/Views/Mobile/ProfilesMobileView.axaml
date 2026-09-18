@@ -1,14 +1,23 @@
 <UserControl xmlns="https://github.com/avaloniaui"
              xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml"
              xmlns:i="https://github.com/projektanker/icons.avalonia"
-             x:Class="Daqifi.Avalonia.Views.Mobile.ProfilesMobileView">
+             xmlns:vm="using:Daqifi.Desktop.ViewModels"
+             x:Class="Daqifi.Avalonia.Views.Mobile.ProfilesMobileView"
+             x:DataType="vm:ProfilesPaneViewModel"
+             x:CompileBindings="True">
   <!-- Mobile projection of Daqifi.Desktop.View.ProfilesPane over the shared
        Daqifi.Desktop.ViewModels.ProfilesPaneViewModel. The desktop 380px side
        drawer is projected to an INLINE expandable section (same IsDrawerOpen
        gate) in a single-column scroll flow; the desktop confirmation overlay
        is projected to a full-bleed modal Scrim + centered card layered over
-       the content Grid. Reflection bindings (no compiled-binding datatype) so
-       this compiles without resolving the VM type. Every binding kept.
+       the content Grid. Every binding kept.
+
+       Compiled bindings (issue #327): AvaloniaUseCompiledBindingsByDefault is false in this
+       project, so the DataType needs the CompileBindings beside it. The one construction site,
+       MobileMainView.OnProfiles, hands this view a new ProfilesPaneViewModel. None of the five
+       item templates declares anything: their scopes are inferred from Profiles,
+       SelectedProfile.Devices, Channels, NewDeviceItems and ChannelItems, and the row EDIT
+       button's $parent[UserControl].DataContext reaches back out to the view model.
 
        Restyled to the shared desktop design language: buttons use the keyed
        pill ControlThemes (AccentPillButton / PillButton / DangerPillButton),
@@ -36,10 +45,7 @@
 
   </UserControl.Styles>
 
-  <!-- Root Grid so the confirm overlay can layer over the scrolling content.
-       (The projektanker icon namespace is intentionally NOT used here: Avalonia
-       forbids xmlns on non-root elements, and the root UserControl is left
-       untouched — so the empty-state badge and the per-row action use text.) -->
+  <!-- Root Grid so the confirm overlay can layer over the scrolling content. -->
   <Grid Background="{DynamicResource Surface}" RowDefinitions="Auto,*,Auto">
 
     <!-- ========== HEADER (fixed top row) ========== -->
