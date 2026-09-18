@@ -97,7 +97,8 @@ internal static class BindingFacts
     /// Asserts that the view opens neither escape hatch — <c>x:CompileBindings="False"</c> on a
     /// subtree, which is inherited and overridable, and <c>{ReflectionBinding}</c> on an individual
     /// binding — the latter in <b>both</b> its spellings, the markup extension and the
-    /// <c>&lt;ReflectionBinding/&gt;</c> object element. Any of them puts markup back on reflection
+    /// <c>&lt;ReflectionBinding/&gt;</c> object element, each with or without a namespace prefix and
+    /// with or without the class name's <c>Extension</c> suffix. Any of them puts markup back on reflection
     /// with the root declaration still in place,
     /// the binding count unchanged and the build still green, so every other guard on the view would
     /// be measuring less than it claims.
@@ -157,17 +158,18 @@ internal static class BindingFacts
                 .Select(attribute => (owner: element.Name.LocalName, on: attribute.Name.LocalName, text: attribute.Value))
                 .Concat(element.Nodes().OfType<XText>()
                     .Select(node => (owner: element.Name.LocalName, on: "(content)", text: node.Value))))
-            .Where(candidate => candidate.text.Contains("{ReflectionBinding", StringComparison.Ordinal))
+            .Where(candidate => ReflectionBindingExtensionUse.IsMatch(candidate.text))
             .Select(candidate => $"{candidate.owner}.{candidate.on}")
             // …and the OBJECT-ELEMENT spelling, <ReflectionBinding Path="…"/>, which is the same
             // markup extension written as an element and so never appears in an attribute value at
             // all. Measured on MainWindow.axaml: that form on a member that does not exist builds
             // Build succeeded with zero AVLN2000 and passed every guard in the class, so scanning
             // only attributes and text left exactly the hole this PR exists to close, one spelling
-            // over. Found by Qodo on this PR.
+            // over. Found by Qodo on PR #375. Matched on the local name, so a prefix cannot hide it,
+            // and with the class name's own Extension suffix too — see ReflectionBindingNames.
             .Concat(root.DescendantsAndSelf()
-                .Where(element => element.Name.LocalName == "ReflectionBinding")
-                .Select(element => $"<ReflectionBinding> under {element.Parent?.Name.LocalName ?? "(root)"}"))
+                .Where(element => ReflectionBindingNames.Contains(element.Name.LocalName))
+                .Select(element => $"<{element.Name.LocalName}> under {element.Parent?.Name.LocalName ?? "(root)"}"))
             .ToList();
 
         Assert.True(
@@ -176,6 +178,38 @@ internal static class BindingFacts
             + $"({string.Join(", ", reflection)}), which opts that one binding out of compile checking "
             + "with the root declaration still in place.");
     }
+
+    /// <summary>
+    /// Both names XAML resolves to Avalonia's <c>ReflectionBindingExtension</c>: the short form, and
+    /// the class name itself, because a XAML type lookup tries <c>Name</c> and <c>NameExtension</c>.
+    /// Measured on <c>SummaryFlyout.axaml</c> (Qodo round 2 on PR #370): the object element
+    /// <c>&lt;ReflectionBindingExtension Path="…"/&gt;</c> on a member that does not exist built with
+    /// zero <c>AVLN2000</c> and passed every guard in that class, while the same element spelled
+    /// <c>&lt;CompiledBindingExtension/&gt;</c> is <c>AVLN2000</c> — so the suffixed name really is
+    /// resolved, and matching only <c>ReflectionBinding</c> was a hole one spelling wide.
+    /// </summary>
+    private static readonly HashSet<string> ReflectionBindingNames =
+        new(StringComparer.Ordinal) { "ReflectionBinding", "ReflectionBindingExtension" };
+
+    /// <summary>
+    /// A <c>{ReflectionBinding …}</c> markup extension anywhere in an attribute value or text node,
+    /// nested or not: the opening brace, optional whitespace, an optional namespace prefix, then
+    /// either name in <see cref="ReflectionBindingNames"/> ending at a word boundary.
+    ///
+    /// <para>
+    /// The prefix is the reason this is not a substring search. Avalonia's namespace can be bound to
+    /// any alias, and <c>{av:ReflectionBinding …}</c> contains no <c>{ReflectionBinding</c>. Measured on
+    /// <c>SummaryFlyout.axaml</c> (Qodo round 2 on PR #370): with
+    /// <c>xmlns:av="https://github.com/avaloniaui"</c> on the root, <c>{av:ReflectionBinding …}</c>
+    /// on a member that does not exist built with zero <c>AVLN2000</c> and every guard in the class
+    /// passed; the same prefix on <c>{av:Binding …}</c> is <c>AVLN2000</c>, so the alias really is
+    /// resolved. Any prefix is flagged, not only one bound to Avalonia's namespace — a false alarm on
+    /// a same-named type from some other library is the cheaper failure, and fails loudly.
+    /// </para>
+    /// </summary>
+    private static readonly System.Text.RegularExpressions.Regex ReflectionBindingExtensionUse =
+        new(@"\{\s*(?:[A-Za-z_][\w.\-]*\s*:\s*)?ReflectionBinding(?:Extension)?\b",
+            System.Text.RegularExpressions.RegexOptions.CultureInvariant);
 
     /// <summary>
     /// Asserts that the <c>DataTemplate</c> inside the <b>named</b> list scopes itself to the given item
