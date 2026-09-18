@@ -1,4 +1,5 @@
 using Daqifi.Desktop.Common.Loggers;
+using BreadcrumbLevel = Daqifi.Desktop.Common.Loggers.BreadcrumbLevel; // not Sentry's, which a global using also brings in
 
 namespace Daqifi.Avalonia.Tests;
 
