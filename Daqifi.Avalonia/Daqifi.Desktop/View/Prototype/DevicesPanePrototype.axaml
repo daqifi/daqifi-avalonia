@@ -6,7 +6,9 @@
              xmlns:i="https://github.com/projektanker/icons.avalonia"
              xmlns:ia="using:Avalonia.Xaml.Interactivity"
              xmlns:iac="using:Avalonia.Xaml.Interactions.Core"
-             x:Class="Daqifi.Desktop.View.Prototype.DevicesPanePrototype">
+             x:Class="Daqifi.Desktop.View.Prototype.DevicesPanePrototype"
+             x:DataType="vm:DevicesPaneViewModel"
+             x:CompileBindings="True">
 
     <!--
         Ported from Daqifi.Desktop/View/Prototype/DevicesPanePrototype.xaml (upstream WPF).
@@ -42,6 +44,17 @@
         - iconPacks:PackIconMaterial Kind="X" Width/Height=N → i:Icon Value="mdi-x" FontSize=N.
         - Panel.ZIndex → ZIndex; ToolTip → ToolTip.Tip; UpdateSourceTrigger dropped (Avalonia
           default); the slider's Delay=500 binding carries over (supported by Avalonia bindings).
+
+        Compiled bindings (issue #327): AvaloniaUseCompiledBindingsByDefault is false in this
+        project, so the DataType needs the CompileBindings beside it. The one host, MainWindow's
+        Devices tab, hands this view the window's DaqifiViewModel; OnLoaded replaces it with a
+        DevicesPaneViewModel, the only type these bindings are written for. Scopes:
+        - the root, DevicesPaneViewModel;
+        - DeviceTileTemplate, typed by its DataType (DeviceTileViewModel): a resource-dictionary
+          template infers nothing, and Devices is an ObservableCollection of that type. Its
+          $parent[UserControl].DataContext hops type as DevicesPaneViewModel uncast;
+        - the two network ComboBox ItemTemplates, left undeclared: their one binding has no
+          member path, only the EnumDescription converter.
     -->
 
     <UserControl.Resources>
