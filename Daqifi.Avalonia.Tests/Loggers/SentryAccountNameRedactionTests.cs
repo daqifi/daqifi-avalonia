@@ -26,12 +26,16 @@ namespace Daqifi.Avalonia.Tests.Loggers;
 /// background worker, so envelopes are recorded in memory instead of being handed to any
 /// transport. No HTTP client is constructed and no envelope cache is written.</para>
 ///
-/// <para><b>Against the unchanged code</b> this file does not compile: every test but
+/// <para><b>Against #366's merge base</b> this file did not compile: every test but
 /// <see cref="Unhooked_options_leak_the_account_name"/> names <c>ConfigureSentryOptions</c> or
-/// <c>ScrubAccountNames</c>, neither of which exists on the merge base. That control is the one
-/// that CAN run there, and it is the positive control for the whole file — it captures through
-/// options with no hooks, which is what the merge base configures, and asserts the account name
-/// DOES reach the envelope. It fails if this harness ever stops being able to see the leak.</para>
+/// <c>ScrubAccountNames</c>, neither of which existed there. That control is the one that COULD
+/// run there, and it is the positive control for the whole file — it captures through options with
+/// no hooks, which is what that base configured, and asserts the account name DOES reach the
+/// envelope. It fails if this harness ever stops being able to see the leak.</para>
+///
+/// <para><b>#369 extends it</b> to the three fields the hook scrubs but nothing pinned — the
+/// <c>logentry</c>, breadcrumb <c>data</c> and <c>server_name</c> regions below — and to
+/// <c>logentry.params</c>, which was passing through verbatim.</para>
 /// </summary>
 public class SentryAccountNameRedactionTests
 {
@@ -146,6 +150,176 @@ public class SentryAccountNameRedactionTests
         Assert.Equal(
             $"Saving the graph image to '/Users/<account>/{DiagnosticTail}' was blocked",
             Assert.Single(captured.BreadcrumbMessages));
+    }
+
+    #endregion
+
+    #region Scrubbed by #367, pinned by #369
+
+    /// <summary>
+    /// The <c>logentry</c> interface — what <c>CaptureMessage</c> builds. Both halves carry a path
+    /// here so that unwiring either line of the rebuild is caught: the template is what a plain
+    /// <c>CaptureMessage(text)</c> puts in <c>message</c>, and <c>formatted</c> is the rendered
+    /// form a structured-logging integration would add beside it.
+    /// </summary>
+    [Fact]
+    public void A_path_in_a_log_message_is_redacted()
+    {
+        var @event = new SentryEvent
+        {
+            Message = new SentryMessage
+            {
+                Message = $"Reading the profiles file failed: {ProfilePath}",
+                Formatted = $"Reading the profiles file failed: {ProfilePath} (errno 13)"
+            }
+        };
+
+        var captured = Capture(@event, Shipped());
+
+        Assert.Equal(
+            $"Reading the profiles file failed: /Users/<account>/{DiagnosticTail}",
+            captured.LogEntry("message"));
+        Assert.Equal(
+            $"Reading the profiles file failed: /Users/<account>/{DiagnosticTail} (errno 13)",
+            captured.LogEntry("formatted"));
+        Assert.DoesNotContain(Account, captured.Raw, StringComparison.Ordinal);
+    }
+
+    /// <summary>
+    /// A breadcrumb's <c>data</c> values, which the SDK populates on the breadcrumbs it writes
+    /// itself. The message here deliberately contains no path, so this also pins the rebuild
+    /// branch in the <c>Breadcrumb</c> overload: a breadcrumb whose message is unchanged but whose
+    /// data is not must still be replaced rather than returned as it arrived.
+    /// </summary>
+    [Fact]
+    public void A_path_in_breadcrumb_data_is_redacted()
+    {
+        var options = Shipped();
+        var scope = new Scope(options);
+        scope.AddBreadcrumb(
+            "Loading the selected profile failed",
+            "log",
+            null,
+            new Dictionary<string, string> { ["path"] = ProfilePath });
+
+        var captured = Capture(new SentryEvent(new InvalidOperationException("boom")), options, scope);
+
+        Assert.Equal(
+            $"/Users/<account>/{DiagnosticTail}",
+            Assert.Single(captured.BreadcrumbData("path")));
+        Assert.DoesNotContain(Account, captured.Raw, StringComparison.Ordinal);
+    }
+
+    /// <summary>
+    /// <c>server_name</c>, which on a developer machine is whatever the host is called and on a
+    /// build agent can be a path. Two assertions, because the field has two states worth pinning:
+    /// the shipped options never populate it at all (<c>SendDefaultPii = false</c>, and the SDK
+    /// only fills it in from the machine name when that is on), and an event that carries one
+    /// anyway has it scrubbed. Without the second half the scrub line is unpinned; without the
+    /// first, the belt-and-braces claim in <c>ScrubAccountNames</c>'s remarks is unpinned.
+    /// </summary>
+    [Fact]
+    public void A_path_in_the_server_name_is_redacted_and_the_field_is_absent_by_default()
+    {
+        var captured = Capture(new SentryEvent { ServerName = $"/Users/{Account}/build-agent" }, Shipped());
+
+        Assert.Equal("/Users/<account>/build-agent", captured.ServerName);
+        Assert.DoesNotContain(Account, captured.Raw, StringComparison.Ordinal);
+
+        var untouched = Capture(new SentryEvent(new InvalidOperationException("boom")), Shipped());
+
+        Assert.False(untouched.Has("server_name"));
+    }
+
+    #endregion
+
+    #region logentry.params (#369)
+
+    /// <summary>
+    /// The one field of <c>logentry</c> the #367 rebuild passed through verbatim. Not reachable
+    /// from this app today — nothing calls <c>CaptureMessage</c>, so no event carries a
+    /// <c>logentry</c> at all — so this is the redactor being put on a path before anything walks
+    /// it, which is the same shape as #366 caught one step earlier.
+    /// </summary>
+    [Fact]
+    public void A_path_in_a_log_message_parameter_is_redacted()
+    {
+        var @event = new SentryEvent
+        {
+            Message = new SentryMessage
+            {
+                Message = "Reading the profiles file failed: {0}",
+                Formatted = "Reading the profiles file failed: <path>",
+                Params = [ProfilePath]
+            }
+        };
+
+        var captured = Capture(@event, Shipped());
+
+        Assert.Equal(
+            $"/Users/<account>/{DiagnosticTail}",
+            Assert.Single(captured.MessageParams).GetString());
+        Assert.DoesNotContain(Account, captured.Raw, StringComparison.Ordinal);
+    }
+
+    /// <summary>
+    /// <c>Params</c> is a collection of arbitrary objects, not of strings, and only its string
+    /// elements are redacted. Stringifying the rest to run them past the redactor would rewrite
+    /// the serialised types of every parameter list in the app — a number arriving as <c>"42"</c>
+    /// instead of <c>42</c> — which is a change to the payload well beyond the scrub. This pins
+    /// that: each element keeps the JSON kind it would have had, and the elements the redactor
+    /// cannot see through — a null, a nested collection — are passed on as they arrived.
+    /// </summary>
+    [Fact]
+    public void Log_message_parameters_that_are_not_strings_keep_their_serialised_type()
+    {
+        var @event = new SentryEvent
+        {
+            Message = new SentryMessage
+            {
+                Message = "{0} {1} {2} {3} {4}",
+                Params = [ProfilePath, 42, true, null!, new[] { "AI0", "AI1" }]
+            }
+        };
+
+        var kinds = Capture(@event, Shipped()).MessageParams.Select(value => value.ValueKind);
+
+        Assert.Equal(
+            [JsonValueKind.String, JsonValueKind.Number, JsonValueKind.True, JsonValueKind.Null, JsonValueKind.Array],
+            kinds);
+    }
+
+    /// <summary>
+    /// The adjacency cases, on the parameter path this time. Over-redaction is the failure mode of
+    /// this class of change — #367 shipped one, where a profile of <c>/Users/octocat</c> turned a
+    /// sibling's <c>/Users/octocat2/…</c> into <c>~2/…</c> — and a new field is a new chance to
+    /// reintroduce it.
+    /// </summary>
+    [Theory]
+    // No path at all: byte-identical, or the parameter list stops being worth having.
+    [InlineData("There was a problem adding channel: AI0.", "There was a problem adding channel: AI0.")]
+    [InlineData("", "")]
+    // A strict prefix of another account name. Both are scrubbed; neither is truncated.
+    [InlineData("/Users/octocat2/logs/run.csv", "/Users/<account>/logs/run.csv")]
+    // The account name mid-path, under a root that is not a home root: not an account segment, so
+    // it stays. Anchoring on the /Users/ prefix is what makes this distinguishable at all.
+    [InlineData("/opt/octocat/logs/run.csv", "/opt/octocat/logs/run.csv")]
+    // An account name that is also an ordinary English word, in prose around a real path: the path
+    // goes, the prose does not.
+    [InlineData(
+        "The sample at /Users/sam/samples/sample.csv was resampled",
+        "The sample at /Users/<account>/samples/sample.csv was resampled")]
+    public void A_log_message_parameter_is_redacted_no_further_than_the_account_segment(
+        string parameter, string expected)
+    {
+        var @event = new SentryEvent
+        {
+            Message = new SentryMessage { Message = "{0}", Params = [parameter] }
+        };
+
+        var captured = Capture(@event, Shipped());
+
+        Assert.Equal(expected, Assert.Single(captured.MessageParams).GetString());
     }
 
     #endregion
@@ -374,6 +548,26 @@ public class SentryAccountNameRedactionTests
 
         internal IEnumerable<string?> BreadcrumbMessages =>
             Values("breadcrumbs").Select(breadcrumb => breadcrumb.GetProperty("message").GetString());
+
+        internal IEnumerable<string?> BreadcrumbData(string key) =>
+            Values("breadcrumbs")
+                .Select(breadcrumb => breadcrumb.GetProperty("data").GetProperty(key).GetString());
+
+        /// <summary>A field of the <c>logentry</c> interface — <c>message</c> or <c>formatted</c>.</summary>
+        internal string? LogEntry(string field) =>
+            _event.GetProperty("logentry").GetProperty(field).GetString();
+
+        /// <summary>
+        /// <c>logentry.params</c> as elements rather than strings, so a test can assert what a
+        /// parameter's JSON kind is and not only what it reads as.
+        /// </summary>
+        internal IReadOnlyList<JsonElement> MessageParams =>
+            [.. _event.GetProperty("logentry").GetProperty("params").EnumerateArray()];
+
+        internal string? ServerName => _event.GetProperty("server_name").GetString();
+
+        /// <summary>Whether the event carries a field at all, for the fields that should be absent.</summary>
+        internal bool Has(string name) => _event.TryGetProperty(name, out _);
 
         /// <summary>
         /// Sentry writes some interfaces as a bare array and others wrapped in <c>{"values":[…]}</c>;

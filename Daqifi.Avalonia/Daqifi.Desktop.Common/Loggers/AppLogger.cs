@@ -444,6 +444,27 @@ public class AppLogger : IAppLogger
     }
 
     /// <summary>
+    /// Redacts the <b>string</b> elements of a structured log message's parameter list, which
+    /// serialises as <c>logentry.params</c>. Every other element is passed on as it arrived.
+    /// </summary>
+    /// <remarks>
+    /// Strings only, deliberately. <c>Params</c> is a collection of arbitrary objects, and running
+    /// the rest through the redactor would mean stringifying them first — which would change the
+    /// serialised payload for every parameter list in the app, sending a number as <c>"42"</c>
+    /// instead of <c>42</c>. That is a behaviour change well past a scrub, and it buys nothing: a
+    /// path arrives here as a string. Same rule, and the same reasoning, as the <c>Extra</c> loop
+    /// in <see cref="ScrubAccountNames(SentryEvent)"/>, which also touches only string values.
+    /// <para>
+    /// The list is materialised rather than left as a lazy projection, so the serializer walks it
+    /// once and cannot re-run a caller's enumerable a second time on its way onto the wire.
+    /// </para>
+    /// </remarks>
+    private static IEnumerable<object>? RedactAccountNames(IEnumerable<object>? parameters) =>
+        parameters?
+            .Select(parameter => parameter is string text ? RedactAccountNames(text) : parameter)
+            .ToList();
+
+    /// <summary>
     /// <c>BeforeSend</c> hook: removes account names from an assembled event, at the last point
     /// before it leaves the process.
     /// </summary>
@@ -455,10 +476,10 @@ public class AppLogger : IAppLogger
     /// that). A call site cannot redact a string it never sees, and a new call site added next
     /// year cannot forget a hook it never has to call.
     /// <para>
-    /// Covered here: <see cref="SentryEvent.Message"/> (both the template and the formatted
-    /// form), every <c>SentryException.Value</c> — the exception text, and the half the call
-    /// sites cannot reach — every stack frame's <c>FileName</c> and <c>AbsolutePath</c>, which
-    /// on a local build are the compiling machine's home directory, the string values in
+    /// Covered here: <see cref="SentryEvent.Message"/> (the template, the formatted form and the
+    /// string parameters), every <c>SentryException.Value</c> — the exception text, and the half
+    /// the call sites cannot reach — every stack frame's <c>FileName</c> and <c>AbsolutePath</c>,
+    /// which on a local build are the compiling machine's home directory, the string values in
     /// <see cref="SentryEvent.Extra"/>, where <c>Error</c>'s own message travels, and
     /// <c>ServerName</c>, which <c>SendDefaultPii = false</c> should already leave unset.
     /// </para>
@@ -479,7 +500,7 @@ public class AppLogger : IAppLogger
             {
                 Message = RedactAccountNames(message.Message),
                 Formatted = RedactAccountNames(message.Formatted),
-                Params = message.Params
+                Params = RedactAccountNames(message.Params)
             };
         }
 
