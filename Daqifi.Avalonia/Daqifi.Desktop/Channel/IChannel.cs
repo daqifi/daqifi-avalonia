@@ -101,6 +101,13 @@ public interface IChannel
     // @port: Daqifi.Desktop.Channel.IChannel.HasValidExpression
     bool HasValidExpression { get; set; }
 
+    /// <summary>
+    /// Why the current <see cref="ScaleExpression"/> was refused. Declared here, not only on
+    /// <see cref="AbstractChannel"/>, because the settings drawers bind it through
+    /// <c>SelectedChannel</c>, which is typed <see cref="IChannel"/> (#311, #327).
+    /// </summary>
+    string ScaleExpressionError { get; }
+
     // @port: Daqifi.Desktop.Channel.IChannel.ActiveSample
     DataSample ActiveSample { get; set; }
 

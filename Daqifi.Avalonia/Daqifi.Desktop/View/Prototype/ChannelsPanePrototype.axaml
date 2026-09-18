@@ -3,7 +3,10 @@
              xmlns:i="https://github.com/projektanker/icons.avalonia"
              xmlns:ia="using:Avalonia.Xaml.Interactivity"
              xmlns:iac="using:Avalonia.Xaml.Interactions.Core"
+             xmlns:vm="using:Daqifi.Desktop.ViewModels"
              x:Class="Daqifi.Desktop.View.Prototype.ChannelsPanePrototype"
+             x:DataType="vm:ChannelsPaneViewModel"
+             x:CompileBindings="True"
              x:Name="Root">
 
     <!--
@@ -36,11 +39,22 @@
           (supported in Avalonia 11.3+).
         - Binding.Delay kept (exists since Avalonia 11.1): 500 ms duty-cycle slider
           debounce + 300 ms scale-expression debounce, upstream parity.
-        - divergence: DataTemplate DataType attribute dropped — downstream compiles with
-          reflection bindings and the template is keyed, so WPF's typed-template metadata
-          was unused.
         - Panel.ZIndex → ZIndex; d:*/mc:Ignorable design attrs dropped; design tokens
           referenced via DynamicResource (theme-variant dictionaries, MainWindow dialect).
+
+        Compiled bindings (issue #327): AvaloniaUseCompiledBindingsByDefault is false in this
+        project, so the DataType needs the CompileBindings beside it. The one host, MainWindow's
+        Channels tab, hands this view the window's DaqifiViewModel; OnLoaded replaces it with a
+        ChannelsPaneViewModel, the only type these bindings are written for. Scopes:
+        - the root, ChannelsPaneViewModel;
+        - ChannelTileTemplate, declared ChannelTileViewModel: a resource-dictionary template
+          infers nothing, and all three lists that use it are ObservableCollection of that type.
+          Its $parent[UserControl].DataContext hops type as ChannelsPaneViewModel uncast;
+        - the device-name ItemTemplate, left undeclared: it infers string;
+        - the palette ItemTemplate and SwatchButton's ControlTemplate, declared IBrush: Palette
+          is an IBrush[] (the view-model aliases Brush to IBrush), an array infers nothing, and a
+          ControlTemplate would otherwise type-check against the root while its runtime
+          DataContext is the palette entry.
     -->
 
     <UserControl.Resources>
@@ -131,7 +145,7 @@
             </Style>
         </ControlTheme>
 
-        <DataTemplate x:Key="ChannelTileTemplate">
+        <DataTemplate x:Key="ChannelTileTemplate" x:DataType="vm:ChannelTileViewModel">
             <Border Width="148" Height="88" Margin="0,0,10,10"
                     Classes="channelTile"
                     Classes.loggingLocked="{Binding $parent[UserControl].DataContext.IsLoggingActive}"
@@ -280,7 +294,7 @@
              template resolves to the item DataContext — the palette Brush. -->
         <ControlTheme x:Key="SwatchButton" TargetType="Button">
             <Setter Property="Template">
-                <ControlTemplate>
+                <ControlTemplate x:DataType="IBrush">
                     <Border x:Name="Bg"
                             Background="{Binding}"
                             BorderBrush="Transparent"
@@ -604,7 +618,7 @@
                                     </ItemsPanelTemplate>
                                 </ItemsControl.ItemsPanel>
                                 <ItemsControl.ItemTemplate>
-                                    <DataTemplate>
+                                    <DataTemplate x:DataType="IBrush">
                                         <Grid Width="36" Height="36" Margin="0,0,8,8">
                                             <!-- Selection ring -->
                                             <Border CornerRadius="5"
