@@ -115,6 +115,80 @@ public class SdCardFailureClassifierTests
 
     #endregion
 
+    #region A read error the device reported is not a transport stall
+
+    [Fact]
+    public void A_read_error_the_device_reported_gets_its_own_advice_not_the_reformat_sentence()
+    {
+        // Core 1.8.0 types the __TRANSFER_ERROR__ marker. Because the new exception derives from
+        // SdCardOperationException, an arm placed below that base arm would never execute — this
+        // assertion is what catches that: with the arms in the wrong order the guidance is
+        // GENERIC_CARD_GUIDANCE ("try a different card or reformat"), which is the wrong advice
+        // for one unreadable file on an otherwise healthy card.
+        var failure = SdCardFailureClassifier.Classify(
+            new SdCardTransferErrorException("log.bin", bytesReceived: 4096));
+
+        Assert.Equal(SdCardFailureClassifier.TRANSFER_READ_ERROR_GUIDANCE, failure.Guidance);
+        Assert.NotEqual(SdCardFailureClassifier.GENERIC_CARD_GUIDANCE, failure.Guidance);
+        // Nor the stall's advice: the device answered rather than falling silent, so the SD
+        // subsystem is demonstrably alive and the power cycle those arms reach for fixes nothing.
+        // Telling a card read error apart from a transport stall is what the new Core type is for.
+        Assert.NotEqual(SdCardFailureClassifier.INCOMPLETE_TRANSFER_GUIDANCE, failure.Guidance);
+        Assert.NotEqual(SdCardFailureClassifier.POWER_CYCLE_GUIDANCE, failure.Guidance);
+    }
+
+    [Fact]
+    public void A_read_error_is_an_expected_device_condition_rather_than_an_app_defect()
+    {
+        // Keeps it off the Error/Sentry path: a damaged file on a user's card is not a bug here.
+        var failure = SdCardFailureClassifier.Classify(
+            new SdCardTransferErrorException("log.bin", bytesReceived: 4096));
+
+        Assert.True(failure.IsExpectedDeviceCondition);
+        Assert.Equal(SdCardState.Error, failure.State);
+    }
+
+    [Fact]
+    public void A_read_error_does_not_abandon_the_rest_of_the_batch()
+    {
+        // One file or one bad region of the card. Because the device lists files in the same
+        // order every time, aborting here makes every later healthy file unreachable through
+        // Import All.
+        var failure = SdCardFailureClassifier.Classify(
+            new SdCardTransferErrorException("log.bin", bytesReceived: 4096));
+
+        Assert.False(failure.IsCardUnavailable);
+    }
+
+    [Fact]
+    public void A_read_error_gets_a_status_line_this_app_owns_rather_than_Core_prose()
+    {
+        // The base arm's StatusMessage is `LastScpiError ?? Message`, and Core builds this
+        // exception with no SCPI error — so without an arm the status line is Core's own
+        // paragraph, which carries its own advice and would read alongside the app's.
+        var ex = new SdCardTransferErrorException("log.bin", bytesReceived: 4096);
+
+        var failure = SdCardFailureClassifier.Classify(ex);
+
+        Assert.Contains("could not read all of this file", failure.StatusMessage, StringComparison.Ordinal);
+        Assert.NotEqual(ex.Message, failure.StatusMessage);
+    }
+
+    [Fact]
+    public void The_read_error_type_still_derives_from_the_base_operation_type()
+    {
+        // The premise the arm's ORDER rests on, pinned against the Daqifi.Core the app actually
+        // compiles against. Putting the arm below the base arm is caught by the compiler today
+        // (CS8510, an unreachable pattern) — but only because the arm is a bare type pattern;
+        // add a `when` clause to either arm and the compiler stops being able to prove it. What
+        // this pins is the fact underneath: if Core ever reparents this exception, "must sit
+        // above the base arm" stops being true and the comment saying so goes stale here.
+        Assert.True(typeof(SdCardOperationException)
+            .IsAssignableFrom(typeof(SdCardTransferErrorException)));
+    }
+
+    #endregion
+
     #region The arms this port carries that upstream does not
 
     [Fact]

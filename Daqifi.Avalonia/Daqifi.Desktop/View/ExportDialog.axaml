@@ -1,7 +1,10 @@
 <Window xmlns="https://github.com/avaloniaui"
         xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml"
         xmlns:i="https://github.com/projektanker/icons.avalonia"
+        xmlns:vm="using:Daqifi.Desktop.ViewModels"
         x:Class="Daqifi.Desktop.View.ExportDialog"
+        x:DataType="vm:ExportDialogViewModel"
+        x:CompileBindings="True"
         Title="Export Logging Session" CanResize="False" Height="390" Width="560"
         Background="{StaticResource Surface}">
     <!--
@@ -10,6 +13,26 @@
         (GroupBox → HeaderedContentControl + DarkGroupBox theme);
         Visibility+BoolToVis → IsVisible; MetroProgressBar → ProgressBar;
         PackIconMaterial → projektanker i:Icon; Square.Accent → Classes="accent".
+    -->
+    <!--
+        Both declarations above are load-bearing and neither works alone (issue #327).
+        AvaloniaUseCompiledBindingsByDefault is false for this project, so before this pair
+        every one of the 22 bindings below was resolved by REFLECTION at run time: a renamed
+        or deleted view-model member failed silently — the control rendered blank, or, for a
+        bool target, sat at its default, which for IsVisible is true, so a state this dialog
+        is supposed to hide would have shown instead. Measured on origin/main in a single
+        build carrying two defects at once: a bogus CLR property on the ProgressBar below was
+        AVLN2000, proving the compiler had read this file, while {Binding} at a member that
+        does not exist, in the same file and the same compilation, produced no diagnostic at
+        all. One build, one failure, one silence.
+
+        There are no DataTemplates in this view, so there is exactly one binding scope and
+        nothing here to declare per-template. Do NOT add x:DataType defensively if one is
+        introduced later: on Avalonia 12.1 a template scope is INFERRED from the ItemsSource
+        beside it and an explicit declaration OVERRIDES that inference, so a
+        plausible-but-wrong one is worse than none. Declare a scope only where the build asks
+        for one — a ContentControl.ContentTemplate or a resource-dictionary template infers
+        nothing and is AVLN2000 even with correct member names.
     -->
     <Grid Margin="16" Background="{StaticResource Surface}">
 

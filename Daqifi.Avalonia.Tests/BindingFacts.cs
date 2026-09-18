@@ -94,6 +94,90 @@ internal static class BindingFacts
     }
 
     /// <summary>
+    /// Asserts that the view opens neither escape hatch — <c>x:CompileBindings="False"</c> on a
+    /// subtree, which is inherited and overridable, and <c>{ReflectionBinding}</c> on an individual
+    /// binding — the latter in <b>both</b> its spellings, the markup extension and the
+    /// <c>&lt;ReflectionBinding/&gt;</c> object element. Any of them puts markup back on reflection
+    /// with the root declaration still in place,
+    /// the binding count unchanged and the build still green, so every other guard on the view would
+    /// be measuring less than it claims.
+    ///
+    /// <para>
+    /// Both halves read the <b>parsed</b> markup, never the raw text. This is the same lesson as
+    /// <see cref="AssertRootDeclares"/> applied to the hatches instead of the declarations, and here
+    /// the substring form was a hole rather than a nuisance: XML permits
+    /// <c>x:CompileBindings = 'False'</c>, and whitespace around the <c>=</c> and single quotes are
+    /// the same attribute to every parser while not being the literal a search looks for. Measured on
+    /// <c>MainWindow.axaml</c> at <c>7921989</c> (issue #374): that spelling on the app-settings
+    /// drawer with <c>{Binding AppSettings.RecoveryNoticeZZZ}</c> inside it — a member that does not
+    /// exist — was a forced, non-incremental <c>Build succeeded</c> with <b>zero</b> <c>AVLN2000</c>,
+    /// and all seven of that view's guards passed; the same dead binding <i>without</i> the opt-out is
+    /// <c>AVLN2000 … 'RecoveryNoticeZZZ' on type 'SettingsViewModel'</c> at line 514. A guard reading
+    /// as protection while a dead binding builds clean is the defect #327 exists to remove, one layer
+    /// up. Parsing also fires on no comment, which the substring form did.
+    /// </para>
+    ///
+    /// <para>
+    /// Anything other than <c>True</c> is an opt-out, <b>including a value that is not a boolean at
+    /// all</b>. Deliberately not <c>bool.TryParse</c>: that returns false on a value it cannot read,
+    /// which would skip the element while the guard still reported a pass — the silent-omission
+    /// failure this family keeps producing (Qodo round 1 on PR #372, on a different guard in the same
+    /// file). Whitespace is trimmed, because XAML trims it too and flagging <c>" True "</c> would be a
+    /// false alarm rather than a catch.
+    /// </para>
+    ///
+    /// <para>
+    /// No view opens either hatch today, and this exists so that the first one has to be deliberate
+    /// and explained rather than quietly absorbed. If a binding genuinely cannot be expressed, narrow
+    /// the opt-out to that binding, say why in the markup, and teach this helper to allow exactly it.
+    /// </para>
+    /// </summary>
+    internal static void AssertNoEscapeHatch(string repoRelativeViewPath)
+    {
+        var root = ViewRoot(repoRelativeViewPath);
+
+        var opted = root.DescendantsAndSelf()
+            .Select(element => (element, attribute: element.Attribute(XamlNamespace + "CompileBindings")))
+            .Where(pair => pair.attribute is not null
+                           && !string.Equals(
+                               pair.attribute!.Value.Trim(), "True", StringComparison.OrdinalIgnoreCase))
+            .Select(pair => $"<{pair.element.Name.LocalName} x:CompileBindings=\"{pair.attribute!.Value}\">")
+            .ToList();
+
+        Assert.True(
+            opted.Count == 0,
+            $"{repoRelativeViewPath}: {string.Join(", ", opted)} — x:CompileBindings is inherited and "
+            + "overridable per subtree, so this puts every binding below it back on reflection while "
+            + "the root declaration, the binding count and the build all stay green.");
+
+        // Attribute values and text nodes of the parsed tree, so the word appearing in a comment —
+        // and every view here has a comment that discusses these hatches — is not read as a binding.
+        var reflection = root.DescendantsAndSelf()
+            .SelectMany(element => element.Attributes()
+                .Select(attribute => (owner: element.Name.LocalName, on: attribute.Name.LocalName, text: attribute.Value))
+                .Concat(element.Nodes().OfType<XText>()
+                    .Select(node => (owner: element.Name.LocalName, on: "(content)", text: node.Value))))
+            .Where(candidate => candidate.text.Contains("{ReflectionBinding", StringComparison.Ordinal))
+            .Select(candidate => $"{candidate.owner}.{candidate.on}")
+            // …and the OBJECT-ELEMENT spelling, <ReflectionBinding Path="…"/>, which is the same
+            // markup extension written as an element and so never appears in an attribute value at
+            // all. Measured on MainWindow.axaml: that form on a member that does not exist builds
+            // Build succeeded with zero AVLN2000 and passed every guard in the class, so scanning
+            // only attributes and text left exactly the hole this PR exists to close, one spelling
+            // over. Found by Qodo on this PR.
+            .Concat(root.DescendantsAndSelf()
+                .Where(element => element.Name.LocalName == "ReflectionBinding")
+                .Select(element => $"<ReflectionBinding> under {element.Parent?.Name.LocalName ?? "(root)"}"))
+            .ToList();
+
+        Assert.True(
+            reflection.Count == 0,
+            $"{repoRelativeViewPath}: {reflection.Count} binding(s) use {{ReflectionBinding}} "
+            + $"({string.Join(", ", reflection)}), which opts that one binding out of compile checking "
+            + "with the root declaration still in place.");
+    }
+
+    /// <summary>
     /// Asserts that the <c>DataTemplate</c> inside the <b>named</b> list scopes itself to the given item
     /// type, and that <b>every</b> <c>DataTemplate</c> in the view scopes itself to something.
     ///
@@ -113,9 +197,39 @@ internal static class BindingFacts
     /// </para>
     ///
     /// <para>
-    /// The every-template half covers what a per-list check cannot: a template added later with no
-    /// <c>x:DataType</c> of its own is the inherited-scope escape hatch this view exists to close, and a
-    /// list naming the three that exist today would not notice a fourth.
+    /// The every-template half covers what a per-list check cannot: a list naming the three templates
+    /// that exist today would not notice a fourth added later with no <c>x:DataType</c> of its own.
+    /// </para>
+    ///
+    /// <para>
+    /// <b>What an undeclared template actually does</b> (issue #336; the earlier wording here said it
+    /// resolves against an inherited scope, which is not what happens). Measured on Avalonia 12.1
+    /// with <c>x:CompileBindings="True"</c> on the root, a <c>DataTemplate</c>'s bindings resolve
+    /// against, in order: its own <c>x:DataType</c>, which <b>overrides</b> everything below it; else
+    /// a scope <b>inferred</b> from the <c>ItemsSource</c> beside it, where the shape supports that —
+    /// <c>ItemsControl</c>/<c>ListBox.ItemTemplate</c> and <c>DataGridTemplateColumn.CellTemplate</c>
+    /// do; else <b>nothing at all</b>, <c>XamlX.TypeSystem.XamlPseudoType</c>, on which no member
+    /// resolves, so every binding in the template is a hard <c>AVLN2000</c> even with correct member
+    /// names. It never falls back to the ancestor or view-model scope.
+    /// </para>
+    ///
+    /// <para>
+    /// Two consequences worth carrying to the views this is still being spread across. First,
+    /// omitting <c>x:DataType</c> is never <i>silently</i> unchecked: the no-scope case is a build
+    /// error, so an undeclared template either infers the right type or fails the build. Second, and
+    /// the reason not to add declarations by reflex, an explicit <c>x:DataType</c> is an override, so
+    /// a plausible-but-wrong one is <b>worse than none</b> — it replaces a correct inferred scope
+    /// with a wrong one, and compiles whenever the two types happen to share the member names, which
+    /// is the reads-as-protection failure these guards exist to remove. Declare a scope where the
+    /// build asks for one (<c>ContentControl.ContentTemplate</c> and resource-dictionary templates
+    /// are the shapes that infer nothing), or where the template needs to narrow a wider item type.
+    /// </para>
+    ///
+    /// <para>
+    /// This overload therefore states a stricter rule than the general one: it is for views whose
+    /// templates are all expected to be declared. Where a view's templates are correctly left
+    /// undeclared, guard that each one either declares a scope or binds nothing, rather than
+    /// requiring the attribute.
     /// </para>
     /// </summary>
     internal static void AssertTemplateScopedTo(
@@ -131,7 +245,9 @@ internal static class BindingFacts
         Assert.True(
             unscoped == 0,
             $"{repoRelativeViewPath}: {unscoped} of {templates.Count} DataTemplates declare no "
-            + "x:DataType, so their bindings resolve against an inherited scope rather than the item.");
+            + "x:DataType, so their bindings resolve against a scope inferred from the surrounding "
+            + "ItemsSource, or — where the shape supports no such inference — against nothing at "
+            + "all (XamlPseudoType, a build error). Not against an inherited scope.");
 
         var list = root.Descendants()
             .SingleOrDefault(element => element.Attribute(XamlNamespace + "Name")?.Value == listName);
@@ -161,7 +277,7 @@ internal static class BindingFacts
     }
 
     /// <summary>Walks up from the test binary to the checkout, identified by the solution file.</summary>
-    private static string RepoRoot()
+    internal static string RepoRoot()
     {
         var directory = new DirectoryInfo(AppContext.BaseDirectory);
         while (directory != null && !File.Exists(Path.Combine(directory.FullName, "Daqifi.Avalonia.slnx")))

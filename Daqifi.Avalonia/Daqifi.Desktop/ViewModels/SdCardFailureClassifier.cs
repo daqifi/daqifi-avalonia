@@ -92,6 +92,20 @@ public static class SdCardFailureClassifier
         "own; if every file fails the same way, power-cycle the device and try again.";
 
     /// <summary>
+    /// Guidance for a file the device could not finish reading off its own card. Distinct from
+    /// <see cref="INCOMPLETE_TRANSFER_GUIDANCE"/> — which covers a transfer that simply went quiet
+    /// and cannot say whether the card or the link was at fault — because here the device names
+    /// itself: it reported the read error rather than falling silent. So the advice is about this
+    /// one file and this one region of the card, and it must not send the user to the power cycle
+    /// that a transport-side fault warrants, nor to the reformat that
+    /// <see cref="GENERIC_CARD_GUIDANCE"/> implies for a card whose contents are unreadable
+    /// wholesale.
+    /// </summary>
+    internal const string TRANSFER_READ_ERROR_GUIDANCE =
+        "The device could not finish reading this file off its SD card. Try importing it again on " +
+        "its own; if it keeps failing, that file or that part of the card may be damaged.";
+
+    /// <summary>
     /// Guidance for a transfer whose transport went away mid-file. Distinct from the two above
     /// because the card is not the problem: Core states that retrying on the same transport cannot
     /// succeed, so the user has to re-establish the connection first.
@@ -250,6 +264,39 @@ public static class SdCardFailureClassifier
                 Guidance: TRANSPORT_GONE_GUIDANCE,
                 IsExpectedDeviceCondition: true,
                 IsCardUnavailable: true),
+
+            // The device hit a read error part-way through serving the file and said so, ending
+            // the transfer at the __TRANSFER_ERROR__ marker firmware v3.7.3 gained
+            // (daqifi-nyquist-firmware#725). Core 1.8.0 types it (daqifi-core#720/#721); before
+            // that the same fault reached this app as a stall with NoDataReceived, because a
+            // read-side failure sent nothing and the host could only notice the silence — so the
+            // app blamed the transport for a card read error. Telling the two apart is the point.
+            //
+            // MUST precede the SdCardOperationException arm below: this type derives from it, so
+            // an arm placed underneath would never execute and the base arm would hand a single
+            // unreadable file the reformat-flavoured GENERIC_CARD_GUIDANCE.
+            //
+            // BytesReceived is deliberately NOT surfaced here, though Core states those bytes are
+            // genuine file content already written to the destination stream (unlike
+            // SdCardTruncatedTransferException, where they are a short reply standing in for the
+            // file). There is nowhere for a per-file number to go that a user would read: this
+            // record's StatusMessage reaches the UI only through ApplyFailureState, which a
+            // per-file failure does not trigger, and Guidance is deduplicated across skipped files
+            // by BuildImportAllSummary — a count baked into it would print one paragraph per
+            // failing file instead of one per distinct reason. Using the partial bytes at all —
+            // importing them as a session flagged incomplete — is a product decision about the
+            // import pipeline rather than a classification, and nothing downstream can label a
+            // session partial today. So this arm reports the fault and leaves the bytes alone.
+            //
+            // Per-file, not card-wide: a read error names one file or one bad region, and the
+            // device is still answering. Setting IsCardUnavailable here would abandon every file
+            // listed after it in a batch import over one damaged log.
+            SdCardTransferErrorException => new SdCardFailure(
+                State: SdCardState.Error,
+                StatusMessage: "The device could not read all of this file.",
+                Guidance: TRANSFER_READ_ERROR_GUIDANCE,
+                IsExpectedDeviceCondition: true,
+                IsCardUnavailable: false),
 
             SdCardOperationException operation => new SdCardFailure(
                 State: SdCardState.Error,

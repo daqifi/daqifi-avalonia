@@ -1,15 +1,18 @@
 using Daqifi.Desktop.Logger;
+using OxyPlot;
+using OxyPlot.Series;
 using Xunit;
 
 namespace Daqifi.Avalonia.Tests.Loggers;
 
 /// <summary>
-/// Characterisation tests for the two small formatters behind the legend and the summary flyout:
-/// <see cref="DeviceLegendGroup.FormatFrequency"/> (the sampling-rate line under each device) and
-/// <see cref="SummaryLogger.FormatStatuses"/> (the status-code cell).
+/// Characterisation tests for the three small formatters behind the legend and the summary flyout:
+/// <see cref="DeviceLegendGroup.FormatFrequency"/> (the sampling-rate line under each device),
+/// <see cref="SummaryLogger.FormatStatuses"/> (the status-code cell) and
+/// <see cref="LoggedSeriesLegendItem.TruncatedSerialNo"/> (the shortened serial on each legend row).
 ///
 /// <para>
-/// Neither had coverage, and both are pure string rendering — the kind of code where a refactor
+/// None had coverage, and all are pure string rendering — the kind of code where a refactor
 /// that changes an output by one character is invisible until a user reads it off the screen. The
 /// values below pin the current rendering exactly, including the cases that are arguably odd (a
 /// frequency just under a megahertz rounds up within the kHz band to "1000 kHz" rather than
@@ -84,6 +87,117 @@ public class LegendFormattingTests
         // rendering, which is what a rewrite of the join could change.
         Assert.Equal(new[] { "1", "2", "3" }, rendered.Split(", ").Order().ToArray());
         Assert.DoesNotContain(",,", rendered);
+    }
+
+    #endregion
+
+    #region LoggedSeriesLegendItem
+
+    /// <summary>
+    /// A legend item with nothing behind it but the plumbing its constructor insists on. The
+    /// optional <c>databaseLogger</c> is left null on purpose: it is the only argument whose
+    /// absence keeps <see cref="LoggedSeriesLegendItem.IsVisible"/>'s dispatcher path out of
+    /// reach, and this project constructs no Avalonia application to pump one (see the comment at
+    /// the top of Daqifi.Avalonia.Tests.csproj).
+    /// </summary>
+    private static LoggedSeriesLegendItem LegendItem(string deviceSerialNo, string channelName = "AI0") =>
+        new(
+            displayName: $"{channelName} ({deviceSerialNo})",
+            channelName: channelName,
+            deviceSerialNo: deviceSerialNo,
+            seriesColor: OxyColors.Red,
+            isVisible: true,
+            actualSeries: new LineSeries(),
+            plotModel: new PlotModel());
+
+    [Theory]
+    // The example from the property's own doc comment.
+    [InlineData("1234104", "...4104")]
+    // Five characters is the shortest serial that truncates at all.
+    [InlineData("41041", "...1041")]
+    [InlineData("DAQiFi-Nq1-0004104", "...4104")]
+    public void A_serial_longer_than_four_characters_shows_only_its_last_four(string serial, string expected)
+    {
+        Assert.Equal(expected, LegendItem(serial).TruncatedSerialNo);
+    }
+
+    [Theory]
+    // Exactly four is NOT truncated — the test that pins the boundary, since ">" rather than
+    // ">=" is the difference between "4104" and a leading ellipsis on every short serial.
+    [InlineData("4104")]
+    [InlineData("104")]
+    [InlineData("4")]
+    [InlineData("")]
+    public void A_serial_of_four_characters_or_fewer_is_shown_whole(string serial)
+    {
+        Assert.Equal(serial, LegendItem(serial).TruncatedSerialNo);
+    }
+
+    /// <summary>
+    /// The parameter is declared non-nullable, but the property guards null twice over
+    /// (<c>?.Length</c> and <c>?? string.Empty</c>) and a legend row is built from database rows
+    /// that predate that guarantee. Pinned so the guards cannot be dropped as dead code: without
+    /// them this is a NullReferenceException on the legend, not an empty cell.
+    /// </summary>
+    [Fact]
+    public void A_missing_serial_renders_as_an_empty_string()
+    {
+        Assert.Equal(string.Empty, LegendItem(null!).TruncatedSerialNo);
+    }
+
+    /// <summary>
+    /// The generated <c>[ObservableProperty]</c> getters hand back the very instances the
+    /// constructor stored in their backing fields — no copy, no trimming, no normalisation. That
+    /// is what makes reading the property interchangeable with reading the field, which is the
+    /// substitution <see cref="LoggedSeriesLegendItem.IsVisible"/>'s minimap-sync call relies on:
+    /// it forwards these two values to
+    /// <see cref="DatabaseLogger.SetMinimapSeriesVisibility"/>, where they are matched against
+    /// series keys by exact string equality.
+    /// </summary>
+    [Fact]
+    public void The_generated_properties_hand_back_exactly_what_the_constructor_stored()
+    {
+        var serial = new string("1234104".ToCharArray());
+        var channel = new string("AI3".ToCharArray());
+
+        var item = LegendItem(serial, channel);
+
+        Assert.Same(serial, item.DeviceSerialNo);
+        Assert.Same(channel, item.ChannelName);
+    }
+
+    /// <summary>
+    /// Reading a generated <c>[ObservableProperty]</c> getter is a plain field read: it returns the
+    /// same instance every time and raises nothing. That is the whole basis for reading these
+    /// properties instead of their backing fields, so it is asserted here rather than assumed from
+    /// what the source generator is believed to emit — <c>[ObservableProperty]</c>'s partial hooks
+    /// (<c>On…Changing</c>, <c>On…Changed</c>) hang off the SETTER, and a getter that gained a side
+    /// effect would make the substitution unsound without changing a single line of this file.
+    /// </summary>
+    [Fact]
+    public void Reading_a_generated_property_is_a_plain_field_read()
+    {
+        var item = LegendItem("1234104");
+        var raised = new List<string?>();
+        item.PropertyChanged += (_, e) => raised.Add(e.PropertyName);
+
+        var first = item.DeviceSerialNo;
+        var second = item.DeviceSerialNo;
+        var channelFirst = item.ChannelName;
+        var channelSecond = item.ChannelName;
+        var truncatedFirst = item.TruncatedSerialNo;
+        var truncatedSecond = item.TruncatedSerialNo;
+
+        Assert.Same(first, second);
+        Assert.Same(channelFirst, channelSecond);
+        Assert.Equal(truncatedFirst, truncatedSecond);
+        Assert.Empty(raised);
+
+        // Self-control: six reads raising nothing only means something if this subscription can
+        // see a raise at all. A WRITE goes through the generated setter and must be observed —
+        // which is also the asymmetry that makes reads safe to substitute and writes not.
+        item.DeviceSerialNo = "9999999";
+        Assert.Equal([nameof(LoggedSeriesLegendItem.DeviceSerialNo)], raised);
     }
 
     #endregion
