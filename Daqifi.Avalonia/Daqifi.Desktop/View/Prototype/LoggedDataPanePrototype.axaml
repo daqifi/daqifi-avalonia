@@ -5,7 +5,11 @@
              xmlns:oxy="http://oxyplot.org/avalonia"
              xmlns:i="https://github.com/projektanker/icons.avalonia"
              xmlns:local="using:Daqifi.Desktop.View"
-             xmlns:logger="using:Daqifi.Desktop.Logger">
+             xmlns:logger="using:Daqifi.Desktop.Logger"
+             xmlns:vm="using:Daqifi.Desktop.ViewModels"
+             xmlns:oxycore="using:OxyPlot"
+             x:DataType="vm:DaqifiViewModel"
+             x:CompileBindings="True">
 
     <!--
         Ported from Daqifi.Desktop/View/Prototype/LoggedDataPanePrototype.xaml.
@@ -464,7 +468,7 @@
                                       Background="{DynamicResource Surface}"
                                       Margin="16,8,16,0">
                             <oxy:PlotView.DefaultTrackerTemplate>
-                                <ControlTemplate>
+                                <ControlTemplate x:DataType="oxycore:TrackerHitResult">
                                     <oxy:TrackerControl Position="{Binding Position}"
                                                         LineExtents="{Binding PlotModel.PlotArea}"
                                                         Background="{DynamicResource SurfaceActive}"
@@ -672,7 +676,7 @@
                              ScrollViewer.HorizontalScrollBarVisibility="Disabled"
                              SelectionMode="Single">
                         <ListBox.ItemContainerTheme>
-                            <ControlTheme TargetType="ListBoxItem">
+                            <ControlTheme TargetType="ListBoxItem" x:DataType="logger:LoggingSession">
                                 <Setter Property="HorizontalContentAlignment" Value="Stretch"/>
                                 <Setter Property="Padding" Value="0"/>
                                 <Setter Property="Margin" Value="0"/>
