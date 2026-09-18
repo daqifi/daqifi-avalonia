@@ -1,7 +1,10 @@
 <Window xmlns="https://github.com/avaloniaui"
         xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml"
         xmlns:dialogService="using:Daqifi.Desktop.DialogService"
+        xmlns:vm="using:Daqifi.Desktop.ViewModels"
         x:Class="Daqifi.Desktop.View.FirmwareDialog"
+        x:DataType="vm:FirmwareDialogViewModel"
+        x:CompileBindings="True"
         dialogService:DialogService.IsRegisteredView="True"
         Title="Firmware Settings" Height="380" Width="500"
         Background="{StaticResource Surface}">
@@ -12,6 +15,27 @@
         Visibility+BoolToVis → IsVisible (with ! for the inverted case);
         MetroProgressBar → ProgressBar; Square.Accent → Classes="accent";
         ComboBox DisplayMemberPath → DisplayMemberBinding.
+    -->
+    <!--
+        Both declarations above are load-bearing and neither works alone (issue #327).
+        AvaloniaUseCompiledBindingsByDefault is false for this project, so before this pair
+        every one of the 14 bindings below was resolved by REFLECTION at run time: a renamed
+        or deleted view-model member failed silently — the control rendered blank, or, for a
+        bool target, sat at its default, which for IsVisible is true. Here that default is the
+        dangerous direction: the upload scrim and both state panels are gated by IsVisible, and
+        a dead gate SHOWS its panel. Measured on origin/main in a single build carrying two
+        defects at once: a bogus CLR property on the ProgressBar below was AVLN2000, proving the
+        compiler had read this file, while {Binding} at a member that does not exist, in the
+        same file and the same compilation, produced no diagnostic at all.
+
+        Two binding scopes, one declared. The ComboBox's DisplayMemberBinding resolves against
+        the element type of the ItemsSource beside it (FirmwareOption) — INFERRED, not declared,
+        and there is no element to hang a declaration on. There are no DataTemplates. Do NOT add
+        x:DataType defensively if one is introduced later: on Avalonia 12.1 a template scope is
+        inferred from the ItemsSource beside it and an explicit declaration OVERRIDES that
+        inference, so a plausible-but-wrong one is worse than none. Declare a scope only where
+        the build asks for one — a ContentControl.ContentTemplate or a resource-dictionary
+        template infers nothing and is AVLN2000 even with correct member names.
     -->
     <Grid Background="{StaticResource Surface}">
 

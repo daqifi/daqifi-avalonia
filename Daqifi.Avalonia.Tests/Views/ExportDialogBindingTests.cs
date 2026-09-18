@@ -1,4 +1,3 @@
-using System.Text.RegularExpressions;
 using System.Xml.Linq;
 using Daqifi.Desktop.ViewModels;
 using Xunit;
@@ -36,7 +35,6 @@ namespace Daqifi.Avalonia.Tests.Views;
 public class ExportDialogBindingTests
 {
     private const string View = "Daqifi.Avalonia/Daqifi.Desktop/View/ExportDialog.axaml";
-    private const string Host = "Daqifi.Avalonia/Daqifi.Desktop/ViewModels/DaqifiViewModel.cs";
 
     /// <summary>The XAML language namespace, where <c>x:DataType</c> and friends live.</summary>
     private static readonly XNamespace Xaml = "http://schemas.microsoft.com/winfx/2006/xaml";
@@ -88,107 +86,15 @@ public class ExportDialogBindingTests
     /// arriving one level up.
     ///
     /// <para>
-    /// Nothing in the type system closes it here, which is why this is asserted rather than assumed:
-    /// the dialog has no <c>DataContext</c> of its own, and is handed one by
-    /// <c>IDialogService.ShowDialogAsync&lt;T&gt;(object ownerViewModel, object viewModel)</c> — whose
-    /// view-model parameter is typed <c>object</c>. Both call sites could hand <c>ExportDialog</c> any
-    /// object at all and still compile.
-    /// </para>
-    ///
-    /// <para>
-    /// So this reads the call sites out of the host's source and requires each to pass a local that
-    /// was constructed as an <c>ExportDialogViewModel</c>. Read off the source rather than by
-    /// constructing anything: <c>ExportDialogViewModel</c>'s public constructors resolve
-    /// <c>App.ServiceProvider</c>, and <c>DaqifiViewModel</c> opens the application database,
-    /// configuration and logs — under a test run that is the developer's real
-    /// <c>~/Library/Application Support/DAQiFi</c>. The type name is spelled with <c>nameof</c>, so
-    /// renaming the view model breaks this file's compile rather than leaving the assertion hunting a
-    /// string that no longer exists.
+    /// The dialog is handed its view model through <c>IDialogService.ShowDialogAsync&lt;T&gt;</c>,
+    /// whose view-model parameter is typed <c>object</c>, so nothing in the type system closes this.
+    /// The guard lives in <see cref="BindingFacts.AssertDialogIsHandedItsDeclaredViewModel"/>, shared
+    /// with <c>FirmwareDialog</c> since issue #327's next view rather than copied a second time.
     /// </para>
     /// </summary>
     [Fact]
-    public void The_declared_scope_is_the_view_model_the_dialog_is_actually_handed()
-    {
-        var root = Root();
-
-        // Avalonia spells a CLR-namespace prefix either way; both are in use in this checkout.
-        var prefix = root.Attribute(XNamespace.Xmlns + "vm")?.Value;
-        Assert.True(
-            prefix == $"using:{typeof(ExportDialogViewModel).Namespace}"
-            || prefix == $"clr-namespace:{typeof(ExportDialogViewModel).Namespace}",
-            $"{View}: xmlns:vm is {prefix ?? "absent"}, so the x:DataType below does not name "
-            + $"{typeof(ExportDialogViewModel).FullName}.");
-
-        Assert.Equal($"vm:{nameof(ExportDialogViewModel)}", root.Attribute(Xaml + "DataType")?.Value);
-
-        // Every C# file in the app project, not just the host that happens to hold the call sites
-        // today: a call added anywhere else would otherwise be outside this guard entirely.
-        var sources = Directory
-            .EnumerateFiles(
-                Path.Combine(BindingFacts.RepoRoot(), "Daqifi.Avalonia"), "*.cs", SearchOption.AllDirectories)
-            .Where(path => !path.Contains($"{Path.DirectorySeparatorChar}obj{Path.DirectorySeparatorChar}")
-                           && !path.Contains($"{Path.DirectorySeparatorChar}bin{Path.DirectorySeparatorChar}"))
-            .ToList();
-
-        var mentions = 0;
-        var understood = 0;
-        var unsupported = new List<string>();
-
-        foreach (var path in sources)
-        {
-            var source = File.ReadAllText(path);
-            var present = Regex.Matches(source, @"ShowDialogAsync\s*<\s*ExportDialog\s*>");
-            if (present.Count == 0) { continue; }
-
-            mentions += present.Count;
-
-            var parsed = Regex.Matches(
-                source,
-                @"ShowDialogAsync\s*<\s*ExportDialog\s*>\(\s*[A-Za-z_][A-Za-z0-9_]*\s*,\s*(?<arg>[A-Za-z_][A-Za-z0-9_]*)\s*\)");
-            understood += parsed.Count;
-
-            foreach (Match site in parsed)
-            {
-                var local = site.Groups["arg"].Value;
-                var constructed = Regex.IsMatch(
-                    source,
-                    $@"\b(var|{nameof(ExportDialogViewModel)})\s+{Regex.Escape(local)}\s*=\s*new\s+{nameof(ExportDialogViewModel)}\s*\(");
-
-                Assert.True(
-                    constructed,
-                    $"{Path.GetFileName(path)}: ShowDialogAsync<ExportDialog> is handed '{local}', which "
-                    + $"is not constructed as a {nameof(ExportDialogViewModel)} in that file. That "
-                    + $"parameter is typed object, so the compiler accepts anything, and {View} claims "
-                    + $"x:DataType=\"vm:{nameof(ExportDialogViewModel)}\" — the dialog would compile and "
-                    + "render blank.");
-            }
-
-            if (parsed.Count < present.Count)
-            {
-                unsupported.Add($"{Path.GetFileName(path)} ({present.Count - parsed.Count})");
-            }
-        }
-
-        Assert.True(
-            mentions > 0,
-            "no ShowDialogAsync<ExportDialog> call site exists anywhere in Daqifi.Avalonia. If the "
-            + "dialog is now presented some other way, this guard has to follow it — the x:DataType "
-            + "claim is unchecked until something pins it to the object the dialog is given.");
-
-        // The half that makes the rest mean something. A call written in a shape the regex above
-        // does not parse — a named argument, an inline `new`, a property or method result — used to
-        // be silently skipped while the two it did understand kept the count positive, so the guard
-        // reported coverage it did not have (Qodo round 1). Now an unparsed call FAILS here and says
-        // so, and whoever adds it either teaches this test the shape or reverts to a local.
-        Assert.True(
-            unsupported.Count == 0,
-            $"ShowDialogAsync<ExportDialog> is called in {mentions} place(s) but only {understood} are "
-            + $"in the (owner, local) shape this guard can follow: {string.Join(", ", unsupported)}. An "
-            + "unrecognised call is NOT covered, and silently skipping it is the failure this assertion "
-            + "exists to prevent. Deliberately not a Roslyn semantic model: the test project references "
-            + "no compiler API, and failing loudly on an unknown shape gives the same protection at a "
-            + "fraction of the machinery.");
-    }
+    public void The_declared_scope_is_the_view_model_the_dialog_is_actually_handed() =>
+        BindingFacts.AssertDialogIsHandedItsDeclaredViewModel(View, typeof(ExportDialogViewModel));
 
     /// <summary>
     /// Gap 3: compiled bindings type-check the <i>path</i>, never the target, so which property a
