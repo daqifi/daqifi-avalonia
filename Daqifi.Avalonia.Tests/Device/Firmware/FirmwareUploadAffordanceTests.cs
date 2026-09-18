@@ -23,7 +23,8 @@ namespace Daqifi.Avalonia.Tests.Device.Firmware;
 /// by reflection, so a missing or misspelled one fails silently at runtime while the build stays
 /// green. The XAML facts below are therefore deliberately textual: they assert the binding exists in
 /// the view AND that the member it names exists on the view model, which is the pair a reflection
-/// binding needs and the pair nothing else in the build checks.
+/// binding needs and the pair nothing else in the build checks. (The bootloader dialog has since
+/// moved to compiled bindings, issue #327, so for that view only the first half is still asserted.)
 /// </para>
 ///
 /// <para>
@@ -188,16 +189,19 @@ public class FirmwareUploadAffordanceTests : IDisposable
     /// The bootloader dialog raises a modal scrim over every control it has, including its own Cancel
     /// button, so before this binding existed a stalled flash could only be escaped by killing the
     /// app. This is the only binding of the command.
+    ///
+    /// <para>
+    /// Only the markup half is asserted. <c>FirmwareDialog.axaml</c> now compiles its bindings
+    /// (issue #327), so a renamed or deleted command is an <c>AVLN2000</c> and an
+    /// <c>AssertExposes</c> here could no longer fail — an assertion the build will not let fail reads
+    /// as coverage and is none. The binding's existence is still worth pinning: deleting it compiles.
+    /// </para>
     /// </summary>
     [Fact]
-    public void The_bootloader_dialog_binds_its_cancel_command()
-    {
+    public void The_bootloader_dialog_binds_its_cancel_command() =>
         BindingFacts.AssertBinds(
             "Daqifi.Avalonia/Daqifi.Desktop/View/FirmwareDialog.axaml",
             "{Binding CancelUploadFirmwareCommand}");
-
-        BindingFacts.AssertExposes(typeof(FirmwareDialogViewModel), "CancelUploadFirmwareCommand");
-    }
 
     /// <summary>
     /// The device pane drives both the combined update and the WiFi-only flash, and both write the

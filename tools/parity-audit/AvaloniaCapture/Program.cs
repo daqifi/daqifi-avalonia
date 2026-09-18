@@ -1050,9 +1050,9 @@ internal static class AvaloniaCapture
         // The bootloader dialog mid-flash. This is the one state in the app that a user could get
         // stuck in: the scrim covers every control the dialog has, including its own Cancel button,
         // and until issue #241 nothing under it offered a way out — a stalled flash meant killing
-        // the app. The screen exists to gate the control that fixes that, which no other check in
-        // the repo can see: the button's only reference is a reflection binding in AXAML, so a
-        // rename would leave the build green and the scrim inescapable again.
+        // the app. The screen exists to gate the control that fixes that. Its binding is compiled
+        // now (issue #327), so a renamed command fails the build — but a deleted or re-gated button
+        // still compiles, and only a rendered screen shows the scrim is escapable.
         yield return new DialogScreen
         {
             Name = "dialog-firmware-uploading",

@@ -1,4 +1,5 @@
 using System.Reflection;
+using System.Text.RegularExpressions;
 using System.Xml.Linq;
 using Xunit;
 
@@ -175,6 +176,129 @@ internal static class BindingFacts
             $"{repoRelativeViewPath}: {reflection.Count} binding(s) use {{ReflectionBinding}} "
             + $"({string.Join(", ", reflection)}), which opts that one binding out of compile checking "
             + "with the root declaration still in place.");
+    }
+
+    /// <summary>
+    /// Asserts that a dialog's root <c>x:DataType</c> names <paramref name="viewModelType"/>, and that
+    /// every place the app presents the dialog hands it an instance constructed as that type.
+    ///
+    /// <para>
+    /// <c>x:DataType</c> is a <i>claim</i>: the compiler checks the bindings against the claim, never
+    /// against the object the dialog will actually meet. Nothing in the type system ties the two
+    /// together for these dialogs, because they have no <c>DataContext</c> of their own and are handed
+    /// one by <c>IDialogService.ShowDialogAsync&lt;T&gt;(object ownerViewModel, object viewModel)</c> —
+    /// whose view-model parameter is typed <c>object</c>. A call handing the wrong object compiles,
+    /// and so does an <c>x:DataType</c> pointed at a type that shares the member names; either renders
+    /// blank at run time, which is the failure #327 exists to remove, arriving one level up.
+    /// </para>
+    ///
+    /// <para>
+    /// So this reads the call sites out of <b>every</b> C# file in <c>Daqifi.Avalonia</c> — not only
+    /// the file that holds them today — and requires each to pass a local constructed as
+    /// <paramref name="viewModelType"/> in that file. The dialog's class name is taken from its own
+    /// <c>x:Class</c>, so the call-site search cannot drift from the view it is guarding. A call in a
+    /// shape the parser does not follow (a named argument, an inline <c>new</c>, a property result)
+    /// <b>fails</b> rather than being skipped, and so does a direct <c>new Dialog(</c>, which would
+    /// present the dialog by a route this guard cannot see: silently checking the subset it happened
+    /// to understand is the defect Qodo found in the first version of this guard (round 1 on PR #372).
+    /// Deliberately not a Roslyn semantic model — the test project references no compiler API, and
+    /// failing loudly on an unknown shape gives the same protection for far less machinery.
+    /// </para>
+    ///
+    /// <para>
+    /// Read off the source rather than by constructing anything: these view models resolve
+    /// <c>App.ServiceProvider</c> and their hosts open the application database, configuration and
+    /// logs — under a test run, the developer's real <c>~/Library/Application Support/DAQiFi</c>.
+    /// </para>
+    /// </summary>
+    internal static void AssertDialogIsHandedItsDeclaredViewModel(string repoRelativeViewPath, Type viewModelType)
+    {
+        var root = ViewRoot(repoRelativeViewPath);
+
+        var dialogClass = root.Attribute(XamlNamespace + "Class")?.Value;
+        Assert.True(dialogClass is not null, $"{repoRelativeViewPath}: the root element declares no x:Class.");
+        var dialog = dialogClass!.Split('.')[^1];
+
+        // x:DataType="prefix:Name", and xmlns:prefix must name the view model's namespace. Avalonia
+        // spells a CLR-namespace prefix either way; both are in use in this checkout.
+        var declared = root.Attribute(XamlNamespace + "DataType")?.Value;
+        Assert.True(declared is not null, $"{repoRelativeViewPath}: the root element declares no x:DataType.");
+        var parts = declared!.Split(':');
+        Assert.True(
+            parts.Length == 2 && parts[1] == viewModelType.Name,
+            $"{repoRelativeViewPath}: x:DataType is \"{declared}\", which does not name {viewModelType.Name}.");
+
+        var prefix = root.Attribute(XNamespace.Xmlns + parts[0])?.Value;
+        Assert.True(
+            prefix == $"using:{viewModelType.Namespace}" || prefix == $"clr-namespace:{viewModelType.Namespace}",
+            $"{repoRelativeViewPath}: xmlns:{parts[0]} is {prefix ?? "absent"}, so x:DataType=\"{declared}\" "
+            + $"does not name {viewModelType.FullName}.");
+
+        var sources = Directory
+            .EnumerateFiles(Path.Combine(RepoRoot(), "Daqifi.Avalonia"), "*.cs", SearchOption.AllDirectories)
+            .Where(path => !path.Contains($"{Path.DirectorySeparatorChar}obj{Path.DirectorySeparatorChar}")
+                           && !path.Contains($"{Path.DirectorySeparatorChar}bin{Path.DirectorySeparatorChar}"))
+            .ToList();
+
+        var escaped = Regex.Escape(dialog);
+        var mentions = 0;
+        var understood = 0;
+        var unsupported = new List<string>();
+
+        foreach (var path in sources)
+        {
+            var source = File.ReadAllText(path);
+            var file = Path.GetFileName(path);
+
+            Assert.False(
+                Regex.IsMatch(source, $@"\bnew\s+{escaped}\s*[({{]"),
+                $"{file}: constructs {dialog} directly. This guard follows ShowDialogAsync<{dialog}> call "
+                + "sites only, so a dialog presented another way is handed a DataContext nothing here "
+                + $"checks against x:DataType=\"{declared}\". Teach this helper the new route.");
+
+            var present = Regex.Matches(source, $@"ShowDialogAsync\s*<\s*{escaped}\s*>");
+            if (present.Count == 0) { continue; }
+
+            mentions += present.Count;
+
+            var parsed = Regex.Matches(
+                source,
+                $@"ShowDialogAsync\s*<\s*{escaped}\s*>\(\s*[A-Za-z_][A-Za-z0-9_]*\s*,\s*(?<arg>[A-Za-z_][A-Za-z0-9_]*)\s*\)");
+            understood += parsed.Count;
+
+            foreach (Match site in parsed)
+            {
+                var local = site.Groups["arg"].Value;
+                var constructed = Regex.IsMatch(
+                    source,
+                    $@"\b(var|{Regex.Escape(viewModelType.Name)})\s+{Regex.Escape(local)}\s*=\s*new\s+{Regex.Escape(viewModelType.Name)}\s*\(");
+
+                Assert.True(
+                    constructed,
+                    $"{file}: ShowDialogAsync<{dialog}> is handed '{local}', which is not constructed as a "
+                    + $"{viewModelType.Name} in that file. That parameter is typed object, so the compiler "
+                    + $"accepts anything, and {repoRelativeViewPath} claims x:DataType=\"{declared}\" — the "
+                    + "dialog would compile and render blank.");
+            }
+
+            if (parsed.Count < present.Count)
+            {
+                unsupported.Add($"{file} ({present.Count - parsed.Count})");
+            }
+        }
+
+        Assert.True(
+            mentions > 0,
+            $"no ShowDialogAsync<{dialog}> call site exists anywhere in Daqifi.Avalonia. If the dialog is "
+            + "now presented some other way, this guard has to follow it — the x:DataType claim is "
+            + "unchecked until something pins it to the object the dialog is given.");
+
+        Assert.True(
+            unsupported.Count == 0,
+            $"ShowDialogAsync<{dialog}> is called in {mentions} place(s) but only {understood} are in the "
+            + $"(owner, local) shape this guard can follow: {string.Join(", ", unsupported)}. An "
+            + "unrecognised call is NOT covered, and silently skipping it is the failure this assertion "
+            + "exists to prevent.");
     }
 
     /// <summary>
