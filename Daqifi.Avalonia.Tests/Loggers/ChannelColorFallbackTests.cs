@@ -1,6 +1,5 @@
 using Daqifi.Avalonia.Tests.ViewModels;
 using Daqifi.Desktop.Channel;
-using Daqifi.Desktop.Common.Loggers;
 using Daqifi.Desktop.Logger;
 using Microsoft.Data.Sqlite;
 using Microsoft.EntityFrameworkCore;
@@ -79,7 +78,7 @@ public class ChannelColorFallbackTests : IDisposable
     {
         var factory = SeedLegacySession(nullColour: true);
 
-        var channel = Assert.Single(new SessionDataRepository(factory, new SilentLogger())
+        var channel = Assert.Single(new SessionDataRepository(factory, new RecordingAppLogger())
             .LoadInitialSession(SessionId).Channels);
 
         Assert.Null(channel.Color);
@@ -142,7 +141,7 @@ public class ChannelColorFallbackTests : IDisposable
     public void A_session_whose_stored_colour_is_missing_still_loads_and_plots(bool nullColour)
     {
         var factory = SeedLegacySession(nullColour);
-        var repository = new SessionDataRepository(factory, new SilentLogger());
+        var repository = new SessionDataRepository(factory, new RecordingAppLogger());
 
         var channel = Assert.Single(repository.LoadInitialSession(SessionId).Channels);
 
@@ -303,37 +302,6 @@ public class ChannelColorFallbackTests : IDisposable
             CREATE INDEX "IX_Samples_LoggingSessionID_TimestampTicks"
                 ON "Samples" ("LoggingSessionID", "TimestampTicks");
             """);
-    }
-
-    /// <summary>
-    /// Swallows the diagnostics so a fixture's noise does not write to the real log. Kept local, like
-    /// the suite's two other test loggers: they are not interchangeable (the bootloader one counts
-    /// errors), so folding three near-copies into one is its own change and not this one's.
-    /// </summary>
-    private sealed class SilentLogger : IAppLogger
-    {
-        public void Information(string message) { }
-
-        public void Warning(string message) { }
-
-        public void Warning(Exception ex, string message) { }
-
-        public void Error(string message) { }
-
-        public void Error(Exception ex, string message) { }
-
-        public void AddBreadcrumb(
-            string category,
-            string message,
-            Daqifi.Desktop.Common.Loggers.BreadcrumbLevel level = Daqifi.Desktop.Common.Loggers.BreadcrumbLevel.Info)
-        { }
-
-        public void SetDeviceContext(
-            string model, string serialNumber, string firmwareVersion, string connectionType, int activeChannels) { }
-
-        public void ClearDeviceContext() { }
-
-        public void Shutdown() { }
     }
 
     #endregion

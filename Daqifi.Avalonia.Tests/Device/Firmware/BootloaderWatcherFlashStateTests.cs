@@ -1,4 +1,3 @@
-using Daqifi.Desktop.Common.Loggers;
 using Daqifi.Desktop.Device.Firmware;
 using Xunit;
 
@@ -31,7 +30,7 @@ public class BootloaderWatcherFlashStateTests
     private const string PathA = "hid://bootloader-a";
 
     private readonly FakeDiscovery _discovery = new();
-    private readonly SilentLogger _logger = new();
+    private readonly RecordingAppLogger _logger = new();
     private readonly Dictionary<string, FakeHold> _holds = new(StringComparer.Ordinal);
 
     private BootloaderWatcher CreateWatcher() =>
@@ -168,7 +167,7 @@ public class BootloaderWatcherFlashStateTests
         Assert.Equal(new[] { true, false }, edges);
         Assert.False(watcher.IsFlashInProgress);
         Assert.True(_discovery.IsRunning);
-        Assert.Equal(2, _logger.Errors);
+        Assert.Equal(2, _logger.Errors.Count);
     }
 
     /// <summary>
@@ -370,35 +369,6 @@ public class BootloaderWatcherFlashStateTests
         }
 
         public void Dispose() => IsHolding = false;
-    }
-
-    /// <summary>Counts errors so a test can assert a faulting subscriber was recorded, not swallowed.</summary>
-    private sealed class SilentLogger : IAppLogger
-    {
-        public int Errors { get; private set; }
-
-        public void Information(string message) { }
-
-        public void Warning(string message) { }
-
-        public void Warning(Exception ex, string message) { }
-
-        public void Error(string message) => Errors++;
-
-        public void Error(Exception ex, string message) => Errors++;
-
-        public void AddBreadcrumb(
-            string category,
-            string message,
-            Daqifi.Desktop.Common.Loggers.BreadcrumbLevel level = Daqifi.Desktop.Common.Loggers.BreadcrumbLevel.Info)
-        { }
-
-        public void SetDeviceContext(
-            string model, string serialNumber, string firmwareVersion, string connectionType, int activeChannels) { }
-
-        public void ClearDeviceContext() { }
-
-        public void Shutdown() { }
     }
     #endregion
 }

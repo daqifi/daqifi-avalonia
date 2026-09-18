@@ -1,7 +1,6 @@
 using System.Collections.ObjectModel;
 using Daqifi.Core.Firmware;
 using Daqifi.Core.Firmware.Winc;
-using Daqifi.Desktop.Common.Loggers;
 using Daqifi.Desktop.Device.Firmware;
 using Daqifi.Desktop.Device.SerialDevice;
 using Daqifi.Desktop.Models;
@@ -47,7 +46,7 @@ public class WifiFlashPlatformGateTests : IDisposable
     private readonly RecordingHost _host = new();
     private readonly RecordingDownloadService _downloads = new();
     private readonly StubUpdateService _updates = new();
-    private readonly SilentLogger _logger = new();
+    private readonly RecordingAppLogger _logger = new();
     private readonly string _dataDirectory =
         Path.Combine(Path.GetTempPath(), "daqifi-wifi-platform-gate-tests", Guid.NewGuid().ToString("N"));
 
@@ -465,33 +464,6 @@ public class WifiFlashPlatformGateTests : IDisposable
 
         public Task QuiesceWifiFirmwareProbeAsync(CancellationToken cancellationToken = default)
             => Task.CompletedTask;
-    }
-
-    private sealed class SilentLogger : IAppLogger
-    {
-        public void Information(string message) { }
-
-        public void Warning(string message) { }
-
-        public void Warning(Exception ex, string message) { }
-
-        public void Error(string message) { }
-
-        public void Error(Exception ex, string message) { }
-
-        public void AddBreadcrumb(
-            string category,
-            string message,
-            Daqifi.Desktop.Common.Loggers.BreadcrumbLevel level
-                = Daqifi.Desktop.Common.Loggers.BreadcrumbLevel.Info)
-        { }
-
-        public void SetDeviceContext(
-            string model, string serialNumber, string firmwareVersion, string connectionType, int activeChannels) { }
-
-        public void ClearDeviceContext() { }
-
-        public void Shutdown() { }
     }
     #endregion
 }

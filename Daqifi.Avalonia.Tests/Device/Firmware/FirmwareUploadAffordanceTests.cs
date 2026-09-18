@@ -1,6 +1,5 @@
 using System.Collections.ObjectModel;
 using Daqifi.Core.Firmware;
-using Daqifi.Desktop.Common.Loggers;
 using Daqifi.Desktop.Device.Firmware;
 using Daqifi.Desktop.Device.SerialDevice;
 using Daqifi.Desktop.Models;
@@ -58,7 +57,7 @@ public class FirmwareUploadAffordanceTests : IDisposable
     private readonly RecordingHost _host = new();
     private readonly NoPackageDownloadService _downloads = new();
     private readonly StubUpdateService _updates = new();
-    private readonly SilentLogger _logger = new();
+    private readonly RecordingAppLogger _logger = new();
     private readonly string _dataDirectory =
         Path.Combine(Path.GetTempPath(), "daqifi-firmware-affordance-tests", Guid.NewGuid().ToString("N"));
 
@@ -378,32 +377,6 @@ public class FirmwareUploadAffordanceTests : IDisposable
         public Task<WifiFirmwareStatus> CheckWifiFirmwareStatusAsync(
             Daqifi.Core.Device.IStreamingDevice device,
             CancellationToken cancellationToken = default) => throw new NotSupportedException();
-    }
-
-    private sealed class SilentLogger : IAppLogger
-    {
-        public void Information(string message) { }
-
-        public void Warning(string message) { }
-
-        public void Warning(Exception ex, string message) { }
-
-        public void Error(string message) { }
-
-        public void Error(Exception ex, string message) { }
-
-        public void AddBreadcrumb(
-            string category,
-            string message,
-            Daqifi.Desktop.Common.Loggers.BreadcrumbLevel level = Daqifi.Desktop.Common.Loggers.BreadcrumbLevel.Info)
-        { }
-
-        public void SetDeviceContext(
-            string model, string serialNumber, string firmwareVersion, string connectionType, int activeChannels) { }
-
-        public void ClearDeviceContext() { }
-
-        public void Shutdown() { }
     }
     #endregion
 }

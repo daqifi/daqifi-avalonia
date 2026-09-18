@@ -1,4 +1,3 @@
-using Daqifi.Desktop.Common.Loggers;
 using Daqifi.Desktop.Logger;
 using Microsoft.Data.Sqlite;
 using Xunit;
@@ -49,7 +48,7 @@ public sealed class EmptySessionSelectionTests : IDisposable
     private readonly string _directory =
         Path.Combine(Path.GetTempPath(), "daqifi-avalonia-tests", "empty-session-" + Guid.NewGuid().ToString("N"));
 
-    private readonly SilentLogger _logger = new();
+    private readonly RecordingAppLogger _logger = new();
 
     private string DatabasePath => Path.Combine(_directory, "DAQiFiDatabase.db");
 
@@ -197,34 +196,6 @@ public sealed class EmptySessionSelectionTests : IDisposable
         using var query = connection.CreateCommand();
         query.CommandText = sql;
         return (long)query.ExecuteScalar()!;
-    }
-
-    /// <summary>
-    /// Keeps the repository's #237 warning off the real application log. Nothing here asserts on it —
-    /// <c>SessionTimestampRangeTests</c> owns that — so this only needs to swallow.
-    /// </summary>
-    private sealed class SilentLogger : IAppLogger
-    {
-        public void Information(string message) { }
-
-        public void Warning(string message) { }
-
-        public void Warning(Exception ex, string message) { }
-
-        public void Error(string message) { }
-
-        public void Error(Exception ex, string message) { }
-
-        public void AddBreadcrumb(
-            string category,
-            string message,
-            Daqifi.Desktop.Common.Loggers.BreadcrumbLevel level = Daqifi.Desktop.Common.Loggers.BreadcrumbLevel.Info) { }
-
-        public void SetDeviceContext(string model, string serialNumber, string firmwareVersion, string connectionType, int activeChannels) { }
-
-        public void ClearDeviceContext() { }
-
-        public void Shutdown() { }
     }
 
     #endregion
