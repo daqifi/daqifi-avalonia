@@ -530,9 +530,6 @@ public partial class DaqifiViewModel : ObservableObject, IFirmwareUpdateHost, IL
     [ObservableProperty]
     private int _notificationCount;
 
-    [ObservableProperty]
-    private string _versionName;
-
     // @port: Daqifi.Desktop.ViewModels.DaqifiViewModel.SelectedIndex
     public int SelectedIndex
     {
@@ -2108,12 +2105,11 @@ public partial class DaqifiViewModel : ObservableObject, IFirmwareUpdateHost, IL
                 NotificationCount = data.NotificationCount;
                 if (NotificationCount > 0)
                 {
-                    VersionName = data.VersionNumber;
                     var notify = new Notifications
                     {
                         IsFirmwareUpdate = false,
                         DeviceSerialNo = null,
-                        Message = $"Please update latest application version:  {VersionName}",
+                        Message = $"Please update latest application version:  {data.VersionNumber}",
                         Link = "https://github.com/daqifi/daqifi-desktop/releases"
                     };
                     if (!NotificationList.Any(n => n.Message == notify.Message || n.Link == notify.Link))
