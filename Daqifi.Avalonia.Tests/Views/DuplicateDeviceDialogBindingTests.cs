@@ -224,8 +224,8 @@ public class DuplicateDeviceDialogBindingTests
         // also reads as an in-scope declaration here, and a field can be reassigned by any method,
         // before or after this one in the text. A same-named local elsewhere trips this too; that is
         // the failing direction, and renaming one of them clears it.
-        var writes = Regex.Matches(source, $@"(?<![\w.]){name}\s*(?:=(?!=)|\?\?=)|\b(?:ref|out)\s+{name}\b")
-            .Count(write => write.Index < nearest.Index || write.Index >= nearest.Index + nearest.Length);
+        var writes = Writes(source, local)
+            .Count(at => at < nearest.Index || at >= nearest.Index + nearest.Length);
         if (writes > 0)
         {
             return $"the name is written {writes} more time(s) in the file — reassigned, passed by ref/out, "
@@ -236,11 +236,59 @@ public class DuplicateDeviceDialogBindingTests
     }
 
     /// <summary>
+    /// Offsets at which <paramref name="local"/> is written: the target of <c>=</c> or any compound
+    /// assignment, an element of a tuple — nested or not — on the left of <c>=</c> (Qodo round 3:
+    /// <c>(local, other) = (null!, 1)</c> was not seen), or an argument passed by <c>ref</c>/<c>out</c>.
+    /// A declaration is a write too, which is how a second declaration of the name is caught.
+    /// </summary>
+    private static IEnumerable<int> Writes(string code, string local)
+    {
+        foreach (Match use in Regex.Matches(code, $@"(?<![\w.]){Regex.Escape(local)}(?!\w)"))
+        {
+            if (Regex.IsMatch(code[Math.Max(0, use.Index - 40)..use.Index], @"\b(?:ref|out)\s+(?:var\s+)?$"))
+            {
+                yield return use.Index;
+                continue;
+            }
+
+            // Walk right over what may follow a tuple element: more elements, commas and closing
+            // parentheses. After a ')', only ',', ')' or the '=' may come next — so `if (a == x) y = 1`
+            // is not read as a tuple write of x.
+            var i = use.Index + use.Length;
+            var closed = 0;
+            var depth = 0;
+            var afterClose = false;
+            while (i < code.Length)
+            {
+                var c = code[i];
+                if (char.IsWhiteSpace(c)) { i++; continue; }
+                if (afterClose && c is not (',' or ')' or '=')) { break; }
+                if (c == ')')
+                {
+                    if (depth > 0) { depth--; } else { closed++; }
+                    afterClose = true;
+                    i++;
+                }
+                else if (c == '(') { depth++; afterClose = false; i++; }
+                else if (c == ',') { afterClose = false; i++; }
+                else if ((char.IsLetterOrDigit(c) || c == '_') && !afterClose) { i++; }
+                else { break; }
+            }
+
+            var rest = code[i..Math.Min(code.Length, i + 4)];
+            var assigns = Regex.IsMatch(rest, @"^(?:=(?![=>])|(?:\?\?|<<|>>|[-+*/%&|^])=)");
+            if (assigns && (closed > 0 || i == use.Index + use.Length || code[(use.Index + use.Length)..i].Trim().Length == 0))
+            {
+                yield return use.Index;
+            }
+        }
+    }
+
+    /// <summary>
     /// The source with every comment and string/char literal overwritten by spaces (newlines kept),
     /// so offsets are unchanged and only code is left to match against. Interpolation holes stay
-    /// code — they are code — and string literals nested inside them are blanked in turn. Raw
-    /// (<c>"""</c>) literals are blanked whole, holes included; their braces come in pairs, so that
-    /// cannot unbalance a count.
+    /// code — they are code — in regular, verbatim and raw (<c>"""</c>) literals alike, and string
+    /// literals nested inside them are blanked in turn.
     /// </summary>
     private static string CodeOnly(string source)
     {
@@ -309,10 +357,8 @@ public class DuplicateDeviceDialogBindingTests
                     {
                         var quotes = 0;
                         while (At(i) == '"') { quotes++; i++; }
-                        var fence = new string('"', quotes);
-                        var end = source.IndexOf(fence, i, StringComparison.Ordinal);
-                        i = end < 0 ? source.Length : end + quotes;
                         Blank(start, i);
+                        RawLiteral(quotes, dollars: i - quotes - start);
                     }
                     else
                     {
@@ -356,6 +402,42 @@ public class DuplicateDeviceDialogBindingTests
                     Blank(i, ++i);
                 }
                 else { Blank(i, ++i); }
+            }
+        }
+
+        // Scans a raw literal body from just after its opening fence of `quotes` quotes. With n
+        // leading '$', a run of n or more '{' opens a hole (the last n of them) and n '}' close it;
+        // anything shorter is content. Holes stay code, as in the other literals — blanking them
+        // whole hid `$"""{new DuplicateDeviceDialog { … }}"""` from the construction count (Qodo round 3).
+        void RawLiteral(int quotes, int dollars)
+        {
+            while (i < source.Length)
+            {
+                var run = 0;
+                while (At(i + run) == '"') { run++; }
+                if (run >= quotes) { Blank(i, i + run); i += run; return; }
+
+                if (dollars > 0 && source[i] == '{')
+                {
+                    var braces = 0;
+                    while (At(i + braces) == '{') { braces++; }
+                    if (braces >= dollars)
+                    {
+                        Blank(i, i + braces);
+                        i += braces;
+                        Code(stopAtClose: true);
+                        Blank(i, i + dollars);
+                        i += dollars;
+                        continue;
+                    }
+
+                    Blank(i, i + braces);
+                    i += braces;
+                    continue;
+                }
+
+                Blank(i, i + Math.Max(run, 1));
+                i += Math.Max(run, 1);
             }
         }
 
