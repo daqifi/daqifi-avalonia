@@ -2,12 +2,21 @@
              xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml"
              xmlns:i="https://github.com/projektanker/icons.avalonia"
              xmlns:oxy="http://oxyplot.org/avalonia"
-             x:Class="Daqifi.Avalonia.Views.Mobile.LoggedSessionsMobileView">
+             xmlns:mobile="using:Daqifi.Avalonia.Views.Mobile"
+             x:Class="Daqifi.Avalonia.Views.Mobile.LoggedSessionsMobileView"
+             x:DataType="mobile:LoggedSessionsMobileViewModel"
+             x:CompileBindings="True">
   <!-- Mobile "APP LOGS" half of the Storage tab: the locally-logged session list,
        the phone projection of the desktop Logged Data pane (#7). Read-only list +
        non-destructive export; the inline plot viewer and delete are deferred (they
        need mobile plot/dialog infra — see #7). Styled with the shared component
-       language so it matches the desktop pane. -->
+       language so it matches the desktop pane.
+
+       Compiled bindings (issue #327): AvaloniaUseCompiledBindingsByDefault is false in this
+       project, so the DataType needs the CompileBindings beside it. The one construction site,
+       StorageMobileView's ctor, hands this view a new LoggedSessionsMobileViewModel. Neither item
+       template declares anything: their scopes are inferred from Sessions and ViewerChannels, and
+       the row buttons' $parent[ItemsControl].DataContext reaches back out to the view model. -->
   <Grid Background="{DynamicResource Surface}">
     <ScrollViewer>
       <StackPanel Classes="paneContent" Spacing="14" Margin="16">
