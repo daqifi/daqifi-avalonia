@@ -1,3 +1,4 @@
+using System.Xml.Linq;
 using Xunit;
 
 namespace Daqifi.Avalonia.Tests.Views;
@@ -27,12 +28,34 @@ public class LoggedDataPanePrototypeBindingTests
     /// template will meet: OxyPlot's <c>PlotBase.ShowTracker</c> assigns a <c>TrackerHitResult</c>, and
     /// a <c>ListBoxItem</c>'s DataContext is its item from <c>LoggingSessions</c>. Pinned so a
     /// plausible-looking repoint cannot quietly re-scope them.
+    ///
+    /// <para>
+    /// Read from the parsed markup, not the raw text, so a copy of either tag in a comment cannot
+    /// stand in for the live declaration (Qodo round 1 on PR #396). Every non-root <c>x:DataType</c>
+    /// in the file is listed, so a third one appearing is a failure too, not a silent addition.
+    /// </para>
     /// </summary>
-    [Theory]
-    [InlineData("<ControlTemplate x:DataType=\"oxycore:TrackerHitResult\">")]
-    [InlineData("<ControlTheme TargetType=\"ListBoxItem\" x:DataType=\"logger:LoggingSession\">")]
-    public void The_nested_scopes_name_what_the_runtime_assigns(string declaration) =>
-        BindingFacts.AssertBinds(View, declaration);
+    [Fact]
+    public void The_nested_scopes_name_what_the_runtime_assigns()
+    {
+        XNamespace x = "http://schemas.microsoft.com/winfx/2006/xaml";
+        var root = XDocument.Parse(BindingFacts.Source(View)).Root!;
+
+        var nested = root.Descendants()
+            .Where(element => element.Attribute(x + "DataType") is not null)
+            .Select(element =>
+                $"{element.Parent?.Name.LocalName}/{element.Name.LocalName}"
+                + $"[{element.Attribute("TargetType")?.Value}] {element.Attribute(x + "DataType")!.Value}")
+            .OrderBy(declaration => declaration, StringComparer.Ordinal)
+            .ToList();
+
+        Assert.Equal(
+            [
+                "ListBox.ItemContainerTheme/ControlTheme[ListBoxItem] logger:LoggingSession",
+                "PlotView.DefaultTrackerTemplate/ControlTemplate[] oxycore:TrackerHitResult",
+            ],
+            nested);
+    }
 
     [Fact]
     public void The_view_opens_no_escape_hatch() => BindingFacts.AssertNoEscapeHatch(View);
