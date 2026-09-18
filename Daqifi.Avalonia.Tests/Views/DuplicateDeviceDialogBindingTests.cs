@@ -99,7 +99,8 @@ public class DuplicateDeviceDialogBindingTests
         // Every way C# 12 can construct the dialog: `new T(`/`new T {` and the target-typed
         // `T x = new(`, which a search for the type name after `new` cannot see.
         var construction = new Regex(
-            $@"\bnew\s+{dialogType}\s*[({{]|(?<![\w.]){dialogType}\s+{identifier}\s*=\s*new\s*\(");
+            // `\??` because `DuplicateDeviceDialog? d = new()` is the same construction (Qodo round 2).
+            $@"\bnew\s+{dialogType}\s*[({{]|(?<![\w.]){dialogType}\s*\??\s+{identifier}\s*=\s*new\s*\(");
         // A `using` alias can name the dialog without either spelling above; this guard does not
         // follow aliases, so one FAILS rather than hiding a construction written through it.
         var alias = new Regex($@"\busing\s+{identifier}\s*=\s*{dialogType}\s*;");
@@ -114,7 +115,9 @@ public class DuplicateDeviceDialogBindingTests
 
         foreach (var path in sources)
         {
-            var source = File.ReadAllText(path);
+            // Code only: comments and string/char literals blanked, so neither a brace inside a
+            // string nor a construction quoted in a comment is read as code.
+            var source = CodeOnly(File.ReadAllText(path));
 
             var aliases = alias.Matches(source).Count;
             if (aliases > 0)
@@ -176,14 +179,17 @@ public class DuplicateDeviceDialogBindingTests
     /// the same name in another, and pass (Qodo round 1). So: take the <b>nearest</b> preceding
     /// declaration whose braces have not closed by the assignment — C# forbids the same name being
     /// redeclared in a nested scope, so that is the one the compiler binds to — then require that
-    /// nothing reassigns the local, or passes it by <c>ref</c>/<c>out</c>, in between.
+    /// nothing else in the file writes that name: no reassignment, no <c>ref</c>/<c>out</c>, no second
+    /// declaration. File-wide rather than between declaration and use, because an initialized field
+    /// also matches as a declaration here and any method can reassign a field.
     /// </para>
     ///
     /// <para>
-    /// Every uncertainty fails rather than passes: a field, parameter or pattern variable is not
-    /// followed and so reads as "not declared in scope"; an unbalanced brace in a string literal can
-    /// only close a scope early, which also fails. The test project references no compiler API, and
-    /// that direction of error is what makes a textual reading acceptable here.
+    /// <c>this</c>, a parameter, a property or a pattern variable is not followed and so reads as "not
+    /// declared in scope", which fails. Braces are counted over <see cref="CodeOnly"/> text: counted raw, a lone
+    /// <c>"{"</c> inside an inner block cancelled that block's closing brace, so a closed scope read
+    /// as open and its declaration was borrowed by an assignment outside it (Qodo round 2 — the
+    /// earlier claim here that a stray brace could only fail was wrong).
     /// </para>
     /// </summary>
     private static string? LocalIsFreshViewModel(string source, string local, int assignmentAt)
@@ -200,8 +206,8 @@ public class DuplicateDeviceDialogBindingTests
 
         if (declarations.Count == 0)
         {
-            return "no local declaration of it with an initializer is in scope there — a field, parameter "
-                   + "or pattern variable is not followed by this guard";
+            return "no declaration of it with an initializer is in scope there — `this`, parameters, "
+                   + "properties and pattern variables are not followed by this guard";
         }
 
         var nearest = declarations[^1];
@@ -214,14 +220,147 @@ public class DuplicateDeviceDialogBindingTests
                    + nameof(DuplicateDeviceDialogViewModel);
         }
 
-        var declarationEnd = nearest.Index + nearest.Length;
-        var between = source[declarationEnd..assignmentAt];
-        if (Regex.IsMatch(between, $@"(?<![\w.]){name}\s*(?:=(?!=)|\?\?=)|\b(?:ref|out)\s+{name}\b"))
+        // Anywhere in the file, not just between the declaration and the use: an initialized FIELD
+        // also reads as an in-scope declaration here, and a field can be reassigned by any method,
+        // before or after this one in the text. A same-named local elsewhere trips this too; that is
+        // the failing direction, and renaming one of them clears it.
+        var writes = Regex.Matches(source, $@"(?<![\w.]){name}\s*(?:=(?!=)|\?\?=)|\b(?:ref|out)\s+{name}\b")
+            .Count(write => write.Index < nearest.Index || write.Index >= nearest.Index + nearest.Length);
+        if (writes > 0)
         {
-            return "it is reassigned, or passed by ref/out, between its declaration and the assignment";
+            return $"the name is written {writes} more time(s) in the file — reassigned, passed by ref/out, "
+                   + "or declared again — so its declaration alone does not say what the dialog receives";
         }
 
         return null;
+    }
+
+    /// <summary>
+    /// The source with every comment and string/char literal overwritten by spaces (newlines kept),
+    /// so offsets are unchanged and only code is left to match against. Interpolation holes stay
+    /// code — they are code — and string literals nested inside them are blanked in turn. Raw
+    /// (<c>"""</c>) literals are blanked whole, holes included; their braces come in pairs, so that
+    /// cannot unbalance a count.
+    /// </summary>
+    private static string CodeOnly(string source)
+    {
+        var text = source.ToCharArray();
+        var i = 0;
+
+        void Blank(int from, int to)
+        {
+            for (var k = from; k < to && k < text.Length; k++)
+            {
+                if (text[k] != '\n') { text[k] = ' '; }
+            }
+        }
+
+        char At(int k) => k < source.Length ? source[k] : '\0';
+
+        // Scans code from i. With stopAtClose, returns at the '}' that closes an interpolation hole.
+        void Code(bool stopAtClose)
+        {
+            var depth = 0;
+            while (i < source.Length)
+            {
+                var c = source[i];
+                if (c == '/' && At(i + 1) == '/')
+                {
+                    var end = source.IndexOf('\n', i);
+                    end = end < 0 ? source.Length : end;
+                    Blank(i, end);
+                    i = end;
+                }
+                else if (c == '/' && At(i + 1) == '*')
+                {
+                    var end = source.IndexOf("*/", i + 2, StringComparison.Ordinal);
+                    end = end < 0 ? source.Length : end + 2;
+                    Blank(i, end);
+                    i = end;
+                }
+                else if (c == '\'')
+                {
+                    var start = i++;
+                    while (i < source.Length && source[i] != '\'' && source[i] != '\n')
+                    {
+                        i += source[i] == '\\' ? 2 : 1;
+                    }
+                    i++;
+                    Blank(start, i);
+                }
+                else if (c == '"' || ((c == '$' || c == '@') && (At(i + 1) == '"' || At(i + 2) == '"')))
+                {
+                    var start = i;
+                    var interpolated = false;
+                    var verbatim = false;
+                    while (At(i) is '$' or '@')
+                    {
+                        interpolated |= source[i] == '$';
+                        verbatim |= source[i] == '@';
+                        i++;
+                    }
+
+                    if (At(i) != '"')
+                    {
+                        // `@identifier` or similar, not a literal prefix: it is code.
+                        i = start + 1;
+                    }
+                    else if (At(i) == '"' && At(i + 1) == '"' && At(i + 2) == '"')
+                    {
+                        var quotes = 0;
+                        while (At(i) == '"') { quotes++; i++; }
+                        var fence = new string('"', quotes);
+                        var end = source.IndexOf(fence, i, StringComparison.Ordinal);
+                        i = end < 0 ? source.Length : end + quotes;
+                        Blank(start, i);
+                    }
+                    else
+                    {
+                        Blank(start, ++i);
+                        Literal(interpolated, verbatim);
+                    }
+                }
+                else if (c == '{')
+                {
+                    depth++;
+                    i++;
+                }
+                else if (c == '}')
+                {
+                    if (stopAtClose && depth == 0) { return; }
+                    depth--;
+                    i++;
+                }
+                else
+                {
+                    i++;
+                }
+            }
+        }
+
+        // Scans a regular or verbatim literal body from just after its opening quote.
+        void Literal(bool interpolated, bool verbatim)
+        {
+            while (i < source.Length)
+            {
+                var c = source[i];
+                if (!verbatim && c == '\\') { Blank(i, i + 2); i += 2; }
+                else if (verbatim && c == '"' && At(i + 1) == '"') { Blank(i, i + 2); i += 2; }
+                else if (c == '"') { Blank(i, ++i); return; }
+                else if (!verbatim && c == '\n') { return; }
+                else if (interpolated && c == '{' && At(i + 1) == '{') { Blank(i, i + 2); i += 2; }
+                else if (interpolated && c == '{')
+                {
+                    Blank(i, ++i);
+                    Code(stopAtClose: true);
+                    Blank(i, ++i);
+                }
+                else { Blank(i, ++i); }
+            }
+        }
+
+        Code(stopAtClose: false);
+        return new string(text);
     }
 
     /// <summary>
