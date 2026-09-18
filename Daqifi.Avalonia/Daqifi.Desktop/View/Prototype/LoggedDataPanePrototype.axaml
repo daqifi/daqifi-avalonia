@@ -32,6 +32,27 @@
         - StaticResource token brushes → DynamicResource (tokens live in ThemeDictionaries).
         - Upstream's FadeButton is referenced only in a comment (PlotIconButton already
           replaced it upstream), so no local FadeButton equivalent is needed here.
+
+        Compiled bindings (issue #327): AvaloniaUseCompiledBindingsByDefault is false in this
+        project, so the DataType needs the CompileBindings beside it. The one host is
+        MainWindow's Logged Data tab, whose ContentControl Content="{Binding}" hands this pane
+        the window's DaqifiViewModel; the code-behind reads it back the same way and swaps in
+        no view model of its own. Five scopes:
+        - the root, DaqifiViewModel;
+        - the tracker ControlTemplate, declared TrackerHitResult because that is what
+          PlotBase.ShowTracker assigns as its DataContext (as in LiveGraphPane). A
+          ControlTemplate is not a new scope: undeclared, its three bindings are AVLN2000
+          against DaqifiViewModel (measured);
+        - the session list's ListBoxItem ControlTheme, declared LoggingSession because a
+          ListBoxItem's DataContext is its item from LoggingSessions. It covers the theme's
+          AutomationProperties.Name setter and the row template beneath it; undeclared, the
+          ten member bindings among their 18 are AVLN2000 against DaqifiViewModel (measured).
+          The other eight - four bare {Binding}s and four $parent paths - compile under either
+          scope, so it is the member bindings that keep this declaration honest. The row's four
+          commands reach back out with $parent[UserControl].DataContext, which the compiler
+          resolves against this root's DaqifiViewModel;
+        - the two legend ItemTemplates, which already carried DataType (DeviceLegendGroup,
+          then LoggedSeriesLegendItem) and are left as they were.
     -->
 
     <UserControl.Resources>
