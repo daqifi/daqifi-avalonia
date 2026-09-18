@@ -512,21 +512,16 @@ public partial class MobileShellViewModel : ObservableObject, IDisposable
             series.Append(sample.Value);
         }
 
-        // Only judge silence when there is something whose silence would mean anything. With no
-        // active analog channel there is nothing to produce a sample, so the count cannot advance
-        // no matter how healthy the transport is, and the watchdog would tear down a working
-        // connection — the exact false-positive this design was supposed to avoid. Reset rather
-        // than merely skip, so a stretch of unmonitored polls cannot bank silence toward a later
-        // trip.
-        if (monitored > 0)
-        {
-            CheckForSilentStream();
-        }
-        else
-        {
-            _silentPolls = 0;
-            _samplesAtLastPoll = TotalSamples;
-        }
+        // Judge silence on EVERY poll, including ones that found no active channel (#358). This
+        // used to reset the counter instead whenever `monitored` was 0, reasoning that with nothing
+        // active nothing can produce a sample. True — but the shell is still showing "Streaming N
+        // channel(s)", and the reset ran every tick, so once the channels went inactive the watchdog
+        // was disarmed for the rest of the session and the screen lied indefinitely. Channels do go
+        // inactive under a running stream: a status frame carrying the device's enabled mask resyncs
+        // every analog channel's IsEnabled in place (Core 1.8.0), and the Channels and Profiles panes
+        // can deactivate them too. What the original gate protected against — tearing down a
+        // healthy connection — is handled at the trip instead: see CheckForSilentStream.
+        CheckForSilentStream(monitored);
     }
 
     /// <summary>
@@ -640,8 +635,17 @@ public partial class MobileShellViewModel : ObservableObject, IDisposable
     /// rather than a frozen plot, which is the whole point.</item>
     /// </list>
     /// </para>
+    /// <para>
+    /// What a trip does depends on whether any analog channel was still active on the poll that
+    /// tripped it (<paramref name="monitoredChannels"/>). With channels active, silence means the
+    /// transport is dead, and the connection is dropped. With none active, silence is explained —
+    /// nothing is enabled to produce a sample — and says nothing about the transport, so only the
+    /// stream is stopped and the user is told why (#358). Either way the screen stops claiming a
+    /// live stream that is delivering nothing.
+    /// </para>
     /// </remarks>
-    private void CheckForSilentStream()
+    /// <param name="monitoredChannels">Active analog input channels seen by this poll.</param>
+    private void CheckForSilentStream(int monitoredChannels)
     {
         var total = TotalSamples;
         if (total != _samplesAtLastPoll)
@@ -655,6 +659,17 @@ public partial class MobileShellViewModel : ObservableObject, IDisposable
         if (_silentPolls < SilentPollsBeforeStreamDeclaredDead) { return; }
 
         _silentPolls = 0;
+        if (monitoredChannels == 0)
+        {
+            AppLogger.Instance.Warning(
+                $"No samples arrived for {SilentPollsBeforeStreamDeclaredDead} consecutive polls while " +
+                "streaming, and no analog channel is enabled any more; stopping the stream.");
+            StopStream();
+            Status = "Streaming stopped — no channels are enabled on the device. " +
+                     "Pick channels and start again.";
+            return;
+        }
+
         AppLogger.Instance.Warning(
             $"No samples arrived for {SilentPollsBeforeStreamDeclaredDead} consecutive polls while " +
             "streaming; treating the connection as dead.");
