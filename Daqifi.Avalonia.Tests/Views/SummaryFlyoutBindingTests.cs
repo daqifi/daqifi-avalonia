@@ -274,44 +274,21 @@ public class SummaryFlyoutBindingTests
     /// <c>0 Error(s)</c> with every test green — the same defect this PR removes, one layer up.
     ///
     /// <para>
-    /// <c>{ReflectionBinding}</c> is the second hatch and is checked here too: it opts a <b>single</b>
-    /// binding out, leaves the root declaration and the count untouched, and reads in a diff as a
-    /// spelling variant of <c>{Binding}</c>.
+    /// This carried its own copy of the check until issue #374 made <see cref="BindingFacts.AssertNoEscapeHatch"/>
+    /// the single implementation, and the copy had the gap that helper closes: it scanned attribute
+    /// values for <c>{ReflectionBinding</c> but not the OBJECT-ELEMENT spelling. Measured on this view:
+    /// <c>&lt;TextBlock.Text&gt;&lt;ReflectionBinding Path="NoSuchMemberZZZ370"/&gt;&lt;/TextBlock.Text&gt;</c>
+    /// in the header built with zero <c>AVLN2000</c> while all 13 tests in this class passed; the same
+    /// path as <c>{Binding}</c> is <c>AVLN2000</c>, so the member really was dead and the file really
+    /// was compiled. Through the helper the same mutation fails this test.
     /// </para>
     ///
     /// <para>
     /// #327 does contemplate switching checking off <i>narrowly</i>, for a binding that is genuinely
     /// inexpressible. This is not a veto on that; it is the requirement that doing so be deliberate,
-    /// which means editing this test and saying which binding and why.
+    /// which means updating the helper to allow exactly that binding and saying why.
     /// </para>
     /// </summary>
     [Fact]
-    public void Nothing_opts_back_out_of_compile_checking()
-    {
-        var root = Root();
-
-        var subtrees = root.DescendantsAndSelf()
-            .Select(element => (element, attribute: element.Attribute(Xaml + "CompileBindings")))
-            .Where(pair => pair.attribute is not null
-                           && !string.Equals(pair.attribute!.Value, "True", StringComparison.OrdinalIgnoreCase))
-            .Select(pair => $"<{pair.element.Name.LocalName} x:CompileBindings=\"{pair.attribute!.Value}\">")
-            .ToList();
-
-        Assert.True(
-            subtrees.Count == 0,
-            $"{View}: {string.Join(", ", subtrees)} — x:CompileBindings is inherited and overridable per "
-            + "subtree, so this puts every binding below it back on reflection while the root "
-            + "declaration, the binding count and the build all stay green.");
-
-        var reflection = root.DescendantsAndSelf()
-            .SelectMany(element => element.Attributes())
-            .Where(attribute => attribute.Value.Contains("{ReflectionBinding", StringComparison.Ordinal))
-            .Select(attribute => $"{attribute.Parent!.Name.LocalName}.{attribute.Name.LocalName}")
-            .ToList();
-
-        Assert.True(
-            reflection.Count == 0,
-            $"{View}: {string.Join(", ", reflection)} use {{ReflectionBinding}}, which opts that one "
-            + "binding out of compile checking without touching the root declaration.");
-    }
+    public void The_view_opens_no_escape_hatch() => BindingFacts.AssertNoEscapeHatch(View);
 }
