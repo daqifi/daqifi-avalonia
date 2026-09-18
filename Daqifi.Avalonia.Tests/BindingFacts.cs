@@ -211,8 +211,9 @@ internal static class BindingFacts
     /// The dialog's class name is taken from its own <c>x:Class</c>, and matched bare, qualified or
     /// <c>global::</c>-qualified. What <i>counts</i> as a use — either route, any construction
     /// including the target-typed <c>Dialog? d = new()</c>, and any <c>using</c> alias for the dialog —
-    /// is read off the raw text, so one inside a comment, string or interpolation hole counts and then
-    /// fails as unparsed rather than vanishing (Qodo, third shepherd round on PR #376). What
+    /// is read off the raw text as well as the code, so one inside a comment, string or interpolation
+    /// hole counts and then fails as unparsed rather than vanishing (Qodo, third shepherd round on PR
+    /// #376), and so does one whose tokens a comment splits (Qodo round 1 on PR #387). What
     /// <i>satisfies</i> the guard is read off <see cref="CodeOnly"/>, so a commented-out construction
     /// cannot. A use in any other shape (a named argument, an inline <c>new</c>, an object initializer)
     /// <b>fails</b>: silently checking the subset it understood is the defect Qodo found in the first
@@ -246,11 +247,13 @@ internal static class BindingFacts
             + $"does not name {viewModelType.FullName}.");
 
         const string id = @"[A-Za-z_][A-Za-z0-9_]*";
-        var type = $@"(?:global::)?(?:{id}\.)*{Regex.Escape(dialog)}";
-        var viewModel = $@"(?:global::)?(?:{id}\.)*{Regex.Escape(viewModelType.Name)}";
+        var type = $@"(?:global\s*::\s*)?(?:{id}\s*\.\s*)*{Regex.Escape(dialog)}";
+        var viewModel = $@"(?:global\s*::\s*)?(?:{id}\s*\.\s*)*{Regex.Escape(viewModelType.Name)}";
 
-        // Counted on raw text: every call, every construction (`new T(`, `new T {`, `T x = new(`,
-        // `T? x = new(`), every alias. Understood on code only: the two routes, in exactly one shape each.
+        // Counted: every call, every construction (`new T(`, `new T {`, `T x = new(`, `T? x = new(`),
+        // every alias — found in the raw text OR in the code-only text, so neither a use inside a
+        // comment, string or hole nor one whose tokens a comment splits (`new /* c */ T(`, found by
+        // Qodo round 1 on PR #387) goes uncounted. Understood on code only: the two routes, one shape each.
         var counted = new Regex(
             $@"ShowDialogAsync\s*<\s*{type}\s*>|\bnew\s+{type}\s*[({{]|(?<![\w.]){type}\s*\??\s+{id}\s*=\s*new\s*\("
             + $@"|\busing\s+{id}\s*=\s*{type}\s*;");
@@ -269,11 +272,11 @@ internal static class BindingFacts
         foreach (var path in sources)
         {
             var raw = File.ReadAllText(path);
-            var present = counted.Matches(raw).Count;
+            var source = CodeOnly(raw);
+            var present = counted.Matches(raw).Concat(counted.Matches(source)).Select(use => use.Index).Distinct().Count();
             if (present == 0) { continue; }
 
             mentions += present;
-            var source = CodeOnly(raw);
             var file = Path.GetFileName(path);
             var parsed = understood.Matches(source);
 
@@ -292,7 +295,9 @@ internal static class BindingFacts
 
                 // …and nothing else in that block names it except to reach a member. Scanned on the raw
                 // text to the block's end, so a write inside an interpolation hole, or in a loop body
-                // after the use, is seen too.
+                // after the use, is seen too. The price, taken deliberately: a comment naming the local
+                // fails too. That is a loud false alarm cured by rewording, where masking comments here
+                // would hide the hole, since CodeOnly cannot tell a hole from the literal around it.
                 var others = construction is null
                     ? 0
                     : Regex.Matches(raw[..BlockEnd(source, construction.Index)], $@"(?<![\w.]){name}(?!\w)(?!\s*\??\.(?!\.))")
@@ -302,7 +307,8 @@ internal static class BindingFacts
                     construction is not null && others == 0,
                     $"{file}: {dialog} is handed '{arg.Value}', which is not a `var` constructed as a "
                     + $"{viewModelType.Name} in a block enclosing that use and left alone after"
-                    + (construction is null ? "" : $" (named {others} more time(s) other than to reach a member)")
+                    + (construction is null ? "" : $" (named {others} more time(s) other than to reach a member, "
+                                                    + "comments and strings included)")
                     + $". That parameter is typed object, so the compiler accepts anything, and "
                     + $"{repoRelativeViewPath} claims x:DataType=\"{declared}\" — the dialog would compile and render blank.");
             }
