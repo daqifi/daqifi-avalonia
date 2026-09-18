@@ -5,7 +5,11 @@
              xmlns:oxy="http://oxyplot.org/avalonia"
              xmlns:i="https://github.com/projektanker/icons.avalonia"
              xmlns:local="using:Daqifi.Desktop.View"
-             xmlns:logger="using:Daqifi.Desktop.Logger">
+             xmlns:logger="using:Daqifi.Desktop.Logger"
+             xmlns:vm="using:Daqifi.Desktop.ViewModels"
+             xmlns:oxycore="using:OxyPlot"
+             x:DataType="vm:DaqifiViewModel"
+             x:CompileBindings="True">
 
     <!--
         Ported from Daqifi.Desktop/View/Prototype/LoggedDataPanePrototype.xaml.
@@ -28,6 +32,27 @@
         - StaticResource token brushes → DynamicResource (tokens live in ThemeDictionaries).
         - Upstream's FadeButton is referenced only in a comment (PlotIconButton already
           replaced it upstream), so no local FadeButton equivalent is needed here.
+
+        Compiled bindings (issue #327): AvaloniaUseCompiledBindingsByDefault is false in this
+        project, so the DataType needs the CompileBindings beside it. The one host is
+        MainWindow's Logged Data tab, whose ContentControl Content="{Binding}" hands this pane
+        the window's DaqifiViewModel; the code-behind reads it back the same way and swaps in
+        no view model of its own. Five scopes:
+        - the root, DaqifiViewModel;
+        - the tracker ControlTemplate, declared TrackerHitResult because that is what
+          PlotBase.ShowTracker assigns as its DataContext (as in LiveGraphPane). A
+          ControlTemplate is not a new scope: undeclared, its three bindings are AVLN2000
+          against DaqifiViewModel (measured);
+        - the session list's ListBoxItem ControlTheme, declared LoggingSession because a
+          ListBoxItem's DataContext is its item from LoggingSessions. It covers the theme's
+          AutomationProperties.Name setter and the row template beneath it; undeclared, the
+          ten member bindings among their 18 are AVLN2000 against DaqifiViewModel (measured).
+          The other eight - four bare {Binding}s and four $parent paths - compile under either
+          scope, so it is the member bindings that keep this declaration honest. The row's four
+          commands reach back out with $parent[UserControl].DataContext, which the compiler
+          resolves against this root's DaqifiViewModel;
+        - the two legend ItemTemplates, which already carried DataType (DeviceLegendGroup,
+          then LoggedSeriesLegendItem) and are left as they were.
     -->
 
     <UserControl.Resources>
@@ -464,7 +489,7 @@
                                       Background="{DynamicResource Surface}"
                                       Margin="16,8,16,0">
                             <oxy:PlotView.DefaultTrackerTemplate>
-                                <ControlTemplate>
+                                <ControlTemplate x:DataType="oxycore:TrackerHitResult">
                                     <oxy:TrackerControl Position="{Binding Position}"
                                                         LineExtents="{Binding PlotModel.PlotArea}"
                                                         Background="{DynamicResource SurfaceActive}"
@@ -672,7 +697,7 @@
                              ScrollViewer.HorizontalScrollBarVisibility="Disabled"
                              SelectionMode="Single">
                         <ListBox.ItemContainerTheme>
-                            <ControlTheme TargetType="ListBoxItem">
+                            <ControlTheme TargetType="ListBoxItem" x:DataType="logger:LoggingSession">
                                 <Setter Property="HorizontalContentAlignment" Value="Stretch"/>
                                 <Setter Property="Padding" Value="0"/>
                                 <Setter Property="Margin" Value="0"/>
