@@ -60,8 +60,9 @@ public class DuplicateDeviceDialogBindingTests
     /// compile and render a dialog with no message and two unlabelled choices.
     ///
     /// <para>
-    /// So this reads every C# file in the app project for places that construct the dialog, and
-    /// requires each one to assign its <c>DataContext</c> a local constructed as a
+    /// So this reads every C# file in the app project for places that construct the dialog — by its
+    /// bare or qualified name, with any <c>using</c> alias failing outright — and requires each one to
+    /// assign its <c>DataContext</c> a local whose in-scope declaration constructs a
     /// <see cref="DuplicateDeviceDialogViewModel"/>. Read off the source rather than by running it:
     /// the one call site today, <c>ConnectionDialogViewModel.HandleDuplicateDevice</c>, needs a live
     /// desktop lifetime to reach the assignment. A construction written in any shape this test cannot
@@ -89,14 +90,23 @@ public class DuplicateDeviceDialogBindingTests
                            && !path.Contains($"{Path.DirectorySeparatorChar}bin{Path.DirectorySeparatorChar}"))
             .ToList();
 
-        // Every way C# 12 can construct the dialog: `new DuplicateDeviceDialog(` and the target-typed
-        // `DuplicateDeviceDialog x = new(`, which a search for the type name after `new` cannot see.
+        // A type name as C# lets you write it: bare, namespace-qualified, or global::-qualified. Only
+        // matching the bare name let `new Daqifi.Desktop.View.DuplicateDeviceDialog()` walk past the
+        // count while the existing bare site kept it positive (Qodo round 1).
+        const string dialogType = @"(?:global::)?(?:[A-Za-z_][A-Za-z0-9_]*\.)*DuplicateDeviceDialog";
+        const string identifier = @"[A-Za-z_][A-Za-z0-9_]*";
+
+        // Every way C# 12 can construct the dialog: `new T(`/`new T {` and the target-typed
+        // `T x = new(`, which a search for the type name after `new` cannot see.
         var construction = new Regex(
-            @"\bnew\s+DuplicateDeviceDialog\s*[({]|\bDuplicateDeviceDialog\s+[A-Za-z_][A-Za-z0-9_]*\s*=\s*new\s*\(");
+            $@"\bnew\s+{dialogType}\s*[({{]|(?<![\w.]){dialogType}\s+{identifier}\s*=\s*new\s*\(");
+        // A `using` alias can name the dialog without either spelling above; this guard does not
+        // follow aliases, so one FAILS rather than hiding a construction written through it.
+        var alias = new Regex($@"\busing\s+{identifier}\s*=\s*{dialogType}\s*;");
         // The one shape this guard understands: a `var` local, then its DataContext assigned a local.
         var understoodShape = new Regex(
-            @"\bvar\s+(?<dialog>[A-Za-z_][A-Za-z0-9_]*)\s*=\s*new\s+DuplicateDeviceDialog\s*\(\s*\)\s*;"
-            + @"\s*(?<dialog2>[A-Za-z_][A-Za-z0-9_]*)\.DataContext\s*=\s*(?<vm>[A-Za-z_][A-Za-z0-9_]*)\s*;");
+            $@"\bvar\s+(?<dialog>{identifier})\s*=\s*new\s+{dialogType}\s*\(\s*\)\s*;"
+            + $@"\s*(?<dialog2>{identifier})\.DataContext\s*=\s*(?<vm>{identifier})\s*;");
 
         var constructions = 0;
         var understood = 0;
@@ -105,6 +115,13 @@ public class DuplicateDeviceDialogBindingTests
         foreach (var path in sources)
         {
             var source = File.ReadAllText(path);
+
+            var aliases = alias.Matches(source).Count;
+            if (aliases > 0)
+            {
+                unsupported.Add($"{Path.GetFileName(path)} ({aliases} using alias(es) for the dialog)");
+            }
+
             var present = construction.Matches(source).Count;
             if (present == 0) { continue; }
 
@@ -117,17 +134,14 @@ public class DuplicateDeviceDialogBindingTests
             foreach (var site in parsed)
             {
                 var local = site.Groups["vm"].Value;
-                var constructed = Regex.IsMatch(
-                    source,
-                    $@"\b(var|{nameof(DuplicateDeviceDialogViewModel)})\s+{Regex.Escape(local)}\s*=\s*new\s+{nameof(DuplicateDeviceDialogViewModel)}\s*\(");
+                var problem = LocalIsFreshViewModel(source, local, site.Groups["dialog2"].Index);
 
                 Assert.True(
-                    constructed,
-                    $"{Path.GetFileName(path)}: DuplicateDeviceDialog.DataContext is assigned '{local}', "
-                    + $"which is not constructed as a {nameof(DuplicateDeviceDialogViewModel)} in that file. "
-                    + $"DataContext is typed object, so the compiler accepts anything, and {View} claims "
-                    + $"x:DataType=\"vm:{nameof(DuplicateDeviceDialogViewModel)}\" — the dialog would compile "
-                    + "and render blank.");
+                    problem is null,
+                    $"{Path.GetFileName(path)}: DuplicateDeviceDialog.DataContext is assigned '{local}', and "
+                    + $"{problem}. DataContext is typed object, so the compiler accepts anything, and {View} "
+                    + $"claims x:DataType=\"vm:{nameof(DuplicateDeviceDialogViewModel)}\" — the dialog would "
+                    + "compile and render blank.");
             }
 
             if (parsed.Count < present)
@@ -144,11 +158,86 @@ public class DuplicateDeviceDialogBindingTests
 
         Assert.True(
             unsupported.Count == 0,
-            $"DuplicateDeviceDialog is constructed in {constructions} place(s) but only {understood} are in "
+            $"DuplicateDeviceDialog is constructed in {constructions} place(s), {understood} of them in "
             + "the `var d = new DuplicateDeviceDialog(); d.DataContext = local;` shape this guard can "
-            + $"follow: {string.Join(", ", unsupported)}. An unrecognised construction is NOT covered, and "
+            + $"follow; not followed: {string.Join(", ", unsupported)}. An unrecognised construction is NOT covered, and "
             + "skipping it silently is the failure this assertion exists to prevent — teach this test the "
             + "shape, or write it as a local.");
+    }
+
+    /// <summary>
+    /// Resolves <paramref name="local"/> as used at <paramref name="assignmentAt"/> to the declaration
+    /// that is actually in scope there, and returns why it is not a freshly constructed
+    /// <see cref="DuplicateDeviceDialogViewModel"/> — or null when it is.
+    ///
+    /// <para>
+    /// Deliberately scoped rather than file-wide. Matching the name anywhere in the file let
+    /// <c>object duplicateDialogViewModel = this;</c> in one method borrow the correct declaration of
+    /// the same name in another, and pass (Qodo round 1). So: take the <b>nearest</b> preceding
+    /// declaration whose braces have not closed by the assignment — C# forbids the same name being
+    /// redeclared in a nested scope, so that is the one the compiler binds to — then require that
+    /// nothing reassigns the local, or passes it by <c>ref</c>/<c>out</c>, in between.
+    /// </para>
+    ///
+    /// <para>
+    /// Every uncertainty fails rather than passes: a field, parameter or pattern variable is not
+    /// followed and so reads as "not declared in scope"; an unbalanced brace in a string literal can
+    /// only close a scope early, which also fails. The test project references no compiler API, and
+    /// that direction of error is what makes a textual reading acceptable here.
+    /// </para>
+    /// </summary>
+    private static string? LocalIsFreshViewModel(string source, string local, int assignmentAt)
+    {
+        const string identifier = @"[A-Za-z_][A-Za-z0-9_]*";
+        const string viewModelType = @"(?:global::)?(?:[A-Za-z_][A-Za-z0-9_]*\.)*" + nameof(DuplicateDeviceDialogViewModel);
+        var name = Regex.Escape(local);
+
+        var declarations = Regex.Matches(
+                source,
+                $@"(?<![\w.])(?<type>(?:global::)?{identifier}(?:\.{identifier})*(?:<[^;=()]*>)?\??)\s+{name}\s*=(?!=)\s*(?<init>[^;]*);")
+            .Where(declaration => declaration.Index < assignmentAt && StillInScope(source, declaration.Index, assignmentAt))
+            .ToList();
+
+        if (declarations.Count == 0)
+        {
+            return "no local declaration of it with an initializer is in scope there — a field, parameter "
+                   + "or pattern variable is not followed by this guard";
+        }
+
+        var nearest = declarations[^1];
+        var type = nearest.Groups["type"].Value;
+        var init = nearest.Groups["init"].Value.Trim();
+        if ((type != "var" && !Regex.IsMatch(type, $"^{viewModelType}$"))
+            || !Regex.IsMatch(init, $@"^new\s+{viewModelType}\s*\("))
+        {
+            return $"the declaration in scope is `{type} {local} = {init}`, not a new "
+                   + nameof(DuplicateDeviceDialogViewModel);
+        }
+
+        var declarationEnd = nearest.Index + nearest.Length;
+        var between = source[declarationEnd..assignmentAt];
+        if (Regex.IsMatch(between, $@"(?<![\w.]){name}\s*(?:=(?!=)|\?\?=)|\b(?:ref|out)\s+{name}\b"))
+        {
+            return "it is reassigned, or passed by ref/out, between its declaration and the assignment";
+        }
+
+        return null;
+    }
+
+    /// <summary>
+    /// Whether a declaration at <paramref name="from"/> is still in scope at <paramref name="to"/>:
+    /// no brace between them closes the block the declaration sits in.
+    /// </summary>
+    private static bool StillInScope(string source, int from, int to)
+    {
+        var depth = 0;
+        for (var i = from; i < to; i++)
+        {
+            if (source[i] == '{') { depth++; }
+            else if (source[i] == '}' && --depth < 0) { return false; }
+        }
+
+        return true;
     }
 
     /// <summary>
