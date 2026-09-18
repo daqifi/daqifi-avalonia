@@ -248,7 +248,8 @@ internal static class BindingFacts
 
         foreach (var path in sources)
         {
-            var source = File.ReadAllText(path);
+            // Comments and literals blanked, offsets kept: every search below is over code only.
+            var source = CodeOnly(File.ReadAllText(path));
             var file = Path.GetFileName(path);
 
             Assert.False(
@@ -314,10 +315,11 @@ internal static class BindingFacts
     /// <paramref name="to"/>: walking forward, brace depth never drops below where it started. A local
     /// declared at <paramref name="from"/> is then in scope at <paramref name="to"/>, and since C# forbids
     /// redeclaring a local's name inside its own scope, the identifier there refers to it. A declaration
-    /// in another method closes its block first and fails. Braces are counted raw: interpolated strings
-    /// balance, and a stray brace in a literal or comment can only make this stricter unless it exactly
-    /// cancels a real one. The one shadowing it cannot see is a lambda or local-function parameter
-    /// reusing the name, which no call site in this checkout does.
+    /// in another method closes its block first and fails. <paramref name="source"/> must already be
+    /// <see cref="CodeOnly"/>: a raw <c>/* { */</c> after the declaration would otherwise hold the depth
+    /// up across the method's real closing brace and let a same-named local in the next method through
+    /// (Qodo, second shepherd round on PR #376). The one shadowing it cannot see is a lambda or
+    /// local-function parameter reusing the name, which no call site in this checkout does.
     /// </summary>
     private static bool BlockStillOpen(string source, int from, int to)
     {
@@ -329,6 +331,114 @@ internal static class BindingFacts
         }
 
         return true;
+    }
+
+    /// <summary>
+    /// The C# source with every comment and every string or character literal overwritten by spaces
+    /// (newlines kept), so the result has the same length and offsets but only code is left to match.
+    /// Without this, a brace in a comment or literal throws off <see cref="BlockStillOpen"/>, and a
+    /// commented-out <c>// var vm = new ViewModel(…)</c> reads as the construction a call relies on.
+    /// Interpolated strings are blanked including their holes, and the lexer follows nested literals
+    /// inside a hole so that a quote in there does not end the outer string early. Raw
+    /// (<c>"""</c>) strings are blanked whole.
+    /// </summary>
+    internal static string CodeOnly(string source)
+    {
+        var code = source.ToCharArray();
+        var i = 0;
+        while (i < source.Length)
+        {
+            var end = NonCodeEnd(source, i);
+            if (end == i) { i++; continue; }
+
+            for (var k = i; k < end; k++)
+            {
+                if (code[k] != '\n' && code[k] != '\r') { code[k] = ' '; }
+            }
+
+            i = end;
+        }
+
+        return new string(code);
+    }
+
+    /// <summary>
+    /// If a comment or a string/character literal starts at <paramref name="i"/>, the index just past
+    /// its end (the end of the source if it never closes); otherwise <paramref name="i"/> itself.
+    /// </summary>
+    private static int NonCodeEnd(string s, int i)
+    {
+        if (string.CompareOrdinal(s, i, "//", 0, 2) == 0)
+        {
+            var newline = s.IndexOf('\n', i);
+            return newline < 0 ? s.Length : newline;
+        }
+
+        if (string.CompareOrdinal(s, i, "/*", 0, 2) == 0)
+        {
+            var close = s.IndexOf("*/", i + 2, StringComparison.Ordinal);
+            return close < 0 ? s.Length : close + 2;
+        }
+
+        if (s[i] == '\'')
+        {
+            var k = i + 1;
+            while (k < s.Length && s[k] != '\'' && s[k] != '\n') { k += s[k] == '\\' ? 2 : 1; }
+            return Math.Min(k + 1, s.Length);
+        }
+
+        // String prefixes: any run of $ and @ (interpolated, verbatim, both, raw-interpolated).
+        var j = i;
+        var interpolated = false;
+        var verbatim = false;
+        while (j < s.Length && (s[j] == '$' || s[j] == '@'))
+        {
+            if (s[j] == '$') { interpolated = true; } else { verbatim = true; }
+            j++;
+        }
+
+        if (j >= s.Length || s[j] != '"') { return i; }
+
+        var quotes = 0;
+        while (j + quotes < s.Length && s[j + quotes] == '"') { quotes++; }
+        if (quotes >= 3 && !verbatim)
+        {
+            var closing = s.IndexOf(new string('"', quotes), j + quotes, StringComparison.Ordinal);
+            return closing < 0 ? s.Length : closing + quotes;
+        }
+
+        var p = j + 1;
+        var hole = 0;
+        while (p < s.Length)
+        {
+            if (hole > 0)
+            {
+                var nested = NonCodeEnd(s, p);
+                if (nested > p) { p = nested; continue; }
+                if (s[p] == '{') { hole++; }
+                else if (s[p] == '}') { hole--; }
+                p++;
+                continue;
+            }
+
+            var c = s[p];
+            if (!verbatim && c == '\\') { p += 2; continue; }
+            if (c == '"')
+            {
+                if (verbatim && p + 1 < s.Length && s[p + 1] == '"') { p += 2; continue; }
+                return p + 1;
+            }
+
+            if (interpolated && c == '{')
+            {
+                if (p + 1 < s.Length && s[p + 1] == '{') { p += 2; continue; }
+                hole = 1;
+            }
+
+            p++;
+        }
+
+        return s.Length;
     }
 
     /// <summary>
