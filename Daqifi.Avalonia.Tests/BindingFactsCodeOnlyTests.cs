@@ -16,6 +16,8 @@ public class BindingFactsCodeOnlyTests
     [InlineData("var s = \"{\"; }", "vars=;}")]
     [InlineData("$\"x{(y ? \"}\" : \"{\")}z\" {", "{")]
     [InlineData("// var vm = new Vm(\ncode{", "\ncode{")]
+    [InlineData("// var vm = new Vm(\r\ncode{", "\r\ncode{")]
+    [InlineData("// var vm = new Vm(\rcode{", "\rcode{")]
     [InlineData("@\"a\"\"{\" {", "{")]
     [InlineData("'{' '\\'' {", "{")]
     [InlineData("\"\"\"\n{ \" }\n\"\"\" }", "\n\n}")]

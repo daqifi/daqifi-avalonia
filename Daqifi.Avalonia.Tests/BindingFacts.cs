@@ -248,17 +248,22 @@ internal static class BindingFacts
 
         foreach (var path in sources)
         {
-            // Comments and literals blanked, offsets kept: every search below is over code only.
-            var source = CodeOnly(File.ReadAllText(path));
+            // Two views of the file, same offsets. What COUNTS as a call or a construction is read off
+            // the raw text, so a mention CodeOnly blanks — inside an interpolation hole, a comment or a
+            // string — still counts and then fails as unparsed rather than vanishing (Qodo, third
+            // shepherd round on PR #376). What SATISFIES the guard is read off code only, so a
+            // commented-out or string-borne construction cannot.
+            var raw = File.ReadAllText(path);
+            var source = CodeOnly(raw);
             var file = Path.GetFileName(path);
 
             Assert.False(
-                Regex.IsMatch(source, $@"\bnew\s+{escaped}\s*[({{]"),
+                Regex.IsMatch(raw, $@"\bnew\s+{escaped}\s*[({{]"),
                 $"{file}: constructs {dialog} directly. This guard follows ShowDialogAsync<{dialog}> call "
                 + "sites only, so a dialog presented another way is handed a DataContext nothing here "
                 + $"checks against x:DataType=\"{declared}\". Teach this helper the new route.");
 
-            var present = Regex.Matches(source, $@"ShowDialogAsync\s*<\s*{escaped}\s*>");
+            var present = Regex.Matches(raw, $@"ShowDialogAsync\s*<\s*{escaped}\s*>");
             if (present.Count == 0) { continue; }
 
             mentions += present.Count;
@@ -276,11 +281,16 @@ internal static class BindingFacts
                 // with the same spelling somewhere in the file (Qodo, shepherd round on PR #376):
                 // DaqifiViewModel.cs declares `exportDialogViewModel` in two methods, so a call handing
                 // some other object under that name in one method passed on the other's construction.
-                // Only declarations that precede the call and whose block still encloses it count.
+                // Only declarations that precede the call and whose block still encloses it count, and
+                // none with a conditional-compilation directive between it and the call: under
+                // `#if false` a construction is text the compiler never sees, and telling an active
+                // branch from an inactive one needs the build's symbols. Failing closed there costs a
+                // false alarm on code this checkout does not contain.
                 var constructed = Regex.Matches(
                         source[..site.Index],
                         $@"\b(var|{Regex.Escape(viewModelType.Name)})\s+{Regex.Escape(local)}\s*=\s*new\s+{Regex.Escape(viewModelType.Name)}\s*\(")
-                    .Any(declaration => BlockStillOpen(source, declaration.Index, site.Index));
+                    .Any(declaration => BlockStillOpen(source, declaration.Index, site.Index)
+                                        && !ConditionalDirective.IsMatch(source[declaration.Index..site.Index]));
 
                 Assert.True(
                     constructed,
@@ -307,8 +317,13 @@ internal static class BindingFacts
             $"ShowDialogAsync<{dialog}> is called in {mentions} place(s) but only {understood} are in the "
             + $"(owner, local) shape this guard can follow: {string.Join(", ", unsupported)}. An "
             + "unrecognised call is NOT covered, and silently skipping it is the failure this assertion "
-            + "exists to prevent.");
+            + "exists to prevent. A mention inside a comment, string or interpolation hole counts here "
+            + "and is never parsed, so it fails too.");
     }
+
+    /// <summary>A conditional-compilation directive at the start of a line.</summary>
+    private static readonly Regex ConditionalDirective =
+        new(@"(?m)^[ \t]*#[ \t]*(if|elif|else|endif)\b", RegexOptions.CultureInvariant);
 
     /// <summary>
     /// True when the block holding the text at <paramref name="from"/> is still open at
@@ -340,7 +355,8 @@ internal static class BindingFacts
     /// commented-out <c>// var vm = new ViewModel(…)</c> reads as the construction a call relies on.
     /// Interpolated strings are blanked including their holes, and the lexer follows nested literals
     /// inside a hole so that a quote in there does not end the outer string early. Raw
-    /// (<c>"""</c>) strings are blanked whole.
+    /// (<c>"""</c>) strings are blanked whole. Because a hole is executable code, callers use this
+    /// only for what may <i>satisfy</i> a guard, and count what must be checked on the raw text.
     /// </summary>
     internal static string CodeOnly(string source)
     {
@@ -370,7 +386,8 @@ internal static class BindingFacts
     {
         if (string.CompareOrdinal(s, i, "//", 0, 2) == 0)
         {
-            var newline = s.IndexOf('\n', i);
+            // A lone \r ends a line in C# too; ending only at \n would erase the rest of such a file.
+            var newline = s.IndexOfAny(['\r', '\n'], i);
             return newline < 0 ? s.Length : newline;
         }
 
@@ -383,7 +400,7 @@ internal static class BindingFacts
         if (s[i] == '\'')
         {
             var k = i + 1;
-            while (k < s.Length && s[k] != '\'' && s[k] != '\n') { k += s[k] == '\\' ? 2 : 1; }
+            while (k < s.Length && s[k] != '\'' && s[k] != '\n' && s[k] != '\r') { k += s[k] == '\\' ? 2 : 1; }
             return Math.Min(k + 1, s.Length);
         }
 
