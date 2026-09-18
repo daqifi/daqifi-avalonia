@@ -195,7 +195,8 @@ internal static class BindingFacts
     /// <para>
     /// So this reads the call sites out of <b>every</b> C# file in <c>Daqifi.Avalonia</c> — not only
     /// the file that holds them today — and requires each to pass a local constructed as
-    /// <paramref name="viewModelType"/> in that file. The dialog's class name is taken from its own
+    /// <paramref name="viewModelType"/> in a scope that encloses the call — a same-named local in another
+    /// method does not count (see <see cref="BlockStillOpen"/>). The dialog's class name is taken from its own
     /// <c>x:Class</c>, so the call-site search cannot drift from the view it is guarding. A call in a
     /// shape the parser does not follow (a named argument, an inline <c>new</c>, a property result)
     /// <b>fails</b> rather than being skipped, and so does a direct <c>new Dialog(</c>, which would
@@ -269,16 +270,23 @@ internal static class BindingFacts
             foreach (Match site in parsed)
             {
                 var local = site.Groups["arg"].Value;
-                var constructed = Regex.IsMatch(
-                    source,
-                    $@"\b(var|{Regex.Escape(viewModelType.Name)})\s+{Regex.Escape(local)}\s*=\s*new\s+{Regex.Escape(viewModelType.Name)}\s*\(");
+
+                // The constructing declaration has to be the one the argument REFERS TO, not merely one
+                // with the same spelling somewhere in the file (Qodo, shepherd round on PR #376):
+                // DaqifiViewModel.cs declares `exportDialogViewModel` in two methods, so a call handing
+                // some other object under that name in one method passed on the other's construction.
+                // Only declarations that precede the call and whose block still encloses it count.
+                var constructed = Regex.Matches(
+                        source[..site.Index],
+                        $@"\b(var|{Regex.Escape(viewModelType.Name)})\s+{Regex.Escape(local)}\s*=\s*new\s+{Regex.Escape(viewModelType.Name)}\s*\(")
+                    .Any(declaration => BlockStillOpen(source, declaration.Index, site.Index));
 
                 Assert.True(
                     constructed,
-                    $"{file}: ShowDialogAsync<{dialog}> is handed '{local}', which is not constructed as a "
-                    + $"{viewModelType.Name} in that file. That parameter is typed object, so the compiler "
-                    + $"accepts anything, and {repoRelativeViewPath} claims x:DataType=\"{declared}\" — the "
-                    + "dialog would compile and render blank.");
+                    $"{file}: ShowDialogAsync<{dialog}> is handed '{local}', which is not a local constructed "
+                    + $"as a {viewModelType.Name} in a scope enclosing that call. That parameter is typed "
+                    + $"object, so the compiler accepts anything, and {repoRelativeViewPath} claims "
+                    + $"x:DataType=\"{declared}\" — the dialog would compile and render blank.");
             }
 
             if (parsed.Count < present.Count)
@@ -299,6 +307,28 @@ internal static class BindingFacts
             + $"(owner, local) shape this guard can follow: {string.Join(", ", unsupported)}. An "
             + "unrecognised call is NOT covered, and silently skipping it is the failure this assertion "
             + "exists to prevent.");
+    }
+
+    /// <summary>
+    /// True when the block holding the text at <paramref name="from"/> is still open at
+    /// <paramref name="to"/>: walking forward, brace depth never drops below where it started. A local
+    /// declared at <paramref name="from"/> is then in scope at <paramref name="to"/>, and since C# forbids
+    /// redeclaring a local's name inside its own scope, the identifier there refers to it. A declaration
+    /// in another method closes its block first and fails. Braces are counted raw: interpolated strings
+    /// balance, and a stray brace in a literal or comment can only make this stricter unless it exactly
+    /// cancels a real one. The one shadowing it cannot see is a lambda or local-function parameter
+    /// reusing the name, which no call site in this checkout does.
+    /// </summary>
+    private static bool BlockStillOpen(string source, int from, int to)
+    {
+        var depth = 0;
+        for (var i = from; i < to; i++)
+        {
+            if (source[i] == '{') { depth++; }
+            else if (source[i] == '}' && --depth < 0) { return false; }
+        }
+
+        return true;
     }
 
     /// <summary>
