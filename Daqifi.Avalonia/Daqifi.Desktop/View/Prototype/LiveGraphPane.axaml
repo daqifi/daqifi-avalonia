@@ -2,6 +2,10 @@
              xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml"
              xmlns:oxy="http://oxyplot.org/avalonia"
              xmlns:i="https://github.com/projektanker/icons.avalonia"
+             xmlns:vm="using:Daqifi.Desktop.ViewModels"
+             xmlns:oxycore="using:OxyPlot"
+             x:DataType="vm:DaqifiViewModel"
+             x:CompileBindings="True"
              x:Class="Daqifi.Desktop.View.Prototype.LiveGraphPane">
 
     <!--
@@ -28,6 +32,20 @@
         (charting_stack invariant: ONE model layer feeds live graph,
         logged-data pane, and minimap; only the view host + tracker templates
         change dialect).
+
+        Compiled bindings (issue #327): AvaloniaUseCompiledBindingsByDefault is false in this
+        project, so the DataType needs the CompileBindings beside it. The one host is
+        MainWindow's Live Graph tab, whose ContentControl Content="{Binding}" hands this pane
+        the window's DaqifiViewModel. Three scopes:
+        - the root, DaqifiViewModel;
+        - the tracker ControlTemplate, declared TrackerHitResult because that is what
+          PlotBase.ShowTracker assigns as its DataContext. Unlike a DataTemplate, a
+          ControlTemplate infers nothing and falls back to the ROOT scope: without the
+          declaration its three bindings are AVLN2000 against DaqifiViewModel (measured);
+        - the legend ItemTemplate, left undeclared: it infers IChannel from ActiveInputChannels.
+          Its command reaches back out with $parent[ItemsControl].DataContext, which the
+          compiler resolves against DaqifiViewModel; the RelativeSource AncestorType spelling
+          it replaced resolves DataContext as System.Object and cannot compile.
     -->
 
     <UserControl.Resources>
@@ -369,7 +387,7 @@
                               TabIndex="0"
                               IsVisible="{Binding !IsSdCardLoggingActive}">
                     <oxy:PlotView.DefaultTrackerTemplate>
-                        <ControlTemplate>
+                        <ControlTemplate x:DataType="oxycore:TrackerHitResult">
                             <oxy:TrackerControl Position="{Binding Position}"
                                                 LineExtents="{Binding PlotModel.PlotArea}"
                                                 Background="{DynamicResource SurfaceActive}"
@@ -565,8 +583,7 @@
                                       BorderThickness="0">
                             <ItemsControl.ItemTemplate>
                                 <DataTemplate>
-                                    <Button Command="{Binding DataContext.ToggleChannelVisibilityCommand,
-                                                              RelativeSource={RelativeSource AncestorType=ItemsControl}}"
+                                    <Button Command="{Binding $parent[ItemsControl].DataContext.ToggleChannelVisibilityCommand}"
                                             CommandParameter="{Binding}"
                                             Padding="14,9"
                                             Theme="{StaticResource LegendItemButton}">
