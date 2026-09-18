@@ -208,8 +208,9 @@ internal static class BindingFacts
     /// </para>
     ///
     /// <para>
-    /// The dialog's class name is taken from its own <c>x:Class</c>, and matched bare, qualified or
-    /// <c>global::</c>-qualified. What <i>counts</i> as a use — either route, any construction
+    /// The dialog's class name is taken from its own <c>x:Class</c>. Any qualification of it counts as
+    /// a use, but only the bare name or its own namespace satisfies the guard, and the same holds for
+    /// the view model. A same-named type from another namespace therefore fails. What <i>counts</i> as a use — either route, any construction
     /// including the target-typed <c>Dialog? d = new()</c>, and any <c>using</c> alias for the dialog —
     /// is read off the raw text as well as the code, so one inside a comment, string or interpolation
     /// hole counts and then fails as unparsed rather than vanishing (Qodo, third shepherd round on PR
@@ -247,8 +248,11 @@ internal static class BindingFacts
             + $"does not name {viewModelType.FullName}.");
 
         const string id = @"[A-Za-z_][A-Za-z0-9_]*";
+        // Any qualifier COUNTS as a use; only the bare name or the full namespace SATISFIES, so a
+        // same-named type in another namespace fails rather than passing (Qodo round 2 on PR #387).
         var type = $@"(?:global\s*::\s*)?(?:{id}\s*\.\s*)*{Regex.Escape(dialog)}";
-        var viewModel = $@"(?:global\s*::\s*)?(?:{id}\s*\.\s*)*{Regex.Escape(viewModelType.Name)}";
+        var exact = Qualified(dialogClass!);
+        var viewModel = Qualified(viewModelType.FullName!);
 
         // Counted: every call, every construction (`new T(`, `new T {`, `T x = new(`, `T? x = new(`),
         // every alias — found in the raw text OR in the code-only text, so neither a use inside a
@@ -258,8 +262,8 @@ internal static class BindingFacts
             $@"ShowDialogAsync\s*<\s*{type}\s*>|\bnew\s+{type}\s*[({{]|(?<![\w.]){type}\s*\??\s+{id}\s*=\s*new\s*\("
             + $@"|\busing\s+{id}\s*=\s*{type}\s*;");
         var understood = new Regex(
-            $@"ShowDialogAsync\s*<\s*{type}\s*>\(\s*{id}\s*,\s*(?<arg>{id})\s*\)"
-            + $@"|\bvar\s+(?<d>{id})\s*=\s*new\s+{type}\s*\(\s*\)\s*;\s*\k<d>\s*\.\s*DataContext\s*=\s*(?<arg>{id})\s*;");
+            $@"ShowDialogAsync\s*<\s*{exact}\s*>\(\s*{id}\s*,\s*(?<arg>{id})\s*\)"
+            + $@"|\bvar\s+(?<d>{id})\s*=\s*new\s+{exact}\s*\(\s*\)\s*;\s*\k<d>\s*\.\s*DataContext\s*=\s*(?<arg>{id})\s*;");
 
         var sources = Directory
             .EnumerateFiles(Path.Combine(RepoRoot(), "Daqifi.Avalonia"), "*.cs", SearchOption.AllDirectories)
@@ -332,6 +336,14 @@ internal static class BindingFacts
             + "covered, and silently skipping it is the failure this assertion exists to prevent. One "
             + "inside a comment, string or interpolation hole counts here and is never parsed, so it fails "
             + "too; so does a `using` alias for the dialog.");
+    }
+
+    /// <summary>A regex for a type written bare, or qualified by exactly its own namespace.</summary>
+    private static string Qualified(string fullName)
+    {
+        var parts = fullName.Split('.');
+        var ns = string.Join(@"\s*\.\s*", parts[..^1].Select(Regex.Escape));
+        return $@"(?:(?:global\s*::\s*)?{ns}\s*\.\s*)?{Regex.Escape(parts[^1])}";
     }
 
     /// <summary>The index of the <c>}</c> that closes the block holding <paramref name="from"/>, in
