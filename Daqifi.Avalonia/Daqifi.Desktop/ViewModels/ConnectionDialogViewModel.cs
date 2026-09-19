@@ -15,7 +15,7 @@ using Avalonia.Controls.ApplicationLifetimes;
 using Avalonia.Threading;
 using System.Collections;
 using System.Collections.ObjectModel;
-using System.IO.Ports;
+using Daqifi.Core.Communication.Transport;
 using System.Net;
 using System.Net.Sockets;
 using CommunityToolkit.Mvvm.ComponentModel;
@@ -770,7 +770,7 @@ public partial class ConnectionDialogViewModel : ObservableObject
     {
         try
         {
-            return SerialPort.GetPortNames()
+            return SerialStreamTransport.GetAvailablePortNames()
                 .Any(p => string.Equals(p, portName, StringComparison.OrdinalIgnoreCase));
         }
         catch (Exception ex)
