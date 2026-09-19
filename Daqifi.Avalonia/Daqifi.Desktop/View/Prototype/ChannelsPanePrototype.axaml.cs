@@ -3,8 +3,8 @@
 // DO NOT manually delete the `// @port:` markers — they link symbols back to
 // the correspondence map.
 
+using Avalonia;
 using Avalonia.Controls;
-using Avalonia.Interactivity;
 using Daqifi.Desktop.ViewModels;
 
 namespace Daqifi.Desktop.View.Prototype;
@@ -15,26 +15,26 @@ public partial class ChannelsPanePrototype : UserControl
     public ChannelsPanePrototype()
     {
         InitializeComponent();
-        Loaded += OnLoaded;
-        Unloaded += OnUnloaded;
     }
 
+    // On attach, not on Loaded as upstream does: Loaded runs below Render, so the pane was
+    // presented for a frame with the host's DaqifiViewModel or null and its IsSettingsOpen
+    // drawer gate at its default true (#397). Tab switches detach and re-attach the pane, so
+    // this still recreates the VM — and its Rebuild — on every return to the tab.
     // @port: Daqifi.Desktop.View.Prototype.ChannelsPanePrototype.OnLoaded
-    private void OnLoaded(object? sender, RoutedEventArgs e)
+    protected override void OnAttachedToVisualTree(VisualTreeAttachmentEventArgs e)
     {
-        // Tab-switches on the host TabControl trigger Unloaded (which disposes
-        // the VM) and then Loaded when the tab comes back. Recreate the VM so
-        // a returning tab gets a fresh Rebuild and picks up devices connected
-        // while the pane was detached.
         if (DataContext is not ChannelsPaneViewModel)
         {
             DataContext = new ChannelsPaneViewModel();
         }
+        base.OnAttachedToVisualTree(e);
     }
 
     // @port: Daqifi.Desktop.View.Prototype.ChannelsPanePrototype.OnUnloaded
-    private void OnUnloaded(object? sender, RoutedEventArgs e)
+    protected override void OnDetachedFromVisualTree(VisualTreeAttachmentEventArgs e)
     {
+        base.OnDetachedFromVisualTree(e);
         if (DataContext is IDisposable disposable)
         {
             disposable.Dispose();
