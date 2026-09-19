@@ -44,7 +44,8 @@ public sealed class BootloaderSessionStreamingDeviceAdapter : CoreStreamingDevic
     // @port: Daqifi.Desktop.Device.Firmware.BootloaderSessionStreamingDeviceAdapter.StatusChanged
     public event EventHandler<CoreDeviceStatusEventArgs>? StatusChanged;
     // @port: Daqifi.Desktop.Device.Firmware.BootloaderSessionStreamingDeviceAdapter.MessageReceived
-    public event EventHandler<CoreMessageReceivedEventArgs>? MessageReceived;
+    // Never raised — the device is already in bootloader mode, so no message arrives through it.
+    public event EventHandler<CoreMessageReceivedEventArgs>? MessageReceived { add { } remove { } }
 
     // @port: Daqifi.Desktop.Device.Firmware.BootloaderSessionStreamingDeviceAdapter.StreamingFrequency
     public int StreamingFrequency { get; set; } = 1;

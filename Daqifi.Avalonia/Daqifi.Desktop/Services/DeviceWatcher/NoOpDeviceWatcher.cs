@@ -11,7 +11,7 @@ public sealed class NoOpDeviceWatcher : IDeviceWatcher
 {
     // Never raised — see the interface contract: consumers must tolerate a
     // backend that stays silent.
-    public event EventHandler? DeviceRemoved;
+    public event EventHandler? DeviceRemoved { add { } remove { } }
 
     public void Start()
     {
