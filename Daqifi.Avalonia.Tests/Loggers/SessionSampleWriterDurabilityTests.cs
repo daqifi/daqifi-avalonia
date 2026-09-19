@@ -1,6 +1,5 @@
 using System.Diagnostics;
 using Daqifi.Desktop.Channel;
-using Daqifi.Desktop.Common.Loggers;
 using Daqifi.Desktop.Logger;
 using Microsoft.EntityFrameworkCore;
 using Xunit;
@@ -48,7 +47,7 @@ public sealed class SessionSampleWriterDurabilityTests : IDisposable
         Path.Combine(Path.GetTempPath(), "daqifi-avalonia-tests", "sample-writer-" + Guid.NewGuid().ToString("N"));
 
     private readonly FailableContexts _contexts;
-    private readonly RecordingLogger _appLogger = new();
+    private readonly RecordingAppLogger _appLogger = new();
     private long _nextTick = DateTime.UtcNow.Ticks;
 
     private string DatabasePath => Path.Combine(_directory, "DAQiFiDatabase.db");
@@ -659,73 +658,6 @@ public sealed class SessionSampleWriterDurabilityTests : IDisposable
 
             return new LoggingContext(TestDatabase.Options(databasePath));
         }
-    }
-
-    /// <summary>
-    /// Captures the consumer thread's diagnostics instead of writing them to the real log, and keeps
-    /// them readable from the test thread.
-    /// </summary>
-    private sealed class RecordingLogger : IAppLogger
-    {
-        private readonly Lock _gate = new();
-        private readonly List<string> _errors = [];
-        private readonly List<string> _informations = [];
-        private readonly List<string> _warnings = [];
-
-        internal IReadOnlyList<string> Errors
-        {
-            get { lock (_gate) { return [.. _errors]; } }
-        }
-
-        internal IReadOnlyList<string> Informations
-        {
-            get { lock (_gate) { return [.. _informations]; } }
-        }
-
-        /// <summary>
-        /// How the writer reports a row it refused. Recorded because the tests around dropped rows
-        /// assert on what a support log would show, not on a counter.
-        /// </summary>
-        internal IReadOnlyList<string> Warnings
-        {
-            get { lock (_gate) { return [.. _warnings]; } }
-        }
-
-        public void Information(string message)
-        {
-            lock (_gate) { _informations.Add(message); }
-        }
-
-        public void Warning(string message)
-        {
-            lock (_gate) { _warnings.Add(message); }
-        }
-
-        public void Warning(Exception ex, string message)
-        {
-            lock (_gate) { _warnings.Add(message); }
-        }
-
-        public void Error(string message)
-        {
-            lock (_gate) { _errors.Add(message); }
-        }
-
-        public void Error(Exception ex, string message)
-        {
-            lock (_gate) { _errors.Add(message); }
-        }
-
-        public void AddBreadcrumb(
-            string category,
-            string message,
-            Daqifi.Desktop.Common.Loggers.BreadcrumbLevel level = Daqifi.Desktop.Common.Loggers.BreadcrumbLevel.Info) { }
-
-        public void SetDeviceContext(string model, string serialNumber, string firmwareVersion, string connectionType, int activeChannels) { }
-
-        public void ClearDeviceContext() { }
-
-        public void Shutdown() { }
     }
     #endregion
 }
