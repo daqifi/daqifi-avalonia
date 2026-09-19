@@ -161,7 +161,15 @@ internal sealed class RecordingStreamingDevice : IStreamingDevice
 
     public void Write(string text) { }
 
-    public void RefreshSdCardFiles() { }
+    /// <summary>
+    /// How many SD listings this device was sent. Counted rather than put in <see cref="Commands"/>
+    /// because the Device Logs pane sends them from a pool thread (issue #410's tests).
+    /// </summary>
+    internal int SdCardListings => Volatile.Read(ref _sdCardListings);
+
+    private int _sdCardListings;
+
+    public void RefreshSdCardFiles() => Interlocked.Increment(ref _sdCardListings);
 
     public void UpdateSdCardFiles(List<SdCardFile> files) { }
 
