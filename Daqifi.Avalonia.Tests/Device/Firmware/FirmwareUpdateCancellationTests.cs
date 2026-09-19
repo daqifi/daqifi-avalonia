@@ -192,7 +192,11 @@ public class FirmwareUpdateCancellationTests : IDisposable
         _updates.OnPic32Flash = coordinator.CancelUpload;
         harness.Transport.ClearSent();
 
-        await coordinator.UploadFirmwareAsync().WaitAsync(UnwindTimeout);
+        // Generous on purpose. A correct run unwinds at once; a probe that ignored the token spends
+        // its whole retry budget against a device that never answers (measured at ~21 s) and then
+        // finishes, and letting it finish is what turns that defect into the wire assertion below
+        // rather than a bare timeout.
+        await coordinator.UploadFirmwareAsync().WaitAsync(TimeSpan.FromSeconds(60));
 
         Assert.True(
             harness.Transport.WaitForSentText(ScpiMessageProducer.TurnDeviceOn.Data, UnwindTimeout),
