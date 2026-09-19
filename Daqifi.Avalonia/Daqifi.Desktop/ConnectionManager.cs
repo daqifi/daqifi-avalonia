@@ -75,9 +75,8 @@ public partial class ConnectionManager : ObservableObject
     #region Properties
     /// <summary>
     /// The status of the most recent <see cref="Connect"/> call to reach a terminal state, as a
-    /// bindable process-wide signal (it drives <see cref="IsDisconnected"/> and
-    /// <see cref="ConnectionStatusString"/>, and mirrors the upstream WPF property this port
-    /// corresponds to).
+    /// bindable process-wide signal (it drives <see cref="ConnectionStatusString"/>, and mirrors
+    /// the upstream WPF property this port corresponds to).
     /// </summary>
     /// <remarks>
     /// <b>Not a per-device result.</b> One field cannot answer "did <em>this</em> device connect?"
@@ -91,9 +90,6 @@ public partial class ConnectionManager : ObservableObject
 
     [ObservableProperty]
     private List<IStreamingDevice> _connectedDevices;
-
-    [ObservableProperty]
-    private bool _isDisconnected = true;
 
     [ObservableProperty]
     private bool _notifyConnection;
@@ -233,7 +229,6 @@ public partial class ConnectionManager : ObservableObject
     partial void OnConnectionStatusChanged(DAQiFiConnectionStatus value)
     {
         UpdateStatusString();
-        IsDisconnected = value != DAQiFiConnectionStatus.Connected;
     }
 
     #region Singleton Constructor / Initalization
