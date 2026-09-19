@@ -2,10 +2,22 @@
              x:Name="Root"
              xmlns="https://github.com/avaloniaui"
              xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml"
-             xmlns:i="https://github.com/projektanker/icons.avalonia">
+             xmlns:i="https://github.com/projektanker/icons.avalonia"
+             xmlns:vm="using:Daqifi.Desktop.ViewModels"
+             x:DataType="vm:ProfilesPaneViewModel"
+             x:CompileBindings="True">
 
     <!--
         Ported from Daqifi.Desktop/View/ProfilesPane.xaml.
+
+        Compiled bindings (issue #327): AvaloniaUseCompiledBindingsByDefault is false in this
+        project, so the DataType needs the CompileBindings beside it. The one host, MainWindow's
+        Profiles tab, hands this view the window's DaqifiViewModel by inheritance, but OnLoaded
+        replaces it with a ProfilesPaneViewModel before the pane is used, and OnUnloaded clears
+        it — so ProfilesPaneViewModel is the only type these bindings are meant to read. None of
+        the five item templates declares anything: their scopes are inferred from Profiles,
+        SelectedProfile.Devices, Channels, NewDeviceItems and ChannelItems, and the three
+        $parent[UserControl].DataContext hops in the profile tile reach back out to the view model.
 
         Dialect decisions applied:
         - BoolToVis / InvertedBoolToVis converters → IsVisible with `!` negation;
