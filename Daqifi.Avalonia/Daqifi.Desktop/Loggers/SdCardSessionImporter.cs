@@ -389,10 +389,20 @@ public class SdCardSessionImporter : ISdCardSessionImporter
                 "Device firmware may not include TimestampFreq in logged messages.");
         }
 
-        var samplesProcessed = await WriteSamplesAsync(
+        var (samplesProcessed, readingsDropped) = await WriteSamplesAsync(
             logSession, session, timestampQuality, progress, ct);
 
         _logger.Information($"Imported {samplesProcessed} samples for session '{session.Name}' (ID={session.ID})");
+
+        if (readingsDropped > 0)
+        {
+            // Once per import, at Warning: a NaN is a property of the user's file, not a fault in
+            // the app, so it is not a Sentry event — and a channel whose every reading is NaN must
+            // not write a line per sample.
+            _logger.Warning(
+                $"SD card import of '{logSession.FileName}' left out {readingsDropped:N0} reading(s) of NaN, " +
+                "which the database cannot store; every other reading was written.");
+        }
 
         if (timestampQuality.HasDegenerateTimeAxis)
         {
@@ -418,10 +428,15 @@ public class SdCardSessionImporter : ISdCardSessionImporter
                 $"No samples found in SD card file '{logSession.FileName}'. " +
                 $"DeviceConfig present: {config != null}. Removing the empty session row.");
 
+            // A log whose every reading was NaN held samples, so "no samples" would be untrue.
+            var whyEmpty = readingsDropped > 0
+                ? "Every reading in the log was NaN (it had no numeric value), so nothing could be stored"
+                : "The log contained no samples";
+
             sessionPersisted = false;
             outcomeGuidance = RemoveSessions([session.ID])
-                ? "The log contained no samples, so no session was created."
-                : "The log contained no samples. The empty session entry it had already created "
+                ? $"{whyEmpty}, so no session was created."
+                : $"{whyEmpty}. The empty session entry it had already created "
                   + "could not be removed, so it will appear in the session list as an incomplete "
                   + "import until you delete it.";
         }
@@ -453,6 +468,16 @@ public class SdCardSessionImporter : ISdCardSessionImporter
                     + "It will appear in the session list as an incomplete import; import the file "
                     + "again to replace it.";
             }
+
+            if (readingsDropped > 0)
+            {
+                // Free of the count and the file name, like every other OutcomeGuidance sentence,
+                // so Import All reads it out once for a card of affected logs. The count is in the
+                // Warning above.
+                outcomeGuidance = outcomeGuidance.Length > 0
+                    ? $"{NaNReadingsLeftOut} {outcomeGuidance}"
+                    : NaNReadingsLeftOut;
+            }
         }
 
         return new SdCardImportResult
@@ -465,9 +490,15 @@ public class SdCardSessionImporter : ISdCardSessionImporter
         };
     }
 
+    /// <summary>What the user is told when an import left out NaN readings but kept the rest.</summary>
+    private const string NaNReadingsLeftOut =
+        "Some readings in the log were NaN (they had no numeric value) and were left out; "
+        + "every other reading was imported.";
+
     /// <summary>
     /// Parses <paramref name="logSession"/> and bulk-inserts its samples against
-    /// <paramref name="session"/>, returning how many were committed.
+    /// <paramref name="session"/>, returning how many were committed and how many NaN readings
+    /// were left out because the database cannot store them.
     /// </summary>
     /// <remarks>
     /// Extracted from <see cref="ImportSessionAsync"/> so the whole parse can sit inside one
@@ -476,7 +507,7 @@ public class SdCardSessionImporter : ISdCardSessionImporter
     /// file left both behind with nothing recording that the import never finished — and the next
     /// launch reloaded that as an ordinary, complete-looking session with silently truncated data.
     /// </remarks>
-    private async Task<long> WriteSamplesAsync(
+    private async Task<(long Written, long NaNDropped)> WriteSamplesAsync(
         SdCardLogSession logSession,
         LoggingSession session,
         ImportTimestampQuality timestampQuality,
@@ -499,6 +530,7 @@ public class SdCardSessionImporter : ISdCardSessionImporter
         // Bulk-insert samples
         var batch = new List<DataSample>();
         long samplesProcessed = 0;
+        long readingsDropped = 0;
         var sampleIndex = 0;
 
         try
@@ -527,6 +559,19 @@ public class SdCardSessionImporter : ISdCardSessionImporter
                 // Create analog samples
                 for (var i = 0; i < entry.AnalogValues.Count; i++)
                 {
+                    // The live path's rule (#294, SessionSampleWriter.Add): SQLite's REAL has no
+                    // NaN and Microsoft.Data.Sqlite refuses to bind one, so a NaN in the batch
+                    // failed the whole import — everything the parser had not reached yet was
+                    // lost with it (#412). Core's parsers pass one through: the CSV parser accepts
+                    // "NaN"/"nan", and the .bin float leg takes the float as-is. NaN only, like
+                    // #294: an infinity stores and reads back, so dropping it would discard a
+                    // reading the database would have kept.
+                    if (double.IsNaN(entry.AnalogValues[i]))
+                    {
+                        readingsDropped++;
+                        continue;
+                    }
+
                     var channelName = $"AI{i}";
                     batch.Add(new DataSample
                     {
@@ -605,7 +650,7 @@ public class SdCardSessionImporter : ISdCardSessionImporter
             throw;
         }
 
-        return samplesProcessed;
+        return (samplesProcessed, readingsDropped);
     }
 
     /// <summary>
@@ -964,9 +1009,10 @@ public sealed class SdCardImportResult
     /// <remarks>
     /// Non-empty for every <see cref="SessionPersisted"/> of <c>false</c> — an empty log, an empty
     /// row that could not be cleaned up, or samples that could not be recorded as a finished
-    /// session — and also for the one case that persists a good session and still owes the user a
-    /// word: an overwrite whose superseded session could not be removed, leaving a duplicate. So
-    /// callers must show it whenever it has content, not only on failure.
+    /// session — and also for the cases that persist a good session and still owe the user a
+    /// word: an overwrite whose superseded session could not be removed, leaving a duplicate, and
+    /// a log some of whose readings were NaN and were left out (#412). So callers must show it
+    /// whenever it has content, not only on failure.
     /// <para>Written here rather than at each of the three import call sites so they cannot drift,
     /// and deliberately free of the file name so <c>ImportAllFiles</c> can dedupe it across a card
     /// full of empty logs — the same reason <c>DatabaseMigrator.DescribeQuarantineForUser</c>
