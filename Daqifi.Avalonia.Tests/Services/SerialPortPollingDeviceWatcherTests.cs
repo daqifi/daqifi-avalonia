@@ -360,20 +360,30 @@ public class SerialPortPollingDeviceWatcherTests
         h.Watcher.Start();
 
         var (entered, release) = h.Table.HoldNextRead(PortA, PortB, PortC);
-        Assert.True(entered.Wait(TimeSpan.FromSeconds(10)), "No poll picked up the held read.");
+        try
+        {
+            Assert.True(entered.Wait(TimeSpan.FromSeconds(10)), "No poll picked up the held read.");
 
-        h.Watcher.Stop();
-        h.Watcher.Start();
-        release.Set();
+            h.Watcher.Stop();
+            h.Watcher.Start();
+            release.Set();
 
-        h.Table.WaitForTwoMorePolls();
-        h.Table.WaitForTwoMorePolls();
-        Assert.Equal(0, h.Removals);
+            h.Table.WaitForTwoMorePolls();
+            h.Table.WaitForTwoMorePolls();
+            Assert.Equal(0, h.Removals);
 
-        // And the restarted cycle is live, not wedged behind the stale poll.
-        h.Table.Set(PortA);
-        h.Table.WaitForTwoMorePolls();
-        Assert.Equal(1, h.Removals);
+            // And the restarted cycle is live, not wedged behind the stale poll.
+            h.Table.Set(PortA);
+            h.Table.WaitForTwoMorePolls();
+            Assert.Equal(1, h.Removals);
+        }
+        finally
+        {
+            // Disposing the watcher does not wait for or cancel an in-flight callback, so on any
+            // failure path above the held read must still be released here, or its thread-pool
+            // worker stays blocked for the rest of the test run. Set is idempotent.
+            release.Set();
+        }
     }
 
     [Fact]
