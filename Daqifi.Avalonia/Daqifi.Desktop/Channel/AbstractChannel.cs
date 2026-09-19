@@ -19,7 +19,7 @@ public abstract partial class AbstractChannel : ObservableObject, IChannel
 {
     #region Private Data
     private string _scaledExpression;
-    private DataSample _activeSample;
+    private DataSample? _activeSample;
     private bool _suppressDigitalOutputCommand;
     protected IStreamingDevice _owner;
     #endregion
@@ -378,13 +378,13 @@ public abstract partial class AbstractChannel : ObservableObject, IChannel
     }
 
     // @port: Daqifi.Desktop.Channel.AbstractChannel.Expression
-    public Expression Expression { get; set; }
+    public Expression? Expression { get; set; }
 
     [ObservableProperty]
     private bool _isVisible = true;
 
     // @port: Daqifi.Desktop.Channel.AbstractChannel.ActiveSample
-    public DataSample ActiveSample
+    public DataSample? ActiveSample
     {
         get => _activeSample;
         set

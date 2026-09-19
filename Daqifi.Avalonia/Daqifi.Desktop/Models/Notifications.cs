@@ -20,7 +20,7 @@ public class Notifications
     public bool IsWifiFirmwareUpdate { get; init; }
 
     // @port: Daqifi.Desktop.Models.Notifications.DeviceSerialNo
-    public string DeviceSerialNo { get; init; }
+    public string? DeviceSerialNo { get; init; }
 
     // @port: Daqifi.Desktop.Models.Notifications.Message
     public string Message { get; init; }

@@ -58,7 +58,7 @@ public partial class DatabaseLogger : ObservableObject, ILogger, IDisposable
     private DispatcherTimer _viewportThrottleTimer;
     private DispatcherTimer _settleTimer;
     private int? _currentSessionId;
-    private CancellationTokenSource _fetchCts;
+    private CancellationTokenSource? _fetchCts;
 
     /// <summary>
     /// How this logger marshals onto the UI thread. Nothing in the app ever reassigns it — it is an
@@ -114,7 +114,7 @@ public partial class DatabaseLogger : ObservableObject, ILogger, IDisposable
     /// chart. Null when no session is loaded.
     /// </summary>
     [ObservableProperty]
-    private LoggingSession _currentSession;
+    private LoggingSession? _currentSession;
 
     /// <summary>
     /// Whether a session is open on the plot at all — a load that FINISHED, with or without
@@ -130,7 +130,7 @@ public partial class DatabaseLogger : ObservableObject, ILogger, IDisposable
     /// </summary>
     public bool IsSessionOpen => CurrentSession is not null;
 
-    partial void OnCurrentSessionChanged(LoggingSession value) => OnPropertyChanged(nameof(IsSessionOpen));
+    partial void OnCurrentSessionChanged(LoggingSession? value) => OnPropertyChanged(nameof(IsSessionOpen));
 
     /// <summary>
     /// Total number of samples in the currently displayed session. Surfaced

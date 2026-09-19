@@ -109,7 +109,7 @@ public interface IChannel
     string ScaleExpressionError { get; }
 
     // @port: Daqifi.Desktop.Channel.IChannel.ActiveSample
-    DataSample ActiveSample { get; set; }
+    DataSample? ActiveSample { get; set; }
 
     // @port: Daqifi.Desktop.Channel.IChannel.IsVisible
     bool IsVisible { get; set; }
