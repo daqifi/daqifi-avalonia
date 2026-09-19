@@ -1,12 +1,15 @@
 <UserControl xmlns="https://github.com/avaloniaui"
              xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml"
              xmlns:i="https://github.com/projektanker/icons.avalonia"
-             x:Class="Daqifi.Avalonia.Views.Mobile.ChannelsMobileView">
+             xmlns:vm="using:Daqifi.Desktop.ViewModels"
+             x:Class="Daqifi.Avalonia.Views.Mobile.ChannelsMobileView"
+             x:DataType="vm:ChannelsPaneViewModel"
+             x:CompileBindings="True">
   <!-- Mobile projection of the desktop Channels pane (ChannelsPanePrototype) over
        the shared ChannelsPaneViewModel. Authored from the portomatic projection
        skeleton: every VM binding it enumerated is preserved here (same exact path
        string, including "!" negations), laid out mobile-friendly — single-column
-       scroll, touch targets (44 px), design tokens, reflection bindings.
+       scroll, touch targets (44 px), design tokens, compiled bindings.
 
        Dialect notes:
        - The desktop 380 px slide-in settings drawer (gated by IsSettingsOpen)
@@ -17,10 +20,26 @@
        - Hover-only affordances and ToolTip-only text dropped; the direction /
          frequency captions that carried explanatory copy are shown as visible
          captions instead.
-       - Section-visibility bound directly to the count int (desktop used an
-         IntToVisibility converter; here the reflection binding converts int->bool,
-         count>0 => visible). AND-gated visibility (desktop MultiBinding) is
-         expressed by nesting one IsVisible container inside another. -->
+       - Section-visibility bound to the count int through the same IntToVisibility
+         converter the desktop uses (count>0 => visible). AND-gated visibility
+         (desktop MultiBinding) is expressed by nesting one IsVisible container
+         inside another.
+
+       Compiled bindings (issue #327): AvaloniaUseCompiledBindingsByDefault is false in this
+       project, so the DataType needs the CompileBindings beside it. The one construction site,
+       MobileMainView.OnChannels, hands this view a new ChannelsPaneViewModel. Scopes:
+       - the root, ChannelsPaneViewModel;
+       - ChannelTileTemplate, declared ChannelTileViewModel: a resource-dictionary template
+         infers nothing, and all three lists that use it (AnalogInputs, DigitalInputs,
+         DigitalOutputs) are ObservableCollection<ChannelTileViewModel>. Its three hops back to
+         the pane cast DataContext, because from a resource the compiler cannot see which
+         ItemsControl the template will land in and types DataContext as System.Object;
+       - the device-name ItemTemplate, left undeclared: it infers string from
+         ConnectedDeviceNames;
+       - the palette ItemTemplate, declared IBrush: Palette is an IBrush[], and an array
+         ItemsSource infers nothing (a member path there is AVLN2000 on XamlPseudoType,
+         measured). Its $parent[ItemsControl].DataContext resolves against the root scope
+         on its own. -->
 
   <UserControl.Styles>
     <!-- sectionLabel / sectionCount / chip / mono / rowAction / emptyBadge / emptyTitle
@@ -42,12 +61,12 @@
          lists (desktop's ChannelTileTemplate). Item-scoped members (Name, StripeBrush,
          TileBackground, Value, TypeLabel, IsActive, ...) come from the desktop
          DataTemplate; the whole tile taps to toggle, the gear opens settings. -->
-    <DataTemplate x:Key="ChannelTileTemplate">
+    <DataTemplate x:Key="ChannelTileTemplate" x:DataType="vm:ChannelTileViewModel">
       <!-- Tile STRETCHES to its UniformGrid column (no fixed width → the internal
            Grid gets the full column and never clips). The grid's column count is
            set by orientation in code-behind: 1 (full-width rows) in portrait,
            multiple in landscape. -->
-      <Border Classes.loggingLocked="{Binding $parent[ItemsControl].DataContext.IsLoggingActive}"
+      <Border Classes.loggingLocked="{Binding $parent[ItemsControl].((vm:ChannelsPaneViewModel)DataContext).IsLoggingActive}"
               Background="{Binding TileBackground}"
               BorderBrush="{Binding TileBorderBrush}"
               BorderThickness="1"
@@ -68,7 +87,7 @@
                   HorizontalAlignment="Stretch"
                   HorizontalContentAlignment="Left"
                   AutomationProperties.AutomationId="ChannelTile"
-                  Command="{Binding $parent[ItemsControl].DataContext.ToggleChannelCommand}"
+                  Command="{Binding $parent[ItemsControl].((vm:ChannelsPaneViewModel)DataContext).ToggleChannelCommand}"
                   CommandParameter="{Binding}">
             <StackPanel Spacing="3">
               <StackPanel Orientation="Horizontal" Spacing="8">
@@ -125,7 +144,7 @@
                   MinWidth="44"
                   VerticalAlignment="Center"
                   AutomationProperties.AutomationId="ChannelSettingsButton"
-                  Command="{Binding $parent[ItemsControl].DataContext.OpenSettingsCommand}"
+                  Command="{Binding $parent[ItemsControl].((vm:ChannelsPaneViewModel)DataContext).OpenSettingsCommand}"
                   CommandParameter="{Binding}" />
         </Grid>
       </Border>
@@ -385,7 +404,7 @@
                   </ItemsPanelTemplate>
                 </ItemsControl.ItemsPanel>
                 <ItemsControl.ItemTemplate>
-                  <DataTemplate>
+                  <DataTemplate x:DataType="IBrush">
                     <Button Width="44"
                             Height="44"
                             Margin="0,0,8,8"

@@ -623,8 +623,9 @@ public class ChannelScalingExpressionTests
     [Fact]
     public void The_scaling_error_label_shows_the_reason_on_both_heads()
     {
-        // Neither view declares an x:DataType, so these bindings resolve by reflection: renaming
-        // the property would leave the label blank on both heads with a green build.
+        // The desktop view declares no x:DataType, so its binding resolves by reflection: renaming
+        // the property would leave its label blank with a green build. (The mobile view compiles
+        // its bindings since #327, but the pair is pinned together so the heads cannot drift.)
         const string desktop = "Daqifi.Avalonia/Daqifi.Desktop/View/Prototype/ChannelsPanePrototype.axaml";
         const string mobile = "Daqifi.Avalonia/Views/Mobile/ChannelsMobileView.axaml";
         const string binding = "Text=\"{Binding SelectedChannel.ScaleExpressionError}\"";
