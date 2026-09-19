@@ -51,7 +51,7 @@ public class SdCardSessionImporter : ISdCardSessionImporter
     /// </summary>
     internal const int BatchSize = 1000;
     private readonly IDbContextFactory<LoggingContext> _loggingContext;
-    private readonly AppLogger _logger = AppLogger.Instance;
+    private readonly IAppLogger _logger;
 
     /// <summary>
     /// How long the desktop waits for the device to deliver more of an SD card file before it
@@ -80,14 +80,17 @@ public class SdCardSessionImporter : ISdCardSessionImporter
 
     /// <summary>
     /// Test seam: constructs an importer with a shortened download stall timeout so the watchdog
-    /// can be exercised without a 90-second unit test.
+    /// can be exercised without a 90-second unit test, and optionally a logger other than
+    /// <see cref="AppLogger.Instance"/> so a test can see which level an outcome was logged at.
     /// </summary>
     internal SdCardSessionImporter(
         IDbContextFactory<LoggingContext> loggingContext,
-        TimeSpan downloadStallTimeout)
+        TimeSpan downloadStallTimeout,
+        IAppLogger? logger = null)
     {
         _loggingContext = loggingContext;
         _downloadStallTimeout = downloadStallTimeout;
+        _logger = logger ?? AppLogger.Instance;
     }
 
     /// <summary>
