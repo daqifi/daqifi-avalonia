@@ -4,6 +4,7 @@ using Daqifi.Core.Device;
 using Daqifi.Core.Device.Capabilities;
 using Daqifi.Desktop.Device;
 using Microsoft.Extensions.Logging.Abstractions;
+using Sentry.Extensibility;
 using Xunit;
 
 namespace Daqifi.Avalonia.Tests.Device;
@@ -277,6 +278,96 @@ public class CurrentRateCapEnforcementTests
         Assert.Equal(1, core.RefreshCount);
         Assert.Equal(OverCapRateHz, device.StreamingFrequency);
     }
+
+    /// <summary>
+    /// Issue #409: the warning itself, which is the only thing that separates the two predicates.
+    /// <see cref="Whether_a_device_owes_a_fresh_document_is_Cores_firmware_gate_not_a_cached_copy"/>
+    /// pins Core's half; these pin that the app asks Core's gate rather than the cache.
+    /// </summary>
+    /// <remarks>
+    /// <c>AbstractStreamingDevice</c> logs through the concrete <c>AppLogger.Instance</c>, not an
+    /// injectable <c>IAppLogger</c>, and under a test runner that logger has no NLog target — so a
+    /// <see cref="RecordingAppLogger"/> cannot reach it. What does leave the process is the Sentry
+    /// breadcrumb every <c>AppLogger.Warning</c> writes, which is shipped behaviour, so that is the
+    /// channel read here. It needs the global Sentry hub, hence the non-parallel collection.
+    /// </remarks>
+    [Collection(SentryHubCollection.Name)]
+    public sealed class TheNoFreshDocumentWarning : IDisposable
+    {
+        private const string WarningFragment = "did not supply a fresh capability document";
+
+        private readonly List<string> _breadcrumbs = [];
+        private readonly IDisposable _sentry;
+
+        public TheNoFreshDocumentWarning()
+        {
+            _sentry = SentrySdk.Init(options =>
+            {
+                options.Dsn = "https://0123456789abcdef0123456789abcdef@o0.ingest.us.sentry.invalid/1";
+                options.BackgroundWorker = new DiscardingWorker();
+                options.AutoSessionTracking = false;
+                options.DisableAppDomainUnhandledExceptionCapture();
+                options.DisableUnobservedTaskExceptionCapture();
+                options.SetBeforeBreadcrumb(breadcrumb =>
+                {
+                    lock (_breadcrumbs) { _breadcrumbs.Add(breadcrumb.Message ?? string.Empty); }
+                    return null;
+                });
+            });
+        }
+
+        public void Dispose() => _sentry.Dispose();
+
+        /// <summary>
+        /// The case the warning exists for: a v3.5.0+ board with nothing cached whose refresh also
+        /// comes back empty. A cache test reads this board as legacy firmware and stays silent.
+        /// </summary>
+        [Fact]
+        public void Is_raised_for_a_supported_device_that_has_never_supplied_a_document()
+        {
+            var core = new CapabilityRefreshingCoreDevice("core") { RefreshedDocument = null };
+            core.Metadata.UpdateFromProtobuf(BenchStatus());
+            core.Metadata.Capabilities = new DeviceCapabilities { MaxSamplingRate = BoardCeilingHz };
+            Assert.Null(core.Metadata.CapabilityDocument);
+            var device = WrapperAt(OverCapRateHz, core);
+
+            device.HoldRateForHandoff(core);
+
+            Assert.Contains(Breadcrumbs(), message => message.Contains(WarningFragment, StringComparison.Ordinal));
+        }
+
+        /// <summary>
+        /// The negative control: firmware below v3.5.0 owes no document, so an empty refresh there
+        /// is not worth a warning — which is also what proves the assertion above can come back empty.
+        /// </summary>
+        [Fact]
+        public void Is_not_raised_for_firmware_that_publishes_no_document()
+        {
+            var core = new CapabilityRefreshingCoreDevice("core") { RefreshedDocument = null };
+            core.Metadata.Capabilities = new DeviceCapabilities { MaxSamplingRate = BoardCeilingHz };
+            Assert.False(core.Supports(DeviceFeature.CapabilityDocument));
+            var device = WrapperAt(OverCapRateHz, core);
+
+            device.HoldRateForHandoff(core);
+
+            Assert.DoesNotContain(Breadcrumbs(), message => message.Contains(WarningFragment, StringComparison.Ordinal));
+        }
+
+        private List<string> Breadcrumbs()
+        {
+            lock (_breadcrumbs) { return [.. _breadcrumbs]; }
+        }
+
+        /// <summary>Accepts envelopes and sends none, so the SDK never builds an HTTP transport.</summary>
+        private sealed class DiscardingWorker : IBackgroundWorker
+        {
+            public int QueuedItems => 0;
+
+            public bool EnqueueEnvelope(Sentry.Protocol.Envelopes.Envelope envelope) => true;
+
+            public Task FlushAsync(TimeSpan timeout) => Task.CompletedTask;
+        }
+    }
     #endregion
 
     #region The start path itself
@@ -472,4 +563,14 @@ public class CurrentRateCapEnforcementTests
             HoldRateToCurrentConfigurationCap(coreDevice);
     }
     #endregion
+}
+
+/// <summary>
+/// Tests that initialise the process-wide Sentry hub to read what the app sends it. The hub is
+/// global, so nothing else may run alongside them.
+/// </summary>
+[CollectionDefinition(Name, DisableParallelization = true)]
+public sealed class SentryHubCollection
+{
+    public const string Name = "Sentry hub";
 }

@@ -1,4 +1,6 @@
 using System.Collections.ObjectModel;
+using Daqifi.Core.Communication.Producers;
+using Daqifi.Core.Device;
 using Daqifi.Core.Firmware;
 using Daqifi.Desktop.Device.Firmware;
 using Daqifi.Desktop.Device.SerialDevice;
@@ -162,7 +164,86 @@ public class FirmwareUpdateCancellationTests : IDisposable
         Assert.False(_host.IsFirmwareUploading);
     }
 
+    /// <summary>
+    /// Issue #409: the pre-flash WiFi version probe runs on the flash's own token, so a Cancel that
+    /// lands between the PIC32 flash and the WiFi step puts no <c>GETChipInfo?</c> on the wire.
+    /// <see cref="WifiChipInfoProbeTests.A_probe_cancelled_before_it_starts_never_queries_the_device"/>
+    /// pins Core's half (a cancelled token sends nothing); this pins the app's half — that the token
+    /// the coordinator hands the probe is the one Cancel signals, rather than
+    /// <see cref="CancellationToken.None"/>.
+    /// </summary>
+    /// <remarks>
+    /// The device is the app's real <see cref="SerialStreamingDevice"/> over a real Core device on a
+    /// <see cref="Daqifi.Avalonia.Tests.Device.CapturingTransport"/>, so what is asserted is what
+    /// reached the wire. The power-on is the proof the run got as far as the probe: the coordinator
+    /// sends it on the line immediately before the query.
+    /// </remarks>
+    [Fact]
+    public async Task Canceling_after_the_pic32_flash_keeps_the_wifi_probe_off_the_wire()
+    {
+        var coordinator = CreateCoordinator();
+        using var harness = ConnectedWincDevice();
+        _host.SelectedDevice = harness.Device;
+        _host.ParkOnQuiesce = false;
+        _downloads.LatestFirmwarePath = FirmwareFile();
+
+        // The user presses Cancel as the PIC32 flash finishes: the stub returns normally, so the run
+        // carries on into the WiFi step holding a cancelled token.
+        _updates.OnPic32Flash = coordinator.CancelUpload;
+        harness.Transport.ClearSent();
+
+        await coordinator.UploadFirmwareAsync().WaitAsync(UnwindTimeout);
+
+        Assert.True(
+            harness.Transport.WaitForSentText(ScpiMessageProducer.TurnDeviceOn.Data, UnwindTimeout),
+            $"The run never reached the WiFi probe; saw: {harness.Transport.SentText}");
+        Assert.DoesNotContain(
+            ScpiMessageProducer.GetLanChipInfo.Data, harness.Transport.SentText, StringComparison.Ordinal);
+        Assert.Equal("Firmware update canceled.", _host.FirmwareUpdateStatusText);
+    }
+
     #region Helpers
+    /// <summary>A stand-in PIC32 image: the coordinator checks only that the file exists.</summary>
+    private string FirmwareFile()
+    {
+        Directory.CreateDirectory(_dataDirectory);
+        var path = Path.Combine(_dataDirectory, "firmware.hex");
+        File.WriteAllText(path, ":00000001FF\n");
+        return path;
+    }
+
+    /// <summary>
+    /// A WINC-bearing USB device wrapping a connected Core device whose transport records every write.
+    /// </summary>
+    private static WireHarness ConnectedWincDevice()
+    {
+        var transport = new Daqifi.Avalonia.Tests.Device.CapturingTransport();
+        var core = new DaqifiStreamingDevice("core", transport, NullLogger.Instance);
+        core.Connect();
+        var device = new SerialStreamingDevice("COM-TEST-409", core);
+        device.Metadata.Capabilities.HasWincWifiModule = true;
+        return new WireHarness(transport, core, device);
+    }
+
+    private sealed class WireHarness(
+        Daqifi.Avalonia.Tests.Device.CapturingTransport transport,
+        DaqifiStreamingDevice core,
+        SerialStreamingDevice device) : IDisposable
+    {
+        public Daqifi.Avalonia.Tests.Device.CapturingTransport Transport { get; } = transport;
+
+        public SerialStreamingDevice Device { get; } = device;
+
+        public void Dispose()
+        {
+            // Release the parked reader first, as CurrentRateCapEnforcementTests does, so Core's
+            // teardown does not spend its consumer-join bound on every run.
+            Transport.CloseStream();
+            core.Dispose();
+            Transport.Dispose();
+        }
+    }
+
     /// <summary>
     /// A USB device that reports a separately-flashable WINC module, so the WiFi flash is attempted.
     /// The <see cref="System.IO.Ports.SerialPort"/> it constructs is never opened.
@@ -214,11 +295,14 @@ public class FirmwareUpdateCancellationTests : IDisposable
             return null;
         }
 
+        /// <summary>What the PIC32 package download returns; null means "no package".</summary>
+        public string? LatestFirmwarePath { get; set; }
+
         public Task<string?> DownloadLatestFirmwareAsync(
             string destinationDirectory,
             bool includePreRelease = false,
             IProgress<int>? progress = null,
-            CancellationToken cancellationToken = default) => Task.FromResult<string?>(null);
+            CancellationToken cancellationToken = default) => Task.FromResult(LatestFirmwarePath);
 
         public Task<string?> DownloadFirmwareByTagAsync(
             string tagName,
@@ -242,10 +326,15 @@ public class FirmwareUpdateCancellationTests : IDisposable
         public void InvalidateCache() { }
     }
 
-    /// <summary>PIC32 update service that is never reached by these tests.</summary>
+    /// <summary>
+    /// PIC32 update service that flashes nothing. <see cref="OnPic32Flash"/> runs in place of the
+    /// flash, which is how a test lands a Cancel at the moment the PIC32 half completes.
+    /// </summary>
     private sealed class StubUpdateService : IFirmwareUpdateService
     {
         public FirmwareUpdateState CurrentState => FirmwareUpdateState.Idle;
+
+        public Action? OnPic32Flash { get; set; }
 
 #pragma warning disable CS0067 // Part of the interface; nothing in these tests raises it.
         public event EventHandler<FirmwareUpdateStateChangedEventArgs>? StateChanged;
@@ -263,7 +352,11 @@ public class FirmwareUpdateCancellationTests : IDisposable
             IProgress<FirmwareUpdateProgress>? progress,
             string? targetDevicePath,
             string? targetLocationKey,
-            CancellationToken cancellationToken = default) => Task.CompletedTask;
+            CancellationToken cancellationToken = default)
+        {
+            OnPic32Flash?.Invoke();
+            return Task.CompletedTask;
+        }
 
         public Task UpdateWifiModuleAsync(
             Daqifi.Core.Device.IStreamingDevice device,
@@ -325,8 +418,16 @@ public class FirmwareUpdateCancellationTests : IDisposable
         /// <summary>Frees a parked quiesce so a failing test cannot leak it past teardown.</summary>
         public void ReleaseQuiesce() => _release.Cancel();
 
+        /// <summary>False lets the quiesce complete at once, for a run meant to get past it.</summary>
+        public bool ParkOnQuiesce { get; set; } = true;
+
         public async Task QuiesceWifiFirmwareProbeAsync(CancellationToken cancellationToken = default)
         {
+            if (!ParkOnQuiesce)
+            {
+                return;
+            }
+
             _quiescing.TrySetResult();
             using var linked = CancellationTokenSource.CreateLinkedTokenSource(cancellationToken, _release.Token);
             await Task.Delay(Timeout.InfiniteTimeSpan, linked.Token);
