@@ -5,14 +5,22 @@
              xmlns:iac="using:Avalonia.Xaml.Interactions.Core"
              xmlns:networkDataModel="using:Daqifi.Core.Device.Network"
              xmlns:sdCard="using:Daqifi.Core.Device.SdCard"
-             x:Class="Daqifi.Avalonia.Views.Mobile.DevicesMobileView">
+             xmlns:vm="using:Daqifi.Desktop.ViewModels"
+             x:Class="Daqifi.Avalonia.Views.Mobile.DevicesMobileView"
+             x:DataType="vm:DevicesPaneViewModel"
+             x:CompileBindings="True">
   <!-- Mobile projection of Daqifi.Desktop.View.Prototype.DevicesPanePrototype over the shared
        DevicesPaneViewModel. Authored from the portomatic binding skeleton: every VM binding the
        skeleton lists is preserved verbatim (same path strings, including `!` negations and dotted
        Shell.* paths). Desktop→mobile idiom: single-column ScrollViewer, touch targets, design
        tokens. The desktop 420px settings DRAWER (gated by IsSettingsOpen) becomes an INLINE
        expandable section in the same scroll flow gated by the same IsSettingsOpen binding.
-       Reflection bindings only (no x:DataType / compiled bindings) so it compiles without the VM.
+       Compiled bindings (issue #327): AvaloniaUseCompiledBindingsByDefault is false in this
+       project, so the DataType needs the CompileBindings beside it. The scope is the VM this view
+       projects, the one its desktop sibling DevicesPanePrototype builds for itself. Nothing in the
+       app constructs this view yet, so no route hands it anything else. The tile template declares
+       nothing: its scope is inferred from Devices, and the tile's $parent[ItemsControl].DataContext
+       reaches back out to the view model.
 
        Visuals use the app-wide shared design language (Components.axaml + Shell.axaml, merged in
        App.axaml): pill ControlThemes (AccentPillButton / PillButton / DangerPillButton) for all
