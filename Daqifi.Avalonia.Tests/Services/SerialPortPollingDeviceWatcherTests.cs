@@ -149,7 +149,7 @@ public class SerialPortPollingDeviceWatcherTests
         public void Warning(Exception ex, string message) => Warnings.Enqueue(message);
         public void Error(string message) => Errors.Enqueue((new Exception(message), message));
         public void Error(Exception ex, string message) => Errors.Enqueue((ex, message));
-        public void AddBreadcrumb(string category, string message, BreadcrumbLevel level = BreadcrumbLevel.Info) { }
+        public void AddBreadcrumb(string category, string message, Daqifi.Desktop.Common.Loggers.BreadcrumbLevel level = Daqifi.Desktop.Common.Loggers.BreadcrumbLevel.Info) { }
         public void SetDeviceContext(string model, string serialNumber, string firmwareVersion, string connectionType, int activeChannels) { }
         public void ClearDeviceContext() { }
         public void Shutdown() { }
