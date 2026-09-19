@@ -73,6 +73,8 @@ public sealed class DeviceLogsSelectionTests : IDisposable
         var (vm, _, b) = await PaneWithUserOnSecondDevice();
         var c = new RecordingStreamingDevice("CCCC0003");
         Register(c);
+        // Re-pick B, so this test measures the drop alone and not also the connect before it.
+        vm.SelectedDevice = b;
         await Settle();
 
         ConnectionManager.Instance.UnregisterConnectedDevice(c);
