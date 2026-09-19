@@ -1,4 +1,3 @@
-using Daqifi.Desktop.Common.Loggers;
 using Daqifi.Desktop.DiskSpace;
 using Xunit;
 
@@ -207,11 +206,11 @@ public class DiskSpaceMonitorCoordinatorTests
 
     #region Test doubles
 
-    private static (DiskSpaceMonitorCoordinator, FakeMonitor, RecordingHost, RecordingLogger) Build()
+    private static (DiskSpaceMonitorCoordinator, FakeMonitor, RecordingHost, RecordingAppLogger) Build()
     {
         var monitor = new FakeMonitor();
         var host = new RecordingHost();
-        var logger = new RecordingLogger();
+        var logger = new RecordingAppLogger();
         return (new DiskSpaceMonitorCoordinator(host, monitor, logger), monitor, host, logger);
     }
 
@@ -281,32 +280,6 @@ public class DiskSpaceMonitorCoordinatorTests
             Messages.Add(message);
             return new TaskCompletionSource().Task;
         }
-    }
-
-    private sealed class RecordingLogger : IAppLogger
-    {
-        public List<string> Warnings { get; } = [];
-
-        public void Information(string message) { }
-
-        public void Warning(string message) => Warnings.Add(message);
-
-        public void Warning(Exception ex, string message) => Warnings.Add(message);
-
-        public void Error(string message) { }
-
-        public void Error(Exception ex, string message) { }
-
-        public void AddBreadcrumb(
-            string category,
-            string message,
-            Daqifi.Desktop.Common.Loggers.BreadcrumbLevel level = Daqifi.Desktop.Common.Loggers.BreadcrumbLevel.Info) { }
-
-        public void SetDeviceContext(string model, string serialNumber, string firmwareVersion, string connectionType, int activeChannels) { }
-
-        public void ClearDeviceContext() { }
-
-        public void Shutdown() { }
     }
 
     #endregion
