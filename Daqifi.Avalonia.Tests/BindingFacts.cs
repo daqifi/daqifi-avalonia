@@ -198,7 +198,8 @@ internal static class BindingFacts
     /// So this reads <b>every</b> C# file in <c>Daqifi.Avalonia</c> for the two routes the app uses —
     /// <c>ShowDialogAsync&lt;Dialog&gt;(owner, local)</c>, and
     /// <c>var d = new Dialog(); d.DataContext = local;</c> — and requires <c>local</c> to be a
-    /// <c>var</c> constructed as <paramref name="viewModelType"/> in a block that encloses the use (see
+    /// <c>var</c> whose whole initializer is a construction of <paramref name="viewModelType"/> (see
+    /// <see cref="IsWholeConstruction"/>) in a block that encloses the use (see
     /// <see cref="BlockStillOpen"/>), and never named again in that block except to reach a member.
     /// <c>var</c> only, because a field cannot be one: an initialized field reads as an enclosing
     /// declaration and any method can reassign it (Qodo round 1 on PR #378). The "never named again"
