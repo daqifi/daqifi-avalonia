@@ -201,6 +201,24 @@ public class BootloaderHoldServiceTests
     }
 
     /// <summary>
+    /// And it drains the read by letting it finish, not by cancelling it. The distinction is the whole
+    /// difference between the pause path and the release path, and it is invisible in the hold's public
+    /// state: a cancelled read aborts mid-IRP, which is the orphaned-read hand-off the drain exists to
+    /// avoid. Release, below, does cancel — that one is not handing anything to a flasher.
+    /// </summary>
+    [Fact]
+    public async Task Pausing_lets_the_in_flight_read_end_on_its_own_rather_than_cancelling_it()
+    {
+        using var service = CreateService();
+        await service.BeginHoldAsync();
+        await _transport.WaitForReadsAsync(1);
+
+        await service.PauseForFlashAsync();
+
+        Assert.Equal(0, _transport.CancelledReadCount);
+    }
+
+    /// <summary>
     /// A pause is a stop we asked for, so it is not a dropped device — firing <c>HoldDropped</c> here
     /// would tell the watcher the bootloader vanished in the middle of a flash.
     /// </summary>
@@ -440,6 +458,7 @@ public class BootloaderHoldServiceTests
         private readonly List<(int Target, TaskCompletionSource Signal)> _readWaiters = [];
         private int _readCount;
         private int _readsInFlight;
+        private int _cancelledReadCount;
         private int _disconnectCount;
         private int _disposeCount;
 
@@ -463,6 +482,9 @@ public class BootloaderHoldServiceTests
         internal int ReadCount => Volatile.Read(ref _readCount);
 
         internal bool ReadInFlight => Volatile.Read(ref _readsInFlight) > 0;
+
+        /// <summary>Reads that ended because their cancellation token fired, rather than by timing out.</summary>
+        internal int CancelledReadCount => Volatile.Read(ref _cancelledReadCount);
 
         internal int DisconnectCount => Volatile.Read(ref _disconnectCount);
 
@@ -540,6 +562,11 @@ public class BootloaderHoldServiceTests
 
                 await Task.Delay(timeout ?? ReadTimeout, cancellationToken).ConfigureAwait(false);
                 throw new TimeoutException("No HID report within the read timeout.");
+            }
+            catch (OperationCanceledException)
+            {
+                Interlocked.Increment(ref _cancelledReadCount);
+                throw;
             }
             finally
             {
