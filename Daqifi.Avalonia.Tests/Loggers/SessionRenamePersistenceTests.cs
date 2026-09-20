@@ -1,5 +1,6 @@
 using Daqifi.Desktop.Logger;
 using Microsoft.Data.Sqlite;
+using Microsoft.EntityFrameworkCore;
 using Xunit;
 
 namespace Daqifi.Avalonia.Tests.Loggers;
@@ -55,18 +56,29 @@ public sealed class SessionRenamePersistenceTests : IDisposable
     }
 
     /// <summary>
-    /// The blank case, which is not merely cosmetic: the pane sends <c>null</c> rather than an empty
-    /// string so that <c>LoggingSession.Name</c>'s getter renders "Session {ID}" again on reload.
-    /// Storing <c>""</c> instead would leave the row displaying an empty label forever.
+    /// The blank case, pinned AS IT BEHAVES TODAY, which is broken — see issue linked on the PR.
+    ///
+    /// <para>The pane sends <c>null</c> when the user empties the box, meaning "go back to the
+    /// default label". <c>Sessions.Name</c> is <c>nullable: false</c>, and EF writes the backing
+    /// field rather than <c>LoggingSession.Name</c>'s substituting getter, so the save throws
+    /// <c>NOT NULL constraint failed: Sessions.Name</c> and the row keeps its old name. The
+    /// in-memory object has already changed, so the pane shows the default until the next launch
+    /// brings the old name back. The code-behind logged the throw and showed the user nothing,
+    /// which is why this has gone unnoticed.</para>
+    ///
+    /// <para>Not fixed here on purpose: this PR moves the write without changing it, and the fix
+    /// is a schema or storage decision (nullable column vs storing <c>""</c>) that deserves its own
+    /// change. When it lands, this row is the one that has to be rewritten.</para>
     /// </summary>
     [Fact]
-    public async Task Clearing_the_box_stores_null_so_the_row_goes_back_to_its_default_label()
+    public async Task Clearing_the_box_fails_to_persist_today_and_leaves_the_old_name_in_place()
     {
         SeedSession();
 
-        await Manager().PersistSessionNameAsync(SessionId, null);
+        await Assert.ThrowsAsync<DbUpdateException>(
+            () => Manager().PersistSessionNameAsync(SessionId, null));
 
-        Assert.Null(StoredName());
+        Assert.Equal(SeededName, StoredName());
     }
 
     /// <summary>
