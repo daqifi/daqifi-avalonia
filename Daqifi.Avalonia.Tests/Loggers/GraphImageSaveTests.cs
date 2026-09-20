@@ -61,6 +61,25 @@ public sealed class GraphImageSaveTests : IDisposable
         catch (UnauthorizedAccessException) { /* ditto */ }
     }
 
+    /// <summary>Why <see cref="A_destination_name_at_the_length_limit_still_saves"/>
+    /// cannot run on Windows — the runner shows this against the skipped row.</summary>
+    private const string LengthLimitIsUnixOnly =
+        "Unix-only: the vector is the 255-byte per-component name limit. On Windows a name this "
+        + "long also pushes the full path past MAX_PATH, so the row would fail for an unrelated "
+        + "reason and prove nothing.";
+
+    /// <summary>Why <see cref="Overwriting_keeps_the_destinations_own_permissions"/>
+    /// cannot run on Windows — the runner shows this against the skipped row.</summary>
+    private const string FileModeIsUnixOnly =
+        "Unix-only: UnixFileMode does not exist on Windows, where the equivalent guarantee is the "
+        + "ACL carried by File.Replace.";
+
+    /// <summary>Why <see cref="Saving_onto_a_symbolic_link_writes_through_to_its_target"/>
+    /// cannot run on Windows — the runner shows this against the skipped row.</summary>
+    private const string SymbolicLinksAreUnixOnly =
+        "Unix-only: creating a symbolic link on Windows needs elevation or developer mode, so the "
+        + "row would report an environment problem rather than a code one.";
+
     /// <summary>
     /// The issue's headline vector: a folder the user cannot write to. Chosen by a picker that
     /// happily lets them pick it, because the picker asks the platform for a path, not for
@@ -272,13 +291,13 @@ public sealed class GraphImageSaveTests : IDisposable
     /// pushes the full path past <c>MAX_PATH</c>, which would fail for an unrelated reason and
     /// prove nothing.
     /// </remarks>
-    [UnixOnlyFact]
+    [UnixOnlyFact(LengthLimitIsUnixOnly)]
     public void A_destination_name_at_the_length_limit_still_saves()
     {
         // Fail-safe, not the skip: the [UnixOnlyFact] above is what stands this row down on
         // Windows. Reaching here means it stopped doing so, and the row must say so rather than
         // report Passed. The `return` is also the CA1416 narrowing, which reads control flow.
-        if (OperatingSystem.IsWindows()) { Assert.Fail(UnixOnlyFactAttribute.Reason); return; }
+        if (OperatingSystem.IsWindows()) { Assert.Fail(LengthLimitIsUnixOnly); return; }
 
         // 251 + ".png" = 255, the longest legal name. Anything appended to it fails.
         var path = Path.Combine(_root, new string('g', 251) + ".png");
@@ -298,13 +317,13 @@ public sealed class GraphImageSaveTests : IDisposable
     /// </summary>
     /// <remarks>Unix-only: <see cref="UnixFileMode"/> does not exist on Windows, where the
     /// equivalent guarantee is the ACL carried by <c>File.Replace</c>.</remarks>
-    [UnixOnlyFact]
+    [UnixOnlyFact(FileModeIsUnixOnly)]
     public void Overwriting_keeps_the_destinations_own_permissions()
     {
         // Fail-safe, not the skip: the [UnixOnlyFact] above is what stands this row down on
         // Windows. Reaching here means it stopped doing so, and the row must say so rather than
         // report Passed. The `return` is also the CA1416 narrowing, which reads control flow.
-        if (OperatingSystem.IsWindows()) { Assert.Fail(UnixOnlyFactAttribute.Reason); return; }
+        if (OperatingSystem.IsWindows()) { Assert.Fail(FileModeIsUnixOnly); return; }
 
         var path = Path.Combine(_root, "graph.png");
         File.WriteAllBytes(path, [0x00, 0x01]);
@@ -327,13 +346,13 @@ public sealed class GraphImageSaveTests : IDisposable
     /// </summary>
     /// <remarks>Unix-only: creating a symbolic link on Windows needs elevation or developer
     /// mode, so the test would report an environment problem rather than a code one.</remarks>
-    [UnixOnlyFact]
+    [UnixOnlyFact(SymbolicLinksAreUnixOnly)]
     public void Saving_onto_a_symbolic_link_writes_through_to_its_target()
     {
         // Fail-safe, not the skip: the [UnixOnlyFact] above is what stands this row down on
         // Windows. Reaching here means it stopped doing so, and the row must say so rather than
         // report Passed. The `return` is also the CA1416 narrowing, which reads control flow.
-        if (OperatingSystem.IsWindows()) { Assert.Fail(UnixOnlyFactAttribute.Reason); return; }
+        if (OperatingSystem.IsWindows()) { Assert.Fail(SymbolicLinksAreUnixOnly); return; }
 
         var target = Path.Combine(_root, "real-graph.png");
         File.WriteAllBytes(target, [0x00, 0x01]);

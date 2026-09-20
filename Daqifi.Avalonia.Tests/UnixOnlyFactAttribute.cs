@@ -4,7 +4,7 @@ namespace Daqifi.Avalonia.Tests;
 
 /// <summary>
 /// A <see cref="FactAttribute"/> for a row that can only run on Linux or macOS, which the runner
-/// reports as <b>Skipped</b> on Windows instead of silently as Passed.
+/// reports as <b>Skipped</b>, with the reason given, instead of silently as Passed.
 ///
 /// <para>
 /// The problem it exists to solve (issue #421): a row that stands itself down with
@@ -31,6 +31,17 @@ namespace Daqifi.Avalonia.Tests;
 /// </para>
 ///
 /// <para>
+/// <b>The reason is required, and it belongs to the row rather than to this type.</b> "Unix-only"
+/// is the condition, not the explanation, and these rows stand down for related but different
+/// causes — one is about the file-mode bits, one about symbolic links, one about a name length
+/// that would trip <c>MAX_PATH</c> for an entirely unrelated reason. A skip reporting the wrong
+/// cause is the same defect this attribute exists to fix, one step along: honest that it did not
+/// run, misleading about why. Pass the row's own sentence — normally the one its
+/// <c>&lt;remarks&gt;</c> already gives — as a <c>const</c>, and give the in-body guard that same
+/// constant so the two cannot drift apart.
+/// </para>
+///
+/// <para>
 /// <b>This attribute does not replace the in-body platform guard, and must not be read as
 /// doing so.</b> <c>CA1416</c> narrows a method's supported platforms by control flow, not by
 /// attribute, so a row calling <c>File.SetUnixFileMode</c> or <c>File.GetUnixFileMode</c> fails to
@@ -42,15 +53,13 @@ namespace Daqifi.Avalonia.Tests;
 /// </summary>
 public sealed class UnixOnlyFactAttribute : FactAttribute
 {
-    /// <summary>The reason the runner prints, and the text an in-body fail-safe should echo.</summary>
-    internal const string Reason =
-        "Unix-only: this vector is about Unix file-mode/link semantics, which Windows does not have.";
-
-    public UnixOnlyFactAttribute()
+    /// <param name="reason">Why this row cannot run on Windows, in the row's own terms. Shown by
+    /// the runner against the skipped row and carried into the TRX.</param>
+    public UnixOnlyFactAttribute(string reason)
     {
         if (OperatingSystem.IsWindows())
         {
-            Skip = Reason;
+            Skip = reason;
         }
     }
 }
