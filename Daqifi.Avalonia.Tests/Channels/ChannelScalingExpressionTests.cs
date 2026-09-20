@@ -392,18 +392,33 @@ public class ChannelScalingExpressionTests
                                  + new string('!', AbstractChannel.MaxScaleExpressionLength
                                                    - AbstractChannel.MaxScaleExpressionDepth);
 
-        // Straddles both caps. Every over-cap case is one the guard must refuse, so each is also
-        // the control for its own half of the post-condition: with that cap gone the input
-        // reaches the parser, the first assertion below fails, and the row is red. They are kept
-        // just one step past their cap on purpose — a run of 9 costs an unguarded parse under a
-        // second, where the 12 of #311 costs 48 s and the ~1,700 characters of nested parentheses
-        // abort the test host outright with an uncatchable StackOverflowException.
+        // It sits exactly at both ceilings, which is what makes it the ceiling of the admitted
+        // set rather than one arbitrary member of it...
+        Assert.Equal(AbstractChannel.MaxScaleExpressionLength, worstUnderBothCaps.Length);
+        Assert.Equal(
+            AbstractChannel.MaxScaleExpressionDepth,
+            LongestRunOfOpenParentheses(worstUnderBothCaps));
+
+        // ...and it really is admitted: an ordinary parse failure, not either cap's refusal. It
+        // is parsed exactly once here, because this is the ~3.2 s input and the rest of this row
+        // is deliberately cheap.
+        var channel = Scaled(worstUnderBothCaps);
+
+        Assert.False(channel.HasValidExpression);
+        Assert.False(RefusedByACap(channel));
+        Assert.Equal(AbstractChannel.InvalidExpressionMessage, channel.ScaleExpressionError);
+
+        // Now the post-condition itself, over a set straddling both caps. Every over-cap case is
+        // the control for its own half of it: with that cap gone the input reaches the parser and
+        // the row goes red. They are kept just one step past their cap on purpose — a run of 9
+        // costs an unguarded parse under a second, where the 12 of #311 costs 48 s and the ~1,700
+        // characters of nested parentheses abort the test host outright with an uncatchable
+        // StackOverflowException, which would leave no result to report at all.
         (string Text, bool ReachesTheParser)[] cases =
         [
             ("x * 2", true),
             (new string('(', AbstractChannel.MaxScaleExpressionDepth) + "x"
              + new string(')', AbstractChannel.MaxScaleExpressionDepth), true),
-            (worstUnderBothCaps, true),
             (new string('(', AbstractChannel.MaxScaleExpressionDepth + 1), false),
             ("['x] + " + new string('(', AbstractChannel.MaxScaleExpressionDepth + 1), false),
             ("'))))))))' + " + new string('(', AbstractChannel.MaxScaleExpressionDepth + 1), false),
@@ -412,35 +427,21 @@ public class ChannelScalingExpressionTests
 
         foreach (var (text, reachesTheParser) in cases)
         {
-            var scaled = Scaled(text);
-
-            Assert.Equal(reachesTheParser, !RefusedByACap(scaled));
+            Assert.Equal(reachesTheParser, !RefusedByACap(Scaled(text)));
 
             if (!reachesTheParser)
             {
                 continue;
             }
 
-            // The post-condition: both quantities the parse cost depends on are inside their cap
-            // for anything that got this far.
+            // Both quantities the parse cost depends on are inside their cap for anything that
+            // got this far.
             Assert.True(text.Length <= AbstractChannel.MaxScaleExpressionLength,
                 $"{text.Length} characters reached the parser");
             Assert.True(
                 LongestRunOfOpenParentheses(text) <= AbstractChannel.MaxScaleExpressionDepth,
                 $"a run of {LongestRunOfOpenParentheses(text)} consecutive '(' reached the parser");
         }
-
-        // And the worst case sits exactly at both ceilings, which is what makes it the ceiling of
-        // the admitted set rather than one arbitrary member of it.
-        Assert.Equal(AbstractChannel.MaxScaleExpressionLength, worstUnderBothCaps.Length);
-        Assert.Equal(
-            AbstractChannel.MaxScaleExpressionDepth,
-            LongestRunOfOpenParentheses(worstUnderBothCaps));
-
-        var channel = Scaled(worstUnderBothCaps);
-
-        Assert.False(channel.HasValidExpression);
-        Assert.Equal(AbstractChannel.InvalidExpressionMessage, channel.ScaleExpressionError);
     }
 
     [Fact]
