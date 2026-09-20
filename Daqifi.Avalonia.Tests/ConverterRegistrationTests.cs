@@ -103,6 +103,9 @@ public class ConverterRegistrationTests
     [InlineData("IsVisible", "{Binding Thing, Converter={StaticResource Ghost}}", true)]
     [InlineData("IsVisible", "{Binding Thing, Converter={StaticResource Ghost}, Mode=OneWay}", true)]
     [InlineData("Text", "{MultiBinding Converter={StaticResource Ghost}}", true)]
+    [InlineData("IsVisible", "{Binding Thing,Converter={StaticResource Ghost}}", true)]
+    // A converter on an arbitrary property is still a converter — do not over-tighten.
+    [InlineData("Tag", "{Binding Thing, Converter={StaticResource Ghost}}", true)]
     // Everything else — not collected.
     [InlineData("Background", "{DynamicResource Ghost}", false)]
     [InlineData("Fill", "{StaticResource Ghost}", false)]
@@ -110,6 +113,12 @@ public class ConverterRegistrationTests
     [InlineData("IsVisible", "{Binding Thing, ConverterParameter={StaticResource Ghost}}", false)]
     [InlineData("ToolTip.Tip", "see the Ghost resource", false)]
     [InlineData("Content", "Ghost", false)]
+    // A longer property name that merely ENDS in 'Converter' is not a converter clause.
+    [InlineData("IsVisible", "{Binding Thing, SomeConverter={StaticResource Ghost}}", false)]
+    [InlineData("IsVisible", "{Binding Thing, ValueConverter={StaticResource Ghost}}", false)]
+    // Literal attribute text is not a markup extension, however much it looks like one.
+    [InlineData("Tag", "Converter={StaticResource Ghost}", false)]
+    [InlineData("ToolTip.Tip", "pass Converter={StaticResource Ghost} to the binding", false)]
     public void Only_a_converter_position_counts_as_converter_usage(string attribute, string value, bool expected)
     {
         Assert.Equal(expected, ConverterKeysIn(attribute, value).Contains("Ghost"));
@@ -203,11 +212,27 @@ public class ConverterRegistrationTests
             ReadResourceKeyInto(attributeValue, cursor, keys);
         }
 
-        // "{Binding X, Converter={StaticResource Key}}" — the nested clause, anywhere in the value.
+        // "{Binding X, Converter={StaticResource Key}}" — the nested clause.
+        //
+        // Two boundaries, and both are load-bearing. The value must BE a markup extension, because a
+        // nested Converter= clause cannot exist outside one — that rules out literal attribute text
+        // such as Tag="Converter={StaticResource Ghost}", which begins at offset 0 and would satisfy
+        // any preceding-character rule. And the token must start at a property boundary, which rules
+        // out a longer property name ending in 'Converter' (SomeConverter=, ValueConverter=).
+        if (attributeValue.TrimStart().StartsWith('{'))
+        {
+            CollectNestedConverterKeys(attributeValue, keys);
+        }
+
+        return keys;
+    }
+
+    private static void CollectNestedConverterKeys(string attributeValue, HashSet<string> keys)
+    {
         const string converter = "Converter";
         for (var index = 0; index + converter.Length < attributeValue.Length; index++)
         {
-            if (!Match(attributeValue, index, converter))
+            if (!Match(attributeValue, index, converter) || !IsPropertyBoundary(attributeValue, index))
             {
                 continue;
             }
@@ -228,9 +253,15 @@ public class ConverterRegistrationTests
             SkipTo(attributeValue, ref cursor, '{');
             ReadResourceKeyInto(attributeValue, cursor, keys);
         }
-
-        return keys;
     }
+
+    /// <summary>
+    /// True when a markup-extension property name could start at <paramref name="index"/> — i.e. it
+    /// is preceded by the extension's opening brace, a clause comma, or whitespace. This is what
+    /// stops <c>SomeConverter=</c> from being read as <c>Converter=</c>.
+    /// </summary>
+    private static bool IsPropertyBoundary(string text, int index) =>
+        index == 0 || text[index - 1] is '{' or ',' || char.IsWhiteSpace(text[index - 1]);
 
     /// <summary>Advances past spaces and one optional opening brace.</summary>
     private static void SkipTo(string text, ref int cursor, char optionalOpener)
