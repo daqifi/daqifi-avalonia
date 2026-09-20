@@ -56,7 +56,7 @@ public sealed class SessionRenamePersistenceTests : IDisposable
     }
 
     /// <summary>
-    /// The blank case, pinned AS IT BEHAVES TODAY, which is broken — see issue linked on the PR.
+    /// The blank case, pinned AS IT BEHAVES TODAY, which is broken — issue #427.
     ///
     /// <para>The pane sends <c>null</c> when the user empties the box, meaning "go back to the
     /// default label". <c>Sessions.Name</c> is <c>nullable: false</c>, and EF writes the backing
@@ -68,7 +68,7 @@ public sealed class SessionRenamePersistenceTests : IDisposable
     ///
     /// <para>Not fixed here on purpose: this PR moves the write without changing it, and the fix
     /// is a schema or storage decision (nullable column vs storing <c>""</c>) that deserves its own
-    /// change. When it lands, this row is the one that has to be rewritten.</para>
+    /// change — #427. When it lands, this row is the one that has to be rewritten.</para>
     /// </summary>
     [Fact]
     public async Task Clearing_the_box_fails_to_persist_today_and_leaves_the_old_name_in_place()
