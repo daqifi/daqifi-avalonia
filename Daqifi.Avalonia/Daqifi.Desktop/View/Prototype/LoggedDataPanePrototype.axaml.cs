@@ -9,8 +9,6 @@ using Avalonia.Threading;
 using Daqifi.Desktop.Common.Loggers;
 using Daqifi.Desktop.Logger;
 using Daqifi.Desktop.ViewModels;
-using Microsoft.EntityFrameworkCore;
-using Microsoft.Extensions.DependencyInjection;
 
 namespace Daqifi.Desktop.View.Prototype;
 
@@ -21,7 +19,6 @@ namespace Daqifi.Desktop.View.Prototype;
 public partial class LoggedDataPanePrototype : UserControl
 {
     private readonly AppLogger _logger = AppLogger.Instance;
-    private readonly IDbContextFactory<LoggingContext> _loggingContext;
     private CancellationTokenSource? _renameSessionCts;
 
     public LoggedDataPanePrototype()
@@ -33,7 +30,6 @@ public partial class LoggedDataPanePrototype : UserControl
         // Avalonia's headless automation drives the ItemsControl directly, so no analog is needed;
         // production virtualization behavior is unchanged.
 
-        _loggingContext = App.ServiceProvider.GetRequiredService<IDbContextFactory<LoggingContext>>();
         Unloaded += (_, _) =>
         {
             _renameSessionCts?.Cancel();
@@ -86,13 +82,10 @@ public partial class LoggedDataPanePrototype : UserControl
         {
             await Task.Delay(TimeSpan.FromMilliseconds(250), renameCts.Token);
 
-            await using var context = await _loggingContext.CreateDbContextAsync(renameCts.Token);
-            var sessionToUpdate = await context.Sessions.FindAsync([session.ID], renameCts.Token);
-            if (sessionToUpdate != null)
-            {
-                sessionToUpdate.Name = newName;
-                await context.SaveChangesAsync(renameCts.Token);
-            }
+            // The write itself belongs to LoggingManager, which owns the sessions this pane lists
+            // and the database they live in. A view knowing the Sessions table was the only place
+            // in the app where markup code-behind opened a DbContext.
+            await LoggingManager.Instance.PersistSessionNameAsync(session.ID, newName, renameCts.Token);
         }
         catch (OperationCanceledException)
         {

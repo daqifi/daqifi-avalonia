@@ -890,6 +890,30 @@ public partial class LoggingManager : ObservableObject
     }
 
     /// <summary>
+    /// Persists the user-entered <see cref="LoggingSession.Name"/> for one session. A blank name is
+    /// stored as <c>null</c>, which is what makes the row render as "Session {ID}" again on reload.
+    /// </summary>
+    /// <remarks>
+    /// Throws rather than swallowing, unlike <see cref="DeleteLoggingSessionIfPresent"/>: the caller
+    /// debounces keystrokes, so it is the one that knows whether a failure means "the user is still
+    /// typing" (<see cref="OperationCanceledException"/>) or "the rename did not stick".
+    /// </remarks>
+    /// <param name="sessionId">The session to rename. A row that is no longer there is a no-op.</param>
+    /// <param name="name">The new name, or <c>null</c> to clear it.</param>
+    /// <param name="cancellationToken">Cancelled by the caller when another keystroke supersedes this write.</param>
+    public async Task PersistSessionNameAsync(
+        int sessionId, string? name, CancellationToken cancellationToken = default)
+    {
+        await using var context = await _loggingContext.CreateDbContextAsync(cancellationToken);
+        var tracked = await context.Sessions.FindAsync([sessionId], cancellationToken);
+        if (tracked != null)
+        {
+            tracked.Name = name;
+            await context.SaveChangesAsync(cancellationToken);
+        }
+    }
+
+    /// <summary>
     /// Persists <see cref="LoggingSession.SampleCount"/> for the given session
     /// by running a single COUNT against the Samples table. Called when a
     /// session ends so the list view can surface the count without a query.
