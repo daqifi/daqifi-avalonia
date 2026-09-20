@@ -16,8 +16,6 @@ using Avalonia.Threading;
 using System.Collections;
 using System.Collections.ObjectModel;
 using Daqifi.Core.Communication.Transport;
-using System.Net;
-using System.Net.Sockets;
 using CommunityToolkit.Mvvm.ComponentModel;
 using CommunityToolkit.Mvvm.Input;
 using Microsoft.Extensions.DependencyInjection;
@@ -112,10 +110,7 @@ public partial class ConnectionDialogViewModel : ObservableObject
     /// loop now owned by Core there is no loop to invoke, so the seam is the only way in.
     /// </summary>
     private Func<WiFiDeviceFinder> _createWifiFinder =
-        static () => new WiFiDeviceFinder(WiFiDiscoveryPort);
-
-    /// <summary>UDP port Nyquist boards answer discovery broadcasts on.</summary>
-    private const int WiFiDiscoveryPort = 30303;
+        static () => new WiFiDeviceFinder();
 
     /// <summary>
     /// Pause between serial scan passes, and the ceiling on one pass. Core bounds the pass itself
@@ -791,10 +786,16 @@ public partial class ConnectionDialogViewModel : ObservableObject
         if (string.IsNullOrWhiteSpace(ManualIpAddress)) { return; }
 
         var endpointInput = ManualIpAddress.Trim();
-        IPAddress? ipAddress;
+
+        // Name resolution and the TCP data port belong to the device wrapper, not to a dialog: it
+        // asks for a device for whatever the user typed and gets one or does not. The wrapper also
+        // drives the connection through Core's DaqifiDeviceFactory, so nothing here has to
+        // fabricate a discovery-shaped IDeviceInfo (issue #620).
+        DaqifiStreamingDevice? device;
         try
         {
-            ipAddress = await ResolveManualWifiEndpointAsync(endpointInput);
+            device = await DaqifiStreamingDevice.CreateForManualEndpointAsync(
+                endpointInput, "Manual IP Device");
         }
         catch (ArgumentException ex)
         {
@@ -802,13 +803,6 @@ public partial class ConnectionDialogViewModel : ObservableObject
             Common.Loggers.AppLogger.Instance.Warning(ex,
                 $"Manual WiFi connection requires a valid IP address or host name. " +
                 $"Received '{ManualIpAddress}'");
-            return;
-        }
-        catch (SocketException ex)
-        {
-            ManualWifiError = $"Could not resolve '{endpointInput}'. Check the address and try again.";
-            Common.Loggers.AppLogger.Instance.Warning(ex,
-                $"Failed to resolve manual WiFi endpoint '{ManualIpAddress}'");
             return;
         }
         catch (Exception ex)
@@ -819,7 +813,7 @@ public partial class ConnectionDialogViewModel : ObservableObject
             throw;
         }
 
-        if (ipAddress == null)
+        if (device == null)
         {
             ManualWifiError = $"Could not resolve '{endpointInput}'. Check the address and try again.";
             Common.Loggers.AppLogger.Instance.Warning(
@@ -827,11 +821,6 @@ public partial class ConnectionDialogViewModel : ObservableObject
             return;
         }
 
-        // Connect directly with the resolved endpoint instead of fabricating a discovery-shaped
-        // IDeviceInfo — the device wrapper drives the connection through Core's DaqifiDeviceFactory
-        // (issue #620). The hardcoded 9760 data port is tracked separately in issue #615.
-        const int MANUAL_WIFI_DATA_PORT = 9760;
-        var device = new DaqifiStreamingDevice(ipAddress, MANUAL_WIFI_DATA_PORT, "Manual IP Device");
         var result = await ConnectionManager.Instance.Connect(device);
 
         // Post-connect check mirrors the manual-serial path: an unreachable device (connect
@@ -863,20 +852,6 @@ public partial class ConnectionDialogViewModel : ObservableObject
     private void RaiseCloseRequested()
     {
         CloseRequested?.Invoke(this, EventArgs.Empty);
-    }
-
-    // @port: Daqifi.Desktop.ViewModels.ConnectionDialogViewModel.ResolveManualWifiEndpointAsync
-    private static async Task<IPAddress?> ResolveManualWifiEndpointAsync(string endpointInput)
-    {
-        if (IPAddress.TryParse(endpointInput, out var parsedIpAddress))
-        {
-            return parsedIpAddress;
-        }
-
-        var resolvedAddresses = await Dns.GetHostAddressesAsync(endpointInput);
-        return resolvedAddresses.FirstOrDefault(
-            address => address.AddressFamily == AddressFamily.InterNetwork)
-            ?? resolvedAddresses.FirstOrDefault();
     }
 
     [RelayCommand]
