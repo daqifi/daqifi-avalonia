@@ -414,20 +414,29 @@ public class ChannelScalingExpressionTests
         // costs an unguarded parse under a second, where the 12 of #311 costs 48 s and the ~1,700
         // characters of nested parentheses abort the test host outright with an uncatchable
         // StackOverflowException, which would leave no result to report at all.
-        (string Text, bool ReachesTheParser)[] cases =
+        (string Name, string Text, bool ReachesTheParser)[] cases =
         [
-            ("x * 2", true),
-            (new string('(', AbstractChannel.MaxScaleExpressionDepth) + "x"
-             + new string(')', AbstractChannel.MaxScaleExpressionDepth), true),
-            (new string('(', AbstractChannel.MaxScaleExpressionDepth + 1), false),
-            ("['x] + " + new string('(', AbstractChannel.MaxScaleExpressionDepth + 1), false),
-            ("'))))))))' + " + new string('(', AbstractChannel.MaxScaleExpressionDepth + 1), false),
-            ("x + " + new string('1', AbstractChannel.MaxScaleExpressionLength), false)
+            ("an ordinary expression", "x * 2", true),
+            ("nesting at the depth cap",
+                new string('(', AbstractChannel.MaxScaleExpressionDepth) + "x"
+                + new string(')', AbstractChannel.MaxScaleExpressionDepth), true),
+            ("a bare run one past the depth cap",
+                new string('(', AbstractChannel.MaxScaleExpressionDepth + 1), false),
+            ("that run behind a bracketed parameter name",
+                "['x] + " + new string('(', AbstractChannel.MaxScaleExpressionDepth + 1), false),
+            ("that run behind a string literal of ')'",
+                "'))))))))' + " + new string('(', AbstractChannel.MaxScaleExpressionDepth + 1), false),
+            ("text one step past the length cap",
+                "x + " + new string('1', AbstractChannel.MaxScaleExpressionLength), false)
         ];
 
-        foreach (var (text, reachesTheParser) in cases)
+        foreach (var (name, text, reachesTheParser) in cases)
         {
-            Assert.Equal(reachesTheParser, !RefusedByACap(Scaled(text)));
+            Assert.True(
+                reachesTheParser == !RefusedByACap(Scaled(text)),
+                reachesTheParser
+                    ? $"{name}: a cap refused text that is inside both of them"
+                    : $"{name}: text past a cap reached the parser");
 
             if (!reachesTheParser)
             {
