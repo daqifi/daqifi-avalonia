@@ -3,42 +3,41 @@
 // DO NOT manually delete the `// @port:` markers — they link symbols back to
 // the correspondence map.
 
+using Avalonia;
 using Avalonia.Controls;
-using Avalonia.Interactivity;
 using Daqifi.Desktop.ViewModels;
 
 namespace Daqifi.Desktop.View;
 
 /// <summary>
 /// Code-behind for the unified Profiles pane. Owns only the minimal lifecycle
-/// wiring: constructs a <see cref="ProfilesPaneViewModel"/> on Loaded if one
-/// has not already been injected, and tears it down on Unloaded. All profile
-/// state and commands live on the view model.
+/// wiring: constructs a <see cref="ProfilesPaneViewModel"/> when the pane is
+/// attached if one has not already been injected, and tears it down on detach.
+/// All profile state and commands live on the view model.
 /// </summary>
 // @port: Daqifi.Desktop.View.ProfilesPane
 public partial class ProfilesPane : UserControl
 {
-    /// <summary>
-    /// Initializes the view and subscribes to the Loaded / Unloaded events so
-    /// the view model is created and cleaned up with the control.
-    /// </summary>
+    /// <summary>Initializes the view; the view model follows visual-tree attachment.</summary>
     public ProfilesPane()
     {
         InitializeComponent();
-        Loaded   += OnLoaded;
-        Unloaded += OnUnloaded;
     }
 
+    // On attach, not on Loaded as upstream does: Loaded runs below Render, so the pane was
+    // presented for a frame with the host's DaqifiViewModel or null as its DataContext (#397).
     // @port: Daqifi.Desktop.View.ProfilesPane.OnLoaded
-    private void OnLoaded(object? sender, RoutedEventArgs e)
+    protected override void OnAttachedToVisualTree(VisualTreeAttachmentEventArgs e)
     {
         if (DataContext is not ProfilesPaneViewModel)
             DataContext = new ProfilesPaneViewModel();
+        base.OnAttachedToVisualTree(e);
     }
 
     // @port: Daqifi.Desktop.View.ProfilesPane.OnUnloaded
-    private void OnUnloaded(object? sender, RoutedEventArgs e)
+    protected override void OnDetachedFromVisualTree(VisualTreeAttachmentEventArgs e)
     {
+        base.OnDetachedFromVisualTree(e);
         if (DataContext is ProfilesPaneViewModel vm)
             vm.Cleanup();
         DataContext = null;

@@ -44,7 +44,7 @@
 
         Compiled bindings (issue #327): AvaloniaUseCompiledBindingsByDefault is false in this
         project, so the DataType needs the CompileBindings beside it. The one host, MainWindow's
-        Channels tab, hands this view the window's DaqifiViewModel; OnLoaded replaces it with a
+        Channels tab, hands this view the window's DaqifiViewModel; attach replaces it with a
         ChannelsPaneViewModel, the only type these bindings are written for. Scopes:
         - the root, ChannelsPaneViewModel;
         - ChannelTileTemplate, declared ChannelTileViewModel: a resource-dictionary template

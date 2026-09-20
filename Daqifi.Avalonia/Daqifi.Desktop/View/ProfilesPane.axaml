@@ -12,8 +12,8 @@
 
         Compiled bindings (issue #327): AvaloniaUseCompiledBindingsByDefault is false in this
         project, so the DataType needs the CompileBindings beside it. The one host, MainWindow's
-        Profiles tab, hands this view the window's DaqifiViewModel by inheritance, but OnLoaded
-        replaces it with a ProfilesPaneViewModel before the pane is used, and OnUnloaded clears
+        Profiles tab, hands this view the window's DaqifiViewModel by inheritance, but attach
+        replaces it with a ProfilesPaneViewModel before the pane is laid out, and detach clears
         it — so ProfilesPaneViewModel is the only type these bindings are meant to read. None of
         the five item templates declares anything: their scopes are inferred from Profiles,
         SelectedProfile.Devices, Channels, NewDeviceItems and ChannelItems, and the three

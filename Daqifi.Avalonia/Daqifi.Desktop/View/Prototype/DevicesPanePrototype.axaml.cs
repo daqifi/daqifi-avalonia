@@ -3,48 +3,49 @@
 // DO NOT manually delete the `// @port:` markers — they link symbols back to
 // the correspondence map.
 
+using Avalonia;
 using Avalonia.Controls;
-using Avalonia.Interactivity;
 using Daqifi.Desktop.ViewModels;
 
 namespace Daqifi.Desktop.View.Prototype;
 
 /// <summary>
 /// Host UserControl for the unified Devices pane. Owns the
-/// <see cref="DevicesPaneViewModel"/> lifecycle — recreates the VM on
-/// Loaded (since TabControl switches trigger Unloaded → Loaded) so a
+/// <see cref="DevicesPaneViewModel"/> lifecycle — recreates the VM each time
+/// the pane is attached (TabControl switches detach and re-attach it) so a
 /// returning tab picks up devices connected while it was detached, and
-/// disposes the VM on Unloaded to detach the singleton subscription.
+/// disposes the VM on detach to drop the singleton subscription.
 /// </summary>
 // @port: Daqifi.Desktop.View.Prototype.DevicesPanePrototype
 public partial class DevicesPanePrototype : UserControl
 {
-    /// <summary>Creates the pane and wires the Loaded/Unloaded VM lifecycle.</summary>
+    /// <summary>Creates the pane; the VM lifecycle follows visual-tree attachment.</summary>
     public DevicesPanePrototype()
     {
         InitializeComponent();
-        Loaded += OnLoaded;
-        Unloaded += OnUnloaded;
     }
 
+    // Upstream swaps the VM in on Loaded. Avalonia raises Loaded at DispatcherPriority.Loaded,
+    // BELOW Render, so the pane was laid out and presented for a frame with the host's
+    // DaqifiViewModel (first visit) or null (every later one) — every IsSettingsOpen /
+    // HasConnectedDevice gate at its default true, drawer drawn open (#397). Attach runs
+    // synchronously, before any layout of the pane, so no frame ever sees the wrong DataContext.
     // @port: Daqifi.Desktop.View.Prototype.DevicesPanePrototype.OnLoaded
-    private void OnLoaded(object? sender, RoutedEventArgs e)
+    protected override void OnAttachedToVisualTree(VisualTreeAttachmentEventArgs e)
     {
-        // Tab-switches on the host TabControl trigger Unloaded (which disposes
-        // the VM) and then Loaded when the tab comes back. Recreate the VM so
-        // a returning tab gets a fresh Rebuild and picks up devices connected
-        // while the pane was detached.
         if (DataContext is not DevicesPaneViewModel)
         {
             // WPF Window.GetWindow(this) → TopLevel.GetTopLevel(this).
             var shell = (TopLevel.GetTopLevel(this) as Window)?.DataContext as DaqifiViewModel;
             DataContext = new DevicesPaneViewModel(shell);
         }
+        base.OnAttachedToVisualTree(e);
     }
 
     // @port: Daqifi.Desktop.View.Prototype.DevicesPanePrototype.OnUnloaded
-    private void OnUnloaded(object? sender, RoutedEventArgs e)
+    protected override void OnDetachedFromVisualTree(VisualTreeAttachmentEventArgs e)
     {
+        base.OnDetachedFromVisualTree(e);
         if (DataContext is IDisposable disposable)
         {
             disposable.Dispose();

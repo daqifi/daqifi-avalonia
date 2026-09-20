@@ -47,7 +47,7 @@
 
         Compiled bindings (issue #327): AvaloniaUseCompiledBindingsByDefault is false in this
         project, so the DataType needs the CompileBindings beside it. The one host, MainWindow's
-        Devices tab, hands this view the window's DaqifiViewModel; OnLoaded replaces it with a
+        Devices tab, hands this view the window's DaqifiViewModel; attach replaces it with a
         DevicesPaneViewModel, the only type these bindings are written for. Scopes:
         - the root, DevicesPaneViewModel;
         - DeviceTileTemplate, typed by its DataType (DeviceTileViewModel): a resource-dictionary
