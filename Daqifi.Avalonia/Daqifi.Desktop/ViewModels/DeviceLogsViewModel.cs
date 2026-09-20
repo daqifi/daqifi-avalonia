@@ -203,17 +203,27 @@ public partial class DeviceLogsViewModel : ObservableObject
     // @port: Daqifi.Desktop.ViewModels.DeviceLogsViewModel.InitialRefreshTask
     internal Task? InitialRefreshTask { get; private set; }
 
+    /// <summary>
+    /// How <see cref="UpdateConnectedDevices"/> reaches the UI thread; null (production) means
+    /// <c>Dispatcher.UIThread</c>. A test seam only: outside a running Avalonia app
+    /// <c>Dispatcher.UIThread</c> binds to whichever thread touches it first and is never pumped, so
+    /// the constructor's own update would hang a test running on any other thread.
+    /// </summary>
+    private readonly Action<Action>? _marshalToUiThread;
+
     public DeviceLogsViewModel() : this(null, null) { }
 
     /// <summary>
-    /// Test seam: injects the logger and SD card importer. Production uses the parameterless ctor,
-    /// which passes null so the defaults (<see cref="AppLogger.Instance"/> and a real
-    /// <see cref="SdCardSessionImporter"/>) are used.
+    /// Test seam: injects the logger, SD card importer and UI-thread marshal. Production uses the
+    /// parameterless ctor, which passes null so the defaults (<see cref="AppLogger.Instance"/>, a real
+    /// <see cref="SdCardSessionImporter"/> and <c>Dispatcher.UIThread</c>) are used.
     /// </summary>
-    internal DeviceLogsViewModel(IAppLogger? logger, ISdCardSessionImporter? importer)
+    internal DeviceLogsViewModel(
+        IAppLogger? logger, ISdCardSessionImporter? importer, Action<Action>? marshalToUiThread = null)
     {
         _logger = logger ?? AppLogger.Instance;
         _importerOverride = importer;
+        _marshalToUiThread = marshalToUiThread;
 
         ConnectedDevices = new ObservableCollection<IStreamingDevice>();
         DeviceFiles = new ObservableCollection<SdCardFile>();
@@ -245,15 +255,35 @@ public partial class DeviceLogsViewModel : ObservableObject
     {
         void Update()
         {
-            ConnectedDevices.Clear();
-            foreach (var device in ConnectionManager.Instance.ConnectedDevices)
+            // Reconcile in place rather than Clear() + re-add (issue #410). The DEVICE combo binds
+            // SelectedItem two-way, so a Clear() empties its items and it writes null back into
+            // SelectedDevice — after which the fallback below replaced the user's choice with the
+            // first device and re-listed that device's SD card, on every connect or drop of ANY
+            // device. Removing only the devices that left and appending only the ones that arrived
+            // keeps a still-connected selection inside the combo's items, so nothing is written.
+            var current = ConnectionManager.Instance.ConnectedDevices.ToList();
+            for (var i = ConnectedDevices.Count - 1; i >= 0; i--)
             {
-                ConnectedDevices.Add(device);
+                if (!current.Contains(ConnectedDevices[i]))
+                {
+                    ConnectedDevices.RemoveAt(i);
+                }
             }
 
-            if (SelectedDevice == null && ConnectedDevices.Any())
+            foreach (var device in current)
             {
-                SelectedDevice = ConnectedDevices.First();
+                if (!ConnectedDevices.Contains(device))
+                {
+                    ConnectedDevices.Add(device);
+                }
+            }
+
+            // Fall back only when the selection actually left: to the first remaining device, or to
+            // none when nothing is connected. Checked against the list rather than for null alone,
+            // so a departed device cannot stay selected when no combo is attached to null it.
+            if (SelectedDevice == null || !ConnectedDevices.Contains(SelectedDevice))
+            {
+                SelectedDevice = ConnectedDevices.FirstOrDefault()!;
             }
 
             // Recompute the SD gate on every connected-set change. CanAccessSdCard now depends on
@@ -264,7 +294,11 @@ public partial class DeviceLogsViewModel : ObservableObject
             RaiseSdGateChanged();
         }
 
-        if (!Dispatcher.UIThread.CheckAccess())
+        if (_marshalToUiThread != null)
+        {
+            _marshalToUiThread(Update);
+        }
+        else if (!Dispatcher.UIThread.CheckAccess())
         {
             Dispatcher.UIThread.Invoke(Update);
         }
