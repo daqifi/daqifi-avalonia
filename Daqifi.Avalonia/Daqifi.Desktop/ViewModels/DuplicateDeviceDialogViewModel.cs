@@ -36,8 +36,6 @@ public partial class DuplicateDeviceDialogViewModel : ObservableObject
     public IStreamingDevice ExistingDevice { get; }
     // @port: Daqifi.Desktop.ViewModels.DuplicateDeviceDialogViewModel.NewDevice
     public IStreamingDevice NewDevice { get; }
-    // @port: Daqifi.Desktop.ViewModels.DuplicateDeviceDialogViewModel.SwitchToNewInterface
-    public bool SwitchToNewInterface { get; set; }
     #endregion
 
     #region Constructor

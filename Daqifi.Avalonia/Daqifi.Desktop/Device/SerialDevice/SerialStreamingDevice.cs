@@ -272,13 +272,6 @@ public class SerialStreamingDevice : AbstractStreamingDevice, ILanChipInfoProvid
     #endregion
 
     #region Serial Device Only Methods
-    // @port: Daqifi.Desktop.Device.SerialDevice.SerialStreamingDevice.SendScpiMessage
-    public void SendScpiMessage(IOutboundMessage<string> message)
-    {
-        ArgumentNullException.ThrowIfNull(message);
-        SendMessage(message);
-    }
-
     /// <summary>
     /// Gets the connected Core serial streaming device used for firmware update workflows.
     /// </summary>
