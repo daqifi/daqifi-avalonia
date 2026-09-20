@@ -5,9 +5,9 @@ namespace Daqifi.Avalonia.Tests;
 
 /// <summary>
 /// The suite's one <see cref="IAppLogger"/> double: records the message of every Information,
-/// Warning and Error call (the exception overloads record their message too) and ignores
-/// breadcrumbs, device context and shutdown. A test that only needs a logger to exist can ignore
-/// what it records. Thread-safe, because some code under test logs from a consumer thread.
+/// Warning and Error call (the exception overloads record their message too; Error's keeps its
+/// exception in <see cref="ErrorExceptions"/>) and ignores breadcrumbs, device context and
+/// shutdown. A test that only needs a logger to exist can ignore what it records. Thread-safe, because some code under test logs from a consumer thread.
 /// </summary>
 internal sealed class RecordingAppLogger : IAppLogger
 {
@@ -15,12 +15,15 @@ internal sealed class RecordingAppLogger : IAppLogger
     private readonly List<string> _informations = [];
     private readonly List<string> _warnings = [];
     private readonly List<string> _errors = [];
+    private readonly List<Exception> _errorExceptions = [];
 
     internal IReadOnlyList<string> Informations => Snapshot(_informations);
 
     internal IReadOnlyList<string> Warnings => Snapshot(_warnings);
 
     internal IReadOnlyList<string> Errors => Snapshot(_errors);
+
+    internal IReadOnlyList<Exception> ErrorExceptions => Snapshot(_errorExceptions);
 
     public void Information(string message) => Record(_informations, message);
 
@@ -30,7 +33,10 @@ internal sealed class RecordingAppLogger : IAppLogger
 
     public void Error(string message) => Record(_errors, message);
 
-    public void Error(Exception ex, string message) => Record(_errors, message);
+    public void Error(Exception ex, string message)
+    {
+        lock (_gate) { _errors.Add(message); _errorExceptions.Add(ex); }
+    }
 
     public void AddBreadcrumb(string category, string message, BreadcrumbLevel level = BreadcrumbLevel.Info) { }
 
@@ -45,7 +51,7 @@ internal sealed class RecordingAppLogger : IAppLogger
         lock (_gate) { list.Add(message); }
     }
 
-    private IReadOnlyList<string> Snapshot(List<string> list)
+    private IReadOnlyList<T> Snapshot<T>(List<T> list)
     {
         lock (_gate) { return [.. list]; }
     }

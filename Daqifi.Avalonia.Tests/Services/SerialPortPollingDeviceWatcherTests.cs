@@ -1,5 +1,3 @@
-using System.Collections.Concurrent;
-using Daqifi.Desktop.Common.Loggers;
 using Daqifi.Desktop.Services.DeviceWatcher;
 using Xunit;
 
@@ -135,26 +133,6 @@ public class SerialPortPollingDeviceWatcherTests
         }
     }
 
-    /// <summary>
-    /// Records what the watcher logs. Minimal and private on purpose; it can fold into the shared
-    /// <c>RecordingAppLogger</c> that PR #401 introduces once that merges.
-    /// </summary>
-    private sealed class RecordingLogger : IAppLogger
-    {
-        public ConcurrentQueue<string> Warnings { get; } = new();
-        public ConcurrentQueue<(Exception Ex, string Message)> Errors { get; } = new();
-
-        public void Information(string message) { }
-        public void Warning(string message) => Warnings.Enqueue(message);
-        public void Warning(Exception ex, string message) => Warnings.Enqueue(message);
-        public void Error(string message) => Errors.Enqueue((new Exception(message), message));
-        public void Error(Exception ex, string message) => Errors.Enqueue((ex, message));
-        public void AddBreadcrumb(string category, string message, Daqifi.Desktop.Common.Loggers.BreadcrumbLevel level = Daqifi.Desktop.Common.Loggers.BreadcrumbLevel.Info) { }
-        public void SetDeviceContext(string model, string serialNumber, string firmwareVersion, string connectionType, int activeChannels) { }
-        public void ClearDeviceContext() { }
-        public void Shutdown() { }
-    }
-
     private sealed class Harness : IDisposable
     {
         private int _removals;
@@ -171,7 +149,7 @@ public class SerialPortPollingDeviceWatcherTests
         }
 
         public PortTable Table { get; }
-        public RecordingLogger Logger { get; } = new();
+        public RecordingAppLogger Logger { get; } = new();
         public SerialPortPollingDeviceWatcher Watcher { get; }
         public int Removals => Volatile.Read(ref _removals);
 
@@ -426,7 +404,7 @@ public class SerialPortPollingDeviceWatcherTests
     {
         var ex = Assert.Throws<ArgumentOutOfRangeException>(() =>
             new SerialPortPollingDeviceWatcher(
-                new RecordingLogger(), TimeSpan.FromMilliseconds(milliseconds), () => []));
+                new RecordingAppLogger(), TimeSpan.FromMilliseconds(milliseconds), () => []));
 
         Assert.Equal("pollInterval", ex.ParamName);
     }
@@ -456,9 +434,8 @@ public class SerialPortPollingDeviceWatcherTests
         h.Table.Set(PortA, PortB);
         h.Table.WaitForTwoMorePolls();
 
-        var (ex, message) = Assert.Single(h.Logger.Errors);
-        Assert.IsType<InvalidOperationException>(ex);
-        Assert.Equal("Serial port hotplug poll failed.", message);
+        Assert.Equal("Serial port hotplug poll failed.", Assert.Single(h.Logger.Errors));
+        Assert.IsType<InvalidOperationException>(Assert.Single(h.Logger.ErrorExceptions));
 
         h.Table.Set(PortA);
         h.Table.WaitForTwoMorePolls();
