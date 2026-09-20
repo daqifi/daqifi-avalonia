@@ -14,15 +14,27 @@ namespace Daqifi.Avalonia.Tests.Device.Firmware;
 /// none of them is obvious from the outside:
 ///
 /// <list type="bullet">
-/// <item><c>PauseForFlashAsync</c> must stop the keep-alive read but must NOT disconnect. Handing the
-/// flasher a warm, quiescent handle is the entire point — a disconnect here reopens the idle window the
-/// hold exists to close, and an un-drained read would swallow the flasher's first response.</item>
-/// <item><c>ReleaseAsync</c> must do the opposite and actually close the handle, or a dismissed dialog
-/// leaves the device locked out of every other user-mode opener.</item>
+/// <item><c>ReleaseAsync</c> is the real watcher-to-flasher transition, and it must actually close the
+/// handle. <c>BootloaderWatcher.PrepareFlashAsync</c> calls it on the target hold so the flasher's own
+/// transport can open that path; left open, the exclusive handle locks the flasher out of the very
+/// device it was asked to flash.</item>
 /// <item><c>HoldDropped</c> must fire when the device vanishes from under the read, and must NOT fire on
 /// a stop we asked for. A spurious drop tells the watcher a bootloader disappeared; a missed one leaves a
 /// dead hold advertising itself as live.</item>
+/// <item>Disposal must close the owned transport deterministically. Each hold news up its own transport
+/// (<c>App.cs</c> wires the watcher's factory that way, deliberately NOT the flasher's DI singleton), so
+/// nothing else will ever close it.</item>
 /// </list>
+///
+/// <para>
+/// <b><c>PauseForFlashAsync</c> has no production caller</b> — verified across every tracked source file;
+/// only the interface, its implementation and tests mention it. Its own doc comments describe a
+/// warm-handle hand-off in which the flasher reuses the held transport, and that is not the design the
+/// app ships: each hold owns a separate transport and the watcher releases rather than pauses. The pause
+/// tests below therefore pin the method's API contract as it stands today and make no claim about a live
+/// flash path; the surrounding production comments are recorded as stale, not endorsed. Raised by Qodo on
+/// PR #416 and filed as issue #417.
+/// </para>
 ///
 /// Everything here runs against a fake <see cref="IHidTransport"/> — no hardware, no HID stack.
 /// </summary>
@@ -161,12 +173,13 @@ public class BootloaderHoldServiceTests
 
     #endregion
 
-    #region Handing the handle to the flasher
+    #region PauseForFlashAsync — an API with no production caller (see #417)
 
     /// <summary>
-    /// The flash hand-off. Pausing stops the keep-alive read but deliberately leaves the handle OPEN:
-    /// the flasher's reconnect sees it connected and closes+reopens back-to-back with no idle window. A
-    /// disconnect here would re-open the #568 wedge the hold exists to prevent.
+    /// Pausing stops the keep-alive read and leaves the handle OPEN — the one thing that distinguishes it
+    /// from <c>ReleaseAsync</c>. Pinned as an API fact, not as a flash-path claim: nothing in the app
+    /// calls this method, so "the flasher reuses the warm handle" is only what the production comment
+    /// says, and #417 tracks reconciling that.
     /// </summary>
     [Fact]
     public async Task Pausing_for_a_flash_stops_the_read_but_leaves_the_handle_open()
@@ -185,8 +198,8 @@ public class BootloaderHoldServiceTests
     }
 
     /// <summary>
-    /// Pausing drains the in-flight read rather than abandoning it. An orphaned read IRP holds the shared
-    /// transport's I/O lock, which is what would race or block the flasher's very first exchange.
+    /// Pausing drains the in-flight read rather than abandoning it: the call does not return until the
+    /// keep-alive loop has stopped, so no read is still outstanding against the transport afterwards.
     /// </summary>
     [Fact]
     public async Task Pausing_waits_for_the_in_flight_read_to_drain()
@@ -201,10 +214,9 @@ public class BootloaderHoldServiceTests
     }
 
     /// <summary>
-    /// And it drains the read by letting it finish, not by cancelling it. The distinction is the whole
-    /// difference between the pause path and the release path, and it is invisible in the hold's public
-    /// state: a cancelled read aborts mid-IRP, which is the orphaned-read hand-off the drain exists to
-    /// avoid. Release, below, does cancel — that one is not handing anything to a flasher.
+    /// And it drains the read by letting it finish, not by cancelling it — <c>StopKeepAliveAsync(hard:
+    /// false)</c> against release's <c>hard: true</c>. The distinction is invisible in the hold's public
+    /// state, and a first mutation pass found it unpinned, so it is asserted directly here.
     /// </summary>
     [Fact]
     public async Task Pausing_lets_the_in_flight_read_end_on_its_own_rather_than_cancelling_it()
@@ -220,7 +232,7 @@ public class BootloaderHoldServiceTests
 
     /// <summary>
     /// A pause is a stop we asked for, so it is not a dropped device — firing <c>HoldDropped</c> here
-    /// would tell the watcher the bootloader vanished in the middle of a flash.
+    /// would tell the watcher a bootloader vanished when nothing had gone wrong.
     /// </summary>
     [Fact]
     public async Task Pausing_for_a_flash_does_not_report_a_dropped_hold()
@@ -239,11 +251,13 @@ public class BootloaderHoldServiceTests
 
     #endregion
 
-    #region Releasing the hold
+    #region Releasing the hold — the path the watcher actually takes
 
     /// <summary>
-    /// Releasing is the opposite of pausing: no flash follows, so the handle is closed. Left open, the
-    /// exclusive handle locks every other user-mode opener out of a device the user has finished with.
+    /// Releasing closes the handle, and this is the live transition: <c>BootloaderWatcher.PrepareFlashAsync</c>
+    /// calls <c>ReleaseAsync</c> on the target hold so the flasher's own transport can open that device
+    /// path, and the dialog's teardown calls it too. Left open, the exclusive handle locks every other
+    /// user-mode opener — the flasher included — out of the device.
     /// </summary>
     [Fact]
     public async Task Releasing_disconnects_the_handle()
