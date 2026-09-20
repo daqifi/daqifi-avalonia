@@ -10,7 +10,7 @@ using Daqifi.Desktop.Common.Loggers;
 namespace Daqifi.Desktop.Device.Firmware;
 
 /// <summary>
-/// Default <see cref="IBootloaderHoldService"/> implementation. Holds the shared exclusive HID transport
+/// Default <see cref="IBootloaderHoldService"/> implementation. Holds its own exclusive HID transport
 /// open with a continuously-pending interrupt-IN read to keep a sitting PIC32 bootloader out of USB
 /// selective-suspend (the cause of the #568 wedge). See <see cref="IBootloaderHoldService"/> for the
 /// full rationale.
@@ -50,12 +50,15 @@ public sealed class BootloaderHoldService : IBootloaderHoldService, IDisposable
 
     #region Constructor
     /// <summary>
-    /// Creates the hold service over the shared HID transport.
+    /// Creates the hold service over the HID transport it will own.
     /// </summary>
     /// <param name="transport">
-    /// The shared bootloader HID transport (the same DI singleton the flasher uses, configured for
-    /// exclusive access). Holding this transport open also locks every other user-mode opener out for
-    /// the duration of the hold (the A2 stray-write guard).
+    /// This hold's own bootloader HID transport, configured for exclusive access — a fresh one per
+    /// device, NOT the flasher's DI singleton (see the watcher's hold factory in <c>App.cs</c>), so
+    /// holding several bootloaders never makes them contend with the flasher or with each other. This
+    /// service owns it and disposes it. Holding it open also locks every other user-mode opener out for
+    /// the duration of the hold (the A2 stray-write guard) — including the flasher, which is why a flash
+    /// is preceded by <see cref="ReleaseAsync"/> rather than by anything that keeps the handle open.
     /// </param>
     /// <param name="logger">Application logger for diagnostics.</param>
     /// <param name="keepAliveReadTimeout">
@@ -124,7 +127,7 @@ public sealed class BootloaderHoldService : IBootloaderHoldService, IDisposable
                 // state was never cleared. Tear the stale hold down here so we re-establish it below
                 // instead of no-opping and leaving the device unprotected from selective-suspend.
                 _logger.Information("HID bootloader keep-alive had stopped; re-establishing the hold.");
-                await StopKeepAliveAsync(hard: true).ConfigureAwait(false);
+                await StopKeepAliveAsync().ConfigureAwait(false);
                 try
                 {
                     await _transport.DisconnectAsync().ConfigureAwait(false);
@@ -142,9 +145,9 @@ public sealed class BootloaderHoldService : IBootloaderHoldService, IDisposable
             {
                 // Grab the bootloader's HID handle. ExclusiveAccess is set on the transport
                 // (FirmwareUpdateServiceConfig.CreateBootloaderHidTransport), so this also locks out
-                // every other user-mode opener for the duration of the hold. A connect over an
-                // already-connected transport (e.g. the handle the flasher just left open) returns
-                // immediately, in which case we simply (re)start the keep-alive over it.
+                // every other user-mode opener for the duration of the hold. A connect over a transport
+                // that is already connected returns immediately, in which case we simply (re)start the
+                // keep-alive over it.
                 if (_devicePath != null)
                 {
                     // Multi-device: target this exact bootloader by path. Identical bootloaders share
@@ -185,39 +188,6 @@ public sealed class BootloaderHoldService : IBootloaderHoldService, IDisposable
     }
 
     /// <inheritdoc />
-    // @port: Daqifi.Desktop.Device.Firmware.BootloaderHoldService.PauseForFlashAsync
-    public async Task PauseForFlashAsync()
-    {
-        if (_disposed)
-        {
-            return;
-        }
-
-        await _gate.WaitAsync().ConfigureAwait(false);
-        try
-        {
-            if (!_holding)
-            {
-                return;
-            }
-
-            // Graceful stop: signal the loop and let its in-flight read complete naturally (within one
-            // keep-alive timeout) so no orphaned read IRP is left pending to swallow the flasher's first
-            // response. Deliberately do NOT disconnect — leave the handle OPEN and warm. The flasher's
-            // ConnectToBootloaderWithRetryAsync sees it connected, closes+reopens it back-to-back (no
-            // idle window, so no #568 wedge) and flashes. Handing it a warm handle is the point of the hold.
-            await StopKeepAliveAsync(hard: false).ConfigureAwait(false);
-            _holding = false;
-
-            _logger.Information("Paused the HID bootloader hold for flashing; handle left open for the flasher.");
-        }
-        finally
-        {
-            _gate.Release();
-        }
-    }
-
-    /// <inheritdoc />
     // @port: Daqifi.Desktop.Device.Firmware.BootloaderHoldService.ReleaseAsync
     public async Task ReleaseAsync()
     {
@@ -229,9 +199,9 @@ public sealed class BootloaderHoldService : IBootloaderHoldService, IDisposable
         await _gate.WaitAsync().ConfigureAwait(false);
         try
         {
-            // Hard stop (no flash follows): cancel any in-flight read and close the handle so the device
-            // is never left held after the dialog goes away.
-            await StopKeepAliveAsync(hard: true).ConfigureAwait(false);
+            // Cancel any in-flight read and close the handle, so the device is neither left held after
+            // the dialog goes away nor locked away from the flasher that asked for this release.
+            await StopKeepAliveAsync().ConfigureAwait(false);
 
             try
             {
@@ -284,7 +254,7 @@ public sealed class BootloaderHoldService : IBootloaderHoldService, IDisposable
                 // flash path re-discovers and reconnects on its own.
                 _logger.Warning(ex, "HID bootloader keep-alive read failed; ending the hold.");
                 droppedByError = true;
-                // Snapshot at failure time: a concurrent PauseForFlash/Release could flip _stopKeepAlive
+                // Snapshot at failure time: a concurrent Release could flip _stopKeepAlive
                 // between here and the post-loop check, which would otherwise swallow a genuine drop.
                 stopWasRequested = _stopKeepAlive;
                 break;
@@ -292,7 +262,8 @@ public sealed class BootloaderHoldService : IBootloaderHoldService, IDisposable
         }
 
         // Notify the watcher only when the device dropped out from under us — never on a requested stop
-        // (PauseForFlash/Release set _stopKeepAlive). Raise off this task's thread so a HoldDropped handler
+        // (Release and the stale-hold teardown in BeginHold both set _stopKeepAlive). Raise off this
+        // task's thread so a HoldDropped handler
         // that disposes this hold (Dispose awaits this very task) cannot deadlock on itself.
         if (droppedByError && !stopWasRequested)
         {
@@ -305,28 +276,24 @@ public sealed class BootloaderHoldService : IBootloaderHoldService, IDisposable
     }
 
     /// <summary>
-    /// Stops the keep-alive loop and awaits its completion. When <paramref name="hard"/> is true the
-    /// in-flight read is cancelled immediately; when false it is allowed to drain naturally (so the
-    /// flasher inherits a quiescent handle with no orphaned read IRP). Must be called under <see cref="_gate"/>.
+    /// Stops the keep-alive loop, cancelling the in-flight read, and awaits the loop's completion.
+    /// Must be called under <see cref="_gate"/>.
     /// </summary>
     // @port: Daqifi.Desktop.Device.Firmware.BootloaderHoldService.StopKeepAliveAsync
-    private async Task StopKeepAliveAsync(bool hard)
+    private async Task StopKeepAliveAsync()
     {
         // Await the loop to completion — deliberately, not with an "abandon on timeout" fallback. The
         // wait is already self-bounding: each keep-alive read is capped by the transport's own read
         // timeout (_keepAliveReadTimeout, ~1s), so once _stopKeepAlive is set the in-flight read
         // returns/throws and the loop exits within that window. Abandoning a still-running read would be
-        // worse than waiting: the orphaned read keeps the shared transport's I/O lock, so the flasher's
-        // reconnect would race/block on it anyway — the exact orphaned-read hand-off hazard this drain
-        // exists to prevent. The hard path additionally cancels so the in-flight read aborts at once.
+        // worse than waiting: the orphaned read keeps this transport's I/O lock, so the close that
+        // follows would race/block on it anyway. Cancelling first is what makes the wait short rather
+        // than one full read timeout.
         _stopKeepAlive = true;
 
         var cts = _keepAliveCts;
-        if (hard)
-        {
-            try { cts?.Cancel(); }
-            catch (ObjectDisposedException) { /* already torn down */ }
-        }
+        try { cts?.Cancel(); }
+        catch (ObjectDisposedException) { /* already torn down */ }
 
         var task = _keepAliveTask;
         if (task != null)
