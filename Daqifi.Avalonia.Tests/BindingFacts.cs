@@ -198,7 +198,8 @@ internal static class BindingFacts
     /// So this reads <b>every</b> C# file in <c>Daqifi.Avalonia</c> for the two routes the app uses —
     /// <c>ShowDialogAsync&lt;Dialog&gt;(owner, local)</c>, and
     /// <c>var d = new Dialog(); d.DataContext = local;</c> — and requires <c>local</c> to be a
-    /// <c>var</c> constructed as <paramref name="viewModelType"/> in a block that encloses the use (see
+    /// <c>var</c> whose whole initializer is a construction of <paramref name="viewModelType"/> (see
+    /// <see cref="IsWholeConstruction"/>) in a block that encloses the use (see
     /// <see cref="BlockStillOpen"/>), and never named again in that block except to reach a member.
     /// <c>var</c> only, because a field cannot be one: an initialized field reads as an enclosing
     /// declaration and any method can reassign it (Qodo round 1 on PR #378). The "never named again"
@@ -293,9 +294,16 @@ internal static class BindingFacts
                 // with no conditional-compilation directive between the two — under `#if false` a
                 // construction is text the compiler never sees, and telling an active branch from an
                 // inactive one needs the build's symbols, so that fails closed.
+                // The match is only the prefix, so the initializer must also END at the construction
+                // (IsWholeConstruction): `new VM(…).ToString()` matched the prefix and handed the
+                // dialog a string, 24/24 guards passing (issue #388).
                 var construction = Regex.Matches(source[..arg.Index], $@"\bvar\s+{name}\s*=\s*new\s+{viewModel}\s*\(")
                     .LastOrDefault(declaration => BlockStillOpen(source, declaration.Index, arg.Index)
                                                   && !ConditionalDirective.IsMatch(source[declaration.Index..arg.Index]));
+                if (construction is not null && !IsWholeConstruction(source, construction.Index + construction.Length - 1))
+                {
+                    construction = null;
+                }
 
                 // …and nothing else in that block names it except to reach a member. Scanned on the raw
                 // text to the block's end, so a write inside an interpolation hole, or in a loop body
@@ -309,8 +317,8 @@ internal static class BindingFacts
 
                 Assert.True(
                     construction is not null && others == 0,
-                    $"{file}: {dialog} is handed '{arg.Value}', which is not a `var` constructed as a "
-                    + $"{viewModelType.Name} in a block enclosing that use and left alone after"
+                    $"{file}: {dialog} is handed '{arg.Value}', which is not a `var` initialized to exactly `new "
+                    + $"{viewModelType.Name}(…)` (an object initializer allowed, nothing after it) in a block enclosing that use and left alone after"
                     + (construction is null ? "" : $" (named {others} more time(s) other than to reach a member, "
                                                     + "comments and strings included)")
                     + $". That parameter is typed object, so the compiler accepts anything, and "
@@ -358,6 +366,54 @@ internal static class BindingFacts
         }
 
         return source.Length;
+    }
+
+    /// <summary>
+    /// True when the argument list opened at <paramref name="open"/> closes, is followed by at most one
+    /// object or collection initializer, and then by the <c>;</c> that ends the declaration — so the
+    /// local holds the constructed object itself. Anything else after the <c>)</c> (<c>.Member</c>,
+    /// <c>?.</c>, <c>??</c>, <c>!</c>, <c>is</c>, <c>as</c>, a ternary, <c>with</c>, <c>switch</c>), or
+    /// a list that never closes, is false: that local holds whatever the rest evaluates to, and
+    /// guessing which of those keep the type is the silent partial check this guard refuses (issue
+    /// #388). An initializer is allowed because <c>new T(…) { … }</c> always evaluates to the new
+    /// <c>T</c>. <paramref name="code"/> must be <see cref="CodeOnly"/>, so a parenthesis or brace in a
+    /// literal or comment cannot unbalance the walk.
+    /// </summary>
+    internal static bool IsWholeConstruction(string code, int open)
+    {
+        var i = SkipBalanced(code, open, '(', ')');
+        if (i < 0) { return false; }
+
+        i = SkipWhitespace(code, i);
+        if (i < code.Length && code[i] == '{')
+        {
+            i = SkipBalanced(code, i, '{', '}');
+            if (i < 0) { return false; }
+
+            i = SkipWhitespace(code, i);
+        }
+
+        return i < code.Length && code[i] == ';';
+    }
+
+    /// <summary>The index just past the <paramref name="close"/> matching the <paramref name="open"/>
+    /// at <paramref name="at"/>, or -1 if it never closes.</summary>
+    private static int SkipBalanced(string code, int at, char open, char close)
+    {
+        var depth = 0;
+        for (var i = at; i < code.Length; i++)
+        {
+            if (code[i] == open) { depth++; }
+            else if (code[i] == close && --depth == 0) { return i + 1; }
+        }
+
+        return -1;
+    }
+
+    private static int SkipWhitespace(string code, int i)
+    {
+        while (i < code.Length && char.IsWhiteSpace(code[i])) { i++; }
+        return i;
     }
 
     /// <summary>A conditional-compilation directive at the start of a line.</summary>
