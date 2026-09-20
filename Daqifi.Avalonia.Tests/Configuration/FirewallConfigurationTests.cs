@@ -37,8 +37,20 @@ public class FirewallConfigurationTests
     /// The one production call site guards on <see cref="AppDataPaths.IsElevated"/>, and
     /// <see cref="FirewallConfiguration.InitializeFirewallRules"/> re-checks elevation itself
     /// before doing anything. On an un-elevated host it must take the early return: no COM, no
-    /// throw, no rule. This is the test that has to keep passing across any change to how that
-    /// gate is spelled.
+    /// throw, no rule.
+    ///
+    /// <para>
+    /// SURVIVING MUTATION, recorded rather than hidden: deleting the elevation early return
+    /// entirely leaves this test GREEN. <c>InitializeFirewallRules</c> wraps its whole body in a
+    /// <c>catch (Exception)</c> that logs and shows a message box, so falling through to the COM
+    /// path on a non-Windows host throws, is swallowed, and the method still returns normally.
+    /// Nothing a black-box caller can observe distinguishes the two. So this row pins "the
+    /// bootstrap does not blow up on an un-elevated host" — real, but weaker than it looks — and
+    /// the elevation gate's correctness rests on it reading the same
+    /// <see cref="AppDataPaths.IsElevated"/> the caller gates on, which is one hop to verify by
+    /// eye. Giving it a sharper assertion would mean re-introducing an injection seam, which is
+    /// the thing this change removed.
+    /// </para>
     /// </summary>
     [Fact]
     public void InitializeFirewallRules_returns_quietly_on_an_un_elevated_host()

@@ -7,6 +7,7 @@ using System.Diagnostics;
 using System.Globalization;
 using System.Runtime.InteropServices;
 using System.IO;
+using Daqifi.Desktop.Common;
 using Daqifi.Desktop.Services;
 using Daqifi.Desktop.Common.Loggers;
 
@@ -17,49 +18,23 @@ public static class FirewallConfiguration
 {
     private static readonly IAppLogger Logger = AppLogger.Instance;
     private const string RuleName = "DAQiFi Desktop";
-    private static IFirewallHelper _firewallHelper;
-    private static IMessageBoxService _messageBoxService;
-    private static IAdminChecker _adminChecker;
-
-    static FirewallConfiguration()
-    {
-        _firewallHelper = new WindowsFirewallWrapper();
-        _messageBoxService = new AvaloniaMessageBoxService();
-        _adminChecker = new WindowsPrincipalAdminChecker();
-    }
-
-    // Added: Method to inject service for testing
-    // @port: Daqifi.Desktop.Configuration.FirewallConfiguration.SetAdminChecker
-    public static void SetAdminChecker(IAdminChecker checker)
-    {
-        _adminChecker = checker;
-    }
-
-    // Added: Method to inject service for testing
-    // @port: Daqifi.Desktop.Configuration.FirewallConfiguration.SetMessageBoxService
-    public static void SetMessageBoxService(IMessageBoxService service)
-    {
-        _messageBoxService = service;
-    }
-
-    // Made public for test access
-    // @port: Daqifi.Desktop.Configuration.FirewallConfiguration.SetFirewallHelper
-    public static void SetFirewallHelper(IFirewallHelper helper)
-    {
-        _firewallHelper = helper;
-    }
+    private static readonly WindowsFirewallWrapper FirewallHelper = new();
+    private static readonly IMessageBoxService MessageBox = new AvaloniaMessageBoxService();
 
     // @port: Daqifi.Desktop.Configuration.FirewallConfiguration.InitializeFirewallRules
     public static void InitializeFirewallRules()
     {
         try
         {
-            // Check if running with admin privileges using the service
-            if (!_adminChecker.IsCurrentUserAdmin())
+            // The single source of truth for "is this process elevated" (AppDataPaths.IsElevated,
+            // surfaced as App.IsElevated). The one caller already gates on the same value, so this
+            // is a precondition re-check, not a second opinion — there used to be a second
+            // implementation here (WindowsPrincipalAdminChecker) with byte-identical logic.
+            if (!AppDataPaths.IsElevated)
             {
                 // Avalonia message boxes are async-only; the informational prompt's result was
                 // unused upstream, so fire-and-forget keeps this path synchronous.
-                _ = _messageBoxService.ShowAsync(
+                _ = MessageBox.ShowAsync(
                     "DAQiFi Desktop requires firewall permissions to discover devices on your network. " +
                     "Please run the application as administrator to automatically configure firewall rules, " +
                     "or manually add firewall rules for both private and public networks.",
@@ -78,18 +53,18 @@ public static class FirewallConfiguration
             }
 
             // Check if rule already exists
-            if (_firewallHelper.RuleExists(RuleName))
+            if (FirewallHelper.RuleExists(RuleName))
             {
                 return;
             }
 
             // Create new rule with specific UDP port (30303 is DAQiFi's UDP discovery port)
-            _firewallHelper.CreateUdpRule(RuleName, appPath, 30303);
+            FirewallHelper.CreateUdpRule(RuleName, appPath, 30303);
         }
         catch (Exception ex)
         {
             Logger.Error(ex, "Failed to initialize firewall rules for DAQiFi Desktop");
-            _ = _messageBoxService.ShowAsync(
+            _ = MessageBox.ShowAsync(
                 "Unable to configure firewall rules automatically. You may need to manually add firewall rules " +
                 "for both private and public networks.\n\nError: " + ex.Message,
                 "Firewall Configuration Error",
@@ -116,17 +91,8 @@ public static class FirewallConfiguration
     }
 }
 
-// @port: Daqifi.Desktop.Configuration.IFirewallHelper
-public interface IFirewallHelper
-{
-    // @port: Daqifi.Desktop.Configuration.WindowsFirewallWrapper.RuleExists
-    bool RuleExists(string ruleName);
-    // @port: Daqifi.Desktop.Configuration.IFirewallHelper.CreateUdpRule
-    void CreateUdpRule(string ruleName, string applicationPath, int port = 0);
-}
-
 // @port: Daqifi.Desktop.Configuration.WindowsFirewallWrapper
-public class WindowsFirewallWrapper : IFirewallHelper
+public class WindowsFirewallWrapper
 {
     private static readonly IAppLogger Logger = AppLogger.Instance;
 
@@ -138,7 +104,7 @@ public class WindowsFirewallWrapper : IFirewallHelper
         return Activator.CreateInstance(type)!;
     }
 
-    // @port: Daqifi.Desktop.Configuration.IFirewallHelper.RuleExists
+    // @port: Daqifi.Desktop.Configuration.WindowsFirewallWrapper.RuleExists
     public bool RuleExists(string ruleName)
     {
         if (!IsValidRuleName(ruleName))
