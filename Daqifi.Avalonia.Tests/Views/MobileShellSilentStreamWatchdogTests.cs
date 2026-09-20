@@ -1,16 +1,13 @@
-using System.Reflection;
 using Daqifi.Avalonia.Tests.Device;
 using Daqifi.Avalonia.Views;
 using Daqifi.Core.Communication.Messages;
 using Daqifi.Core.Device;
 using Daqifi.Desktop.Channel;
-using Daqifi.Desktop.Device;
 using Google.Protobuf;
 using Microsoft.Extensions.Logging.Abstractions;
 using Xunit;
 using ChannelType = Daqifi.Core.Channel.ChannelType;
 using CoreStreamingDevice = Daqifi.Core.Device.DaqifiStreamingDevice;
-using ConnectionType = Daqifi.Desktop.Device.ConnectionType;
 
 namespace Daqifi.Avalonia.Tests.Views;
 
@@ -50,12 +47,12 @@ public sealed class MobileShellSilentStreamWatchdogTests : IDisposable
         _core.Connect();
         _core.PopulateChannelsFromStatus(Status(enabledMask: null));
 
-        _device = new ShellTestDevice();
+        _device = new ShellTestDevice("Watchdog test device");
         _device.Metadata.Capabilities = new DeviceCapabilities { MaxSamplingRate = 1000 };
         _device.AttachCore(_core);
         _device.SyncFromCore(_core);
 
-        Adopt(_shell, _device);
+        _device.AdoptInto(_shell);
         Assert.True(_shell.IsConnected);
         Assert.Equal(AnalogPorts, _shell.Channels.Count);
     }
@@ -252,39 +249,4 @@ public sealed class MobileShellSilentStreamWatchdogTests : IDisposable
         return message;
     }
 
-    /// <summary>
-    /// The shell's adopt step is private — the public routes into it (WiFi connect, USB connect)
-    /// each need a live transport or a platform connector. It is reached by name so the test
-    /// exercises the shell's real adoption rather than a copy of it.
-    /// </summary>
-    private static void Adopt(MobileShellViewModel shell, AbstractStreamingDevice device)
-    {
-        var adopt = typeof(MobileShellViewModel).GetMethod(
-            "AdoptConnectedDevice", BindingFlags.Instance | BindingFlags.NonPublic);
-        Assert.NotNull(adopt);
-        adopt.Invoke(shell, [device]);
-    }
-
-    /// <summary>
-    /// Minimal concrete <see cref="AbstractStreamingDevice"/> over a real Core device. The wrapper's
-    /// own <c>SendMessage</c> is a no-op: nothing here reads what the wrapper sends, and a silent
-    /// device would not answer it anyway.
-    /// </summary>
-    private sealed class ShellTestDevice : AbstractStreamingDevice
-    {
-        public ShellTestDevice()
-        {
-            Name = "Watchdog test device";
-        }
-
-        public override ConnectionType ConnectionType => ConnectionType.Wifi;
-
-        protected override void SendMessage(IOutboundMessage<string> message)
-        {
-        }
-
-        public void AttachCore(CoreStreamingDevice coreDevice) => CoreDevice = coreDevice;
-
-        public void SyncFromCore(DaqifiDevice coreDevice) => SyncFromCoreDevice(coreDevice);
-    }
 }
