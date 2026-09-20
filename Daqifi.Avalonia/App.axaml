@@ -43,13 +43,15 @@
             <!-- Upstream App.xaml converter registrations, same keys. The WPF-framework
                  BoolToVis / InvertedBoolToVis registrations are dropped — Avalonia binds
                  IsVisible directly (with ! for negation). The ported Converters return
-                 bool for the visibility-flavored keys, so they too target IsVisible. -->
+                 bool for the visibility-flavored keys, so they too target IsVisible.
+
+                 BooleanToInverse went the same way and its registration is dropped too:
+                 every view that would have used it writes the `!` negation instead, and
+                 says so in its own comments. Every key below is named by at least one
+                 binding — ConverterRegistrationTests keeps it that way. -->
             <helpers:IntToVisibilityConverter x:Key="IntToVisibility"/>
             <converters:BoolAndToVisibilityConverter x:Key="BoolAndToVis"/>
             <helpers:EnumDescriptionConverter x:Key="EnumDescription"/>
-            <helpers:BooleanToInverseBoolConverter x:Key="BooleanToInverse"/>
-            <converters:BoolToActiveStatusConverter x:Key="BoolToActiveStatus"/>
-            <converters:BoolToStatusColorConverter x:Key="BoolToStatusColor"/>
             <converters:ListToStringConverter x:Key="ListToStringConverter"/>
             <converters:BrushColorMatchConverter x:Key="BrushColorMatch"/>
             <converters:OxyColorToBrushConverter x:Key="OxyColorToBrushConverter"/>
