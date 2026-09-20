@@ -272,10 +272,13 @@ public sealed class GraphImageSaveTests : IDisposable
     /// pushes the full path past <c>MAX_PATH</c>, which would fail for an unrelated reason and
     /// prove nothing.
     /// </remarks>
-    [Fact]
+    [UnixOnlyFact]
     public void A_destination_name_at_the_length_limit_still_saves()
     {
-        if (OperatingSystem.IsWindows()) { return; }
+        // Fail-safe, not the skip: the [UnixOnlyFact] above is what stands this row down on
+        // Windows. Reaching here means it stopped doing so, and the row must say so rather than
+        // report Passed. The `return` is also the CA1416 narrowing, which reads control flow.
+        if (OperatingSystem.IsWindows()) { Assert.Fail(UnixOnlyFactAttribute.Reason); return; }
 
         // 251 + ".png" = 255, the longest legal name. Anything appended to it fails.
         var path = Path.Combine(_root, new string('g', 251) + ".png");
@@ -295,10 +298,13 @@ public sealed class GraphImageSaveTests : IDisposable
     /// </summary>
     /// <remarks>Unix-only: <see cref="UnixFileMode"/> does not exist on Windows, where the
     /// equivalent guarantee is the ACL carried by <c>File.Replace</c>.</remarks>
-    [Fact]
+    [UnixOnlyFact]
     public void Overwriting_keeps_the_destinations_own_permissions()
     {
-        if (OperatingSystem.IsWindows()) { return; }
+        // Fail-safe, not the skip: the [UnixOnlyFact] above is what stands this row down on
+        // Windows. Reaching here means it stopped doing so, and the row must say so rather than
+        // report Passed. The `return` is also the CA1416 narrowing, which reads control flow.
+        if (OperatingSystem.IsWindows()) { Assert.Fail(UnixOnlyFactAttribute.Reason); return; }
 
         var path = Path.Combine(_root, "graph.png");
         File.WriteAllBytes(path, [0x00, 0x01]);
@@ -321,10 +327,13 @@ public sealed class GraphImageSaveTests : IDisposable
     /// </summary>
     /// <remarks>Unix-only: creating a symbolic link on Windows needs elevation or developer
     /// mode, so the test would report an environment problem rather than a code one.</remarks>
-    [Fact]
+    [UnixOnlyFact]
     public void Saving_onto_a_symbolic_link_writes_through_to_its_target()
     {
-        if (OperatingSystem.IsWindows()) { return; }
+        // Fail-safe, not the skip: the [UnixOnlyFact] above is what stands this row down on
+        // Windows. Reaching here means it stopped doing so, and the row must say so rather than
+        // report Passed. The `return` is also the CA1416 narrowing, which reads control flow.
+        if (OperatingSystem.IsWindows()) { Assert.Fail(UnixOnlyFactAttribute.Reason); return; }
 
         var target = Path.Combine(_root, "real-graph.png");
         File.WriteAllBytes(target, [0x00, 0x01]);
