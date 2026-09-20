@@ -256,8 +256,10 @@ public class BootloaderHoldServiceTests
     /// <summary>
     /// Releasing closes the handle, and this is the live transition: <c>BootloaderWatcher.PrepareFlashAsync</c>
     /// calls <c>ReleaseAsync</c> on the target hold so the flasher's own transport can open that device
-    /// path, and the dialog's teardown calls it too. Left open, the exclusive handle locks every other
-    /// user-mode opener — the flasher included — out of the device.
+    /// path. That is its <b>only</b> production caller — teardown does not release, it calls
+    /// <c>hold.Dispose()</c>, which is why the disposal tests below carry the shutdown half of this
+    /// contract. Left open, the exclusive handle locks every other user-mode opener — the flasher
+    /// included — out of the device.
     /// </summary>
     [Fact]
     public async Task Releasing_disconnects_the_handle()
