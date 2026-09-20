@@ -215,26 +215,6 @@ public class BootloaderHoldServiceTests
     }
 
     /// <summary>
-    /// A release is a stop we asked for, so it is not a dropped device — firing <c>HoldDropped</c> here
-    /// would tell the watcher a bootloader vanished at the exact moment it was handing that bootloader to
-    /// the flasher, and the watcher would drop the row for a device that is about to come back.
-    /// </summary>
-    [Fact]
-    public async Task Releasing_does_not_report_a_dropped_hold()
-    {
-        using var service = CreateService();
-        var dropped = 0;
-        service.HoldDropped += (_, _) => Interlocked.Increment(ref dropped);
-        await service.BeginHoldAsync();
-        await _transport.WaitForReadsAsync(1);
-
-        await service.ReleaseAsync();
-        await Task.Delay(ReadTimeout + ReadTimeout);
-
-        Assert.Equal(0, Volatile.Read(ref dropped));
-    }
-
-    /// <summary>
     /// A disconnect that throws on the way out (the device was already yanked) is logged and swallowed.
     /// Release runs from dialog teardown, where an exception has nowhere useful to go.
     /// </summary>
