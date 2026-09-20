@@ -49,7 +49,7 @@ public class ConverterRegistrationTests
         var markup = ParseAllMarkup();
 
         var orphans = markup.Registrations
-            .Where(r => !markup.ReferencedKeys.Contains(r.Key))
+            .Where(r => !markup.ConverterKeys.Contains(r.Key))
             .Select(r => $"{r.Key} ({r.TypeName}, registered in {r.File})")
             .OrderBy(text => text, StringComparer.Ordinal)
             .ToList();
@@ -81,12 +81,43 @@ public class ConverterRegistrationTests
 
         Assert.True(markup.FileCount >= 20, $"Only {markup.FileCount} .axaml files were walked.");
         Assert.True(markup.Registrations.Count >= 6, $"Only {markup.Registrations.Count} converter registrations were found.");
-        Assert.True(markup.ReferencedKeys.Count >= 6, $"Only {markup.ReferencedKeys.Count} resource keys were referenced by a binding.");
+        Assert.True(markup.ConverterKeys.Count >= 6, $"Only {markup.ConverterKeys.Count} keys were found in a converter position.");
+    }
+
+    /// <summary>
+    /// The negative control for <see cref="ConverterKeysIn"/>: a resource key that appears somewhere
+    /// other than a converter position must not count as converter usage.
+    ///
+    /// <para>
+    /// Without this, the guard above degrades into "is this key mentioned anywhere", and a converter
+    /// whose last binding was deleted stays green forever as long as an unrelated brush, theme or
+    /// parameter happens to share its key — the orphan surviving behind a lookup that has nothing to
+    /// do with it. Raised by review on this PR; the first version of the walk had exactly that hole.
+    /// </para>
+    /// </summary>
+    [Theory]
+    // Converter positions — collected.
+    [InlineData("Converter", "{StaticResource Ghost}", true)]
+    [InlineData("Converter", "{DynamicResource Ghost}", true)]
+    [InlineData("Converter", "{ StaticResource Ghost }", true)]
+    [InlineData("IsVisible", "{Binding Thing, Converter={StaticResource Ghost}}", true)]
+    [InlineData("IsVisible", "{Binding Thing, Converter={StaticResource Ghost}, Mode=OneWay}", true)]
+    [InlineData("Text", "{MultiBinding Converter={StaticResource Ghost}}", true)]
+    // Everything else — not collected.
+    [InlineData("Background", "{DynamicResource Ghost}", false)]
+    [InlineData("Fill", "{StaticResource Ghost}", false)]
+    [InlineData("Theme", "{StaticResource Ghost}", false)]
+    [InlineData("IsVisible", "{Binding Thing, ConverterParameter={StaticResource Ghost}}", false)]
+    [InlineData("ToolTip.Tip", "see the Ghost resource", false)]
+    [InlineData("Content", "Ghost", false)]
+    public void Only_a_converter_position_counts_as_converter_usage(string attribute, string value, bool expected)
+    {
+        Assert.Equal(expected, ConverterKeysIn(attribute, value).Contains("Ghost"));
     }
 
     private sealed record Registration(string Key, string TypeName, string File);
 
-    private sealed record Markup(int FileCount, IReadOnlyList<Registration> Registrations, IReadOnlySet<string> ReferencedKeys);
+    private sealed record Markup(int FileCount, IReadOnlyList<Registration> Registrations, IReadOnlySet<string> ConverterKeys);
 
     private static Markup ParseAllMarkup()
     {
@@ -123,7 +154,10 @@ public class ConverterRegistrationTests
                         continue;
                     }
 
-                    CollectResourceKeys(attribute.Value, referenced);
+                    foreach (var converterKey in ConverterKeysIn(attribute.Name.LocalName, attribute.Value))
+                    {
+                        referenced.Add(converterKey);
+                    }
                 }
             }
         }
@@ -132,45 +166,125 @@ public class ConverterRegistrationTests
     }
 
     /// <summary>
-    /// Pulls every <c>{StaticResource Key}</c> / <c>{DynamicResource Key}</c> out of one attribute
-    /// value. Both the braced markup-extension form and the bare form that appears inside a nested
-    /// extension (<c>{Binding Converter={StaticResource Key}}</c>) are matched, because the nested
-    /// one is how almost every converter in this repo is actually reached.
+    /// The resource keys one attribute puts in a <b>converter position</b>, and only those.
+    ///
+    /// <para>
+    /// The distinction matters: a resource key is not evidence that a <i>converter</i> is used, it is
+    /// evidence that <i>something</i> with that key is used. XAML resources share one key namespace,
+    /// so a brush, a control theme and a converter can collide there; if this collected every
+    /// <c>{StaticResource X}</c> from every attribute, a <c>Background="{DynamicResource Foo}"</c>
+    /// would keep a converter registered as <c>Foo</c> looking alive after its last binding went
+    /// away — which is precisely the failure this file exists to catch. Only two positions actually
+    /// hand a converter to the binding engine, and only those two are counted:
+    /// </para>
+    ///
+    /// <list type="bullet">
+    /// <item>the element-syntax attribute — <c>&lt;Binding Converter="{StaticResource Key}"/&gt;</c>,
+    /// also how <c>MultiBinding</c> is written in this repo;</item>
+    /// <item>the nested <c>Converter=</c> clause inside a markup extension —
+    /// <c>"{Binding Path, Converter={StaticResource Key}}"</c>.</item>
+    /// </list>
+    ///
+    /// <para>
+    /// <c>ConverterParameter=</c> is deliberately <b>not</b> a converter position, and the
+    /// <c>=</c>-after-<c>Converter</c> requirement below is what excludes it: a parameter names a
+    /// value handed <i>to</i> a converter, not the converter itself.
+    /// </para>
     /// </summary>
-    private static void CollectResourceKeys(string attributeValue, HashSet<string> into)
+    internal static IReadOnlyCollection<string> ConverterKeysIn(string attributeLocalName, string attributeValue)
     {
-        const string staticResource = "StaticResource";
-        const string dynamicResource = "DynamicResource";
+        var keys = new HashSet<string>(StringComparer.Ordinal);
 
-        for (var index = 0; index < attributeValue.Length; index++)
+        // <Binding Converter="{StaticResource Key}"/> — the whole attribute value is the converter.
+        if (string.Equals(attributeLocalName, "Converter", StringComparison.Ordinal))
         {
-            var length = Match(attributeValue, index, staticResource) ? staticResource.Length
-                : Match(attributeValue, index, dynamicResource) ? dynamicResource.Length
-                : 0;
-            if (length == 0)
+            var cursor = 0;
+            SkipTo(attributeValue, ref cursor, '{');
+            ReadResourceKeyInto(attributeValue, cursor, keys);
+        }
+
+        // "{Binding X, Converter={StaticResource Key}}" — the nested clause, anywhere in the value.
+        const string converter = "Converter";
+        for (var index = 0; index + converter.Length < attributeValue.Length; index++)
+        {
+            if (!Match(attributeValue, index, converter))
             {
                 continue;
             }
 
-            var cursor = index + length;
+            var cursor = index + converter.Length;
             while (cursor < attributeValue.Length && attributeValue[cursor] == ' ')
             {
                 cursor++;
             }
 
-            var start = cursor;
-            while (cursor < attributeValue.Length &&
-                   (char.IsLetterOrDigit(attributeValue[cursor]) || attributeValue[cursor] is '_' or '.'))
+            // 'ConverterParameter=' fails here on 'P', which is the whole point.
+            if (cursor >= attributeValue.Length || attributeValue[cursor] != '=')
             {
-                cursor++;
+                continue;
             }
 
-            if (cursor > start)
-            {
-                into.Add(attributeValue[start..cursor]);
-            }
+            cursor++;
+            SkipTo(attributeValue, ref cursor, '{');
+            ReadResourceKeyInto(attributeValue, cursor, keys);
+        }
 
-            index = cursor - 1;
+        return keys;
+    }
+
+    /// <summary>Advances past spaces and one optional opening brace.</summary>
+    private static void SkipTo(string text, ref int cursor, char optionalOpener)
+    {
+        while (cursor < text.Length && text[cursor] == ' ')
+        {
+            cursor++;
+        }
+
+        if (cursor < text.Length && text[cursor] == optionalOpener)
+        {
+            cursor++;
+        }
+
+        while (cursor < text.Length && text[cursor] == ' ')
+        {
+            cursor++;
+        }
+    }
+
+    /// <summary>
+    /// Reads a <c>StaticResource Key</c> / <c>DynamicResource Key</c> starting exactly at
+    /// <paramref name="cursor"/> — anchored, not searched, so a key can only be collected from the
+    /// position the caller already established is a converter position.
+    /// </summary>
+    private static void ReadResourceKeyInto(string text, int cursor, HashSet<string> into)
+    {
+        const string staticResource = "StaticResource";
+        const string dynamicResource = "DynamicResource";
+
+        var length = Match(text, cursor, staticResource) ? staticResource.Length
+            : Match(text, cursor, dynamicResource) ? dynamicResource.Length
+            : 0;
+        if (length == 0)
+        {
+            return;
+        }
+
+        cursor += length;
+        while (cursor < text.Length && text[cursor] == ' ')
+        {
+            cursor++;
+        }
+
+        var start = cursor;
+        while (cursor < text.Length &&
+               (char.IsLetterOrDigit(text[cursor]) || text[cursor] is '_' or '.'))
+        {
+            cursor++;
+        }
+
+        if (cursor > start)
+        {
+            into.Add(text[start..cursor]);
         }
     }
 
