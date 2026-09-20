@@ -890,16 +890,21 @@ public partial class LoggingManager : ObservableObject
     }
 
     /// <summary>
-    /// Persists the user-entered <see cref="LoggingSession.Name"/> for one session. A blank name is
-    /// stored as <c>null</c>, which is what makes the row render as "Session {ID}" again on reload.
+    /// Persists the user-entered <see cref="LoggingSession.Name"/> for one session.
     /// </summary>
     /// <remarks>
-    /// Throws rather than swallowing, unlike <see cref="DeleteLoggingSessionIfPresent"/>: the caller
-    /// debounces keystrokes, so it is the one that knows whether a failure means "the user is still
-    /// typing" (<see cref="OperationCanceledException"/>) or "the rename did not stick".
+    /// <para>Throws rather than swallowing, unlike <see cref="DeleteLoggingSessionIfPresent"/>: the
+    /// caller debounces keystrokes, so it is the one that knows whether a failure means "the user is
+    /// still typing" (<see cref="OperationCanceledException"/>) or "the rename did not stick".</para>
+    /// <para><b>A <c>null</c> name does not currently save.</b> The caller sends <c>null</c> for an
+    /// emptied box, meaning "go back to the default label", and <c>LoggingSession.Name</c>'s getter
+    /// honours that in memory — but <c>Sessions.Name</c> is <c>nullable: false</c> and EF writes the
+    /// backing field rather than that getter, so the save throws <c>DbUpdateException</c> and the row
+    /// keeps its old name. Tracked as issue #427; this method relays the behaviour it inherited from
+    /// the view code-behind rather than changing it.</para>
     /// </remarks>
     /// <param name="sessionId">The session to rename. A row that is no longer there is a no-op.</param>
-    /// <param name="name">The new name, or <c>null</c> to clear it.</param>
+    /// <param name="name">The new name. <c>null</c> throws on save — see the remark.</param>
     /// <param name="cancellationToken">Cancelled by the caller when another keystroke supersedes this write.</param>
     public async Task PersistSessionNameAsync(
         int sessionId, string? name, CancellationToken cancellationToken = default)
