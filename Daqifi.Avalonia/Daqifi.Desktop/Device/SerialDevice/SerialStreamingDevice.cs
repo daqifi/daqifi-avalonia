@@ -7,7 +7,6 @@ using System.IO;
 using System.IO.Ports;
 using Daqifi.Core.Device;
 using Daqifi.Core.Communication.Transport;
-using Daqifi.Core.Communication.Messages;
 using Daqifi.Core.Firmware;
 using ScpiMessageProducer = Daqifi.Core.Communication.Producers.ScpiMessageProducer;
 using CoreStreamingDevice = Daqifi.Core.Device.DaqifiStreamingDevice;
