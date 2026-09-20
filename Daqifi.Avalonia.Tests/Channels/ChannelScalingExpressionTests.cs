@@ -425,7 +425,8 @@ public class ChannelScalingExpressionTests
             ("that run behind a bracketed parameter name",
                 "['x] + " + new string('(', AbstractChannel.MaxScaleExpressionDepth + 1), false),
             ("that run behind a string literal of ')'",
-                "'))))))))' + " + new string('(', AbstractChannel.MaxScaleExpressionDepth + 1), false),
+                "'" + new string(')', AbstractChannel.MaxScaleExpressionDepth) + "' + "
+                + new string('(', AbstractChannel.MaxScaleExpressionDepth + 1), false),
             ("text one step past the length cap",
                 "x + " + new string('1', AbstractChannel.MaxScaleExpressionLength), false)
         ];
