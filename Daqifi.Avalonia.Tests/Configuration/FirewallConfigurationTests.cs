@@ -55,8 +55,19 @@ public class FirewallConfigurationTests
     [Fact]
     public void InitializeFirewallRules_returns_quietly_on_an_un_elevated_host()
     {
-        Assert.False(AppDataPaths.IsElevated,
-            "this test only means anything on an un-elevated host; CI and the dev Macs are.");
+        // An elevated host is not just outside what this row characterises — it is a host where
+        // CALLING the method at all would be wrong. Past the gate, InitializeFirewallRules goes on
+        // to add a real Windows Firewall rule, so on an administrator-token Windows machine this
+        // test would mutate the developer's actual firewall configuration. The guard therefore has
+        // to wrap the call, not merely the assertion in front of it.
+        //
+        // xunit 2.9.3 has no dynamic skip (Assert.Skip is v3), so this returns rather than
+        // reporting Skipped, matching the two platform-conditional rows below. The hosts that
+        // matter — CI's ubuntu runner and the dev Macs — are un-elevated, so the body does run.
+        if (AppDataPaths.IsElevated)
+        {
+            return;
+        }
 
         // Must not throw: the un-elevated branch informs the user and returns. It must not fall
         // through to the COM path, which on a non-Windows host cannot even be constructed.
