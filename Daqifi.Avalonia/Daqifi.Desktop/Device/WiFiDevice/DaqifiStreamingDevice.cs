@@ -108,7 +108,10 @@ public class DaqifiStreamingDevice : AbstractStreamingDevice
     /// socket failures they raise are transport concerns; the connect dialog that calls this only
     /// needs to know whether it got a device.
     /// </summary>
-    /// <returns>The device, or <c>null</c> when the endpoint resolves to no address.</returns>
+    /// <returns>
+    /// The device, or <c>null</c> when the endpoint resolves to no address — in which case this
+    /// has already logged exactly one warning saying why, so the caller only reports to the user.
+    /// </returns>
     /// <exception cref="ArgumentException">
     /// <paramref name="endpointInput"/> is not a valid IP address or host name.
     /// </exception>
@@ -131,17 +134,22 @@ public class DaqifiStreamingDevice : AbstractStreamingDevice
             }
             catch (SocketException ex)
             {
-                // The caller only needs "no device"; the detail belongs in the log next to this
-                // device's other transport failures.
+                // Both failure paths log here and nowhere else: one warning per failed lookup,
+                // with the socket detail, next to this device's other transport failures.
                 Common.Loggers.AppLogger.Instance.Warning(
                     ex, $"Failed to resolve manual WiFi endpoint '{endpointInput}'");
                 return null;
             }
+
+            if (ipAddress == null)
+            {
+                Common.Loggers.AppLogger.Instance.Warning(
+                    $"Manual WiFi endpoint '{endpointInput}' did not resolve to an IP address.");
+                return null;
+            }
         }
 
-        return ipAddress == null
-            ? null
-            : new DaqifiStreamingDevice(ipAddress, DaqifiDeviceFactory.DefaultTcpDataPort, name);
+        return new DaqifiStreamingDevice(ipAddress, DaqifiDeviceFactory.DefaultTcpDataPort, name);
     }
 
     #endregion

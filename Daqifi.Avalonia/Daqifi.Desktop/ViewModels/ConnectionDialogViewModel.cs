@@ -815,9 +815,9 @@ public partial class ConnectionDialogViewModel : ObservableObject
 
         if (device == null)
         {
+            // CreateForManualEndpointAsync has already logged why, with the socket detail where
+            // there was one; logging again here would double every failed lookup in the timeline.
             ManualWifiError = $"Could not resolve '{endpointInput}'. Check the address and try again.";
-            Common.Loggers.AppLogger.Instance.Warning(
-                $"Manual WiFi endpoint '{ManualIpAddress}' did not resolve to an IP address.");
             return;
         }
 
