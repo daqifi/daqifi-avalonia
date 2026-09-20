@@ -247,10 +247,7 @@ public partial class ChannelsPaneViewModel : ObservableObject, IDisposable
         foreach (var device in devices)
         {
             ConnectedDeviceNames.Add(device.Name);
-        }
 
-        foreach (var device in devices)
-        {
             foreach (var channel in device.DataChannels.OrderBy(c => c.Name, ChannelNameComparer.Instance))
             {
                 _channelOwners[channel] = device;
