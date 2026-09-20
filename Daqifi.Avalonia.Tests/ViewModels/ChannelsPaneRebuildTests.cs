@@ -1,4 +1,3 @@
-using Avalonia.Threading;
 using Daqifi.Avalonia.Tests.Device;
 using Daqifi.Desktop;
 using Daqifi.Desktop.Channel;
@@ -26,11 +25,13 @@ namespace Daqifi.Avalonia.Tests.ViewModels;
 ///
 /// <para>
 /// <c>Rebuild</c> is private and runs on two triggers: the constructor calls it directly, and a
-/// change to <c>ConnectionManager.ConnectedDevices</c> re-runs it (marshalled through the
-/// dispatcher). Most tests here use the constructor path — devices registered first, then the
-/// pane opened — because that is synchronous and is what a user opening the pane on a connected
-/// rig actually runs. <see cref="A_device_connecting_while_the_pane_is_open_rebuilds_it"/> covers
-/// the other trigger, draining the dispatcher explicitly.
+/// change to <c>ConnectionManager.ConnectedDevices</c> re-runs it. These tests all use the
+/// constructor path — devices registered first, then the pane opened — which is synchronous, and
+/// is what a user opening the pane on an already-connected rig runs. The second trigger reaches
+/// the SAME method through <c>Dispatcher.UIThread.Post</c>, and this project stands up no
+/// dispatcher thread to drain that queue on (draining it from an arbitrary xUnit worker throws
+/// <c>VerifyAccess</c>), so what these pin is the method's output rather than the marshalling
+/// in front of it.
 /// </para>
 ///
 /// <para>
@@ -272,36 +273,6 @@ public sealed class ChannelsPaneRebuildTests : IDisposable
         Assert.True(pane.IsSettingsOpen);
         Assert.Same(b, pane.SelectedDevice);
         Assert.NotSame(a, pane.SelectedDevice);
-    }
-
-    #endregion
-
-    #region The rebuild trigger
-
-    /// <summary>
-    /// The pane's other entry point: a device connecting while the pane is open re-runs the
-    /// rebuild, and the result replaces the previous contents rather than accumulating on top of
-    /// them. The notification is marshalled through the dispatcher, so the queue is drained
-    /// before reading the result.
-    /// </summary>
-    [Fact]
-    public void A_device_connecting_while_the_pane_is_open_rebuilds_it()
-    {
-        Connect("AAAA0001", Analog("AI0"));
-        var pane = OpenPane();
-        Assert.Equal(new[] { "AAAA0001" }, pane.ConnectedDeviceNames);
-        Assert.Single(pane.AnalogInputs);
-        Assert.False(pane.HasMultipleDevices);
-
-        Connect("BBBB0002", Analog("AI0"));
-        Dispatcher.UIThread.RunJobs();
-
-        Assert.Equal(new[] { "AAAA0001", "BBBB0002" }, pane.ConnectedDeviceNames);
-        Assert.Equal(new[] { "AAAA0001/AI0", "BBBB0002/AI0" },
-            pane.AnalogInputs.Select(t => $"{t.DeviceName}/{t.Name}"));
-        Assert.True(pane.HasMultipleDevices);
-        // And the tiles rebuilt after the second device arrived now carry its label.
-        Assert.All(pane.AnalogInputs, t => Assert.True(t.ShowDeviceLabel));
     }
 
     #endregion
