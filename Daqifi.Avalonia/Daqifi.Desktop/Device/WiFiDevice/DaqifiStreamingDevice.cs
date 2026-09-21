@@ -102,6 +102,56 @@ public class DaqifiStreamingDevice : AbstractStreamingDevice
         IsStreaming = false;
     }
 
+    /// <summary>
+    /// Resolves a user-entered endpoint — an IP literal or a host name — and wraps it for a manual
+    /// connect on Core's default TCP data port. Name resolution, the IPv4-first preference and the
+    /// socket failures they raise are transport concerns; the connect dialog that calls this only
+    /// needs to know whether it got a device.
+    /// </summary>
+    /// <returns>
+    /// The device, or <c>null</c> when the endpoint resolves to no address — in which case this
+    /// has already logged exactly one warning saying why, so the caller only reports to the user.
+    /// </returns>
+    /// <exception cref="ArgumentException">
+    /// <paramref name="endpointInput"/> is not a valid IP address or host name.
+    /// </exception>
+    // Upstream keeps this in the dialog; the backlink moves with the logic rather than being dropped.
+    // @port: Daqifi.Desktop.ViewModels.ConnectionDialogViewModel.ResolveManualWifiEndpointAsync
+    public static async Task<DaqifiStreamingDevice?> CreateForManualEndpointAsync(
+        string endpointInput, string name)
+    {
+        // The dialog already refuses a blank box; stating it makes the "invalid endpoint" contract
+        // one exception type rather than whatever Dns happens to do with whitespace.
+        ArgumentException.ThrowIfNullOrWhiteSpace(endpointInput);
+
+        if (!IPAddress.TryParse(endpointInput, out var ipAddress))
+        {
+            try
+            {
+                var resolved = await Dns.GetHostAddressesAsync(endpointInput);
+                ipAddress = resolved.FirstOrDefault(a => a.AddressFamily == AddressFamily.InterNetwork)
+                    ?? resolved.FirstOrDefault();
+            }
+            catch (SocketException ex)
+            {
+                // Both failure paths log here and nowhere else: one warning per failed lookup,
+                // with the socket detail, next to this device's other transport failures.
+                Common.Loggers.AppLogger.Instance.Warning(
+                    ex, $"Failed to resolve manual WiFi endpoint '{endpointInput}'");
+                return null;
+            }
+
+            if (ipAddress == null)
+            {
+                Common.Loggers.AppLogger.Instance.Warning(
+                    $"Manual WiFi endpoint '{endpointInput}' did not resolve to an IP address.");
+                return null;
+            }
+        }
+
+        return new DaqifiStreamingDevice(ipAddress, DaqifiDeviceFactory.DefaultTcpDataPort, name);
+    }
+
     #endregion
 
     #region Override Methods
