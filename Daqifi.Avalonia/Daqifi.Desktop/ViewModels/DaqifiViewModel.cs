@@ -817,15 +817,11 @@ public partial class DaqifiViewModel : ObservableObject, IFirmwareUpdateHost, IL
     /// <param name="firmwareUpdateService">Firmware update service for PIC32 updates.</param>
     /// <param name="firmwareDownloadService">Firmware download service for package acquisition.</param>
     /// <param name="firmwareLogger">Logger used when creating the default firmware update service.</param>
-    /// <param name="wifiFirmwareUpdateServiceFactory">
-    /// Factory used to create the WiFi firmware update service for a specific firmware version and COM port.
-    /// </param>
     public DaqifiViewModel(
         IDialogService dialogService,
         IFirmwareUpdateService? firmwareUpdateService = null,
         IFirmwareDownloadService? firmwareDownloadService = null,
         ILogger<FirmwareUpdateService>? firmwareLogger = null,
-        Func<string, string, IFirmwareUpdateService>? wifiFirmwareUpdateServiceFactory = null,
         IDbContextFactory<LoggingContext>? loggingContextFactory = null)
     {
         _dialogService = dialogService ?? throw new ArgumentNullException(nameof(dialogService));
@@ -848,7 +844,6 @@ public partial class DaqifiViewModel : ObservableObject, IFirmwareUpdateHost, IL
             resolvedFirmwareLogger,
             _appLogger,
             App.DaqifiDataDirectory,
-            wifiFirmwareUpdateServiceFactory,
             // Suspend the app-global bootloader watcher's discovery during the PIC32 flash so it doesn't
             // grab the connected device when it reboots into the bootloader mid-update.
             watcher: App.ServiceProvider?.GetService<IBootloaderWatcher>());
