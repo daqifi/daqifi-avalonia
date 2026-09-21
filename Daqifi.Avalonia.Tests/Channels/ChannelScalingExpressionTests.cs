@@ -1,4 +1,3 @@
-using System.Diagnostics;
 using Daqifi.Desktop.Channel;
 using Xunit;
 using ChannelDirection = Daqifi.Core.Channel.ChannelDirection;
@@ -65,6 +64,42 @@ public class ChannelScalingExpressionTests
         channel.ActiveSample = sample;
         return sample.Value;
     }
+
+    /// <summary>
+    /// The longest run of <em>consecutive</em> <c>(</c> in the text — the quantity NCalc's
+    /// backtracking is exponential in, and the one the depth cap bounds lexically.
+    /// </summary>
+    /// <remarks>
+    /// Deliberately not a copy of the production <c>DeepestParenthesisNesting</c>: that returns
+    /// the larger of two grammar-aware readings, and a test that re-implemented it would only
+    /// prove the guard agrees with itself. This reads the raw characters and nothing else, so
+    /// the assertions below check the guard's <em>promise</em> — that whatever reaches the
+    /// parser carries at most <see cref="AbstractChannel.MaxScaleExpressionDepth"/> consecutive
+    /// <c>(</c> — against a quantity the guard does not compute.
+    /// </remarks>
+    private static int LongestRunOfOpenParentheses(string expression)
+    {
+        var longest = 0;
+        var run = 0;
+
+        foreach (var character in expression)
+        {
+            run = character == '(' ? run + 1 : 0;
+            if (run > longest) { longest = run; }
+        }
+
+        return longest;
+    }
+
+    /// <summary>
+    /// Whether one of the two counts refused the text before it could reach NCalc. Both cap
+    /// refusals name themselves in the label the user sees, and neither message can be produced
+    /// by any other branch of the setter — so the message is a load-independent statement about
+    /// <em>which</em> code path ran, which is what these tests need and what a stopwatch was
+    /// previously being asked to infer.
+    /// </summary>
+    private static bool RefusedByACap(AbstractChannel channel) =>
+        channel.ScaleExpressionError != AbstractChannel.InvalidExpressionMessage;
 
     // ---- Wiring -----------------------------------------------------------------------------
 
@@ -318,14 +353,14 @@ public class ChannelScalingExpressionTests
     [InlineData("[\"x] + ((((((((((((")]
     public void A_quote_in_a_bracketed_parameter_name_does_not_hide_open_parentheses(string expression)
     {
-        var started = Stopwatch.StartNew();
         var channel = Scaled(expression);
-        started.Stop();
 
         Assert.False(channel.HasValidExpression);
+        // "the parser was never entered" is the claim, and the message proves it outright: the
+        // depth cap's branch calls Reject and returns before `new Expression(...)` exists, so no
+        // other path in the setter can produce this text. A stopwatch used to stand in for that
+        // proof and was strictly weaker — see #424.
         Assert.Contains("NESTED PARENTHESES", channel.ScaleExpressionError, StringComparison.Ordinal);
-        Assert.True(started.Elapsed < TimeSpan.FromSeconds(5),
-            $"the setter took {started.Elapsed.TotalSeconds:0.0} s, so the parser was entered");
     }
 
     [Fact]
@@ -335,29 +370,88 @@ public class ChannelScalingExpressionTests
         // '!' to the length cap — searched for over 17 filler alphabets at 6, 7 and 8 opens, and
         // over 4,000 random strings. Measured unguarded: 1.4 s when the cap was 256 and 3.2 s now
         // that it is 1,024, against the 48 s the same setter spent on twelve bare parentheses.
-        // Those few seconds are the residual stall the caps concede, and it is the ceiling rather
-        // than a typical figure: nothing that gets past the caps can escalate past it, because the
-        // caps hold the contiguous run of '(' at 8 and the exponent is in that run, leaving a cost
-        // that grows in proportion to the length rather than with it.
         //
-        // The bound below is deliberately far above the measured 3.2 s. It is not a performance
-        // assertion — it is the assertion that SOMETHING bounded the parse, and the regression it
-        // guards against is 48 s. Pinning it any tighter would make it a measurement of the build
-        // agent, which is the mistake this PR made once already in the production code.
-        var underBothCaps = new string('(', AbstractChannel.MaxScaleExpressionDepth)
-                            + new string('!', AbstractChannel.MaxScaleExpressionLength
-                                              - AbstractChannel.MaxScaleExpressionDepth);
+        // This row used to assert `elapsed < 20 s` around that 3.2 s figure, and #424 is what
+        // came of it: a ubuntu agent took more than six times the measured cost and the row went
+        // red with "nothing bounded the parse" on a PR that cannot reach this file. Raising the
+        // ceiling would only have bought time until the next busy agent — under contention the
+        // thing being timed is the scheduler, not the parse — and, worse, the assertion could
+        // never have failed for the RIGHT reason either: this input satisfies both caps by
+        // construction, so deleting the guard outright leaves its cost completely unchanged and
+        // the old row still green. It measured the build agent and nothing else.
+        //
+        // What the row is actually for is in its name: the caps bound not only what they refuse
+        // but the residual cost of what they let through. The production guard's own argument for
+        // that (see MaxScaleExpressionDepth) is structural, not temporal — NCalc's backtracking is
+        // exponential in the longest CONTIGUOUS run of '(' and linear in the length, and both of
+        // those are pure functions of the text. So the bound is asserted where it lives: as a
+        // post-condition on everything the guard admits to the parser. That is a lexical fact a
+        // loaded agent cannot inflate, and unlike the stopwatch it goes red the moment either cap
+        // stops being enforced.
+        var worstUnderBothCaps = new string('(', AbstractChannel.MaxScaleExpressionDepth)
+                                 + new string('!', AbstractChannel.MaxScaleExpressionLength
+                                                   - AbstractChannel.MaxScaleExpressionDepth);
 
-        Assert.Equal(AbstractChannel.MaxScaleExpressionLength, underBothCaps.Length);
+        // It sits exactly at both ceilings, which is what makes it the ceiling of the admitted
+        // set rather than one arbitrary member of it...
+        Assert.Equal(AbstractChannel.MaxScaleExpressionLength, worstUnderBothCaps.Length);
+        Assert.Equal(
+            AbstractChannel.MaxScaleExpressionDepth,
+            LongestRunOfOpenParentheses(worstUnderBothCaps));
 
-        var started = Stopwatch.StartNew();
-        var channel = Scaled(underBothCaps);
-        started.Stop();
+        // ...and it really is admitted: an ordinary parse failure, not either cap's refusal. It
+        // is parsed exactly once here, because this is the ~3.2 s input and the rest of this row
+        // is deliberately cheap.
+        var channel = Scaled(worstUnderBothCaps);
 
         Assert.False(channel.HasValidExpression);
+        Assert.False(RefusedByACap(channel));
         Assert.Equal(AbstractChannel.InvalidExpressionMessage, channel.ScaleExpressionError);
-        Assert.True(started.Elapsed < TimeSpan.FromSeconds(20),
-            $"the setter took {started.Elapsed.TotalSeconds:0.0} s, so nothing bounded the parse");
+
+        // Now the post-condition itself, over a set straddling both caps. Every over-cap case is
+        // the control for its own half of it: with that cap gone the input reaches the parser and
+        // the row goes red. They are kept just one step past their cap on purpose — a run of 9
+        // costs an unguarded parse under a second, where the 12 of #311 costs 48 s and the ~1,700
+        // characters of nested parentheses abort the test host outright with an uncatchable
+        // StackOverflowException, which would leave no result to report at all.
+        (string Name, string Text, bool ReachesTheParser)[] cases =
+        [
+            ("an ordinary expression", "x * 2", true),
+            ("nesting at the depth cap",
+                new string('(', AbstractChannel.MaxScaleExpressionDepth) + "x"
+                + new string(')', AbstractChannel.MaxScaleExpressionDepth), true),
+            ("a bare run one past the depth cap",
+                new string('(', AbstractChannel.MaxScaleExpressionDepth + 1), false),
+            ("that run behind a bracketed parameter name",
+                "['x] + " + new string('(', AbstractChannel.MaxScaleExpressionDepth + 1), false),
+            ("that run behind a string literal of ')'",
+                "'" + new string(')', AbstractChannel.MaxScaleExpressionDepth) + "' + "
+                + new string('(', AbstractChannel.MaxScaleExpressionDepth + 1), false),
+            ("text one step past the length cap",
+                "x + " + new string('1', AbstractChannel.MaxScaleExpressionLength), false)
+        ];
+
+        foreach (var (name, text, reachesTheParser) in cases)
+        {
+            Assert.True(
+                reachesTheParser == !RefusedByACap(Scaled(text)),
+                reachesTheParser
+                    ? $"{name}: a cap refused text that is inside both of them"
+                    : $"{name}: text past a cap reached the parser");
+
+            if (!reachesTheParser)
+            {
+                continue;
+            }
+
+            // Both quantities the parse cost depends on are inside their cap for anything that
+            // got this far.
+            Assert.True(text.Length <= AbstractChannel.MaxScaleExpressionLength,
+                $"{text.Length} characters reached the parser");
+            Assert.True(
+                LongestRunOfOpenParentheses(text) <= AbstractChannel.MaxScaleExpressionDepth,
+                $"a run of {LongestRunOfOpenParentheses(text)} consecutive '(' reached the parser");
+        }
     }
 
     [Fact]
@@ -427,14 +521,14 @@ public class ChannelScalingExpressionTests
     [InlineData("x + \")))))))))\" + (((((((((")]
     public void A_run_past_the_depth_cap_cannot_be_hidden_from_the_guard(string expression)
     {
-        var started = Stopwatch.StartNew();
         var channel = Scaled(expression);
-        started.Stop();
 
         Assert.False(channel.HasValidExpression);
+        // Same as above: the cap's own message is the proof the parser was never entered, and it
+        // is a fact about which branch ran rather than about how fast the machine is.
         Assert.Contains("NESTED PARENTHESES", channel.ScaleExpressionError, StringComparison.Ordinal);
-        Assert.True(started.Elapsed < TimeSpan.FromSeconds(5),
-            $"the setter took {started.Elapsed.TotalSeconds:0.0} s, so the parser was entered");
+        Assert.True(LongestRunOfOpenParentheses(expression) > AbstractChannel.MaxScaleExpressionDepth,
+            "the case is only meaningful if the text really does carry a run past the cap");
     }
 
     [Fact]
@@ -468,16 +562,20 @@ public class ChannelScalingExpressionTests
     {
         // Measured against this same setter before the guard: 0.07 s at 4 open parentheses,
         // 0.69 s at 8, 3.6 s at 10, 48.5 s at 12 — on the UI thread, so the window stopped
-        // painting and logging could not be stopped. The bound below is ~10x the pre-fix figure's
-        // safety margin in the wrong direction on purpose: anything under it proves the parser
-        // was never entered, and a regression lands nowhere near it.
-        var stopwatch = Stopwatch.StartNew();
+        // painting and logging could not be stopped.
+        //
+        // The regression to catch is "the parser was entered", and this used to be asserted with
+        // a 5 s stopwatch. That was the weaker of the two available checks in both directions:
+        // it passes on a busy agent only by luck, and — because a 12-paren run is a syntax error
+        // either way — HasValidExpression alone is false whether the guard refused it or NCalc
+        // did, so the timer was the only thing separating the two. Naming the cap's own message
+        // separates them outright and cannot be perturbed by load (#424).
         var channel = Scaled(new string('(', 12));
-        stopwatch.Stop();
 
         Assert.False(channel.HasValidExpression);
-        Assert.True(stopwatch.Elapsed < TimeSpan.FromSeconds(5),
-            $"the guard let a 12-character run of '(' reach the parser: {stopwatch.Elapsed}");
+        Assert.Equal(
+            $"TOO MANY NESTED PARENTHESES (LIMIT {AbstractChannel.MaxScaleExpressionDepth})",
+            channel.ScaleExpressionError);
     }
 
     /// <summary>
