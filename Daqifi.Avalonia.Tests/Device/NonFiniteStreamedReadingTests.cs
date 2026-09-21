@@ -133,8 +133,8 @@ public class NonFiniteStreamedReadingTests
     }
 
     /// <summary>The single channel row the flyout would render for the single reporting device.</summary>
-    private static SummaryLogger.ChannelSummary TheRow(SummaryLogger summary) =>
-        Assert.Single(Assert.Single(summary.Devices).Channels);
+    private static ChannelAcquisitionStatistics TheRow(SummaryLogger summary) =>
+        Assert.Single(Assert.Single(summary.Devices).Snapshot.Channels);
 
     /// <summary>
     /// The value the firmware sent is not a measurement, so it does not become the channel's
@@ -227,7 +227,7 @@ public class NonFiniteStreamedReadingTests
 
         var row = TheRow(summary);
 
-        Assert.Equal(3.0, row.AverageValue, precision: 5);
+        Assert.Equal(3.0, row.MeanValue, precision: 5);
         Assert.Equal(2, row.SampleCount);
     }
 
@@ -267,7 +267,7 @@ public class NonFiniteStreamedReadingTests
         device.ReceiveFloatFrame(1_000, 1.25f);
 
         Assert.Equal(1.25, channel.ActiveSample!.Value, precision: 5);
-        Assert.Equal(1.25, TheRow(summary).AverageValue, precision: 5);
+        Assert.Equal(1.25, TheRow(summary).MeanValue, precision: 5);
     }
 
     /// <summary>

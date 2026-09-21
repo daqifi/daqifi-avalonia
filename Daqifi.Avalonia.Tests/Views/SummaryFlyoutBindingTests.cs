@@ -1,4 +1,5 @@
 using System.Xml.Linq;
+using Daqifi.Core.Device;
 using Daqifi.Desktop.Logger;
 using Daqifi.Desktop.ViewModels;
 using Xunit;
@@ -16,7 +17,8 @@ namespace Daqifi.Avalonia.Tests.Views;
 /// (<c>74308c5</c>): one deliberate typo in each of the view's three binding scopes, each applied
 /// alone, built with <c>0 Error(s)</c> and not one diagnostic naming the file. Each of those three is
 /// now <c>AVLN2000</c> naming the type its own scope resolves against —
-/// <c>DaqifiViewModel</c>, <c>SummaryLogger/DeviceSummary</c>, <c>SummaryLogger/ChannelSummary</c>.
+/// <c>DaqifiViewModel</c>, <c>SummaryLogger/DeviceSummary</c>, and (since #447) Core's own
+/// <c>ChannelAcquisitionStatistics</c>.
 /// </para>
 ///
 /// <para>
@@ -126,7 +128,7 @@ public class SummaryFlyoutBindingTests
     /// Gap 2, and the fact this view leans on hardest: neither of its two <c>DataTemplate</c>s declares
     /// an <c>x:DataType</c>. Both scopes are <b>inferred</b> from the collection beside them, and the
     /// inner one is inferred through the outer — measured, a typo in the channel rows is
-    /// <c>AVLN2000 … on type 'Daqifi.Desktop.Logger.SummaryLogger/ChannelSummary'</c>, two levels down
+    /// <c>AVLN2000 … on type 'Daqifi.Core.Device.ChannelAcquisitionStatistics'</c>, two levels down
     /// from the root declaration, with no <c>DataType</c> written anywhere in the file.
     ///
     /// <para>
@@ -140,20 +142,23 @@ public class SummaryFlyoutBindingTests
     /// The consequence is what this test pins. Because the scopes are inferred, the ELEMENT TYPES of
     /// these two collections are load-bearing markup that the markup never names: changing what
     /// <c>SummaryLogger.Devices</c> holds silently re-scopes every device section, and changing what
-    /// <c>DeviceSummary.Channels</c> holds silently re-scopes all eleven per-channel figures. Under a
+    /// <c>DeviceSummary.Snapshot.Channels</c> holds silently re-scopes all eleven per-channel figures. Under a
     /// declared <c>x:DataType</c> that would be a build error; under inference it is an error only if
     /// the new type happens not to carry the same member names.
     /// </para>
     /// </summary>
     [Theory]
     [InlineData("{Binding SummaryLogger.Devices}")]
-    [InlineData("{Binding Channels}")]
+    [InlineData("{Binding Snapshot.Channels}")]
     public void The_inferred_item_scopes_come_from_the_collections_beside_them(string itemsSource)
     {
         Assert.Equal(typeof(SummaryLogger.DeviceSummary), ItemTypeOf(typeof(SummaryLogger), nameof(SummaryLogger.Devices)));
         Assert.Equal(
-            typeof(SummaryLogger.ChannelSummary),
-            ItemTypeOf(typeof(SummaryLogger.DeviceSummary), nameof(SummaryLogger.DeviceSummary.Channels)));
+            typeof(AcquisitionStatisticsSnapshot),
+            typeof(SummaryLogger.DeviceSummary).GetProperty(nameof(SummaryLogger.DeviceSummary.Snapshot))?.PropertyType);
+        Assert.Equal(
+            typeof(ChannelAcquisitionStatistics),
+            ItemTypeOf(typeof(AcquisitionStatisticsSnapshot), nameof(AcquisitionStatisticsSnapshot.Channels)));
 
         // One parse, because the ownership check below compares element identity.
         var root = Root();

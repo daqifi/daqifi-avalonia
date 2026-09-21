@@ -23,17 +23,17 @@ namespace Daqifi.Desktop.Logger;
 /// and value extreme comes from Core's <see cref="CoreAcquisitionStatistics"/> (daqifi-core#518,
 /// released in 1.6.0), which was itself ported out of upstream daqifi-desktop's copy of this
 /// class so that every Core consumer gets the measurement rather than just one app. This type
-/// feeds it and projects its snapshot onto the properties the flyout binds; that is the whole job.
+/// feeds it and hands the flyout its snapshot, bound as Core's own records; that is the whole job.
 /// </para>
 /// <para>
 /// <b>What adopting Core's aggregator changed for the user.</b> The per-channel sample rate this
 /// class used to report was derived from the sample <em>timestamps</em>, which are reconstructed
 /// from the device's own clock — so it reported the rate the device believed it was streaming at
 /// and could not, even in principle, reveal that samples were going missing. Core measures both:
-/// <see cref="ChannelSummary.SampleRate"/> against the host clock (what actually arrived) and
-/// <see cref="ChannelSummary.DeviceClockSampleRate"/> against the device clock (what the device
-/// claims). The two agreeing but below the requested rate means samples were lost; the two
-/// disagreeing means the clocks have parted company.
+/// <see cref="CoreChannelStatistics.MeasuredSampleRateHz"/> against the host clock (what actually
+/// arrived) and <see cref="CoreChannelStatistics.DeviceClockSampleRateHz"/> against the device
+/// clock (what the device claims). The two agreeing but below the requested rate means samples
+/// were lost; the two disagreeing means the clocks have parted company.
 /// </para>
 /// <para>
 /// <b>Samples are handed over rather than observed.</b> Core can attach itself to a device and
@@ -67,89 +67,6 @@ public partial class SummaryLogger : ObservableObject, ILogger
 
     #region Nested Types
     /// <summary>
-    /// One channel's row in the flyout, projected from Core's per-channel statistics.
-    /// </summary>
-    // @port: Daqifi.Desktop.Logger.SummaryLogger.ChannelSummary
-    public sealed class ChannelSummary
-    {
-        private readonly CoreChannelStatistics _statistics;
-
-        internal ChannelSummary(CoreChannelStatistics statistics)
-        {
-            _statistics = statistics;
-        }
-
-        /// <summary>
-        /// The channel name.
-        /// </summary>
-        public string Name => _statistics.Name;
-
-        /// <summary>
-        /// The number of samples seen on this channel in the current window.
-        /// </summary>
-        public long SampleCount => _statistics.SampleCount;
-
-        // A per-channel "last update" was dropped along with its column: the device stamps every
-        // channel in a frame with the same time, so every channel reported the same value and it
-        // duplicated DeviceSummary.LastUpdate.
-
-        /// <summary>
-        /// The rate samples actually reached the host at, in Hz. This is the answer to "am I
-        /// really getting the rate I asked for?" — it falls short of the requested rate when
-        /// samples go missing, which the device-clock rate below cannot show.
-        /// </summary>
-        // @port: Daqifi.Desktop.Logger.SummaryLogger.SampleRate
-        public double SampleRate => _statistics.MeasuredSampleRateHz;
-
-        /// <summary>
-        /// The rate the device's own timestamps claim, in Hz. Compare against
-        /// <see cref="SampleRate"/>: both low means lost samples, a disagreement means the device
-        /// and host clocks have drifted apart.
-        /// </summary>
-        public double DeviceClockSampleRate => _statistics.DeviceClockSampleRateHz;
-
-        /// <summary>
-        /// The largest gap between consecutive samples, in milliseconds.
-        /// </summary>
-        // @port: Daqifi.Desktop.Logger.SummaryLogger.MaxDelta
-        public double MaxDelta => _statistics.MaxSampleInterval.TotalMilliseconds;
-
-        /// <summary>
-        /// The mean gap between consecutive samples, in milliseconds.
-        /// </summary>
-        // @port: Daqifi.Desktop.Logger.SummaryLogger.AverageDelta
-        public double AverageDelta => _statistics.MeanSampleInterval.TotalMilliseconds;
-
-        /// <summary>
-        /// The smallest gap between consecutive samples, in milliseconds.
-        /// </summary>
-        // @port: Daqifi.Desktop.Logger.SummaryLogger.MinDelta
-        public double MinDelta => _statistics.MinSampleInterval.TotalMilliseconds;
-
-        /// <summary>
-        /// How many samples arrived stamped behind one already seen on this channel. Non-zero
-        /// means the device sent frames out of order, which is why it is reported separately
-        /// rather than folded into the interval bounds as a negative gap.
-        /// </summary>
-        public long OutOfOrderSampleCount => _statistics.OutOfOrderSampleCount;
-
-        /// <summary>
-        /// The largest sample value seen on this channel.
-        /// </summary>
-        public double MaxValue => _statistics.MaxValue;
-
-        /// <summary>
-        /// The smallest sample value seen on this channel.
-        /// </summary>
-        public double MinValue => _statistics.MinValue;
-
-        /// <summary>
-        /// The mean of the sample values seen on this channel.
-        /// </summary>
-        public double AverageValue => _statistics.MeanValue;
-    }
-
-    /// <summary>
     /// One device's section of the flyout, projected from that device's own Core snapshot.
     /// </summary>
     /// <remarks>
@@ -159,15 +76,12 @@ public partial class SummaryLogger : ObservableObject, ILogger
     /// </remarks>
     public sealed class DeviceSummary
     {
-        private readonly CoreStatisticsSnapshot _snapshot;
-        private readonly string _statuses;
-
         internal DeviceSummary(string name, string serialNumber, CoreStatisticsSnapshot snapshot, string statuses)
         {
             Name = name;
             SerialNumber = serialNumber;
-            _snapshot = snapshot;
-            _statuses = statuses;
+            Snapshot = snapshot;
+            StatusList = statuses;
         }
 
         /// <summary>The device's display name.</summary>
@@ -185,11 +99,22 @@ public partial class SummaryLogger : ObservableObject, ILogger
         // An elapsed-milliseconds row was dropped along with its column: it is Samples divided by
         // Total Samples/s, both of which are shown, and Updated already conveys recency.
 
-        /// <summary>The time of this device's last sample.</summary>
-        public DateTime LastUpdate => _snapshot.LastReceivedAt;
-
-        /// <summary>The total number of samples recorded across this device's channels.</summary>
-        public long SampleCount => _snapshot.TotalSampleCount;
+        /// <summary>
+        /// This device's reading, straight from Core. The flyout binds its figures directly —
+        /// <see cref="CoreStatisticsSnapshot.LastReceivedAt"/>, the latencies, and one
+        /// <see cref="CoreChannelStatistics"/> row per channel in the device's own channel order —
+        /// rather than through a copy of each one here.
+        /// </summary>
+        // @port: Daqifi.Desktop.Logger.SummaryLogger.MaxLatency
+        // @port: Daqifi.Desktop.Logger.SummaryLogger.MinLatency
+        // @port: Daqifi.Desktop.Logger.SummaryLogger.AverageLatency
+        // @port: Daqifi.Desktop.Logger.SummaryLogger.Channels
+        // @port: Daqifi.Desktop.Logger.SummaryLogger.ChannelSummary
+        // @port: Daqifi.Desktop.Logger.SummaryLogger.SampleRate
+        // @port: Daqifi.Desktop.Logger.SummaryLogger.MinDelta
+        // @port: Daqifi.Desktop.Logger.SummaryLogger.AverageDelta
+        // @port: Daqifi.Desktop.Logger.SummaryLogger.MaxDelta
+        public CoreStatisticsSnapshot Snapshot { get; }
 
         /// <summary>
         /// The combined rate samples arrived from this device at, in Hz, measured against the host
@@ -206,37 +131,12 @@ public partial class SummaryLogger : ObservableObject, ILogger
         /// produces. Each per-channel rate already divides that channel's own count by its own
         /// span, so adding them up needs no correction.
         /// </remarks>
-        public double SampleRate => Channels.Sum(static channel => channel.SampleRate);
-
-        /// <summary>
-        /// The longest observed delay between the device's account of when a sample was taken and
-        /// the host seeing it, in milliseconds.
-        /// </summary>
-        // @port: Daqifi.Desktop.Logger.SummaryLogger.MaxLatency
-        public double MaxLatency => _snapshot.MaxLatency.TotalMilliseconds;
-
-        /// <summary>
-        /// The shortest observed sample latency, in milliseconds. Can legitimately be negative when
-        /// the device clock outruns the host's.
-        /// </summary>
-        // @port: Daqifi.Desktop.Logger.SummaryLogger.MinLatency
-        public double MinLatency => _snapshot.MinLatency.TotalMilliseconds;
-
-        /// <summary>The mean sample latency, in milliseconds.</summary>
-        // @port: Daqifi.Desktop.Logger.SummaryLogger.AverageLatency
-        public double AverageLatency => _snapshot.MeanLatency.TotalMilliseconds;
+        public double SampleRate => Snapshot.Channels.Sum(static channel => channel.MeasuredSampleRateHz);
 
         /// <summary>
         /// The distinct status codes this device reported in the current window, or "-" if none.
         /// </summary>
-        public string StatusList => _statuses;
-
-        /// <summary>
-        /// This device's channels, in its own channel order (analog first, then digital, ascending
-        /// within each) rather than in first-seen order.
-        /// </summary>
-        // @port: Daqifi.Desktop.Logger.SummaryLogger.Channels
-        public IEnumerable<ChannelSummary> Channels { get; internal init; } = [];
+        public string StatusList { get; }
     }
 
     /// <summary>
@@ -503,21 +403,11 @@ public partial class SummaryLogger : ObservableObject, ILogger
             var summaries = new List<DeviceSummary>(_devices.Count);
             foreach (var pair in _devices)
             {
-                var snapshot = pair.Value.Statistics.Snapshot();
-                var channels = new List<ChannelSummary>(snapshot.Channels.Count);
-                foreach (var channel in snapshot.Channels)
-                {
-                    channels.Add(new ChannelSummary(channel));
-                }
-
                 summaries.Add(new DeviceSummary(
                     string.IsNullOrWhiteSpace(pair.Key) ? "Device" : pair.Key,
                     pair.Value.SerialNumber,
-                    snapshot,
-                    FormatStatuses(pair.Value.Statuses))
-                {
-                    Channels = channels
-                });
+                    pair.Value.Statistics.Snapshot(),
+                    FormatStatuses(pair.Value.Statuses)));
             }
 
             // Stable order so the sections do not shuffle between refreshes.
