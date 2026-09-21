@@ -141,9 +141,10 @@ public class ConnectionDialogDiscoveryBindingTests
 /// re-raised when the state they are computed from changes.
 ///
 /// <para>
-/// <c>IsWiFiDiscoveryScanning</c> and <c>IsSerialDiscoveryScanning</c> are expressions over two
-/// members each, and depend entirely on four <c>[NotifyPropertyChangedFor]</c> attributes to reach
-/// the screen. Drop one and nothing above catches it: the markup still names the gate, the type
+/// <c>IsWiFiDiscoveryScanning</c> and <c>IsSerialDiscoveryScanning</c> are expressions over a device
+/// list and an error message each. The error half depends on two <c>[NotifyPropertyChangedFor]</c>
+/// attributes, pinned here; the list half is pinned in <see cref="ConnectionDialogScanningOverlayListTests"/>.
+/// Drop one and nothing above catches it: the markup still names the gate, the type
 /// still exposes it, and the binding still resolves — the overlay simply keeps animating "Scanning
 /// for USB devices…" over a discovery that has already given up, which is the exact defect
 /// issue #290 was filed for. The wiring is correct today; these assertions are what keep it so.
@@ -161,14 +162,8 @@ public class ConnectionDialogScanningOverlayRefreshTests
 {
     [Theory]
     [InlineData(
-        nameof(ConnectionDialogViewModel.HasNoWiFiDevices), false,
-        nameof(ConnectionDialogViewModel.IsWiFiDiscoveryScanning))]
-    [InlineData(
         nameof(ConnectionDialogViewModel.WiFiDiscoveryError), "WiFi discovery gave up.",
         nameof(ConnectionDialogViewModel.IsWiFiDiscoveryScanning))]
-    [InlineData(
-        nameof(ConnectionDialogViewModel.HasNoSerialDevices), false,
-        nameof(ConnectionDialogViewModel.IsSerialDiscoveryScanning))]
     [InlineData(
         nameof(ConnectionDialogViewModel.SerialDiscoveryError), "USB discovery gave up.",
         nameof(ConnectionDialogViewModel.IsSerialDiscoveryScanning))]

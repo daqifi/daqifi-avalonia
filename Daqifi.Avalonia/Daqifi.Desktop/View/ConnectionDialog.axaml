@@ -268,8 +268,8 @@
                         </ListBox>
 
                         <!-- Scanning overlay (MahApps ProgressRing → indeterminate ProgressBar).
-                             Bound to IsWiFiDiscoveryScanning rather than HasNoWiFiDevices, so it
-                             stops claiming to scan the moment discovery gives up (#290). -->
+                             IsWiFiDiscoveryScanning is false once a device is listed or discovery
+                             has given up (#290). -->
                         <StackPanel VerticalAlignment="Center" HorizontalAlignment="Center"
                                     IsVisible="{Binding IsWiFiDiscoveryScanning}">
                             <ProgressBar IsIndeterminate="True" Width="120" Height="4"
@@ -385,9 +385,8 @@
                             </ListBox.ItemTemplate>
                         </ListBox>
 
-                        <!-- Scanning overlay. Bound to IsSerialDiscoveryScanning rather than
-                             HasNoSerialDevices, so it stops claiming to scan the moment discovery
-                             gives up (#290). -->
+                        <!-- Scanning overlay. IsSerialDiscoveryScanning is false once a device is
+                             listed or discovery has given up (#290). -->
                         <StackPanel VerticalAlignment="Center" HorizontalAlignment="Center"
                                     IsVisible="{Binding IsSerialDiscoveryScanning}">
                             <ProgressBar IsIndeterminate="True" Width="120" Height="4"

@@ -156,9 +156,8 @@ public class ConnectionDialogDiscoveryFailureTests
             vm => vm.SerialDiscoveryError != null,
             "Discovery must still report giving up when it had already found a board.");
 
-        Assert.False(
-            viewModel.Value.HasNoSerialDevices,
-            "The device found by the first pass is still listed, which is the whole point of this case.");
+        // The device found by the first pass is still listed, which is the whole point of this case.
+        Assert.NotEmpty(viewModel.Value.AvailableSerialDevices);
         Assert.False(viewModel.Value.IsSerialDiscoveryScanning);
     }
 

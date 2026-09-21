@@ -950,11 +950,10 @@ internal static class AvaloniaCapture
         // The parameterless constructor is the one the app uses; it resolves IDialogService out of
         // the container, which is up because this phase runs after SetupWithLifetime.
         var vm = new ConnectionDialogViewModel();
+        // A listed device also hides the "Scanning for USB devices…" overlay — see
+        // SettleIndeterminateProgress. This is the state a user is in whenever a device has been
+        // found, so it is the honest way to get a still frame here rather than a workaround.
         vm.AvailableSerialDevices.Add(SeedSerialDevice());
-        // Hides the "Scanning for USB devices…" overlay — see SettleIndeterminateProgress. This is
-        // the state a user is in whenever a device has been found, so it is the honest way to get a
-        // still frame here rather than a workaround.
-        vm.HasNoSerialDevices = false;
         vm.SerialConnectError = serialConnectError;
         return new ConnectionDialog { DataContext = vm };
     }
@@ -1207,8 +1206,7 @@ internal static class AvaloniaCapture
     /// </para>
     /// <list type="number">
     /// <item>PREFERRED: seed the state that hides the animation, the way
-    /// <see cref="ConnectDialogWithOneSerialDevice"/> puts a device in the list and clears
-    /// <c>HasNoSerialDevices</c>. Nothing is faked — that is a state the app really has.</item>
+    /// <see cref="ConnectDialogWithOneSerialDevice"/> puts a device in the list. Nothing is faked — that is a state the app really has.</item>
     /// <item><c>FreezeIndeterminateProgress</c>, for a screen whose whole subject is the scanning
     /// state. A frozen bar renders as its empty track rather than as a moving pill, so the PNG is
     /// not what a user sees at any given instant; the [INFO] line below records that, so the empty
@@ -1237,7 +1235,7 @@ internal static class AvaloniaCapture
                 $"({DescribeBars(live)}). An indeterminate bar never stops animating, so the " +
                 "settle loop would burn all its rounds and the capture would be refused as a " +
                 "moving frame. Either seed the state that hides it (preferred - e.g. add a device " +
-                "so HasNoSerialDevices goes false), or set FreezeIndeterminateProgress on this " +
+                "to its list), or set FreezeIndeterminateProgress on this " +
                 "scenario if the scanning state is what you are photographing.");
             return false;
         }
