@@ -114,12 +114,14 @@ public partial class ConnectionManager : ObservableObject
     /// <summary>
     /// Callback for handling duplicate device situations.
     /// Should return the user's choice on how to handle the duplicate.
+    /// Null until the connection dialog installs one, which <see cref="Connect"/> handles by
+    /// rejecting the duplicate outright.
     /// </summary>
     // @port: Daqifi.Desktop.ConnectionManager.DuplicateDeviceHandler
     // Dialect divergence: Avalonia dialogs are async-only (no WPF ShowDialog nested message
     // pump), so the handler is Task-returning and Connect awaits it — same async-dialogs
     // dialect as IMessageBoxService.ShowAsync.
-    public Func<DuplicateDeviceCheckResult, Task<DuplicateDeviceAction>> DuplicateDeviceHandler { get; set; }
+    public Func<DuplicateDeviceCheckResult, Task<DuplicateDeviceAction>>? DuplicateDeviceHandler { get; set; }
 
     /// <summary>
     /// Tracks the device currently undergoing firmware update. Non-null for the whole update (PIC32 +
@@ -335,11 +337,6 @@ public partial class ConnectionManager : ObservableObject
         _subscribedChannels = subscribedChannels;
         _unsubscribeChannel = unsubscribeChannel;
         _postToUiThread = postToUiThread;
-
-        // The same state the singleton is in until the connection dialog installs one; Connect
-        // null-checks it and rejects duplicates when it is unset. Assigned explicitly only so this
-        // constructor does not add a CS8618 to the repo's warning count.
-        DuplicateDeviceHandler = null!;
     }
 
     // @port: Daqifi.Desktop.ConnectionManager.Instance
@@ -445,28 +442,27 @@ public partial class ConnectionManager : ObservableObject
             ConnectionStatus = DAQiFiConnectionStatus.Connecting;
 
             // Check for duplicate device before connecting
-            var duplicateResult = CheckForDuplicateDevice(device);
-            if (duplicateResult.IsDuplicate)
+            var duplicate = CheckForDuplicateDevice(device);
+            if (duplicate != null)
             {
-                if (DuplicateDeviceHandler != null)
+                // No handler set (the state this class is in until the connection dialog installs
+                // one): the duplicate is rejected without opening a second connection, and the user
+                // still has the device they asked for.
+                if (DuplicateDeviceHandler == null)
                 {
-                    var action = await DuplicateDeviceHandler(duplicateResult);
-                    switch (action)
-                    {
-                        case DuplicateDeviceAction.KeepExisting:
-                            return DAQiFiConnectionStatus.AlreadyConnected;
-                        case DuplicateDeviceAction.Cancel:
-                            return DAQiFiConnectionStatus.Disconnected;
-                        case DuplicateDeviceAction.SwitchToNew:
-                            // Disconnect the existing device and continue with connection
-                            Disconnect(duplicateResult.ExistingDevice);
-                            break;
-                    }
+                    return DAQiFiConnectionStatus.AlreadyConnected;
                 }
-                else
+
+                switch (await DuplicateDeviceHandler(duplicate))
                 {
-                    // No handler set, default behavior is to reject the duplicate
-                    return duplicateResult.ExistingDevice != null ? DAQiFiConnectionStatus.AlreadyConnected : DAQiFiConnectionStatus.Error;
+                    case DuplicateDeviceAction.KeepExisting:
+                        return DAQiFiConnectionStatus.AlreadyConnected;
+                    case DuplicateDeviceAction.Cancel:
+                        return DAQiFiConnectionStatus.Disconnected;
+                    case DuplicateDeviceAction.SwitchToNew:
+                        // Disconnect the existing device and continue with connection
+                        Disconnect(duplicate.ExistingDevice);
+                        break;
                 }
             }
 
@@ -477,12 +473,11 @@ public partial class ConnectionManager : ObservableObject
             }
 
             // Check again after connection (in case serial number wasn't available before connect)
-            var postConnectDuplicateResult = CheckForDuplicateDevice(device);
-            if (postConnectDuplicateResult.IsDuplicate)
+            if (CheckForDuplicateDevice(device) != null)
             {
                 // Disconnect the device we just connected since it's a duplicate
                 device.Disconnect();
-                return postConnectDuplicateResult.ExistingDevice != null ? DAQiFiConnectionStatus.AlreadyConnected : DAQiFiConnectionStatus.Error;
+                return DAQiFiConnectionStatus.AlreadyConnected;
             }
 
             // A transport that dies between device.Connect() returning and the loss handler going
@@ -1225,9 +1220,13 @@ public partial class ConnectionManager : ObservableObject
     /// Checks if a device is already connected by comparing serial numbers.
     /// </summary>
     /// <param name="newDevice">The device to check for duplicates</param>
-    /// <returns>A result indicating if the device is a duplicate and which existing device it matches</returns>
+    /// <returns>
+    /// The match, or <c>null</c> when <paramref name="newDevice"/> is not a duplicate. Absence is
+    /// the answer rather than a flag on a result object, so "this is a duplicate" and "this is the
+    /// device it duplicates" cannot disagree.
+    /// </returns>
     // @port: Daqifi.Desktop.ConnectionManager.CheckForDuplicateDevice
-    private DuplicateDeviceCheckResult CheckForDuplicateDevice(IStreamingDevice newDevice)
+    private DuplicateDeviceCheckResult? CheckForDuplicateDevice(IStreamingDevice newDevice)
     {
         // Match on Core's transport-independent DeviceIdentity (issue #752): it compares the serial
         // number first and falls back to the MAC address when the serial is blank — the WiFi path knows
@@ -1241,52 +1240,52 @@ public partial class ConnectionManager : ObservableObject
         {
             AppLogger.Instance.Information(
                 $"Device {newDevice.Name} has no serial number or MAC address - cannot check for duplicates");
-            return new DuplicateDeviceCheckResult { IsDuplicate = false };
+            return null;
         }
 
         var existingDevice = ConnectedDevices.FirstOrDefault(d =>
             DeviceIdentity.Create(d.DeviceSerialNo, d.MacAddress).Matches(candidateIdentity));
 
-        if (existingDevice != null)
+        if (existingDevice == null)
         {
-            var newDeviceInterface = newDevice.ConnectionType == ConnectionType.Usb ? "USB" : "WiFi";
-            var existingDeviceInterface = existingDevice.ConnectionType == ConnectionType.Usb ? "USB" : "WiFi";
-            
-            AppLogger.Instance.Information(
-                $"Duplicate device detected ({candidateIdentity}): Device already connected via " +
-                $"{existingDeviceInterface}, attempted to add via {newDeviceInterface}");
-            
-            return new DuplicateDeviceCheckResult 
-            { 
-                IsDuplicate = true, 
-                ExistingDevice = existingDevice,
-                NewDevice = newDevice,
-                NewDeviceInterface = newDeviceInterface,
-                ExistingDeviceInterface = existingDeviceInterface
-            };
+            return null;
         }
 
-        return new DuplicateDeviceCheckResult { IsDuplicate = false };
+        var newDeviceInterface = newDevice.ConnectionType == ConnectionType.Usb ? "USB" : "WiFi";
+        var existingDeviceInterface = existingDevice.ConnectionType == ConnectionType.Usb ? "USB" : "WiFi";
+
+        AppLogger.Instance.Information(
+            $"Duplicate device detected ({candidateIdentity}): Device already connected via " +
+            $"{existingDeviceInterface}, attempted to add via {newDeviceInterface}");
+
+        return new DuplicateDeviceCheckResult(
+            existingDevice, existingDeviceInterface, newDevice, newDeviceInterface);
     }
 }
 
 /// <summary>
-/// Result of checking for duplicate devices
+/// A device that is already connected under the same identity, and how each side is attached.
 /// </summary>
+/// <remarks>
+/// Only ever constructed when there IS a duplicate — <see cref="ConnectionManager"/>'s check returns
+/// <c>null</c> otherwise — so it carries no "is this a duplicate" flag that could disagree with the
+/// device it names, and every member is set by the one constructor rather than left to an object
+/// initializer that may or may not fill it in.
+/// </remarks>
+/// <param name="ExistingDevice">The connected device the new one matches.</param>
+/// <param name="ExistingDeviceInterface">How the already-connected device is attached ("USB"/"WiFi").</param>
+/// <param name="NewDevice">The device being added.</param>
+/// <param name="NewDeviceInterface">How the device being added is attached ("USB"/"WiFi").</param>
 // @port: Daqifi.Desktop.DuplicateDeviceCheckResult
-public class DuplicateDeviceCheckResult
-{
-    // @port: Daqifi.Desktop.DuplicateDeviceCheckResult.IsDuplicate
-    public bool IsDuplicate { get; set; }
+public sealed record DuplicateDeviceCheckResult(
     // @port: Daqifi.Desktop.DuplicateDeviceCheckResult.ExistingDevice
-    public IStreamingDevice ExistingDevice { get; set; }
-    // @port: Daqifi.Desktop.DuplicateDeviceCheckResult.NewDevice
-    public IStreamingDevice NewDevice { get; set; }
-    // @port: Daqifi.Desktop.DuplicateDeviceCheckResult.NewDeviceInterface
-    public string NewDeviceInterface { get; set; }
+    IStreamingDevice ExistingDevice,
     // @port: Daqifi.Desktop.DuplicateDeviceCheckResult.ExistingDeviceInterface
-    public string ExistingDeviceInterface { get; set; }
-}
+    string ExistingDeviceInterface,
+    // @port: Daqifi.Desktop.DuplicateDeviceCheckResult.NewDevice
+    IStreamingDevice NewDevice,
+    // @port: Daqifi.Desktop.DuplicateDeviceCheckResult.NewDeviceInterface
+    string NewDeviceInterface);
 
 /// <summary>
 /// Actions that can be taken when a duplicate device is detected

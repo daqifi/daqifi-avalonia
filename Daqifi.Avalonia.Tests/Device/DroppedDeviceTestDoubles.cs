@@ -70,6 +70,14 @@ internal sealed class DroppableTestDevice : AbstractStreamingDevice
         PretendConnectSucceeds || PretendTransportDiesDuringConnect ? _pretendConnected : base.IsConnected;
 
     /// <summary>
+    /// When set, <see cref="Connect"/> publishes this serial number as it returns, reproducing the
+    /// device whose identity is not knowable until it has connected — a WiFi unit's serial arrives
+    /// with its first status message, so the manager's pre-connect duplicate check has nothing to
+    /// compare and only the post-connect one can see the clash.
+    /// </summary>
+    public string? SerialRevealedOnConnect { get; init; }
+
+    /// <summary>
     /// Completes as soon as <see cref="Connect"/> has been entered, so a test can wait until this
     /// device's connect is genuinely in flight before starting another one.
     /// </summary>
@@ -89,6 +97,11 @@ internal sealed class DroppableTestDevice : AbstractStreamingDevice
     {
         ConnectEntered.TrySetResult();
         ConnectGate?.Task.GetAwaiter().GetResult();
+
+        if (SerialRevealedOnConnect != null)
+        {
+            DeviceSerialNo = SerialRevealedOnConnect;
+        }
 
         if (PretendTransportDiesDuringConnect)
         {

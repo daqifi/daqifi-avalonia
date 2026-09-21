@@ -149,6 +149,81 @@ public class ConnectionManagerConnectResultTests
     }
 
     /// <summary>
+    /// Choosing the new device drops the one already connected and then connects the new one, so the
+    /// user ends up with exactly the device they picked — and with one entry, not two.
+    /// </summary>
+    [Fact]
+    public async Task Switching_to_the_new_device_replaces_the_one_already_connected()
+    {
+        var manager = NewManager();
+        var existing = new DroppableTestDevice("SN-DUP") { PretendConnectSucceeds = true };
+        manager.ConnectedDevices.Add(existing);
+        manager.DuplicateDeviceHandler = _ => Task.FromResult(DuplicateDeviceAction.SwitchToNew);
+
+        var replacement = new DroppableTestDevice("SN-DUP", ConnectionType.Usb) { PretendConnectSucceeds = true };
+        var result = await manager.Connect(replacement);
+
+        Assert.Equal(DAQiFiConnectionStatus.Connected, result.Status);
+        Assert.Same(replacement, result.Device);
+        Assert.DoesNotContain(existing, manager.ConnectedDevices);
+        Assert.Contains(replacement, manager.ConnectedDevices);
+    }
+
+    /// <summary>
+    /// With no prompt installed — the state the manager is in until the connection dialog sets one —
+    /// a duplicate is refused without ever opening the second connection, and reported as
+    /// AlreadyConnected rather than as an error: the device the user asked for is in the list.
+    /// </summary>
+    [Fact]
+    public async Task A_duplicate_refused_without_a_prompt_is_reported_as_already_connected()
+    {
+        var manager = NewManager();
+        var existing = new DroppableTestDevice("SN-DUP") { PretendConnectSucceeds = true };
+        manager.ConnectedDevices.Add(existing);
+
+        var second = new DroppableTestDevice("SN-DUP", ConnectionType.Usb) { PretendConnectSucceeds = true };
+        var result = await manager.Connect(second);
+
+        Assert.Equal(DAQiFiConnectionStatus.AlreadyConnected, result.Status);
+        Assert.True(result.IsConnected);
+
+        // Refused before the second transport was opened, and the list still holds only the first.
+        Assert.False(second.IsConnected);
+        Assert.DoesNotContain(second, manager.ConnectedDevices);
+        Assert.Contains(existing, manager.ConnectedDevices);
+    }
+
+    /// <summary>
+    /// A device whose identity only arrives with the connection — a WiFi unit's serial comes with its
+    /// first status message — gets past the pre-connect check and is caught by the one after it. The
+    /// connection just opened is closed again, and the outcome is still AlreadyConnected.
+    /// </summary>
+    [Fact]
+    public async Task A_duplicate_only_visible_after_connecting_is_reported_as_already_connected()
+    {
+        var manager = NewManager();
+        var existing = new DroppableTestDevice("SN-LATE") { PretendConnectSucceeds = true };
+        manager.ConnectedDevices.Add(existing);
+
+        // Nothing to match on until Connect() returns, so the pre-connect check cannot see this.
+        var late = new DroppableTestDevice(string.Empty, ConnectionType.Usb)
+        {
+            PretendConnectSucceeds = true,
+            SerialRevealedOnConnect = "SN-LATE"
+        };
+
+        var result = await manager.Connect(late);
+
+        Assert.Equal(DAQiFiConnectionStatus.AlreadyConnected, result.Status);
+        Assert.True(result.IsConnected);
+
+        // It really did connect, and was really torn down again rather than left holding a transport.
+        Assert.False(late.IsConnected);
+        Assert.DoesNotContain(late, manager.ConnectedDevices);
+        Assert.Contains(existing, manager.ConnectedDevices);
+    }
+
+    /// <summary>
     /// The ordinary case, so the two properties are pinned in both directions: a plain failure is a
     /// failure and not a cancellation.
     /// </summary>
