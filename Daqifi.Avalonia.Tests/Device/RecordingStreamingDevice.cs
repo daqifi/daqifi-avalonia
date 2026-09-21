@@ -113,9 +113,19 @@ internal sealed class RecordingStreamingDevice : IStreamingDevice
 
     public string Name { get; set; }
 
-    public bool IsConnected => true;
+    /// <summary>
+    /// Settable so a test can take the device away mid-run. Defaults to true, which is what every
+    /// test that does not care about the drop expects; <c>ImportAllFiles</c> re-reads it on every
+    /// iteration, so clearing it from <see cref="OnCommand"/> or from a fake importer stands in for
+    /// a USB removal part-way through a batch.
+    /// </summary>
+    public bool IsConnected { get; internal set; } = true;
 
-    public IReadOnlyList<SdCardFile> SdCardFiles => [];
+    /// <summary>
+    /// The listing the device serves to <c>RefreshSdCardFiles</c>. Empty by default; a test that
+    /// needs the Device Logs pane to have files in it sets this before the pane selects the device.
+    /// </summary>
+    public IReadOnlyList<SdCardFile> SdCardFiles { get; internal set; } = [];
 
     public SdCardLogFormat SdCardLogFormat { get; set; } = SdCardLogFormat.Protobuf;
 
