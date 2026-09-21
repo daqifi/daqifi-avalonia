@@ -88,21 +88,16 @@ public partial class FirmwareDialogViewModel : ObservableObject
     /// </summary>
     /// <param name="hidDeviceName">HID device name for the bootloader session (used by the flasher adapter).</param>
     /// <param name="targetDevicePath">OS HID device path of the bootloader to flash; null falls back to first-match.</param>
-    /// <param name="firmwareUpdateService">Optional override for tests; otherwise resolved from DI.</param>
-    /// <param name="firmwareDownloadService">Optional override for tests; otherwise resolved from DI.</param>
-    /// <param name="watcher">Optional override for tests; otherwise resolved from DI.</param>
+    /// <param name="firmwareDownloadService">Optional override (the capture harness passes an offline stub); otherwise resolved from DI.</param>
     public FirmwareDialogViewModel(
         string? hidDeviceName,
         string? targetDevicePath = null,
-        IFirmwareUpdateService? firmwareUpdateService = null,
-        IFirmwareDownloadService? firmwareDownloadService = null,
-        IBootloaderWatcher? watcher = null)
+        IFirmwareDownloadService? firmwareDownloadService = null)
     {
         // Resolve from DI rather than newing up services/HttpClient here. Both are registered in
         // App.ConfigureServices and the provider is always present at runtime; the throw is a
-        // fail-fast for a misconfigured container (tests pass mocks via the constructor args).
-        _firmwareUpdateService = firmwareUpdateService
-            ?? App.ServiceProvider?.GetService<IFirmwareUpdateService>()
+        // fail-fast for a misconfigured container.
+        _firmwareUpdateService = App.ServiceProvider?.GetService<IFirmwareUpdateService>()
             ?? throw new InvalidOperationException("IFirmwareUpdateService is not registered.");
 
         _firmwareDownloadService = firmwareDownloadService
@@ -110,8 +105,8 @@ public partial class FirmwareDialogViewModel : ObservableObject
             ?? throw new InvalidOperationException("IFirmwareDownloadService is not registered.");
 
         // Optional: the app-global watcher holds the bootloaders; this dialog asks it to release the
-        // target's hold at flash start. Resolved from DI in production; null is fine for tests/standalone.
-        _watcher = watcher ?? App.ServiceProvider?.GetService<IBootloaderWatcher>();
+        // target's hold at flash start. Null (no watcher registered) is tolerated.
+        _watcher = App.ServiceProvider?.GetService<IBootloaderWatcher>();
         _targetDevicePath = targetDevicePath;
 
         _coreDevice = new BootloaderSessionStreamingDeviceAdapter(hidDeviceName ?? "DAQiFi Bootloader");

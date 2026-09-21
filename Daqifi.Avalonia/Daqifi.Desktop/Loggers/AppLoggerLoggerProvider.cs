@@ -19,18 +19,7 @@ namespace Daqifi.Desktop.Loggers;
 // @port: Daqifi.Desktop.Loggers.AppLoggerLoggerProvider
 public sealed class AppLoggerLoggerProvider : ILoggerProvider
 {
-    private readonly IAppLogger _appLogger;
-
-    /// <summary>
-    /// Initializes the provider.
-    /// </summary>
-    /// <param name="appLogger">
-    /// Target desktop logger. Defaults to <see cref="AppLogger.Instance"/> when null.
-    /// </param>
-    public AppLoggerLoggerProvider(IAppLogger? appLogger = null)
-    {
-        _appLogger = appLogger ?? AppLogger.Instance;
-    }
+    private readonly IAppLogger _appLogger = AppLogger.Instance;
 
     /// <summary>
     /// Creates an <see cref="ILogger"/> that forwards entries for the given category to the

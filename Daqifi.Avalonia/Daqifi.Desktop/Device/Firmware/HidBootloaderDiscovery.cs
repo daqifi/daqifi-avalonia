@@ -31,8 +31,6 @@ public sealed class HidBootloaderDiscovery : IBootloaderDiscovery, IDisposable
 
     #region Private Fields
     private readonly IAppLogger _logger;
-    private readonly TimeSpan _pollInterval;
-    private readonly Func<HidDeviceFinder> _finderFactory;
     private readonly object _sync = new();
 
     private ContinuousDeviceFinder? _finder;
@@ -44,19 +42,9 @@ public sealed class HidBootloaderDiscovery : IBootloaderDiscovery, IDisposable
 
     /// <summary>Creates the discovery source.</summary>
     /// <param name="logger">Application logger for diagnostics.</param>
-    /// <param name="pollInterval">Pause between discovery passes; null uses <see cref="DefaultPollInterval"/>.</param>
-    /// <param name="finderFactory">
-    /// Factory for the underlying Core HID finder; a fresh one is created per Start/Stop cycle (the finder
-    /// is disposed on Stop). Null uses the production <c>HidDeviceFinder</c>; tests inject a fake.
-    /// </param>
-    public HidBootloaderDiscovery(
-        IAppLogger logger,
-        TimeSpan? pollInterval = null,
-        Func<HidDeviceFinder>? finderFactory = null)
+    public HidBootloaderDiscovery(IAppLogger logger)
     {
         _logger = logger ?? throw new ArgumentNullException(nameof(logger));
-        _pollInterval = pollInterval ?? DefaultPollInterval;
-        _finderFactory = finderFactory ?? (() => new HidDeviceFinder());
     }
 
     /// <inheritdoc />
@@ -71,8 +59,8 @@ public sealed class HidBootloaderDiscovery : IBootloaderDiscovery, IDisposable
             }
 
             var finder = new ContinuousDeviceFinder(
-                _finderFactory(),
-                new ContinuousDiscoveryOptions { Interval = _pollInterval });
+                new HidDeviceFinder(),
+                new ContinuousDiscoveryOptions { Interval = DefaultPollInterval });
             finder.DeviceDiscovered += OnDeviceDiscovered;
             finder.ScanError += OnScanError;
             _finder = finder;

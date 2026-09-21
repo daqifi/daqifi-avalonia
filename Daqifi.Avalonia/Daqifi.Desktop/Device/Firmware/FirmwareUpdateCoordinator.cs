@@ -35,7 +35,6 @@ public class FirmwareUpdateCoordinator
     private readonly ILogger<FirmwareUpdateService> _firmwareLogger;
     private readonly IAppLogger _appLogger;
     private readonly string _firmwareDataDirectory;
-    private readonly Func<string, string, IFirmwareUpdateService> _wifiFirmwareUpdateServiceFactory;
 
     /// <summary>
     /// App-global bootloader watcher. During an auto-update the connected device reboots into the HID
@@ -150,14 +149,9 @@ public class FirmwareUpdateCoordinator
     /// <param name="host">The host view-model surface the coordinator reads input from and pushes state to.</param>
     /// <param name="firmwareUpdateService">PIC32 firmware update service.</param>
     /// <param name="firmwareDownloadService">Firmware package download service.</param>
-    /// <param name="firmwareLogger">Logger passed to the WiFi update service built by the default factory.</param>
+    /// <param name="firmwareLogger">Logger passed to the WiFi update service built by <see cref="CreateWifiFirmwareUpdateService"/>.</param>
     /// <param name="appLogger">Application logger used for diagnostics and Sentry breadcrumbs.</param>
     /// <param name="firmwareDataDirectory">Base directory under which firmware packages are downloaded.</param>
-    /// <param name="wifiFirmwareUpdateServiceFactory">
-    /// Factory used to build the WiFi firmware update service for a specific firmware version and COM
-    /// port. When null, the built-in desktop factory (<see cref="CreateWifiFirmwareUpdateService"/>)
-    /// is used; tests inject a fake to assert WiFi sequencing without hardware.
-    /// </param>
     /// <param name="wifiUpdateModeSettleDelay">
     /// Overrides the WiFi-update-mode settle delay. Null uses
     /// <see cref="DefaultWifiUpdateModeSettleDelay"/>; tests pass <see cref="TimeSpan.Zero"/> to skip the wait.
@@ -178,7 +172,6 @@ public class FirmwareUpdateCoordinator
         ILogger<FirmwareUpdateService> firmwareLogger,
         IAppLogger appLogger,
         string firmwareDataDirectory,
-        Func<string, string, IFirmwareUpdateService>? wifiFirmwareUpdateServiceFactory = null,
         TimeSpan? wifiUpdateModeSettleDelay = null,
         IBootloaderWatcher? watcher = null,
         bool? canFlashWifiModule = null)
@@ -189,7 +182,6 @@ public class FirmwareUpdateCoordinator
         _firmwareLogger = firmwareLogger ?? throw new ArgumentNullException(nameof(firmwareLogger));
         _appLogger = appLogger ?? throw new ArgumentNullException(nameof(appLogger));
         _firmwareDataDirectory = firmwareDataDirectory ?? throw new ArgumentNullException(nameof(firmwareDataDirectory));
-        _wifiFirmwareUpdateServiceFactory = wifiFirmwareUpdateServiceFactory ?? CreateWifiFirmwareUpdateService;
         _wifiUpdateModeSettleDelay = wifiUpdateModeSettleDelay ?? DefaultWifiUpdateModeSettleDelay;
         _watcher = watcher;
         _canFlashWifiModule = canFlashWifiModule ?? CanFlashWifiModule;
@@ -635,7 +627,7 @@ public class FirmwareUpdateCoordinator
             serialStreamingDevice.Disconnect();
             var flashDevice = new BootloaderSessionStreamingDeviceAdapter(serialStreamingDevice.Name);
 
-            var wifiUpdateService = _wifiFirmwareUpdateServiceFactory(wifiVersion, serialStreamingDevice.PortName);
+            IFirmwareUpdateService wifiUpdateService = CreateWifiFirmwareUpdateService(wifiVersion, serialStreamingDevice.PortName);
             try
             {
                 // Core verifies the flash from the WINC tool's own output (it throws if the success
