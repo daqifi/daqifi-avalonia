@@ -52,7 +52,7 @@ public class ConnectionDialogSerialListTests
 
         Assert.Empty(viewModel.Value.AvailableSerialDevices);
         Assert.True(
-            viewModel.Value.HasNoSerialDevices,
+            viewModel.Value.IsSerialDiscoveryScanning,
             "The 'Scanning for USB devices…' overlay is bound to this, so it has to follow the list.");
     }
 
@@ -71,7 +71,7 @@ public class ConnectionDialogSerialListTests
         InvokePrivate(viewModel.Value, "ResumeSerialDiscoveryKeepingDiscoveredDevices");
 
         Assert.Same(stillListed, Assert.Single(viewModel.Value.AvailableSerialDevices));
-        Assert.False(viewModel.Value.HasNoSerialDevices);
+        Assert.False(viewModel.Value.IsSerialDiscoveryScanning);
     }
 
     /// <summary>
@@ -116,7 +116,7 @@ public class ConnectionDialogSerialListTests
         RaiseDiscovery(viewModel.Value, retiredFinder, "COM-GHOST");
 
         Assert.Empty(viewModel.Value.AvailableSerialDevices);
-        Assert.True(viewModel.Value.HasNoSerialDevices);
+        Assert.True(viewModel.Value.IsSerialDiscoveryScanning);
     }
 
     /// <summary>
@@ -135,7 +135,7 @@ public class ConnectionDialogSerialListTests
 
         var listed = Assert.Single(viewModel.Value.AvailableSerialDevices);
         Assert.Equal("COM-REAL", listed.Port?.PortName);
-        Assert.False(viewModel.Value.HasNoSerialDevices);
+        Assert.False(viewModel.Value.IsSerialDiscoveryScanning);
     }
 
     /// <summary>
@@ -195,7 +195,7 @@ public class ConnectionDialogSerialListTests
 
         Assert.Equal("COM-STAYS", Assert.Single(viewModel.Value.AvailableSerialDevices).PortName);
         Assert.False(
-            viewModel.Value.HasNoSerialDevices,
+            viewModel.Value.IsSerialDiscoveryScanning,
             "One device went away, not both, so the 'Scanning…' overlay must stay away.");
     }
 
@@ -212,12 +212,11 @@ public class ConnectionDialogSerialListTests
         var currentFinder = GetPrivateField(viewModel.Value, "_serialFinder");
 
         RaiseDiscovery(viewModel.Value, currentFinder, "COM-ONLY");
-        Assert.False(viewModel.Value.HasNoSerialDevices);
+        Assert.False(viewModel.Value.IsSerialDiscoveryScanning);
 
         RaiseLoss(viewModel.Value, currentFinder, "COM-ONLY");
 
         Assert.Empty(viewModel.Value.AvailableSerialDevices);
-        Assert.True(viewModel.Value.HasNoSerialDevices);
         Assert.True(viewModel.Value.IsSerialDiscoveryScanning);
     }
 
@@ -301,7 +300,6 @@ public class ConnectionDialogSerialListTests
     {
         var device = new SerialStreamingDevice(portName);
         viewModel.AvailableSerialDevices.Add(device);
-        viewModel.HasNoSerialDevices = false;
         return device;
     }
 

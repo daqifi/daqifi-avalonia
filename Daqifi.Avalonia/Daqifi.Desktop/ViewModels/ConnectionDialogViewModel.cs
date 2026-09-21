@@ -134,17 +134,6 @@ public partial class ConnectionDialogViewModel : ObservableObject
     private TimeSpan _wifiScanInterval = TimeSpan.FromSeconds(1);
     private TimeSpan _wifiPassTimeout = TimeSpan.FromSeconds(3);
 
-    [ObservableProperty]
-    [NotifyPropertyChangedFor(nameof(IsWiFiDiscoveryScanning))]
-    private bool _hasNoWiFiDevices = true;
-
-    [ObservableProperty]
-    [NotifyPropertyChangedFor(nameof(IsSerialDiscoveryScanning))]
-    private bool _hasNoSerialDevices = true;
-
-    [ObservableProperty]
-    private bool _hasNoHidDevices = true;
-
     private bool _closed;
     #endregion
 
@@ -171,6 +160,9 @@ public partial class ConnectionDialogViewModel : ObservableObject
 
     private readonly ReadOnlyObservableCollection<HeldBootloader> _emptyHidDevices =
         new(new ObservableCollection<HeldBootloader>());
+
+    /// <summary>Gates the Firmware tab's "Scanning…" overlay.</summary>
+    public bool HasNoHidDevices => AvailableHidDevices.Count == 0;
 
     /// <summary>
     /// User-facing failure message for the USB tab's discovered-device list. Non-null when a
@@ -202,14 +194,14 @@ public partial class ConnectionDialogViewModel : ObservableObject
 
     /// <summary>
     /// Whether the USB tab may claim to be scanning: nothing found yet AND discovery has not given
-    /// up. The animated "Scanning for USB devices…" overlay binds to this rather than to
-    /// <see cref="HasNoSerialDevices"/> alone, so it stops making that claim the moment
-    /// <see cref="SerialDiscoveryError"/> says why it stopped (issue #290).
+    /// up. The animated "Scanning for USB devices…" overlay binds to this, so it stops making that
+    /// claim the moment <see cref="SerialDiscoveryError"/> says why it stopped (issue #290).
+    /// Re-raised by the list's own <c>CollectionChanged</c>, wired in the constructor.
     /// </summary>
-    public bool IsSerialDiscoveryScanning => HasNoSerialDevices && SerialDiscoveryError is null;
+    public bool IsSerialDiscoveryScanning => AvailableSerialDevices.Count == 0 && SerialDiscoveryError is null;
 
     /// <summary>The WiFi counterpart of <see cref="IsSerialDiscoveryScanning"/>.</summary>
-    public bool IsWiFiDiscoveryScanning => HasNoWiFiDevices && WiFiDiscoveryError is null;
+    public bool IsWiFiDiscoveryScanning => AvailableWiFiDevices.Count == 0 && WiFiDiscoveryError is null;
 
     [ObservableProperty]
     private string? _manualPortName;
@@ -276,13 +268,15 @@ public partial class ConnectionDialogViewModel : ObservableObject
         ConnectManualSerialCommand = new AsyncRelayCommand(ConnectManualSerialAsync);
         ConnectManualWifiCommand = new AsyncRelayCommand(ConnectManualWifiAsync);
 
+        // Each tab's "Scanning…" overlay is computed from its list, so the list changing is what re-raises it.
+        AvailableWiFiDevices.CollectionChanged += (_, _) => OnPropertyChanged(nameof(IsWiFiDiscoveryScanning));
+        AvailableSerialDevices.CollectionChanged += (_, _) => OnPropertyChanged(nameof(IsSerialDiscoveryScanning));
+
         // The watcher holds bootloaders app-wide, so its list may already be populated before the dialog
-        // opens. Reflect its current count and track changes so the "scanning…" overlay is accurate.
-        // (Bootloaders is a ReadOnlyObservableCollection — its CollectionChanged is an explicit interface
-        // member, so reach it via INotifyCollectionChanged.)
+        // opens. (Bootloaders is a ReadOnlyObservableCollection — its CollectionChanged is an explicit
+        // interface member, so reach it via INotifyCollectionChanged.)
         if (_watcher != null)
         {
-            HasNoHidDevices = _watcher.Bootloaders.Count == 0;
             ((System.Collections.Specialized.INotifyCollectionChanged)_watcher.Bootloaders).CollectionChanged
                 += OnHidDevicesChanged;
 
@@ -385,7 +379,7 @@ public partial class ConnectionDialogViewModel : ObservableObject
     // @port: Daqifi.Desktop.ViewModels.ConnectionDialogViewModel.OnHidDevicesChanged
     private void OnHidDevicesChanged(object? sender, System.Collections.Specialized.NotifyCollectionChangedEventArgs e)
     {
-        HasNoHidDevices = AvailableHidDevices.Count == 0;
+        OnPropertyChanged(nameof(HasNoHidDevices));
     }
 
     // @port: Daqifi.Desktop.ViewModels.ConnectionDialogViewModel.StartConnectionFinders
@@ -420,7 +414,6 @@ public partial class ConnectionDialogViewModel : ObservableObject
         _marshalToUiThread(() =>
         {
             AvailableWiFiDevices.Clear();
-            HasNoWiFiDevices = true;
             // Discovery is live again, so retire whatever the previous run gave up with (issue #290).
             WiFiDiscoveryError = null;
         });
@@ -515,11 +508,7 @@ public partial class ConnectionDialogViewModel : ObservableObject
         _marshalToUiThread(() =>
         {
             SerialDiscoveryError = null;
-            if (clearDiscoveredDevices)
-            {
-                AvailableSerialDevices.Clear();
-                HasNoSerialDevices = true;
-            }
+            if (clearDiscoveredDevices) { AvailableSerialDevices.Clear(); }
         });
 
         _serialConsecutiveFaults = 0;
@@ -973,7 +962,6 @@ public partial class ConnectionDialogViewModel : ObservableObject
                 if (listed == null) { return; }
 
                 AvailableSerialDevices.Remove(listed);
-                HasNoSerialDevices = AvailableSerialDevices.Count == 0;
                 Common.Loggers.AppLogger.Instance.Information(
                     $"Removed DAQiFi device on {portName}: no longer answering discovery.");
             });
@@ -1000,7 +988,6 @@ public partial class ConnectionDialogViewModel : ObservableObject
                 if (listed == null) { return; }
 
                 AvailableWiFiDevices.Remove(listed);
-                HasNoWiFiDevices = AvailableWiFiDevices.Count == 0;
             });
         }
         catch (Exception ex)
@@ -1051,7 +1038,6 @@ public partial class ConnectionDialogViewModel : ObservableObject
                     LocationKey = deviceInfo.LocationKey
                 };
                 AvailableSerialDevices.Add(serialDevice);
-                if (HasNoSerialDevices) { HasNoSerialDevices = false; }
                 Common.Loggers.AppLogger.Instance.Information(
                     $"Added DAQiFi device on {portName}: {serialDevice.Name} (S/N: {serialDevice.DeviceSerialNo})");
                 return;
@@ -1134,7 +1120,6 @@ public partial class ConnectionDialogViewModel : ObservableObject
             // (issue #621)
             if (AvailableWiFiDevices.Any(d => d.MacAddress == wifiDevice.MacAddress)) return;
             AvailableWiFiDevices.Add(wifiDevice);
-            if (HasNoWiFiDevices) { HasNoWiFiDevices = false; }
         });
     }
 

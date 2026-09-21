@@ -347,8 +347,8 @@ Four rules, each of which cost someone real time:
   bars. The connect dialog puts one behind a "Scanning…" overlay on three of its five tabs,
   so this is the *default* state of the dialog most likely to be captured next.
   `SettleIndeterminateProgress` now fails loudly and **by name** instead, and offers two
-  remedies: **preferred**, seed the state that hides the overlay (a device in the list, and
-  `HasNoSerialDevices = false`) — nothing is faked, that is a state the app really has; or
+  remedies: **preferred**, seed the state that hides the overlay (a device in the list) —
+  nothing is faked, that is a state the app really has; or
   set `FreezeIndeterminateProgress` when the scanning state *is* the subject, which stops
   the animation and logs that it did, because a frozen bar renders as its empty track rather
   than as the moving indicator a user sees. The settle rule itself is never loosened for
