@@ -890,6 +890,35 @@ public partial class LoggingManager : ObservableObject
     }
 
     /// <summary>
+    /// Persists the user-entered <see cref="LoggingSession.Name"/> for one session.
+    /// </summary>
+    /// <remarks>
+    /// <para>Throws rather than swallowing, unlike <see cref="DeleteLoggingSessionIfPresent"/>: the
+    /// caller debounces keystrokes, so it is the one that knows whether a failure means "the user is
+    /// still typing" (<see cref="OperationCanceledException"/>) or "the rename did not stick".</para>
+    /// <para><b>A <c>null</c> name does not currently save.</b> The caller sends <c>null</c> for an
+    /// emptied box, meaning "go back to the default label", and <c>LoggingSession.Name</c>'s getter
+    /// honours that in memory — but <c>Sessions.Name</c> is <c>nullable: false</c> and EF writes the
+    /// backing field rather than that getter, so the save throws <c>DbUpdateException</c> and the row
+    /// keeps its old name. Tracked as issue #427; this method relays the behaviour it inherited from
+    /// the view code-behind rather than changing it.</para>
+    /// </remarks>
+    /// <param name="sessionId">The session to rename. A row that is no longer there is a no-op.</param>
+    /// <param name="name">The new name. <c>null</c> throws on save — see the remark.</param>
+    /// <param name="cancellationToken">Cancelled by the caller when another keystroke supersedes this write.</param>
+    public async Task PersistSessionNameAsync(
+        int sessionId, string? name, CancellationToken cancellationToken = default)
+    {
+        await using var context = await _loggingContext.CreateDbContextAsync(cancellationToken);
+        var tracked = await context.Sessions.FindAsync([sessionId], cancellationToken);
+        if (tracked != null)
+        {
+            tracked.Name = name;
+            await context.SaveChangesAsync(cancellationToken);
+        }
+    }
+
+    /// <summary>
     /// Persists <see cref="LoggingSession.SampleCount"/> for the given session
     /// by running a single COUNT against the Samples table. Called when a
     /// session ends so the list view can surface the count without a query.
