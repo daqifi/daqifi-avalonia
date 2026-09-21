@@ -18,8 +18,13 @@ namespace Daqifi.Desktop.Device.Firmware;
 /// mis-parsed as a stray command — they are the one form of I/O safe to direct at a sitting bootloader.
 /// </para>
 /// <para>
-/// The hold uses the same shared exclusive <c>IHidTransport</c> the flasher uses, so handing off to the
-/// flash is seamless: the flasher reopens the already-warm handle with no idle gap.
+/// Each hold owns its <em>own</em> exclusive <c>IHidTransport</c>, not the flasher's DI singleton, so
+/// holding N bootloaders never makes them contend with the flasher or with each other. Because that
+/// handle is exclusive it must be CLOSED before a flash, or it locks the flasher out of the very device
+/// it was asked to flash — which is why the hand-off is <see cref="ReleaseAsync"/>:
+/// <c>BootloaderWatcher.PrepareFlashAsync</c> releases the target hold, the flasher opens the path with
+/// its own transport, and the watcher's flash lease re-grabs the device afterwards with
+/// <see cref="BeginHoldAsync"/>. The other holds are left untouched and stay wedge-proof throughout.
 /// </para>
 /// </summary>
 // @port: Daqifi.Desktop.Device.Firmware.IBootloaderHoldService
@@ -43,7 +48,7 @@ public interface IBootloaderHoldService : IDisposable
 
     /// <summary>
     /// Raised when the keep-alive loop ends because the device went away (I/O error / surprise removal),
-    /// not because of a requested <see cref="PauseForFlashAsync"/>/<see cref="ReleaseAsync"/>. The watcher
+    /// not because of a requested <see cref="ReleaseAsync"/>. The watcher
     /// subscribes to drop the device from its held-bootloader list. Raised off the keep-alive task thread
     /// so a handler may safely dispose this hold.
     /// </summary>
@@ -58,16 +63,9 @@ public interface IBootloaderHoldService : IDisposable
     Task BeginHoldAsync(CancellationToken cancellationToken = default);
 
     /// <summary>
-    /// Stops the keep-alive read so the flasher can own the device's HID I/O, but leaves the handle
-    /// OPEN and warm for the flasher to reopen with no idle gap. Lets the in-flight read drain fully so
-    /// no orphaned read IRP can swallow the flasher's first response. Call immediately before flashing.
-    /// </summary>
-    // @port: Daqifi.Desktop.Device.Firmware.IBootloaderHoldService.PauseForFlashAsync
-    Task PauseForFlashAsync();
-
-    /// <summary>
-    /// Stops the keep-alive read and closes the handle. Call when the device is no longer being managed
-    /// (the connection dialog closes) so the bootloader is never left held.
+    /// Stops the keep-alive read and closes the handle. This is the hand-off to the flasher — the
+    /// exclusive handle has to be gone before another transport can open the path — and it is also how a
+    /// hold is given up when the device is no longer being managed, so the bootloader is never left held.
     /// </summary>
     // @port: Daqifi.Desktop.Device.Firmware.IBootloaderHoldService.ReleaseAsync
     Task ReleaseAsync();

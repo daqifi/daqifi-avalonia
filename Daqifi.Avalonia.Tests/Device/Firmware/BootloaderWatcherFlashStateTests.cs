@@ -355,8 +355,6 @@ public class BootloaderWatcherFlashStateTests
             IsHolding = true;
         }
 
-        public Task PauseForFlashAsync() => Task.CompletedTask;
-
         public async Task ReleaseAsync()
         {
             ReleaseCount++;

@@ -27,13 +27,11 @@ namespace Daqifi.Avalonia.Tests.Device.Firmware;
 /// </list>
 ///
 /// <para>
-/// <b><c>PauseForFlashAsync</c> has no production caller</b> — verified across every tracked source file;
-/// only the interface, its implementation and tests mention it. Its own doc comments describe a
-/// warm-handle hand-off in which the flasher reuses the held transport, and that is not the design the
-/// app ships: each hold owns a separate transport and the watcher releases rather than pauses. The pause
-/// tests below therefore pin the method's API contract as it stands today and make no claim about a live
-/// flash path; the surrounding production comments are recorded as stale, not endorsed. Raised by Qodo on
-/// PR #416 and filed as issue #417.
+/// This file originally also pinned a <c>PauseForFlashAsync</c> that stopped the read but left the
+/// handle open for the flasher to inherit. That method had no production caller and could not have had
+/// one: each hold's handle is <em>exclusive</em> and belongs to the hold, not to the flasher, so leaving
+/// it open would have locked the flasher out. It was deleted with the rest of issue #417; the release
+/// tests below cover the hand-off that actually ships.
 /// </para>
 ///
 /// Everything here runs against a fake <see cref="IHidTransport"/> — no hardware, no HID stack.
@@ -173,84 +171,6 @@ public class BootloaderHoldServiceTests
 
     #endregion
 
-    #region PauseForFlashAsync — an API with no production caller (see #417)
-
-    /// <summary>
-    /// Pausing stops the keep-alive read and leaves the handle OPEN — the one thing that distinguishes it
-    /// from <c>ReleaseAsync</c>. Pinned as an API fact, not as a flash-path claim: nothing in the app
-    /// calls this method, so "the flasher reuses the warm handle" is only what the production comment
-    /// says, and #417 tracks reconciling that.
-    /// </summary>
-    [Fact]
-    public async Task Pausing_for_a_flash_stops_the_read_but_leaves_the_handle_open()
-    {
-        using var service = CreateService();
-        await service.BeginHoldAsync();
-        await _transport.WaitForReadsAsync(1);
-
-        await service.PauseForFlashAsync();
-
-        Assert.Equal(0, _transport.DisconnectCount);
-        Assert.False(service.IsHolding);
-        var afterPause = _transport.ReadCount;
-        await Task.Delay(ReadTimeout + ReadTimeout);
-        Assert.Equal(afterPause, _transport.ReadCount);
-    }
-
-    /// <summary>
-    /// Pausing drains the in-flight read rather than abandoning it: the call does not return until the
-    /// keep-alive loop has stopped, so no read is still outstanding against the transport afterwards.
-    /// </summary>
-    [Fact]
-    public async Task Pausing_waits_for_the_in_flight_read_to_drain()
-    {
-        using var service = CreateService();
-        await service.BeginHoldAsync();
-        await _transport.WaitForReadsAsync(1);
-
-        await service.PauseForFlashAsync();
-
-        Assert.False(_transport.ReadInFlight);
-    }
-
-    /// <summary>
-    /// And it drains the read by letting it finish, not by cancelling it — <c>StopKeepAliveAsync(hard:
-    /// false)</c> against release's <c>hard: true</c>. The distinction is invisible in the hold's public
-    /// state, and a first mutation pass found it unpinned, so it is asserted directly here.
-    /// </summary>
-    [Fact]
-    public async Task Pausing_lets_the_in_flight_read_end_on_its_own_rather_than_cancelling_it()
-    {
-        using var service = CreateService();
-        await service.BeginHoldAsync();
-        await _transport.WaitForReadsAsync(1);
-
-        await service.PauseForFlashAsync();
-
-        Assert.Equal(0, _transport.CancelledReadCount);
-    }
-
-    /// <summary>
-    /// A pause is a stop we asked for, so it is not a dropped device — firing <c>HoldDropped</c> here
-    /// would tell the watcher a bootloader vanished when nothing had gone wrong.
-    /// </summary>
-    [Fact]
-    public async Task Pausing_for_a_flash_does_not_report_a_dropped_hold()
-    {
-        using var service = CreateService();
-        var dropped = 0;
-        service.HoldDropped += (_, _) => Interlocked.Increment(ref dropped);
-        await service.BeginHoldAsync();
-        await _transport.WaitForReadsAsync(1);
-
-        await service.PauseForFlashAsync();
-        await Task.Delay(ReadTimeout + ReadTimeout);
-
-        Assert.Equal(0, Volatile.Read(ref dropped));
-    }
-
-    #endregion
-
     #region Releasing the hold — the path the watcher actually takes
 
     /// <summary>
@@ -273,6 +193,25 @@ public class BootloaderHoldServiceTests
         Assert.Equal(1, _transport.DisconnectCount);
         Assert.False(service.IsHolding);
         Assert.False(_transport.ReadInFlight);
+    }
+
+    /// <summary>
+    /// Release ends the in-flight read by CANCELLING it, not by waiting out its timeout. That matters on
+    /// the flash path: <c>PrepareFlashAsync</c> awaits this release before the flasher opens the device,
+    /// so a release that let the read drain naturally would stall the flash for up to a full keep-alive
+    /// timeout (a second in production) on every flash. The distinction is invisible in the hold's public
+    /// state — release looks identical either way — so it is asserted against the transport directly.
+    /// </summary>
+    [Fact]
+    public async Task Releasing_cancels_the_in_flight_read_rather_than_waiting_it_out()
+    {
+        using var service = CreateService();
+        await service.BeginHoldAsync();
+        await _transport.WaitForReadsAsync(1);
+
+        await service.ReleaseAsync();
+
+        Assert.True(_transport.CancelledReadCount >= 1);
     }
 
     /// <summary>
@@ -411,13 +350,12 @@ public class BootloaderHoldServiceTests
     /// will ever close.
     /// </summary>
     [Fact]
-    public async Task A_disposed_hold_ignores_begin_pause_and_release()
+    public async Task A_disposed_hold_ignores_begin_and_release()
     {
         var service = CreateService();
         service.Dispose();
 
         await service.BeginHoldAsync();
-        await service.PauseForFlashAsync();
         await service.ReleaseAsync();
 
         Assert.Empty(_transport.ConnectByPathCalls);
