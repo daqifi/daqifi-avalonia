@@ -8,10 +8,8 @@ using Daqifi.Core.Firmware;
 using Daqifi.Desktop.Common;
 using Daqifi.Desktop.Common.Loggers;
 using Daqifi.Desktop.Loggers;
-using Daqifi.Desktop.Configuration;
 using Daqifi.Desktop.Device.Firmware;
 using Daqifi.Desktop.DialogService;
-using Daqifi.Desktop.Services;
 using Daqifi.Desktop.Logger;
 using Daqifi.Desktop.View;
 using Microsoft.EntityFrameworkCore;
@@ -130,12 +128,6 @@ public static class App
         }
 
         AppDataPaths.ThrowIfDataDirectoryUnusable();
-
-        if (IsTestMode)
-        {
-            // Suppress any modal message boxes so UI automation is never blocked.
-            FirewallConfiguration.SetMessageBoxService(new NoOpMessageBoxService());
-        }
 
         ShowSplashScreen();
 
