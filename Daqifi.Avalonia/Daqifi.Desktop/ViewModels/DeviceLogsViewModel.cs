@@ -214,16 +214,22 @@ public partial class DeviceLogsViewModel : ObservableObject
     public DeviceLogsViewModel() : this(null, null) { }
 
     /// <summary>
-    /// Test seam: injects the logger, SD card importer and UI-thread marshal. Production uses the
-    /// parameterless ctor, which passes null so the defaults (<see cref="AppLogger.Instance"/>, a real
-    /// <see cref="SdCardSessionImporter"/> and <c>Dispatcher.UIThread</c>) are used.
+    /// Test seam: injects the logger, SD card importer, UI-thread marshal and message box. Production
+    /// uses the parameterless ctor, which passes null so the defaults (<see cref="AppLogger.Instance"/>,
+    /// a real <see cref="SdCardSessionImporter"/>, <c>Dispatcher.UIThread</c> and an
+    /// <see cref="AvaloniaMessageBoxService"/>) are used. The message box is how a test reads the
+    /// Import All summary — the only place the batch's skip/abort accounting becomes observable.
     /// </summary>
     internal DeviceLogsViewModel(
-        IAppLogger? logger, ISdCardSessionImporter? importer, Action<Action>? marshalToUiThread = null)
+        IAppLogger? logger,
+        ISdCardSessionImporter? importer,
+        Action<Action>? marshalToUiThread = null,
+        IMessageBoxService? messageBoxService = null)
     {
         _logger = logger ?? AppLogger.Instance;
         _importerOverride = importer;
         _marshalToUiThread = marshalToUiThread;
+        _messageBoxService = messageBoxService ?? new AvaloniaMessageBoxService();
 
         ConnectedDevices = new ObservableCollection<IStreamingDevice>();
         DeviceFiles = new ObservableCollection<SdCardFile>();
@@ -904,7 +910,7 @@ public partial class DeviceLogsViewModel : ObservableObject
         await _messageBoxService.ShowAsync(message, title, button, MessageBoxImage.Information);
     }
 
-    private static readonly IMessageBoxService _messageBoxService = new AvaloniaMessageBoxService();
+    private readonly IMessageBoxService _messageBoxService;
 }
 
 /// <summary>

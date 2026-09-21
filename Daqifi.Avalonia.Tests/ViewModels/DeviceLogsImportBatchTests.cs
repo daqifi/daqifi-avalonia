@@ -4,6 +4,7 @@ using Daqifi.Desktop;
 using Daqifi.Desktop.Logger;
 using Daqifi.Desktop.Loggers;
 using Daqifi.Desktop.Models;
+using Daqifi.Desktop.Services;
 using Daqifi.Desktop.ViewModels;
 using Xunit;
 using IStreamingDevice = Daqifi.Desktop.Device.IStreamingDevice;
@@ -46,6 +47,7 @@ public sealed class DeviceLogsImportBatchTests : IDisposable
     private const string FileC = "LOG_0003.bin";
 
     private readonly List<IStreamingDevice> _registered = [];
+    private readonly RecordingMessageBox _dialogs = new();
     private bool _disposed;
 
     public void Dispose()
@@ -82,6 +84,13 @@ public sealed class DeviceLogsImportBatchTests : IDisposable
         await vm.ImportAllFilesCommand.ExecuteAsync(null);
 
         Assert.Equal([FileA, FileB, FileC], importer.Requested);
+
+        // And the failed file is named in the summary so the user can retry it on its own: B went
+        // through the catch's skip, A and C through the no-session skip, so all three are counted.
+        var summary = ImportAllSummary();
+        Assert.Contains("Skipped 3 file(s).", summary);
+        Assert.Contains($"• {FileB}", summary);
+        Assert.DoesNotContain("Import stopped", summary);
     }
 
     /// <summary>
@@ -98,6 +107,12 @@ public sealed class DeviceLogsImportBatchTests : IDisposable
 
         Assert.Equal([FileA, FileB], importer.Requested);
         Assert.DoesNotContain(FileC, importer.Requested);
+
+        // Reported as where the run stopped, not as one more skipped file.
+        var summary = ImportAllSummary();
+        Assert.Contains($"Import stopped at {FileB}:", summary);
+        Assert.Contains("Skipped 1 file(s).", summary);
+        Assert.DoesNotContain($"• {FileB}", summary);
     }
 
     /// <summary>
@@ -136,6 +151,16 @@ public sealed class DeviceLogsImportBatchTests : IDisposable
 
         // Every response this fake gives is a non-persisted one, so all three took the skip path.
         Assert.Equal([FileA, FileB, FileC], importer.Requested);
+
+        // Carrying on is only half of it: each empty log must be COUNTED as skipped, not dropped
+        // from the summary and not counted as imported, and the importer's guidance read out once.
+        var summary = ImportAllSummary();
+        Assert.StartsWith("Imported 0 of 3 files.", summary);
+        Assert.Contains("Skipped 3 file(s).", summary);
+        Assert.Contains($"• {FileA}", summary);
+        Assert.Contains($"• {FileB}", summary);
+        Assert.Contains($"• {FileC}", summary);
+        Assert.Equal(2, summary.Split(RecordingSessionImporter.NoSamplesGuidance).Length); // exactly once
     }
 
     /// <summary>
@@ -158,6 +183,7 @@ public sealed class DeviceLogsImportBatchTests : IDisposable
         await vm.ImportAllFilesCommand.ExecuteAsync(null);
 
         Assert.Equal([FileA], importer.Requested);
+        Assert.Contains("Import stopped early: the device disconnected.", ImportAllSummary());
     }
     #endregion
 
@@ -257,7 +283,11 @@ public sealed class DeviceLogsImportBatchTests : IDisposable
             {
                 update();
             }
-        });
+        }, _dialogs);
+
+    /// <summary>The body of the one "Import Complete" dialog the batch ended with.</summary>
+    private string ImportAllSummary() =>
+        Assert.Single(_dialogs.Shown, d => d.Caption == "Import Complete").Text;
 
     /// <summary>Waits out the SD listing the current selection started.</summary>
     private static async Task Settle(DeviceLogsViewModel vm)
@@ -281,6 +311,8 @@ public sealed class DeviceLogsImportBatchTests : IDisposable
     /// </summary>
     private sealed class RecordingSessionImporter : ISdCardSessionImporter
     {
+        internal const string NoSamplesGuidance = "The log held no samples.";
+
         /// <summary>File names this importer was asked for, in order.</summary>
         internal List<string> Requested { get; } = [];
 
@@ -314,9 +346,22 @@ public sealed class DeviceLogsImportBatchTests : IDisposable
                 Session = new LoggingSession(),
                 SamplesImported = 0,
                 SessionPersisted = false,
-                OutcomeGuidance = "The log held no samples.",
+                OutcomeGuidance = NoSamplesGuidance,
                 TimestampQuality = new ImportTimestampQuality(),
             });
+        }
+    }
+
+    /// <summary>Records every dialog instead of showing it.</summary>
+    private sealed class RecordingMessageBox : IMessageBoxService
+    {
+        internal List<(string Caption, string Text)> Shown { get; } = [];
+
+        public Task<MessageBoxResult> ShowAsync(
+            string messageBoxText, string caption, MessageBoxButton button, MessageBoxImage icon)
+        {
+            Shown.Add((caption, messageBoxText));
+            return Task.FromResult(MessageBoxResult.OK);
         }
     }
     #endregion
