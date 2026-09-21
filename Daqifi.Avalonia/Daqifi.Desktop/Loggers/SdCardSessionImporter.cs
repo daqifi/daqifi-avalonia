@@ -108,22 +108,6 @@ public class SdCardSessionImporter : ISdCardSessionImporter
         return await ImportSessionAsync(logSession, options, progress, ct);
     }
 
-    /// <summary>
-    /// Imports an SD card log file from a stream.
-    /// </summary>
-    // @port: Daqifi.Desktop.Loggers.SdCardSessionImporter.ImportFromStreamAsync
-    public async Task<SdCardImportResult> ImportFromStreamAsync(
-        Stream stream,
-        string fileName,
-        ImportOptions? options = null,
-        IProgress<ImportProgress>? progress = null,
-        CancellationToken ct = default)
-    {
-        _logger.Information($"Starting stream import for '{fileName}'");
-        var logSession = await SdCardFileParserFactory.ParseAsync(stream, fileName, null, ct);
-        return await ImportSessionAsync(logSession, options, progress, ct);
-    }
-
     /// <inheritdoc />
     // @port: Daqifi.Desktop.Loggers.SdCardSessionImporter.ImportFromDeviceAsync
     public async Task<SdCardImportResult> ImportFromDeviceAsync(

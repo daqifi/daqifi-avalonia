@@ -1810,18 +1810,6 @@ public partial class DaqifiViewModel : ObservableObject, IFirmwareUpdateHost, IL
 
     #endregion
 
-    #region Helper Methods
-
-    // @port: Daqifi.Desktop.ViewModels.DaqifiViewModel.EnsureAnyDeviceConnected
-    private bool EnsureAnyDeviceConnected()
-    {
-        if (ConnectionManager.Instance.ConnectedDevices.Count > 0) return true;
-        _ = _dialogService.ShowDialogAsync<ErrorDialog>(this, new ErrorDialogViewModel("Please connect a device before creating a profile."));
-        return false;
-    }
-
-    #endregion
-
     #region Methods
     // @port: Daqifi.Desktop.ViewModels.DaqifiViewModel.UpdateConnectedDeviceUI
     public Task UpdateConnectedDeviceUI()

@@ -7,7 +7,6 @@ using System.IO;
 using System.IO.Ports;
 using Daqifi.Core.Device;
 using Daqifi.Core.Communication.Transport;
-using Daqifi.Core.Communication.Messages;
 using Daqifi.Core.Firmware;
 using ScpiMessageProducer = Daqifi.Core.Communication.Producers.ScpiMessageProducer;
 using CoreStreamingDevice = Daqifi.Core.Device.DaqifiStreamingDevice;
@@ -272,13 +271,6 @@ public class SerialStreamingDevice : AbstractStreamingDevice, ILanChipInfoProvid
     #endregion
 
     #region Serial Device Only Methods
-    // @port: Daqifi.Desktop.Device.SerialDevice.SerialStreamingDevice.SendScpiMessage
-    public void SendScpiMessage(IOutboundMessage<string> message)
-    {
-        ArgumentNullException.ThrowIfNull(message);
-        SendMessage(message);
-    }
-
     /// <summary>
     /// Gets the connected Core serial streaming device used for firmware update workflows.
     /// </summary>
