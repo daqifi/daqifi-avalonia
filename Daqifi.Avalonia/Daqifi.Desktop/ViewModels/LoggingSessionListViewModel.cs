@@ -138,9 +138,28 @@ public class LoggingSessionListViewModel
     /// UI thread under the busy flag (replacing the legacy <c>BackgroundWorker</c>); the session is
     /// removed from the bound collection only when the database delete succeeds.
     /// </summary>
+    /// <remarks>
+    /// A delete that fails keeps the row and tells the user — the same rule
+    /// <see cref="DeleteAllSessionsAsync"/> states for the purge (#183), applied to the single
+    /// session (#434). Keeping the row is right: the delete rethrows (#592), so the session's data
+    /// is still on disk and the list is right to go on showing it. Saying nothing is not: the user
+    /// confirmed a destructive action, watched the spinner clear, and cannot tell a refused delete
+    /// from a stale list, so the only reasonable next move is to click Delete again.
+    /// </remarks>
     // @port: Daqifi.Desktop.ViewModels.LoggingSessionListViewModel.DeleteSessionAsync
     public async Task DeleteSessionAsync(LoggingSession? session)
     {
+        const string failureTitle = "Delete Failed";
+        const string failureMessage = "The logging session could not be deleted. See the application log for details.";
+
+        // Held over the busy flag's finally so the dialog is shown after the pane stops saying it is
+        // deleting, rather than behind a spinner that never clears — as DeleteAllSessionsAsync does.
+        (string Title, string Message)? dialog = null;
+
+        // Hoisted out of the inner scope so the outer catch can tell "nothing was deleted" from
+        // "the delete went through and something after it threw".
+        var deleteSucceeded = false;
+
         try
         {
             if (session == null)
@@ -171,7 +190,6 @@ public class LoggingSessionListViewModel
                 // the SessionDataRepository extraction (#592) rethrows on failure instead of swallowing
                 // it — so this is now a live failure path: a failed delete throws, deleteSucceeded stays
                 // false, and the row is kept rather than silently dropped while its data still exists.
-                var deleteSucceeded = false;
                 try
                 {
                     await Task.Run(() => _host.DeleteSessionFromDatabase(session));
@@ -180,6 +198,7 @@ public class LoggingSessionListViewModel
                 catch (Exception dbEx)
                 {
                     _appLogger.Error(dbEx, $"Failed to delete session {session.ID} from database.");
+                    dialog = (failureTitle, failureMessage);
                 }
 
                 if (deleteSucceeded)
@@ -197,6 +216,30 @@ public class LoggingSessionListViewModel
         catch (Exception ex)
         {
             _appLogger.Error(ex, "Error initiating logging session deletion");
+
+            // Anything that throws before the delete — the confirmation dialog itself, the host's
+            // selection write — looks identical to the user: a destructive action confirmed and a
+            // row still on screen. The one case this must NOT claim is a delete that DID go through
+            // and then threw while updating the list, where the data really is gone and "could not
+            // be deleted" would be the opposite lie.
+            if (!deleteSucceeded)
+            {
+                dialog = (failureTitle, failureMessage);
+            }
+        }
+
+        if (dialog is { } toShow)
+        {
+            try
+            {
+                await _host.ShowMessageAsync(toShow.Title, toShow.Message);
+            }
+            catch (Exception ex)
+            {
+                // Outside the guard above, so its own failure would otherwise escape this method and
+                // reach the command that invoked it — which is the shape of the crash in #183.
+                _appLogger.Error(ex, "Failed to show the delete result dialog");
+            }
         }
     }
 
