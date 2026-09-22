@@ -1,6 +1,7 @@
 using System.Collections.ObjectModel;
 using System.ComponentModel;
 using System.Net;
+using Avalonia.Media;
 using Avalonia.Threading;
 using CommunityToolkit.Mvvm.ComponentModel;
 using CommunityToolkit.Mvvm.Input;
@@ -80,8 +81,8 @@ public partial class MobileShellViewModel : ObservableObject, IDisposable
     public bool ShowDeviceList => !IsConnected && !IsStreaming;
     public bool ShowChannelSelector => IsConnected && !IsStreaming;
 
-    // Rolling per-channel buffers the LivePlot renders. Palette is the
-    // desktop channel colors, cycled.
+    // Rolling per-channel buffers the LivePlot renders. Each one is drawn in its
+    // channel's OWN colour — see SeriesColorArgb.
     public ObservableCollection<ChannelSeries> Series { get; } = [];
     // Keyed by channel NAME (stable "AI0".."AI15"), NOT instance: enabling
     // channels makes the device re-sync DataChannels with fresh instances,
@@ -125,11 +126,30 @@ public partial class MobileShellViewModel : ObservableObject, IDisposable
     /// </para>
     /// </remarks>
     public long TotalSamples => Interlocked.Read(ref _totalSamples);
-    private static readonly uint[] Palette =
-    [
-        0xFF4FC3F7, 0xFFFFB74D, 0xFF81C784, 0xFFE57373,
-        0xFFBA68C8, 0xFF4DD0E1, 0xFFFFD54F, 0xFFA1887F,
-    ];
+
+    /// <summary>
+    /// The colour <paramref name="channel"/> is already drawn in everywhere else, as the 0xAARRGGBB
+    /// <see cref="ChannelSeries.ColorArgb"/> the live plot takes.
+    /// </summary>
+    /// <remarks>
+    /// A channel is given its colour once, at construction
+    /// (<c>ChannelColorManager.NewColor</c>), and every other surface shows that one: the mobile
+    /// Channels tab and the desktop panes bind <c>ChannelColorBrush</c>, and the session viewer
+    /// replays what <c>DataSample</c> persisted from the same brush. The live plot used to index a
+    /// private palette by the channel's position in the SELECTION instead, so a channel was one
+    /// colour while streaming and another everywhere else, changed colour when an earlier channel
+    /// was deselected, and repeated a colour past the 8th channel — on a plot where the colour is
+    /// the only thing identifying the trace (#433).
+    /// <para>
+    /// Grey for a brush with no single colour — the same fallback the stored-colour path uses
+    /// (<c>ChannelSeriesColor.FALLBACK_CHANNEL_COLOR</c>), so an unreadable colour looks the same
+    /// live as it does on replay.
+    /// </para>
+    /// </remarks>
+    internal static uint SeriesColorArgb(IChannel channel) =>
+        channel.ChannelColorBrush is ISolidColorBrush solid
+            ? solid.Color.ToUInt32()
+            : Colors.Gray.ToUInt32();
 
     // Per-channel stream selection — populated on connect from the device's
     // analog input channels; the user picks which to stream (all on by default).
@@ -416,14 +436,12 @@ public partial class MobileShellViewModel : ObservableObject, IDisposable
                 device.RemoveChannel(channel);
             }
 
-            var i = 0;
             foreach (var channel in analog)
             {
                 device.AddChannel(channel);
-                var s = new ChannelSeries(channel.Name, Palette[i % Palette.Length], 600);
+                var s = new ChannelSeries(channel.Name, SeriesColorArgb(channel), 600);
                 Series.Add(s);
                 _seriesByName[channel.Name] = s;
-                i++;
             }
 
             // Count every channel the device will actually stream — driven off IsActive, not off
